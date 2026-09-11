@@ -22,9 +22,9 @@
 
 #include <utility>
 
-#include "iresearch/search/common/bitset_build.hpp"
-#include "iresearch/search/common/lazy_bitset.hpp"
-#include "iresearch/search/common/posting_probe.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -33,13 +33,13 @@ namespace irs::count {
 template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
-  TermCountsOf(search::LazyBitset& set, const IndexInput& doc, IndexFeatures layout,
+  TermCountsOf(detail::LazyBitset& set, const IndexInput& doc, IndexFeatures layout,
                bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
   uint64_t Count(const PostingMeta& term) final {
     SDB_ASSERT(term.docs_count != 0);
-    search::CountAgainst sink{_set};
+    detail::CountAgainst sink{_set};
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
@@ -54,7 +54,7 @@ class TermCountsOf : public TermCounts {
     if (term.docs_count == 1) {
       return _set.Contains(doc_limits::min() + term.doc_delta);
     }
-    search::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+    detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
     auto doc = doc_limits::min();
     for (;;) {
       doc = posting.Probe(doc);
@@ -73,8 +73,8 @@ class TermCountsOf : public TermCounts {
   }
 
  private:
-  search::LazyBitset& _set;
-  search::PostingReader<Input> _reader;
+  detail::LazyBitset& _set;
+  detail::PostingReader<Input> _reader;
   const IndexInput* _doc;
   IndexFeatures _layout;
   bool _bounds;

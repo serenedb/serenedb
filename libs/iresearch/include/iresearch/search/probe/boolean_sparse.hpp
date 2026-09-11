@@ -27,10 +27,10 @@
 
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/score/make_conjunction.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/score/make_conjunction.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -52,8 +52,8 @@ class BooleanSparse {
   static constexpr bool kMusts = !std::is_same_v<Musts, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
-  static constexpr bool kInherited = std::is_same_v<Score, search::Inherited>;
+  static constexpr bool kScored = std::is_same_v<Score, detail::Scored>;
+  static constexpr bool kInherited = std::is_same_v<Score, detail::Inherited>;
   static_assert(kMusts || kOptional);
   static_assert(!kInherited || (kMusts && !kOptional));
 
@@ -83,7 +83,7 @@ class BooleanSparse {
       }
     }
     if constexpr (kExcludes) {
-      if (search::IsExcluded(_excludes, target)) {
+      if (detail::IsExcluded(_excludes, target)) {
         return target + 1;
       }
     }
@@ -114,9 +114,9 @@ class BooleanSparse {
         _musts.CollectScorers(scorers);
       }
       if constexpr (kOptional) {
-        search::AppendScorer(scorers, OptionalScore());
+        detail::AppendScorer(scorers, OptionalScore());
       }
-      return search::MakeConjunctionScore(_score.inner, std::move(scorers),
+      return detail::MakeConjunctionScore(_score.inner, std::move(scorers),
                                           _score.absorbed);
     }
   }
@@ -127,7 +127,7 @@ class BooleanSparse {
     if constexpr (kInherited) {
       _musts.CollectScorers(out);
     } else {
-      search::AppendScorer(out, PrepareScore());
+      detail::AppendScorer(out, PrepareScore());
     }
   }
 

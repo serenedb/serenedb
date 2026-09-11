@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "iresearch/search/offsets/ngram_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
@@ -31,17 +31,17 @@
 namespace irs::fill {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const search::ScoredCtx& ctx, ScoreMergeType merge) {
+                          const detail::ScoredCtx& ctx, ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
   if (stats == nullptr) {
     return {};
   }
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.scorer = record.scorer,
                        .stats = stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
-  return search::Build<true>(
+  return detail::Build<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return memory::make_managed<ByWalkScored<Node>>(

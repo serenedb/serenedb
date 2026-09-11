@@ -72,7 +72,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/common/window.hpp>
+#include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/fill/node.hpp>
@@ -340,14 +340,14 @@ size_t Emit(const irs::docs::Root::ptr& docs) {
 }
 
 size_t Window(const irs::fill::Node::ptr& docs) {
-  irs::search::Scratch mask;
+  irs::detail::Scratch mask;
   size_t n = 0;
   irs::doc_id_t min = 0;
   for (;;) {
-    irs::search::Clear(mask.data(), irs::search::kWindowWords);
+    irs::detail::Clear(mask.data(), irs::detail::kWindowWords);
     const auto next =
-      docs->FillOr(min, min + irs::search::kWindowDocs, mask.data());
-    for (size_t i = 0; i != irs::search::kWindowWords; ++i) {
+      docs->FillOr(min, min + irs::detail::kWindowDocs, mask.data());
+    for (size_t i = 0; i != irs::detail::kWindowWords; ++i) {
       n += static_cast<size_t>(std::popcount(mask[i]));
     }
     if (irs::doc_limits::eof(next)) {

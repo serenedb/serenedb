@@ -26,7 +26,7 @@ namespace irs::docs {
 
 Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
                                  const Context& ctx) {
-  return MakeVariadicPhraseWalk<search::PhraseMatch::Slop>(query, ctx);
+  return MakeVariadicPhraseWalk<detail::PhraseMatch::Slop>(query, ctx);
 }
 
 }  // namespace irs::docs

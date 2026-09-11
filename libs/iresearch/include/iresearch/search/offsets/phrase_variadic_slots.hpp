@@ -25,12 +25,12 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/offsets/phrase_variadic_pos.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename Matcher, typename Leaf, bool HasBoost = false>
 class PhraseVariadicSlots {
@@ -166,10 +166,10 @@ class PhraseVariadicSlots {
     return offset;
   }
 
-  search::FixedArray<Leaf> _terms;
-  search::FixedArray<Entry> _slots;
-  search::FixedArray<Slot*> _probes;
+  detail::FixedArray<Leaf> _terms;
+  detail::FixedArray<Entry> _slots;
+  detail::FixedArray<Slot*> _probes;
   Matcher _matcher;
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

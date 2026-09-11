@@ -22,8 +22,8 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scored/make_boolean.hpp"
 #include "iresearch/search/scored/posting.hpp"
 
@@ -55,31 +55,31 @@ Root::ptr MakeBoostedPosting(const BooleanQuery& query,
   SDB_ASSERT(boost.state.reader != nullptr);
   const auto& own = *lead.state.reader;
   const auto& boost_own = *boost.state.reader;
-  const auto* const doc = search::DocOf(own);
-  if (doc == nullptr || search::DocOf(boost_own) != doc ||
-      !search::FreqOf(own) || !search::FreqOf(boost_own)) {
+  const auto* const doc = irs::detail::DocOf(own);
+  if (doc == nullptr || irs::detail::DocOf(boost_own) != doc ||
+      !irs::detail::FreqOf(own) || !irs::detail::FreqOf(boost_own)) {
     return {};
   }
-  const search::ScoreArgs args{.scorer = lead.stats.scorer,
+  const irs::detail::ScoreArgs args{.scorer = lead.stats.scorer,
                        .stats = lead.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = lead.boost};
-  const search::ScoreArgs boost_args{.scorer = boost.stats.scorer,
+  const irs::detail::ScoreArgs boost_args{.scorer = boost.stats.scorer,
                              .stats = boost.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = boost.boost};
-  if (search::ConstantOf(segment, own, args) ||
-      search::ConstantOf(segment, boost_own, boost_args)) {
+  if (irs::detail::ConstantOf(segment, own, args) ||
+      irs::detail::ConstantOf(segment, boost_own, boost_args)) {
     return {};
   }
-  return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<
         Posting<Input, BoostTerm<Input>, utils::Empty, decltype(table)>>(
         table, std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
         std::forward_as_tuple());
-      root->Prepare(meta, *doc, segment, own, args, search::LayoutOf(own),
-                    search::BoundsOf(own));
+      root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
+                    irs::detail::BoundsOf(own));
       root->Optional().Prepare(boost_meta, *doc, segment, boost_own,
                                boost_args);
       return root;

@@ -24,7 +24,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/docs/boolean_sparse.hpp"
 
 namespace irs::docs {
@@ -56,7 +56,7 @@ struct Api {
     return child.PlanDocs(ctx);
   }
 
-  static Result MakeTerm(const search::PostingClause& term,
+  static Result MakeTerm(const detail::PostingClause& term,
                          const SubReader& segment, const Context& ctx) {
     return MakePosting(term, segment, ctx);
   }
@@ -65,15 +65,15 @@ struct Api {
     return docs::MakeAll(static_cast<doc_id_t>(segment.docs_count()), ctx);
   }
 
-  static search::TableFilter* BitsetTable(const Context&) noexcept {
+  static detail::TableFilter* BitsetTable(const Context&) noexcept {
     return nullptr;
   }
 
   static Result MakeNegation(
-    std::span<const search::PostingClause> exclude_terms,
+    std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t, const Context& ctx) {
-    return search::builder::MakeWindowNegation<Api>(
+    return detail::builder::MakeWindowNegation<Api>(
       exclude_terms, exclude_filters, segment, ctx);
   }
 };
@@ -81,7 +81,7 @@ struct Api {
 }  // namespace
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return search::builder::Make<Api>(query, ctx);
+  return detail::builder::Make<Api>(query, ctx);
 }
 
 }  // namespace irs::docs

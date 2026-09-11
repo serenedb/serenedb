@@ -25,7 +25,7 @@
 namespace irs::lead {
 
 Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query) {
-  return search::MakeFixedPhraseOf<search::PhraseMatch::Slop, Impl, Node::ptr>(
+  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Slop, Impl, Node::ptr>(
     query);
 }
 

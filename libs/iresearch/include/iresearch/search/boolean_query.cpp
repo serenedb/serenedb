@@ -27,7 +27,7 @@
 
 #include "basics/down_cast.h"
 #include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/estimate.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -40,8 +40,8 @@ bool SamePosting(const PostingMeta& l, const PostingMeta& r) noexcept {
   return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1;
 }
 
-bool SameStats(const search::StatsRecord& lhs,
-               const search::StatsRecord& rhs) noexcept {
+bool SameStats(const detail::StatsRecord& lhs,
+               const detail::StatsRecord& rhs) noexcept {
   return lhs.stats == rhs.stats && lhs.scorer == rhs.scorer;
 }
 
@@ -79,7 +79,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
       if (record.stats == nullptr) {
         continue;
       }
-      const auto one = search::AllDocsScore(segment, search::ScoreArgs{
+      const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
                                                        .scorer = record.scorer,
                                                        .stats = record.stats,
                                                        .boost = clause.boost,
@@ -103,20 +103,20 @@ void Classify(BooleanQuery::PreparedBucket& bucket) {
     const auto* const field = clause.state.reader;
     const auto& stats = clause.stats;
     const bool per_doc =
-      field != nullptr && search::FreqOf(*field) && ScoresPerDoc(stats.scorer);
+      field != nullptr && detail::FreqOf(*field) && ScoresPerDoc(stats.scorer);
     if (stats.stats == nullptr) {
       bounded = false;
       continue;
     }
     all_per_doc = all_per_doc && per_doc;
     any_per_doc = any_per_doc || per_doc;
-    bounded = bounded && per_doc && search::BoundsOf(*field) &&
+    bounded = bounded && per_doc && detail::BoundsOf(*field) &&
               HasScoreBounds(stats.scorer);
   }
-  bucket.uniformity = bounded        ? search::Terms::Bounded
-                      : all_per_doc  ? search::Terms::Scored
-                      : !any_per_doc ? search::Terms::Constant
-                                     : search::Terms::Mixed;
+  bucket.uniformity = bounded        ? detail::Terms::Bounded
+                      : all_per_doc  ? detail::Terms::Scored
+                      : !any_per_doc ? detail::Terms::Constant
+                                     : detail::Terms::Mixed;
 }
 
 template<typename To, typename From>
@@ -130,7 +130,7 @@ void Append(To& to, From& from) {
 
 void BooleanBuilder::Push(BooleanQuery::PreparedBucket& bucket,
                           const TermReader* reader, const PostingMeta& meta,
-                          score_t boost, search::StatsRecord stats) {
+                          score_t boost, detail::StatsRecord stats) {
   SDB_ASSERT(meta.docs_count != 0);
   bucket.postings.emplace_back(TermState{reader, meta}, boost, stats);
 }
@@ -150,7 +150,7 @@ bool BooleanBuilder::Absorb(QueryKind kind, Occur occur) {
 
 void BooleanBuilder::AddTerm(const TermReader* reader, const PostingMeta& meta,
                              score_t boost, Occur occur,
-                             search::StatsRecord stats) {
+                             detail::StatsRecord stats) {
   if (_empty) {
     return;
   }
@@ -162,7 +162,7 @@ void BooleanBuilder::AddTerm(const TermReader* reader, const PostingMeta& meta,
                                                         : QueryKind::Term;
   if (Absorb(kind, occur)) {
     if (kind == QueryKind::All && !_empty) {
-      bucket.all_docs.emplace_back(kNoBoost, search::StatsRecord{});
+      bucket.all_docs.emplace_back(kNoBoost, detail::StatsRecord{});
     }
     return;
   }
@@ -222,7 +222,7 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
     const auto* const scorer = multi.Stats().scorer;
     for (const auto& entry : state.Terms()) {
       Push(bucket, state.Reader(), entry.cookie, boost * entry.boost,
-           search::StatsRecord{entry.stats, entry.stats ? scorer : nullptr});
+           detail::StatsRecord{entry.stats, entry.stats ? scorer : nullptr});
     }
     return;
   }
@@ -428,7 +428,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
       if (must.empty()) {
         auto all = memory::make_tracked<AllQuery>(_memory, _segment, _boost);
         all->SetStats(_collector != nullptr ? _collector->Record()
-                                            : search::StatsRecord{});
+                                            : detail::StatsRecord{});
         return all;
       }
       if (auto only = lone(must)) {
@@ -477,7 +477,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     _memory, _segment, std::move(_clauses), msm, matching_msm, _boost, estimate,
     _merge_type);
   query->SetStats(_collector != nullptr ? _collector->Record()
-                                        : search::StatsRecord{});
+                                        : detail::StatsRecord{});
   return query;
 }
 

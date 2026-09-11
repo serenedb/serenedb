@@ -21,8 +21,8 @@
 #pragma once
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -31,10 +31,10 @@ namespace irs::scored {
 class SinglePosting : public Root {
  public:
   void Prepare(const PostingMeta& meta, const SubReader& segment,
-               const TermReader& field, const search::ScoreArgs& args) {
+               const TermReader& field, const irs::detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count == 1);
     _doc = doc_limits::min() + meta.doc_delta;
-    _score = search::SingleDocScore(segment, field, _doc, meta.freq, args);
+    _score = irs::detail::SingleDocScore(segment, field, _doc, meta.freq, args);
   }
 
   uint32_t Run(doc_id_t* docs, score_t* scores, uint32_t capacity) final {

@@ -23,14 +23,14 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/subtract.hpp"
 
 namespace irs::count {
 
-Root::ptr MakeSubtractDisjunction(const search::PostingClause& first,
-                                  const search::PostingClause& second,
+Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
+                                  const detail::PostingClause& second,
                                   const SubReader& segment,
                                   const Context& ctx) {
   const auto* rarest = &first;
@@ -38,9 +38,9 @@ Root::ptr MakeSubtractDisjunction(const search::PostingClause& first,
   if (rarest->state.cookie.docs_count > densest->state.cookie.docs_count) {
     std::swap(rarest, densest);
   }
-  const std::array<search::PostingClause, 2> terms{*rarest, *densest};
+  const std::array<detail::PostingClause, 2> terms{*rarest, *densest};
   auto conjunction =
-    search::builder::MakeSparseConjunction<Api>(terms, {}, segment, ctx);
+    detail::builder::MakeSparseConjunction<Api>(terms, {}, segment, ctx);
   if (!conjunction) {
     return {};
   }

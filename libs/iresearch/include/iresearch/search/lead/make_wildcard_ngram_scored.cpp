@@ -29,7 +29,7 @@ namespace irs::lead {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score) {
-  return search::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(query, 0,
+  return detail::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(query, 0,
                                                                   score);
 }
 

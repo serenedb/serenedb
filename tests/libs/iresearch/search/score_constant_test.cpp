@@ -31,8 +31,8 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scores/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scores/constant_score.hpp"
 #include "iresearch/search/scores/dfi.hpp"
 #include "iresearch/search/scores/idf.hpp"
@@ -231,15 +231,15 @@ TEST_P(ScoreConstantTest, folds_only_what_reads_nothing_per_document) {
       tests::PreparedFilter prepared{filter, *index, scorer.get()};
       const auto* reader = segment.field(id);
       ASSERT_NE(nullptr, reader);
-      ASSERT_NE(nullptr, irs::search::DocOf(*reader));
+      ASSERT_NE(nullptr, irs::detail::DocOf(*reader));
 
       irs::ColumnArgsFetcher fetcher;
-      const irs::search::ScoreArgs args{.scorer = scorer.get(),
+      const irs::detail::ScoreArgs args{.scorer = scorer.get(),
                                         .stats = prepared.Stats().stats,
                                         .fetcher = &fetcher,
                                         .boost = irs::kNoBoost};
 
-      const auto folded = irs::search::ConstantOf(segment, *reader, args);
+      const auto folded = irs::detail::ConstantOf(segment, *reader, args);
       EXPECT_EQ(c.constant[SlotOf(id)], folded.has_value());
     }
   }
@@ -410,15 +410,15 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   tests::PreparedFilter prepared{filter, *index, scorer.get()};
   const auto* reader = segment.field(kNone);
   ASSERT_NE(nullptr, reader);
-  ASSERT_NE(nullptr, irs::search::DocOf(*reader));
+  ASSERT_NE(nullptr, irs::detail::DocOf(*reader));
 
   irs::ColumnArgsFetcher fetcher;
-  const irs::search::ScoreArgs args{.scorer = scorer.get(),
+  const irs::detail::ScoreArgs args{.scorer = scorer.get(),
                                     .stats = prepared.Stats().stats,
                                     .fetcher = &fetcher,
                                     .boost = irs::kNoBoost};
 
-  const auto folded = irs::search::ConstantOf(segment, *reader, args);
+  const auto folded = irs::detail::ConstantOf(segment, *reader, args);
   ASSERT_TRUE(folded.has_value());
 
   struct Provider final : irs::AttributeProvider {

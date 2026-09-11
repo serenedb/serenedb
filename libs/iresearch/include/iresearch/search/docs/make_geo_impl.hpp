@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "iresearch/search/common/geo_of.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
@@ -32,9 +32,9 @@ template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   if (ctx.table != nullptr) {
-    return search::MakeGeo<FilteredWalk, Root::ptr>(query, 0, ctx.table);
+    return detail::MakeGeo<FilteredWalk, Root::ptr>(query, 0, ctx.table);
   }
-  return search::MakeGeo<PlainWalk, Root::ptr>(query, 0, utils::Empty{});
+  return detail::MakeGeo<PlainWalk, Root::ptr>(query, 0, utils::Empty{});
 }
 
 }  // namespace irs::docs

@@ -29,7 +29,7 @@
 namespace irs::lead {
 
 Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query) {
-  return search::BuildAll(query,
+  return detail::BuildAll(query,
                           [&]<typename Slots>(auto&&... args) -> Node::ptr {
                             using Node = TwoPhaseDocs<Slots>;
                             return memory::make_managed<Impl<Node>>(

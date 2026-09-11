@@ -19,9 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
@@ -36,28 +36,28 @@ Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
   if (stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = stats,
                                .fetcher = &ctx.fetcher,
                                .boost = query.Boost()};
   if (const auto value =
-        search::ConstantOf(query.Segment(), *query.state.reader, args)) {
+        irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
     if (ctx.table != nullptr) {
-      return search::MakeFixedPhraseOf<search::PhraseMatch::Slop,
+      return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                        FilteredConstantWalk, Root::ptr>(
         query, ctx.table, *value);
     }
-    return search::MakeFixedPhraseOf<search::PhraseMatch::Slop,
+    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                      PlainConstantWalk, Root::ptr>(
       query, utils::Empty{}, *value);
   }
   if (ctx.table != nullptr) {
-    return search::MakeFixedPhraseOf<search::PhraseMatch::Slop, FilteredWalk,
+    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop, FilteredWalk,
                                      Root::ptr, true, lead::TwoPhaseScored>(
       query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
       args);
   }
-  return search::MakeFixedPhraseOf<search::PhraseMatch::Slop, PlainWalk,
+  return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop, PlainWalk,
                                    Root::ptr, true, lead::TwoPhaseScored>(
     query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
     args);

@@ -60,8 +60,8 @@ struct DocBlockAttr : public irs::Attribute {
 class ScoredWrapper : public irs::lead::Node {
  public:
   ScoredWrapper(irs::lead::Node::ptr it, const irs::SubReader& segment,
-                const irs::search::ScoredCtx& ctx,
-                irs::search::StatsRecord record)
+                const irs::detail::ScoredCtx& ctx,
+                irs::detail::StatsRecord record)
     : _it(std::move(it)),
       _docs(irs::kScoreBlock),
       _segment(segment),
@@ -106,8 +106,8 @@ class ScoredWrapper : public irs::lead::Node {
   std::vector<irs::doc_id_t> _docs;
   Provider _provider;
   const irs::SubReader& _segment;
-  irs::search::ScoredCtx _ctx;
-  irs::search::StatsRecord _record;
+  irs::detail::ScoredCtx _ctx;
+  irs::detail::StatsRecord _record;
 };
 
 class QueryWrapper : public irs::QueryBuilder {
@@ -149,7 +149,7 @@ class QueryWrapper : public irs::QueryBuilder {
     return _query->PlanTop(ctx);
   }
 
-  irs::lead::Node::ptr PlanLead(const irs::search::ScoredCtx& ctx) const final {
+  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx& ctx) const final {
     auto it = _query->PlanLead(ctx);
     if (!it || !_query->Scores()) {
       return it;
@@ -158,12 +158,12 @@ class QueryWrapper : public irs::QueryBuilder {
                                                     ctx, _query->Stats(ctx));
   }
 
-  irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx& ctx,
+  irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                   uint64_t interrogations) const final {
     return _query->PlanProbe(ctx, interrogations);
   }
 
-  irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx& ctx,
+  irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                 irs::ScoreMergeType merge) const final {
     return _query->PlanFill(ctx, merge);
   }
@@ -474,8 +474,8 @@ class PreparedFilter {
 
   const irs::Scorer* Scorer() const noexcept { return _scorer; }
 
-  irs::search::StatsRecord Stats() const noexcept {
-    return _queries.empty() || !_queries.front() ? irs::search::StatsRecord{}
+  irs::detail::StatsRecord Stats() const noexcept {
+    return _queries.empty() || !_queries.front() ? irs::detail::StatsRecord{}
                                                  : _queries.front()->Stats();
   }
 

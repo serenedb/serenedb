@@ -25,7 +25,7 @@
 
 namespace irs::fill {
 
-Node::ptr MakeSinglePostingDocs(const search::PostingClause& posting) {
+Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting) {
   SDB_ASSERT(posting.state.cookie.docs_count == 1);
   return memory::make_managed<Impl<SingleDocs>>(doc_limits::min() +
                                                 posting.state.cookie.doc_delta);

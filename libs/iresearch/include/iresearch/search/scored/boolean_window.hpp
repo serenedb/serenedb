@@ -29,9 +29,9 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/table_filter.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -45,8 +45,8 @@ class BooleanWindow : public Root {
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kResets = kOptional && !search::LazyReset<Optional>();
-  static constexpr bool kTally = kOptional && search::Tallies<Optional>();
+  static constexpr bool kResets = kOptional && !irs::detail::LazyReset<Optional>();
+  static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
   static_assert(kLead != kOptional);
   static_assert(!kTally || !kExcludes);
 
@@ -61,7 +61,7 @@ class BooleanWindow : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _constant{constant},
       _table{table} {
-    std::fill_n(_window, search::kWindowDocs, _constant);
+    std::fill_n(_window, irs::detail::kWindowDocs, _constant);
   }
 
   BooleanWindow(BooleanWindow&&) = delete;
@@ -75,7 +75,7 @@ class BooleanWindow : public Root {
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
-      for (; _word != search::kWindowWords; ++_word) {
+      for (; _word != irs::detail::kWindowWords; ++_word) {
         auto word = _mask[_word];
         if (word == 0) {
           continue;
@@ -90,8 +90,8 @@ class BooleanWindow : public Root {
         if constexpr (kTally) {
           auto* const counts = _optional.Counts() + base;
           const auto min_match = _optional.MinMatch();
-          if (std::popcount(word) >= search::kDenseWord) {
-            const auto answer = search::TallyAnswer(counts, min_match);
+          if (std::popcount(word) >= irs::detail::kDenseWord) {
+            const auto answer = irs::detail::TallyAnswer(counts, min_match);
             std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
             const auto first = n;
             n = static_cast<uint32_t>(
@@ -156,7 +156,7 @@ class BooleanWindow : public Root {
         return n;
       }
       _min = _next;
-      const auto max = _min + search::kWindowDocs;
+      const auto max = _min + irs::detail::kWindowDocs;
       doc_id_t next;
       if constexpr (kLead) {
         next = _lead.FillOr(_min, max, _mask);
@@ -178,17 +178,17 @@ class BooleanWindow : public Root {
   }
 
  private:
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs];
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs];
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
-  uint32_t _word = search::kWindowWords;
+  uint32_t _word = irs::detail::kWindowWords;
   score_t _constant;
   bool _spent = false;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::scored

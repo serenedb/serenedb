@@ -32,8 +32,8 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/search/common/node_of.hpp"
-#include "iresearch/search/common/score/make_window.hpp"
+#include "iresearch/search/detail/node_of.hpp"
+#include "iresearch/search/detail/score/make_window.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/docs/plan.hpp"
@@ -161,7 +161,7 @@ class ScoredChild {
   }
 
   ScoreFunction PrepareScore() {
-    return search::MakeWindowScore(_merge, _parents);
+    return detail::MakeWindowScore(_merge, _parents);
   }
 
  private:
@@ -443,7 +443,7 @@ template<template<typename> class Impl, typename Result, typename Rule,
 Result MakeNestedDocs(ParentDocs::ptr parent, lead::Node::ptr child, Rule rule,
                       Head&&... head) {
   using Slots = NestedSlots<PlainChild, Rule>;
-  using Node = search::TwoPhaseFor<Result, Slots>;
+  using Node = detail::TwoPhaseFor<Result, Slots>;
   return memory::make_managed<Impl<Node>>(
     std::forward<Head>(head)..., std::piecewise_construct, std::move(parent),
     std::forward_as_tuple(std::move(child)), std::move(rule));
@@ -564,7 +564,7 @@ Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
 }
 
 template<template<typename> class Impl, typename Result, typename... Head>
-Result PlanNestedScored(const ByNestedQuery& query, search::ScoredCtx ctx,
+Result PlanNestedScored(const ByNestedQuery& query, detail::ScoredCtx ctx,
                         Head&&... head) {
   auto fetcher = std::make_unique<ColumnArgsFetcher>();
   ctx.fetcher = fetcher.get();
@@ -610,7 +610,7 @@ Node::ptr Make(const ByNestedQuery& query) {
   return PlanNestedDocs<Impl, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx) {
+Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
@@ -624,7 +624,7 @@ Node::ptr Make(const ByNestedQuery& query, uint64_t) {
   return PlanNestedDocs<Impl, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
@@ -638,7 +638,7 @@ Node::ptr Make(const ByNestedQuery& query) {
   return PlanNestedDocs<ByWalkDocs, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge,

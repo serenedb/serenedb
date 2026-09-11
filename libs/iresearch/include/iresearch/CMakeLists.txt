@@ -130,10 +130,10 @@ set(IResearch_core_sources
     ./search/all_filter.cpp
     ./search/granular_range_filter.cpp
     ./search/score_function.cpp
-    ./search/common/score/make_conjunction.cpp
-    ./search/common/score/make_probe.cpp
-    ./search/common/score/make_window.cpp
-    ./search/common/score/root_window.cpp
+    ./search/detail/score/make_conjunction.cpp
+    ./search/detail/score/make_probe.cpp
+    ./search/detail/score/make_window.cpp
+    ./search/detail/score/root_window.cpp
     ./search/collectors.cpp
     ./search/filter.cpp
     ./search/term_filter.cpp

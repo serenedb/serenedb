@@ -22,9 +22,9 @@
 
 #include <utility>
 
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/geo_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/geo_query.hpp"
@@ -34,19 +34,19 @@ namespace irs::fill {
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return search::MakeGeo<ByWalkDocs, Node::ptr>(query, 0);
+  return detail::MakeGeo<ByWalkDocs, Node::ptr>(query, 0);
 }
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
-  const auto value = search::AllDocsScore(
-    query.Segment(), search::ScoreArgs{.scorer = record.scorer,
+  const auto value = detail::AllDocsScore(
+    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
                                        .stats = record.stats,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
-  return search::MakeGeo<WalkConstantScored, Node::ptr>(query, 0, merge,
+  return detail::MakeGeo<WalkConstantScored, Node::ptr>(query, 0, merge,
                                                         *ctx.fetcher, value);
 }
 

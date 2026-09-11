@@ -19,9 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/plain_scored.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/plain_scored.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
@@ -30,9 +30,9 @@
 
 namespace irs::probe {
 
-Node::ptr MakePostingScored(const search::PostingClause& posting,
+Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
-                            const search::ScoreRecipe& recipe) {
+                            const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
@@ -42,7 +42,7 @@ Node::ptr MakePostingScored(const search::PostingClause& posting,
   const auto& own = *posting.state.reader;
   const auto scores = posting.stats.stats != nullptr;
   if (scores) {
-    if (const auto value = search::ConstantOf(
+    if (const auto value = detail::ConstantOf(
           segment, own, recipe.Args(posting.stats, posting.boost))) {
       return ResolvePostingDocs<Node::ptr>(
         posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
@@ -51,17 +51,17 @@ Node::ptr MakePostingScored(const search::PostingClause& posting,
         });
     }
   }
-  return search::ResolveInput(
-    *search::DocOf(own), [&]<typename Input> -> Node::ptr {
+  return detail::ResolveInput(
+    *detail::DocOf(own), [&]<typename Input> -> Node::ptr {
       if (!scores) {
-        using Leaf = search::PlainProbeScored<Input>;
-        return memory::make_managed<Impl<Leaf>>(meta, *search::DocOf(own),
-                                                search::LayoutOf(own),
-                                                search::BoundsOf(own));
+        using Leaf = detail::PlainProbeScored<Input>;
+        return memory::make_managed<Impl<Leaf>>(meta, *detail::DocOf(own),
+                                                detail::LayoutOf(own),
+                                                detail::BoundsOf(own));
       }
-      using Leaf = search::PostingProbeScored<Input>;
+      using Leaf = detail::PostingProbeScored<Input>;
       return memory::make_managed<Impl<Leaf>>(
-        meta, *search::DocOf(own), segment, own,
+        meta, *detail::DocOf(own), segment, own,
         recipe.Args(posting.stats, posting.boost));
     });
 }

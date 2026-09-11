@@ -26,8 +26,8 @@
 #include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/erasure.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/erasure.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -81,7 +81,7 @@ class Erased {
   }
 
   IRS_FORCE_INLINE void CollectScorers(std::vector<ScoreFunction>& out) {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }

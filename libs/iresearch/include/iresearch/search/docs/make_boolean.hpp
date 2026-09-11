@@ -27,10 +27,10 @@
 #include <vector>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/docs/boolean_window.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
@@ -42,7 +42,7 @@ Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
                                        const TermReader* field,
                                        const IndexInput& doc,
                                        doc_id_t docs_count, const Context&) {
-  return search::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
+  return detail::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
                                          nullptr);
 }
 
@@ -52,15 +52,15 @@ Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                        const IndexInput& doc,
                                        const Context& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return search::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = search::PostingFill<Input>;
-    using Optional = search::OrGroup<fill::SetLeaves<Leaf>>;
+  return detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = detail::PostingFill<Input>;
+    using Optional = detail::OrGroup<fill::SetLeaves<Leaf>>;
     const auto init = [&](Leaf& leaf, size_t i) {
-      const auto& own = search::FieldOf(terms[i], field);
-      const auto& meta = search::CookieOf(terms[i]);
+      const auto& own = detail::FieldOf(terms[i], field);
+      const auto& meta = detail::CookieOf(terms[i]);
       SDB_ASSERT(meta.docs_count != 0);
-      leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                   meta.docs_count != 1 && search::FreqOf(own));
+      leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+                   meta.docs_count != 1 && detail::FreqOf(own));
     };
     return MakeShape<BooleanWindow, utils::Empty, utils::Empty, Optional,
                      utils::Empty>(

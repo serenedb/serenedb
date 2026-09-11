@@ -18,37 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/probe/make.hpp"
 
 namespace irs::probe {
 
 Node::ptr Make(const RangeVectorQuery& query, uint64_t) {
-  auto inner = search::InnerProbe(query);
+  auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return search::MakeVectorDocs<Impl, Node::ptr,
-                                  search::RadiusGate<Inclusive>, TwoPhaseDocs>(
+    return detail::MakeVectorDocs<Impl, Node::ptr,
+                                  detail::RadiusGate<Inclusive>, TwoPhaseDocs>(
       query, query.Threshold(), std::move(inner));
   });
 }
 
-Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx, uint64_t) {
-  auto inner = search::InnerProbe(query);
+Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
+  auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = ctx.fetcher,
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return search::MakeVectorScored<Impl, Node::ptr,
-                                      search::RadiusGate<Inclusive>, Rescore,
+      return detail::MakeVectorScored<Impl, Node::ptr,
+                                      detail::RadiusGate<Inclusive>, Rescore,
                                       probe::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner));

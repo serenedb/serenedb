@@ -21,8 +21,8 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
@@ -30,16 +30,16 @@
 
 namespace irs::probe {
 
-Node::ptr MakeSinglePostingScored(const search::PostingClause& posting,
+Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
-                                  const search::ScoreRecipe& recipe) {
+                                  const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count == 1);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto doc = doc_limits::min() + meta.doc_delta;
   const auto value =
     posting.stats.stats != nullptr
-      ? search::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
+      ? detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
                                recipe.Args(posting.stats, posting.boost))
       : score_t{0};
   using Node = ConstantScored<SinglePostingDocs>;

@@ -23,12 +23,12 @@
 #include <cstdint>
 
 #include "basics/memory.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 
 namespace irs::count {
 
 struct Context {
-  search::TableFilter* table = nullptr;
+  detail::TableFilter* table = nullptr;
 };
 
 struct Root : memory::Managed {

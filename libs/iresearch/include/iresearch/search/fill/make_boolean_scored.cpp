@@ -20,16 +20,16 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/scored_context.hpp"
-#include "iresearch/search/common/scored_node_builder.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/make_boolean.hpp"
 
 namespace irs::fill {
 
-Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return search::builder::MakeNode<ScoredApi>(query, ctx, merge);
+  return detail::builder::MakeNode<ScoredApi>(query, ctx, merge);
 }
 
 }  // namespace irs::fill

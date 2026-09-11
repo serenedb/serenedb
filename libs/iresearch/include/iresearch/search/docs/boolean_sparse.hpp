@@ -26,8 +26,8 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -79,7 +79,7 @@ class BooleanSparse : public Root {
       }
       out[n] = doc;
       if constexpr (kExcludes) {
-        n += static_cast<uint32_t>(!search::IsExcluded(_excludes, doc));
+        n += static_cast<uint32_t>(!detail::IsExcluded(_excludes, doc));
       } else {
         ++n;
       }
@@ -98,7 +98,7 @@ class BooleanSparse : public Root {
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Excludes _excludes;
   bool _spent = false;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

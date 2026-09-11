@@ -24,10 +24,10 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/bitset_build.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/bitset_storage.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/count/root.hpp"
 
 namespace irs::count {
@@ -35,7 +35,7 @@ namespace irs::count {
 template<typename Table>
 class BooleanBitset : public Root {
  public:
-  BooleanBitset(search::BitsetBuckets&& buckets, const IndexInput& doc,
+  BooleanBitset(detail::BitsetBuckets&& buckets, const IndexInput& doc,
                 doc_id_t docs_count, Table table) noexcept
     : _buckets{std::move(buckets)},
       _doc{&doc},
@@ -43,20 +43,20 @@ class BooleanBitset : public Root {
       _table{table} {}
 
   uint64_t Run() final {
-    auto set = search::BuildBitset(_buckets, *_doc, _docs_count);
-    return _table.Count(search::BitsetStorage::kMin, set.Words(),
+    auto set = detail::BuildBitset(_buckets, *_doc, _docs_count);
+    return _table.Count(detail::BitsetStorage::kMin, set.Words(),
                         set.WordCount());
   }
 
  private:
-  search::BitsetBuckets _buckets;
+  detail::BitsetBuckets _buckets;
   const IndexInput* _doc;
   doc_id_t _docs_count;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::count
-namespace irs::search {
+namespace irs::detail {
 
 template<>
 inline constexpr uint64_t kFoldPostings<count::Root::ptr> = 4;
@@ -75,4 +75,4 @@ inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
     std::move(buckets), doc, docs_count, utils::Empty{});
 }
 
-}  // namespace irs::search
+}  // namespace irs::detail

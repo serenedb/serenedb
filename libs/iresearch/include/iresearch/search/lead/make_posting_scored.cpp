@@ -21,7 +21,7 @@
 #include <optional>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
@@ -29,9 +29,9 @@
 
 namespace irs::lead {
 
-Node::ptr MakePostingScored(const search::PostingClause& posting,
+Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
-                            const search::ScoreRecipe& recipe) {
+                            const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   const auto args = recipe.Args(posting.stats, posting.boost);
@@ -42,11 +42,11 @@ Node::ptr MakePostingScored(const search::PostingClause& posting,
     }
     SDB_ASSERT(posting.state.reader != nullptr);
     if (meta.docs_count == 1) {
-      return search::SingleDocScore(segment, *posting.state.reader,
+      return detail::SingleDocScore(segment, *posting.state.reader,
                                     doc_limits::min() + meta.doc_delta,
                                     meta.freq, args);
     }
-    return search::ConstantOf(segment, *posting.state.reader, args);
+    return detail::ConstantOf(segment, *posting.state.reader, args);
   }();
 
   if (constant) {
@@ -58,16 +58,16 @@ Node::ptr MakePostingScored(const search::PostingClause& posting,
   }
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  if (!search::FreqOf(own)) {
+  if (!detail::FreqOf(own)) {
     return ResolvePostingDocs<Node::ptr>(
       posting, [&]<typename Leaf>(auto&&... leaf_args) -> Node::ptr {
         return memory::make_managed<Impl<RecipeScored<Leaf>>>(
           segment, own, args, std::forward<decltype(leaf_args)>(leaf_args)...);
       });
   }
-  const auto& doc = *search::DocOf(own);
-  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = search::PostingLeadScored<Input>;
+  const auto& doc = *detail::DocOf(own);
+  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    using Leaf = detail::PostingLeadScored<Input>;
     return memory::make_managed<Impl<Leaf>>(meta, doc, segment, own, args);
   });
 }

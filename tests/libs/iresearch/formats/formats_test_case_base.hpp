@@ -32,8 +32,8 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/posting_pos.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/posting_pos.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
 
@@ -94,23 +94,23 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
                                           irs::IndexFeatures layout,
                                           irs::IndexFeatures required,
                                           bool has_score_bounds) {
-  return irs::search::ResolveInput(
+  return irs::detail::ResolveInput(
     *handles.doc, [&]<typename Input> -> SeekPostings::ptr {
       if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
         return irs::memory::make_managed<
-          SeekPostingsImpl<irs::search::PostingLead<Input>>>(
+          SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
           meta, *handles.doc, layout, has_score_bounds);
       }
-      return irs::search::ResolveBounds(
+      return irs::detail::ResolveBounds(
         has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
           if (irs::IndexFeatures::None !=
               (required & irs::IndexFeatures::Offs)) {
             return irs::memory::make_managed<
-              SeekPostingsImpl<irs::search::PostingPos<Input, Bounds, true>>>(
+              SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, true>>>(
               meta, *handles.doc, layout, *handles.pos, handles.pay);
           }
           return irs::memory::make_managed<
-            SeekPostingsImpl<irs::search::PostingPos<Input, Bounds, false>>>(
+            SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, false>>>(
             meta, *handles.doc, layout, *handles.pos, handles.pay);
         });
     });

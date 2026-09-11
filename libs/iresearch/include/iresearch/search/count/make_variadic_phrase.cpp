@@ -26,7 +26,7 @@ namespace irs::count {
 
 Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
                              const Context& ctx) {
-  return MakeVariadicPhraseWalk<search::PhraseMatch::Plain>(query, ctx);
+  return MakeVariadicPhraseWalk<detail::PhraseMatch::Plain>(query, ctx);
 }
 
 }  // namespace irs::count

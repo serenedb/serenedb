@@ -29,11 +29,11 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/boolean_of.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/boolean_of.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/phrase_query.hpp"
@@ -45,14 +45,14 @@
 namespace irs::probe {
 namespace {
 
-search::ScoreRecipe RecipeOf(const SubReader& segment, const search::ScoredCtx& ctx) {
+detail::ScoreRecipe RecipeOf(const SubReader& segment, const detail::ScoredCtx& ctx) {
   return {.segment = &segment, .fetcher = ctx.fetcher};
 }
 
 }  // namespace
 
 Node::ptr Make(const TermQuery& query, uint64_t) {
-  return MakePostingDocs(search::PostingClause{query.State()}, query.Segment());
+  return MakePostingDocs(detail::PostingClause{query.State()}, query.Segment());
 }
 
 Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
@@ -60,21 +60,21 @@ Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
-    return MakePostingDocs(search::ClauseOf(terms.front(), field),
+    return MakePostingDocs(detail::ClauseOf(terms.front(), field),
                            query.Segment());
   }
   return MakeDisjunctionDocs(terms, {}, field, query.Segment(), interrogations);
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, uint64_t) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeFixedPhraseSlopDocs(query); },
     [&] { return MakeFixedPhraseIntervalsDocs(query); },
     [&] { return MakeFixedPhraseDocs(query); });
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query, uint64_t) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeVariadicPhraseSlopDocs(query); },
     [&] { return MakeVariadicPhraseIntervalsDocs(query); },
     [&] { return MakeVariadicPhraseDocs(query); });
@@ -92,14 +92,14 @@ Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
   return MakeWildcardNGramDocs(query, interrogations);
 }
 
-Node::ptr Make(const TermQuery& query, const search::ScoredCtx& ctx, uint64_t) {
-  const search::PostingClause posting{query.State(), query.Boost(),
+Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
+  const detail::PostingClause posting{query.State(), query.Boost(),
                                       query.Stats(ctx)};
   return MakePostingScored(posting, query.Segment(),
                            RecipeOf(query.Segment(), ctx));
 }
 
-Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto merge = query.MergeType();
   const auto& segment = query.Segment();
@@ -111,53 +111,53 @@ Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx,
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
     return MakePostingScored(
-      search::ClauseOf(terms.front(), field, scorer, boost), segment, recipe);
+      detail::ClauseOf(terms.front(), field, scorer, boost), segment, recipe);
   }
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  return MakeDisjunctionScored(terms, {}, search::UniformityOf(*field, scorer),
+  return MakeDisjunctionScored(terms, {}, detail::UniformityOf(*field, scorer),
                                field, scorer, boost, segment, recipe, merge,
                                interrogations, clause, ctx);
 }
 
-Node::ptr Make(const FixedPhraseQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
   if (args.stats == nullptr) {
     return Make(query, interrogations);
   }
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeFixedPhraseSlopScored(query, args); },
     [&] { return MakeFixedPhraseIntervalsScored(query, args); },
     [&] { return MakeFixedPhraseScored(query, args); });
 }
 
-Node::ptr Make(const VariadicPhraseQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
   if (args.stats == nullptr) {
     return Make(query, interrogations);
   }
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeVariadicPhraseSlopScored(query, args); },
     [&] { return MakeVariadicPhraseIntervalsScored(query, args); },
     [&] { return MakeVariadicPhraseScored(query, args); });
 }
 
-Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
   if (record.stats == nullptr) {
     return Make(query, interrogations);
   }
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -165,22 +165,22 @@ Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx,
                        : MakeNGramScored(query, args);
 }
 
-Node::ptr Make(const AllQuery& query, const search::ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
   const auto record = query.Stats(ctx);
   return MakeAllScored(
     query.Segment(),
-    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
+    detail::AllDocsScore(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}));
 }
 
-Node::ptr Make(const WildcardNGramQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
   return MakeWildcardNGramScored(
     query,
-    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
+    detail::AllDocsScore(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}),

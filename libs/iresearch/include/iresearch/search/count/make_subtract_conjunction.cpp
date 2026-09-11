@@ -23,19 +23,19 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/subtract.hpp"
 
 namespace irs::count {
 
-Root::ptr MakeSubtractConjunction(std::span<const search::PostingClause> terms,
+Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment,
                                   const Context& ctx) {
   SDB_ASSERT(terms.size() + filters.size() == 2);
   const IndexInput* doc = nullptr;
-  if (!search::WindowTerms(terms, filters, nullptr, doc)) {
+  if (!detail::WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());

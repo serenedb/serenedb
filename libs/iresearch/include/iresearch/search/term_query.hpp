@@ -31,7 +31,7 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
  public:
   TermQuery(const SubReader& segment, const TermReader* reader,
             const PostingMeta& cookie, score_t boost,
-            search::StatsRecord stats);
+            detail::StatsRecord stats);
 
   void Visit(PreparedStateVisitor&, score_t boost) const final;
 
@@ -50,6 +50,6 @@ QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
-                                search::StatsRecord stats = {});
+                                detail::StatsRecord stats = {});
 
 }  // namespace irs

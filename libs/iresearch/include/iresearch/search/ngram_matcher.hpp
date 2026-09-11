@@ -31,7 +31,7 @@
 #include "basics/containers/small_vector.h"
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -304,7 +304,7 @@ class SerialPositionsChecker final : public Base {
 
   using States = utils::Need<CollectAll, std::vector<SearchState>>;
 
-  irs::search::RunOf<PositionType, N> _pos;
+  irs::detail::RunOf<PositionType, N> _pos;
   std::vector<const PosAttr*> _longest_sequence;
   std::vector<uint32_t> _pos_sequence;
   size_t _min_match_count;

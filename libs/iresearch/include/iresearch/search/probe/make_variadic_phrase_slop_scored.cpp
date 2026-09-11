@@ -26,11 +26,11 @@
 namespace irs::probe {
 
 Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const search::ScoreArgs& args) {
+                                       const detail::ScoreArgs& args) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
-  return search::MakeVariadicPhraseOf<search::PhraseMatch::Slop, Impl,
+  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Slop, Impl,
                                       Node::ptr, true, probe::TwoPhaseScored>(
     query, query.Segment(), *query.state.reader, args);
 }

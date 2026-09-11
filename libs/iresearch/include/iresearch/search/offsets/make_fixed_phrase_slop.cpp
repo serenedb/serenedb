@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query) {
-  return search::MakeFixedPhraseOffsets<search::PhraseMatch::Slop>(query);
+  return detail::MakeFixedPhraseOffsets<detail::PhraseMatch::Slop>(query);
 }
 
 }  // namespace irs::offsets

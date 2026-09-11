@@ -30,9 +30,9 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
-#include "iresearch/search/common/score/make_probe.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/search/detail/score/make_probe.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -79,7 +79,7 @@ class AndLeaves {
   }
 
  private:
-  search::RunOf<Leaf, N> _leaves;
+  detail::RunOf<Leaf, N> _leaves;
 };
 
 template<Type Leaf, size_t N = 0, bool Scored = false>
@@ -161,12 +161,12 @@ class OrLeaves {
   ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
     requires Scored
   {
-    return search::MakeProbeOf(inner, _leaves, _held, absorbed);
+    return detail::MakeProbeOf(inner, _leaves, _held, absorbed);
   }
 
  private:
-  search::RunOf<Leaf, N> _leaves;
-  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>> _held;
+  detail::RunOf<Leaf, N> _leaves;
+  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>> _held;
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
   [[no_unique_address]] utils::Need<Scored, uint32_t> _first = 0;
@@ -250,13 +250,13 @@ class ThresholdLeaves {
   ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
     requires Scored
   {
-    return search::MakeProbeOf(inner, _probes, _held, absorbed);
+    return detail::MakeProbeOf(inner, _probes, _held, absorbed);
   }
 
  private:
-  search::RunOf<Leaf, N> _probes;
-  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>> _held;
-  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>>
+  detail::RunOf<Leaf, N> _probes;
+  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>> _held;
+  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>>
     _matched;
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
@@ -298,7 +298,7 @@ class BoostLeaves {
   }
 
   ScoreFunction PrepareScore(ScoreMergeType inner) {
-    return search::MakeProbeOf(inner, _leaves, _held);
+    return detail::MakeProbeOf(inner, _leaves, _held);
   }
 
   ScoreFunction PrepareScore(ScoreMergeType inner, ScoreFunction&& required,
@@ -308,13 +308,13 @@ class BoostLeaves {
     for (auto& leaf : _leaves) {
       probed.emplace_back(leaf.PrepareScore());
     }
-    return search::MakeProbeScore(inner, std::move(required), std::move(probed),
+    return detail::MakeProbeScore(inner, std::move(required), std::move(probed),
                                   _held.data(), absorbed);
   }
 
  private:
-  search::RunOf<Leaf, N> _leaves;
-  search::RunOf<uint32_t, N> _held;
+  detail::RunOf<Leaf, N> _leaves;
+  detail::RunOf<uint32_t, N> _held;
   doc_id_t _doc = doc_limits::invalid();
 };
 

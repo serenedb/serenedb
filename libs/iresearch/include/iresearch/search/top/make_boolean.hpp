@@ -27,12 +27,12 @@
 
 #include "basics/debugging.h"
 #include "basics/empty.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_policy.hpp"
-#include "iresearch/search/common/scored_builder.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/top/boolean_sparse.hpp"
 #include "iresearch/search/top/boolean_window.hpp"
 #include "iresearch/search/top/make.hpp"
@@ -61,7 +61,7 @@ struct Api {
 
   template<typename Lead, typename Probes, typename Optional, typename Excludes,
            typename... Args>
-  static Result MakeSparse(const Context& ctx, search::Scored score,
+  static Result MakeSparse(const Context& ctx, irs::detail::Scored score,
                            Args&&... args) {
     return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
       ctx, std::piecewise_construct, ctx.fetcher, score,
@@ -70,13 +70,13 @@ struct Api {
 
   template<typename Input, typename Exclude, typename ExcludeArgs>
   static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
-                                    const search::PostingClause& posting,
+                                    const irs::detail::PostingClause& posting,
                                     const IndexInput& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
-                                    const search::ScoreRecipe& recipe) {
+                                    const irs::detail::ScoreRecipe& recipe) {
     SDB_IF_FAILURE("irs::PruningIterator") {
-      if (search::BoundsOf(own)) {
+      if (irs::detail::BoundsOf(own)) {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
     }
@@ -86,18 +86,18 @@ struct Api {
           table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));
       root->Prepare(posting.state.cookie, doc, segment, own,
                     recipe.Args(posting.stats, posting.boost),
-                    search::LayoutOf(own), search::BoundsOf(own));
+                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
       return root;
     });
   }
 
   static score_t Base(score_t) noexcept { return 0; }
 
-  static search::ScoredCtx ChildContext(const Context& ctx) noexcept {
+  static irs::detail::ScoredCtx ChildContext(const Context& ctx) noexcept {
     return ScoredOf(ctx);
   }
 
-  static search::ScoreRecipe Recipe(const SubReader& segment,
+  static irs::detail::ScoreRecipe Recipe(const SubReader& segment,
                             const Context& ctx) noexcept {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
@@ -110,12 +110,12 @@ struct Api {
                           .k = ctx.k});
   }
 
-  static Result MakePosting(const search::PostingClause& posting,
+  static Result MakePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx) {
     return top::MakePosting(posting, segment, ctx);
   }
 
-  static Result MakeSinglePosting(const search::PostingClause& posting,
+  static Result MakeSinglePosting(const irs::detail::PostingClause& posting,
                                   const SubReader& segment,
                                   const Context& ctx) {
     return top::MakeSinglePosting(posting, segment, ctx);
@@ -137,9 +137,9 @@ struct Api {
   }
 
   static Result MakePrunedDisjunction(
-    std::span<const search::PostingClause> should,
-    std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
-    std::span<const search::PostingClause> excludes,
+    std::span<const irs::detail::PostingClause> should,
+    std::span<const QueryBuilder::ptr> should_filters, irs::detail::Terms uniformity,
+    std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge,
     uint32_t min_match) {
@@ -149,9 +149,9 @@ struct Api {
   }
 
   static Result MakePrunedConjunction(
-    std::span<const search::PostingClause> must,
-    std::span<const QueryBuilder::ptr> must_filters, search::Terms uniformity,
-    std::span<const search::PostingClause> excludes,
+    std::span<const irs::detail::PostingClause> must,
+    std::span<const QueryBuilder::ptr> must_filters, irs::detail::Terms uniformity,
+    std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge) {
     return top::MakePrunedConjunction(must, must_filters, uniformity, excludes,
@@ -159,7 +159,7 @@ struct Api {
   }
 
   static Result MakePrunedPosting(
-    const search::PostingClause& posting, std::span<const search::PostingClause> excludes,
+    const irs::detail::PostingClause& posting, std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx) {
     return top::MakePrunedPosting(posting, excludes, exclude_filters, segment,
@@ -170,12 +170,12 @@ struct Api {
 template<typename Term>
 Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 std::span<const QueryBuilder::ptr> filters,
-                                search::Terms uniformity,
+                                irs::detail::Terms uniformity,
                                 const TermReader* field, const Scorer* scorer,
                                 score_t boost, const SubReader& segment,
                                 const Context& ctx, ScoreMergeType merge,
                                 score_t absorbed) {
-  return search::builder::MakeScoredDisjunction<Api, Term>(
+  return irs::detail::builder::MakeScoredDisjunction<Api, Term>(
     terms, filters, uniformity, field, scorer, boost, segment, ctx, merge,
     absorbed);
 }

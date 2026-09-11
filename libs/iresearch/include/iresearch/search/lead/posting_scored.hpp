@@ -25,11 +25,11 @@
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/posting_leaf.hpp"
+#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename InputType>
 class PostingLeadScored : public PostingLeaf<InputType, kCursorScoredShape> {
@@ -73,4 +73,4 @@ class PostingLeadScored : public PostingLeaf<InputType, kCursorScoredShape> {
   }
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

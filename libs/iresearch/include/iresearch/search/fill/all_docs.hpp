@@ -25,7 +25,7 @@
 #include "basics/bit_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -64,14 +64,14 @@ class AllDocs {
     doc_id_t begin = 0;
     doc_id_t end = 0;
     if (!Span(min, max, begin, end)) {
-      search::Clear(mask, search::WindowWords(min, max));
+      detail::Clear(mask, detail::WindowWords(min, max));
       return doc_limits::eof();
     }
     if (begin != min) {
-      search::ClearInclusive(mask, 0, begin - min - 1);
+      detail::ClearInclusive(mask, 0, begin - min - 1);
     }
     if (end != max) {
-      search::ClearInclusive(mask, end - min, max - min - 1);
+      detail::ClearInclusive(mask, end - min, max - min - 1);
     }
     return end > _last ? doc_limits::eof() : end;
   }
@@ -82,7 +82,7 @@ class AllDocs {
     if (!Span(min, max, begin, end)) {
       return doc_limits::eof();
     }
-    search::ClearInclusive(mask, begin - min, end - min - 1);
+    detail::ClearInclusive(mask, begin - min, end - min - 1);
     return end > _last ? doc_limits::eof() : end;
   }
 

@@ -25,10 +25,10 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/probe_leaves.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/probe_leaves.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -47,7 +47,7 @@ Node::ptr MakeSparse(Args&&... args) {
 }
 
 template<typename Make>
-Node::ptr BuildMusts(std::span<const search::PostingClause> terms,
+Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
                      std::span<const QueryBuilder::ptr> filters,
                      const SubReader& segment, uint64_t interrogations,
                      Make&& make) {
@@ -67,11 +67,11 @@ Node::ptr BuildMusts(std::span<const search::PostingClause> terms,
     return make.template operator()<Erased>(
       std::forward_as_tuple(std::move(node)));
   }
-  return search::BuildProbeLeaves<Node::ptr>(
+  return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, nullptr, segment, interrogations,
-    search::ProbeOrder::Narrowest,
+    detail::ProbeOrder::Narrowest,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return search::ResolveArity<search::kRunArity, search::kRunFloor>(
+      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return make.template operator()<AndLeaves<Leaf, N>>(
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)));
@@ -82,7 +82,7 @@ Node::ptr BuildMusts(std::span<const search::PostingClause> terms,
 }  // namespace
 
 Node::ptr MakeSparseConjunctionDocs(
-  std::span<const search::PostingClause> terms,
+  std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
   uint64_t interrogations) {
   const auto size = terms.size() + filters.size();
@@ -102,7 +102,7 @@ Node::ptr MakeSparseConjunctionDocs(
 }
 
 Node::ptr MakeSparseConjunctionWithDocs(
-  std::span<const search::PostingClause> terms,
+  std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
   uint64_t interrogations, Node::ptr other) {
   SDB_ASSERT(other);
@@ -116,17 +116,17 @@ Node::ptr MakeSparseConjunctionWithDocs(
                     });
 }
 
-Node::ptr MakeSparseThresholdDocs(std::span<const search::PostingClause> terms,
+Node::ptr MakeSparseThresholdDocs(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment, uint32_t min_match,
                                   uint64_t interrogations) {
   SDB_ASSERT(min_match > 1);
   SDB_ASSERT(terms.size() + filters.size() >= min_match);
-  return search::BuildProbeLeaves<Node::ptr>(
+  return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, nullptr, segment, interrogations,
-    search::ProbeOrder::Densest,
+    detail::ProbeOrder::Densest,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return search::ResolveArity<search::kRunArity, search::kRunFloor>(
+      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparse<utils::Empty, ThresholdLeaves<Leaf, N>,
                             utils::Empty>(
@@ -139,20 +139,20 @@ Node::ptr MakeSparseThresholdDocs(std::span<const search::PostingClause> terms,
 }
 
 Node::ptr MakeSparseExclusionDocs(
-  std::span<const search::PostingClause> must,
+  std::span<const detail::PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should,
+  std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude,
+  std::span<const detail::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t interrogations) {
   SDB_ASSERT(!exclude.empty() || !exclude_filters.empty());
   const bool no_must = must.empty() && must_filters.empty();
   const uint64_t docs_count = segment.docs_count();
-  uint64_t lead = search::IncludeCandidates(must, must_filters, segment);
+  uint64_t lead = detail::IncludeCandidates(must, must_filters, segment);
   if (no_must && min_should_match != 0) {
     lead = std::min(docs_count,
-                    search::LeadCandidates(should, should_filters,
+                    detail::LeadCandidates(should, should_filters,
                                            static_cast<doc_id_t>(docs_count)));
   }
   const auto reach = std::max<uint64_t>(
@@ -167,7 +167,7 @@ Node::ptr MakeSparseExclusionDocs(
   }
   const auto excluded = [&]<typename Musts, typename Optional>(
                           auto&& musts, auto&& optional_args) -> Node::ptr {
-    return search::BuildExcludeSide<Node::ptr>(
+    return detail::BuildExcludeSide<Node::ptr>(
       exclude, exclude_filters, nullptr, segment, reach, lead,
       [&]<typename Exclude>(auto&& excludes) -> Node::ptr {
         return MakeSparse<Musts, Optional, Exclude>(

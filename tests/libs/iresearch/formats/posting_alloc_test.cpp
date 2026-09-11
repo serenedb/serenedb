@@ -117,8 +117,8 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
 
   constexpr size_t kWarmup = 64;
   constexpr size_t kRounds = 1024;
-  ASSERT_NE(nullptr, irs::search::DocOf(*field));
-  const irs::search::PostingClause posting{
+  ASSERT_NE(nullptr, irs::detail::DocOf(*field));
+  const irs::detail::PostingClause posting{
     .state = irs::TermState{field, chosen_storage}};
 
   // Warm up so first-touch growth of any pooled structure is not attributed to

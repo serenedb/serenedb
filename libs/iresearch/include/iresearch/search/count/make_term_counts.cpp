@@ -21,26 +21,26 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/lazy_bitset.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/count/term_counts_of.hpp"
 #include "iresearch/search/filter.hpp"
 
 namespace irs::count {
 
-TermCounts::ptr MakeTermCounts(search::LazyBitset& set, const TermReader& field,
+TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
                                size_t terms) {
-  SDB_ASSERT(search::DocOf(field) != nullptr);
+  SDB_ASSERT(detail::DocOf(field) != nullptr);
   if (terms < 2) {
     return {};
   }
-  return search::ResolveInput(
-    *search::DocOf(field), [&]<typename Input> -> TermCounts::ptr {
+  return detail::ResolveInput(
+    *detail::DocOf(field), [&]<typename Input> -> TermCounts::ptr {
       using Shape = TermCountsOf<Input>;
-      return memory::make_managed<TermCounts, Shape>(set, *search::DocOf(field),
-                                                     search::LayoutOf(field),
-                                                     search::BoundsOf(field));
+      return memory::make_managed<TermCounts, Shape>(set, *detail::DocOf(field),
+                                                     detail::LayoutOf(field),
+                                                     detail::BoundsOf(field));
     });
 }
 

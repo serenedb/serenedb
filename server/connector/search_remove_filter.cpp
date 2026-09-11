@@ -45,7 +45,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
                     const irs::DocumentMask* pending)
     : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
-  irs::lead::Node::ptr PlanLead(const irs::search::ScoredCtx&) const final {
+  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
     return _filter.MakeLead(_segment, _pending);
   }
 
@@ -61,11 +61,11 @@ class SearchRemoveQuery : public irs::QueryBuilder {
   irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
     return {};
   }
-  irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx&,
+  irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx&,
                                   uint64_t) const final {
     return {};
   }
-  irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx&,
+  irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx&,
                                 irs::ScoreMergeType) const final {
     return {};
   }

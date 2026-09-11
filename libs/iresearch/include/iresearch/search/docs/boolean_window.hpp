@@ -27,7 +27,7 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/emit.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -79,8 +79,8 @@ class BooleanWindow : public Root {
       if (_spent || n == capacity) {
         return n;
       }
-      SDB_ASSERT(_min <= doc_limits::eof() - search::kWindowDocs);
-      const doc_id_t max = _min + search::kWindowDocs;
+      SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
+      const doc_id_t max = _min + detail::kWindowDocs;
       auto* const words = _mask.data();
       doc_id_t next;
       if constexpr (kLead) {
@@ -105,7 +105,7 @@ class BooleanWindow : public Root {
 
  private:
   Emit<Table> _emit;
-  search::Scratch _mask{};
+  detail::Scratch _mask{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;

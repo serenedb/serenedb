@@ -55,7 +55,7 @@ class QueryBuilderImpl : public Base {
     return top::Make(Self(), ctx);
   }
 
-  lead::Node::ptr PlanLead(const search::ScoredCtx& ctx) const final {
+  lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const final {
     if (!Base::Scores()) {
       if (auto node = lead::Make(Self())) {
         return node;
@@ -64,7 +64,7 @@ class QueryBuilderImpl : public Base {
     return lead::Make(Self(), ctx);
   }
 
-  probe::Node::ptr PlanProbe(const search::ScoredCtx& ctx,
+  probe::Node::ptr PlanProbe(const detail::ScoredCtx& ctx,
                              uint64_t interrogations) const final {
     if (!Base::Scores()) {
       if (auto node = probe::Make(Self(), interrogations)) {
@@ -74,7 +74,7 @@ class QueryBuilderImpl : public Base {
     return probe::Make(Self(), ctx, interrogations);
   }
 
-  fill::Node::ptr PlanFill(const search::ScoredCtx& ctx,
+  fill::Node::ptr PlanFill(const detail::ScoredCtx& ctx,
                            ScoreMergeType merge) const final {
     if (!Base::Scores()) {
       if (auto node = fill::Make(Self())) {

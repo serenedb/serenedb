@@ -21,12 +21,12 @@
 #include "iresearch/search/scored/make_boolean.hpp"
 
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/scored_builder.hpp"
+#include "iresearch/search/detail/scored_builder.hpp"
 
 namespace irs::scored {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return search::builder::MakeScored<Api>(query, ctx);
+  return irs::detail::builder::MakeScored<Api>(query, ctx);
 }
 
 }  // namespace irs::scored

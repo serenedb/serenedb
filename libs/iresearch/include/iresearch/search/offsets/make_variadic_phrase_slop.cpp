@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query) {
-  return search::MakeVariadicPhraseOffsets<search::PhraseMatch::Slop>(query);
+  return detail::MakeVariadicPhraseOffsets<detail::PhraseMatch::Slop>(query);
 }
 
 }  // namespace irs::offsets

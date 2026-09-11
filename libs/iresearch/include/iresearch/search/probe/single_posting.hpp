@@ -26,7 +26,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -59,7 +59,7 @@ class SinglePostingScored {
  public:
   SinglePostingScored(const PostingMeta& meta, const SubReader& segment,
                       const TermReader& field, bool has_freq,
-                      const search::ScoreArgs& args) noexcept
+                      const detail::ScoreArgs& args) noexcept
     : _leaf{meta},
       _freq{meta.freq},
       _segment{&segment},
@@ -96,7 +96,7 @@ class SinglePostingScored {
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:
@@ -114,7 +114,7 @@ class SinglePostingScored {
   uint32_t _freq;
   const SubReader* _segment;
   const TermReader* _field;
-  search::ScoreArgs _args;
+  detail::ScoreArgs _args;
   Provider _provider;
   uint32_t _gather[kScoreBlock]{};
 };

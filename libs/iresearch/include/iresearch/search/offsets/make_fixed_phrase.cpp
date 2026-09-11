@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query) {
-  return search::MakeFixedPhraseOffsets<search::PhraseMatch::Plain>(query);
+  return detail::MakeFixedPhraseOffsets<detail::PhraseMatch::Plain>(query);
 }
 
 }  // namespace irs::offsets

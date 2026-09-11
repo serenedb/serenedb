@@ -22,7 +22,7 @@
 
 #include "iresearch/search/top/detail/prune_leaf.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename InputType>
 class PostingPrunedClause : public PruneLeafBase<InputType, false> {
@@ -193,4 +193,4 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

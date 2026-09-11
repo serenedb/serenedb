@@ -34,10 +34,10 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/score/make_window.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_policy.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/score/make_window.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -46,9 +46,9 @@ namespace irs::probe {
 template<typename Optional, typename Score = utils::Empty, bool Bounded = false>
 class BooleanWindow {
  public:
-  static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
+  static constexpr bool kScored = std::is_same_v<Score, detail::Scored>;
   static constexpr bool kBounded = Bounded;
-  static_assert(!search::Retracts<Optional>());
+  static_assert(!detail::Retracts<Optional>());
   static_assert(!kBounded || kScored);
 
   template<typename OptionalArgs>
@@ -83,19 +83,19 @@ class BooleanWindow {
     if (doc_limits::eof(target)) {
       return doc_limits::eof();
     }
-    if (!_filled || target >= _min + search::kWindowDocs) {
+    if (!_filled || target >= _min + detail::kWindowDocs) {
       if (_spent) {
         return doc_limits::eof();
       }
       Refill(target);
     }
-    return _min + (search::kWindowDocs - 1);
+    return _min + (detail::kWindowDocs - 1);
   }
 
   score_t MaxScore(doc_id_t last) const noexcept
     requires kBounded
   {
-    if (_filled && last < _min + search::kWindowDocs) {
+    if (_filled && last < _min + detail::kWindowDocs) {
       return _max;
     }
     return _spent ? score_t{0} : _bound;
@@ -111,13 +111,13 @@ class BooleanWindow {
   ScoreFunction PrepareScore()
     requires kScored
   {
-    return search::MakeWindowScore(_score.inner, _gathered, _score.absorbed);
+    return detail::MakeWindowScore(_score.inner, _gathered, _score.absorbed);
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out)
     requires kScored
   {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:
@@ -127,19 +127,19 @@ class BooleanWindow {
       return doc_limits::eof();
     }
     for (;;) {
-      if (!_filled || target >= _min + search::kWindowDocs) {
+      if (!_filled || target >= _min + detail::kWindowDocs) {
         if (_spent) {
           return doc_limits::eof();
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min); found != search::kWindowDocs) {
+      if (const auto found = Find(target - _min); found != detail::kWindowDocs) {
         return _min + found;
       }
       if (_spent) {
         return doc_limits::eof();
       }
-      if (!search::NextWindow(_min, _next, target)) {
+      if (!detail::NextWindow(_min, _next, target)) {
         return doc_limits::eof();
       }
     }
@@ -149,29 +149,29 @@ class BooleanWindow {
     SDB_ASSERT(!_filled || target >= _min);
     auto* const words = _mask.data();
     if constexpr (kScored) {
-      for (uint32_t w = 0; w != search::kWindowWords; ++w) {
+      for (uint32_t w = 0; w != detail::kWindowWords; ++w) {
         auto word = words[w];
         words[w] = 0;
-        const auto base = w * search::kWindowBits;
+        const auto base = w * detail::kWindowBits;
         while (word != 0) {
           _window[base + std::countr_zero(word)] = 0;
           word = PopBit(word);
         }
       }
     } else {
-      search::Clear(words, search::kWindowWords);
+      detail::Clear(words, detail::kWindowWords);
     }
     _min = target;
     _filled = true;
-    const auto max = _min + search::kWindowDocs;
+    const auto max = _min + detail::kWindowDocs;
     doc_id_t next;
     if constexpr (kScored) {
       next = _optional.Fill(_min, max, words, _window);
       if constexpr (kBounded) {
         score_t top = 0;
-        for (uint32_t w = 0; w != search::kWindowWords; ++w) {
+        for (uint32_t w = 0; w != detail::kWindowWords; ++w) {
           auto word = words[w];
-          const auto base = w * search::kWindowBits;
+          const auto base = w * detail::kWindowBits;
           while (word != 0) {
             top = std::max(top, _window[base + std::countr_zero(word)]);
             word = PopBit(word);
@@ -187,22 +187,22 @@ class BooleanWindow {
   }
 
   doc_id_t Find(doc_id_t offset) const noexcept {
-    auto word = offset / search::kWindowBits;
-    auto bits = _mask[word] & (~uint64_t{0} << (offset % search::kWindowBits));
+    auto word = offset / detail::kWindowBits;
+    auto bits = _mask[word] & (~uint64_t{0} << (offset % detail::kWindowBits));
     for (;;) {
       if (bits != 0) {
-        return static_cast<doc_id_t>(word * search::kWindowBits + std::countr_zero(bits));
+        return static_cast<doc_id_t>(word * detail::kWindowBits + std::countr_zero(bits));
       }
-      if (++word == search::kWindowWords) {
-        return search::kWindowDocs;
+      if (++word == detail::kWindowWords) {
+        return detail::kWindowDocs;
       }
       bits = _mask[word];
     }
   }
 
-  search::Scratch _mask{};
+  detail::Scratch _mask{};
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kScored, score_t[search::kWindowDocs]> _window{};
+    utils::Need<kScored, score_t[detail::kWindowDocs]> _window{};
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED
     utils::Need<kScored, score_t[kScoreBlock]> _gathered{};
   Optional _optional;

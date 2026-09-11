@@ -24,15 +24,15 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
+Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const search::PostingClause> should,
+                           std::span<const detail::PostingClause> should,
                            std::span<const QueryBuilder::ptr> should_filters,
                            uint32_t min_should_match, const SubReader& segment,
                            uint64_t interrogations) {
@@ -47,7 +47,7 @@ Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
   auto other = BuildOptionalProbe(
     should, should_filters, min_should_match, segment,
     std::min(interrogations,
-             search::IncludeCandidates(must, must_filters, segment)));
+             detail::IncludeCandidates(must, must_filters, segment)));
   if (!other) {
     return {};
   }

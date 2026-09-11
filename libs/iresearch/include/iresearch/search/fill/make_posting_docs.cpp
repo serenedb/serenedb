@@ -19,22 +19,22 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/posting_fill.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakePostingDocs(const search::PostingClause& posting,
+Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader&) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const auto& doc = *search::DocOf(own);
-  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    return memory::make_managed<Impl<search::PostingFill<Input>>>(
-      posting.state.cookie, doc, search::BoundsOf(own), search::FreqOf(own));
+  const auto& doc = *detail::DocOf(own);
+  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    return memory::make_managed<Impl<detail::PostingFill<Input>>>(
+      posting.state.cookie, doc, detail::BoundsOf(own), detail::FreqOf(own));
   });
 }
 

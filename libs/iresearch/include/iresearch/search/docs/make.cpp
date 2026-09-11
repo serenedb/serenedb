@@ -42,23 +42,23 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
-    return MakePosting(search::ClauseOf(terms.front(), field), query.Segment(),
+    return MakePosting(detail::ClauseOf(terms.front(), field), query.Segment(),
                        ctx);
   }
   return MakeDisjunctionOfTerms(
-    terms, field, *search::DocOf(*field),
+    terms, field, *detail::DocOf(*field),
     static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
 }
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeFixedPhraseSlop(query, ctx); },
     [&] { return MakeFixedPhraseIntervals(query, ctx); },
     [&] { return MakeFixedPhrase(query, ctx); });
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
     [&] { return MakeVariadicPhraseIntervals(query, ctx); },
     [&] { return MakeVariadicPhrase(query, ctx); });

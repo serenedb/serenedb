@@ -26,8 +26,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -44,7 +44,7 @@ class PrunedPhrase : public Root {
  public:
   template<typename... Args>
   PrunedPhrase(Table table, const SubReader& segment, const TermReader& field,
-               const search::ScoreArgs& args, Args&&... slots)
+               const irs::detail::ScoreArgs& args, Args&&... slots)
     : _slots{std::forward<Args>(slots)...},
       _fetcher{*args.fetcher},
       _admit{table} {
@@ -81,7 +81,7 @@ class PrunedPhrase : public Root {
 
  private:
   Slots _slots;
-  search::LeafProvider _provider;
+  irs::detail::LeafProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   uint32_t _freq = 0;

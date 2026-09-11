@@ -29,9 +29,9 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_filter.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -98,7 +98,7 @@ class PruneLeaves {
     uint32_t fetched = 0;
     for (size_t i = 0; i != count && len != 0; ++i) {
       if (const auto required = threshold - _suffix[i]; required > 0) {
-        len = search::FilterScores(docs, scores, len, required);
+        len = irs::detail::FilterScores(docs, scores, len, required);
         if (len == 0) {
           break;
         }
@@ -137,11 +137,11 @@ class PruneLeaves {
   }
 
   ColumnArgsFetcher& _fetcher;
-  search::RunOf<Leaf, N> _leaves;
-  search::RunOf<ScoreFunction, N> _scorers;
-  search::RunOf<score_t, N> _remaining;
-  search::RunOf<score_t, N> _suffix;
-  search::RunOf<uint32_t, N> _order;
+  irs::detail::RunOf<Leaf, N> _leaves;
+  irs::detail::RunOf<ScoreFunction, N> _scorers;
+  irs::detail::RunOf<score_t, N> _remaining;
+  irs::detail::RunOf<score_t, N> _suffix;
+  irs::detail::RunOf<uint32_t, N> _order;
 };
 
 }  // namespace irs::top::detail

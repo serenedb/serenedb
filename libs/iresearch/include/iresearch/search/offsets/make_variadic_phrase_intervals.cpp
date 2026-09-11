@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query) {
-  return search::MakeVariadicPhraseOffsets<search::PhraseMatch::Intervals>(
+  return detail::MakeVariadicPhraseOffsets<detail::PhraseMatch::Intervals>(
     query);
 }
 

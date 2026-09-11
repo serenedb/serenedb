@@ -19,8 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
@@ -29,33 +29,33 @@
 
 namespace irs::scored {
 
-Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
                       const Context& ctx) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count > 1, "a single document has its own unit");
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const auto* const doc = search::DocOf(own);
-  const search::ScoreArgs args{.scorer = posting.stats.scorer,
+  const auto* const doc = irs::detail::DocOf(own);
+  const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
                        .stats = posting.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = posting.boost};
 
-  if (const auto value = search::ConstantOf(segment, own, args)) {
+  if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
       posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
         return MakeShape<detail::ConstantWalk, Leaf>(
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
   }
-  return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<
         Posting<Input, utils::Empty, utils::Empty, decltype(table)>>(
         table, std::piecewise_construct, std::forward_as_tuple(),
         std::forward_as_tuple());
-      root->Prepare(meta, *doc, segment, own, args, search::LayoutOf(own),
-                    search::BoundsOf(own));
+      root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
+                    irs::detail::BoundsOf(own));
       return root;
     });
   });

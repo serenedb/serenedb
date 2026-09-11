@@ -27,7 +27,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/scores/scorer.hpp"
@@ -45,7 +45,7 @@ class WindowScored {
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT scores) {
     const auto next = _child.Fill(min, max, _mask.data(), _scores);
-    Fold(mask, scores, search::WindowWords(min, max));
+    Fold(mask, scores, detail::WindowWords(min, max));
     return next;
   }
 
@@ -56,7 +56,7 @@ class WindowScored {
     for (size_t w = 0; w != words; ++w) {
       auto bits = std::exchange(_mask[w], uint64_t{0});
       mask[w] |= bits;
-      const size_t base = w * search::kWindowBits;
+      const size_t base = w * detail::kWindowBits;
       while (bits != 0) {
         const auto doc = base + static_cast<uint32_t>(std::countr_zero(bits));
         irs::Merge<Merge>(scores[doc], std::exchange(_scores[doc], 0.f));
@@ -65,8 +65,8 @@ class WindowScored {
     }
   }
 
-  search::Scratch _mask{};
-  ABSL_CACHELINE_ALIGNED score_t _scores[search::kWindowDocs]{};
+  detail::Scratch _mask{};
+  ABSL_CACHELINE_ALIGNED score_t _scores[detail::kWindowDocs]{};
   Child _child;
 };
 

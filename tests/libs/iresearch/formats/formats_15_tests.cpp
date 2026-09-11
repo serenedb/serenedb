@@ -289,11 +289,11 @@ class Format15TestCase : public tests::FormatTestCase {
                                         uint32_t k) {
     static constexpr irs::byte_type kStats[1]{};
 
-    if (irs::search::DocOf(field) == nullptr) {
+    if (irs::detail::DocOf(field) == nullptr) {
       return {};
     }
 
-    const irs::search::PostingClause posting{
+    const irs::detail::PostingClause posting{
       .state = irs::TermState{&field, meta},
       .stats = {.stats = kStats, .scorer = &scorer}};
     const irs::top::Context ctx{.scorer = scorer, .fetcher = fetcher, .k = k};

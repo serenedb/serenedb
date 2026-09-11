@@ -27,10 +27,10 @@
 
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/score/make_conjunction.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/score/make_conjunction.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,8 +44,8 @@ class BooleanSparse {
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
-  static constexpr bool kInherited = std::is_same_v<Score, search::Inherited>;
+  static constexpr bool kScored = std::is_same_v<Score, detail::Scored>;
+  static constexpr bool kInherited = std::is_same_v<Score, detail::Inherited>;
   static_assert(kProbes || kOptional || kExcludes);
   static_assert(kScored || !kOptional);
   static_assert(!kInherited || (!kProbes && !kOptional));
@@ -106,7 +106,7 @@ class BooleanSparse {
   void CollectScorers(std::vector<ScoreFunction>& out)
     requires(kScored || kInherited)
   {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:
@@ -115,9 +115,9 @@ class BooleanSparse {
   {
     if constexpr (kProbes) {
       std::vector<ScoreFunction> scorers;
-      search::AppendScorer(scorers, _lead.PrepareScore());
+      detail::AppendScorer(scorers, _lead.PrepareScore());
       _probes.CollectScorers(scorers);
-      return search::MakeConjunctionScore(
+      return detail::MakeConjunctionScore(
         _score.inner, std::move(scorers),
         kOptional ? score_t{0} : _score.absorbed);
     } else {
@@ -135,7 +135,7 @@ class BooleanSparse {
         }
       }
       if constexpr (kExcludes) {
-        if (search::IsExcluded(_excludes, doc)) {
+        if (detail::IsExcluded(_excludes, doc)) {
           doc = _lead.Advance();
           continue;
         }

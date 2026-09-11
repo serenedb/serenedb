@@ -30,7 +30,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/prune_leaves.hpp"
@@ -98,7 +98,7 @@ class PrunedConjunction : public Root {
       _lead.ForEachScoredBlock(
         last + 1, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
           if constexpr (kExcludes) {
-            len = search::ExcludeBlock(_excludes, docs, scores, len);
+            len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
           }
           for (uint32_t off = 0; off < len; off += kChunk) {
             const auto n = std::min<uint32_t>(kChunk, len - off);

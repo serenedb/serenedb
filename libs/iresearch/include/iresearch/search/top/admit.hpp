@@ -28,7 +28,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -107,7 +107,7 @@ class Admit {
   [[no_unique_address]] utils::Need<kTable, std::array<doc_id_t, kRun>> _docs;
   [[no_unique_address]] utils::Need<kTable, std::array<score_t, kRun>> _scores;
   [[no_unique_address]] utils::Need<kTable, uint32_t> _staged{};
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::top

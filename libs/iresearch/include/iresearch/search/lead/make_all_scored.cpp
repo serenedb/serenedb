@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/impl.hpp"
@@ -33,8 +33,8 @@ Node::ptr MakeAllScored(const SubReader& segment, score_t score) {
   return memory::make_managed<Impl<Node>>(score, segment);
 }
 
-Node::ptr MakeAllScored(const SubReader& segment, const search::ScoreArgs& args) {
-  return MakeAllScored(segment, search::AllDocsScore(segment, args));
+Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoreArgs& args) {
+  return MakeAllScored(segment, detail::AllDocsScore(segment, args));
 }
 
 }  // namespace irs::lead

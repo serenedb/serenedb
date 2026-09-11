@@ -27,14 +27,14 @@
 #include <vector>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/score_policy.hpp"
-#include "iresearch/search/common/scored_context.hpp"
-#include "iresearch/search/common/scored_node_builder.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
@@ -51,7 +51,7 @@ namespace irs::fill {
 
 struct ScoredApi {
   using Result = Node::ptr;
-  using Context = search::ScoredCtx;
+  using Context = detail::ScoredCtx;
   using SparseApi = lead::ScoredApi;
 
   static constexpr bool kLazyGroups = false;
@@ -65,9 +65,9 @@ struct ScoredApi {
   }
 
   template<typename Optional, typename OptionalArgs>
-  static Result MakeWindow(search::Scored score, OptionalArgs&& optional) {
+  static Result MakeWindow(detail::Scored score, OptionalArgs&& optional) {
     using Window = BooleanWindow<utils::Empty, utils::Empty, Optional,
-                                 utils::Empty, search::Scored>;
+                                 utils::Empty, detail::Scored>;
     return memory::make_managed<Impl<Window>>(
       std::piecewise_construct, std::forward_as_tuple(),
       std::forward_as_tuple(), std::forward<OptionalArgs>(optional),
@@ -95,13 +95,13 @@ struct ScoredApi {
   }
 
   static Result MakeRequiredWith(
-    std::span<const search::PostingClause> must,
+    std::span<const detail::PostingClause> must,
     std::span<const QueryBuilder::ptr> must_filters,
-    std::span<const search::PostingClause> should,
-    std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
+    std::span<const detail::PostingClause> should,
+    std::span<const QueryBuilder::ptr> should_filters, detail::Terms uniformity,
     uint32_t min_match, const SubReader& segment, const Context& ctx,
     ScoreMergeType merge, score_t absorbed) {
-    return search::builder::MakeNodeConjunctionWith<ScoredApi>(
+    return detail::builder::MakeNodeConjunctionWith<ScoredApi>(
       must, must_filters, should, should_filters, uniformity, min_match,
       segment, ctx, merge, absorbed);
   }
@@ -119,9 +119,9 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
                                            const TermReader* field,
                                            const IndexInput& doc) {
   SDB_ASSERT(terms.size() > 1);
-  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = search::PostingFill<Input>;
-    using Optional = search::OrGroup<SetLeaves<Leaf>>;
+  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    using Leaf = detail::PostingFill<Input>;
+    using Optional = detail::OrGroup<SetLeaves<Leaf>>;
     using Node =
       BooleanWindow<utils::Empty, utils::Empty, Optional, utils::Empty>;
     return memory::make_managed<Impl<Node>>(
@@ -130,11 +130,11 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
       std::forward_as_tuple(
         terms.size(),
         [&](Leaf& leaf, size_t i) {
-          const auto& own = search::FieldOf(terms[i], field);
-          const auto& meta = search::CookieOf(terms[i]);
+          const auto& own = detail::FieldOf(terms[i], field);
+          const auto& meta = detail::CookieOf(terms[i]);
           SDB_ASSERT(meta.docs_count != 0);
-          leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                       meta.docs_count != 1 && search::FreqOf(own));
+          leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+                       meta.docs_count != 1 && detail::FreqOf(own));
         }),
       std::forward_as_tuple());
   });
@@ -146,8 +146,8 @@ Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
                                      const IndexInput& doc,
                                      doc_id_t docs_count) {
   SDB_ASSERT(terms.size() > 1);
-  if (search::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
-    return search::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
+  if (detail::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
+    return detail::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
                                            nullptr);
   }
   return MakeWindowDisjunctionOfTermsDocs(terms, field, doc);
@@ -157,9 +157,9 @@ template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
-  search::Terms uniformity, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  detail::Terms uniformity, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
   score_t absorbed = 0) {
-  return search::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
+  return detail::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
     terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
     absorbed);
 }

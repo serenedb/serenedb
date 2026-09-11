@@ -22,10 +22,10 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/ngram_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
@@ -39,11 +39,11 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx) {
   if (stats == nullptr) {
     return {};
   }
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = stats,
                                .fetcher = &ctx.fetcher,
                                .boost = query.Boost()};
-  return search::Build<true>(
+  return irs::detail::Build<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return MakeShape<detail::Walk, Node>(

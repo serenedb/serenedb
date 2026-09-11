@@ -24,20 +24,20 @@
 
 #include "basics/memory.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/score/root_window.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/score/root_window.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 
 namespace irs::top {
 
 struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
-  search::TableFilter* table = nullptr;
+  detail::TableFilter* table = nullptr;
   bool prune = false;
   uint32_t k = 0;
 };
 
-inline search::ScoredCtx ScoredOf(const Context& ctx) noexcept {
+inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {
     .scorer = &ctx.scorer,
     .fetcher = &ctx.fetcher,

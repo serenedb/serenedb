@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/ngram_of.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
@@ -32,11 +32,11 @@
 namespace irs::lead {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const search::ScoreArgs& args) {
+                          const detail::ScoreArgs& args) {
   if (args.stats == nullptr) {
     return {};
   }
-  return search::Build<true>(query,
+  return detail::Build<true>(query,
                              [&]<typename Slots>(auto&&... rest) -> Node::ptr {
                                using Node = TwoPhaseScored<Slots>;
                                return memory::make_managed<Impl<Node>>(

@@ -28,11 +28,11 @@
 #include <vector>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename Leaf, bool HasBoost = false>
 class PhraseVariadicPositions {
@@ -193,8 +193,8 @@ class PhraseVariadicPositions {
     }
   }
 
-  search::FixedArray<Position*> _live;
-  [[no_unique_address]] utils::Need<HasBoost, search::FixedArray<score_t>>
+  detail::FixedArray<Position*> _live;
+  [[no_unique_address]] utils::Need<HasBoost, detail::FixedArray<score_t>>
     _boosts;
   uint32_t _size = 0;
   uint32_t _freq = 0;
@@ -350,22 +350,22 @@ class PhraseVariadicPos {
   Position _positions;
   Leaf* _begin;
   [[no_unique_address]] utils::Need<HasBoost, const score_t*> _boosts;
-  search::FixedArray<Leaf*> _heap;
-  search::FixedArray<uint32_t> _stack;
+  detail::FixedArray<Leaf*> _heap;
+  detail::FixedArray<uint32_t> _stack;
   size_t _live_count = 0;
   uint32_t _count;
   doc_id_t _doc = doc_limits::invalid();
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail
 namespace irs {
 
 template<typename Leaf, bool HasBoost>
 struct TermPositionTraits<
-  std::pair<search::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>> {
+  std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>> {
   using T =
-    std::pair<search::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
-  using PositionImpl = search::PhraseVariadicPositions<Leaf, HasBoost>;
+    std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
+  using PositionImpl = detail::PhraseVariadicPositions<Leaf, HasBoost>;
 
   static PosAttr::value_t Position(T& pos) noexcept {
     return pos.first->value();

@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 
 namespace irs {
 
@@ -36,7 +36,7 @@ void RerankExactDistances(const SubReader& segment,
   if (!col_reader) {
     return;
   }
-  search::RawVectorReader reader{vector_column, *col_reader, d};
+  detail::RawVectorReader reader{vector_column, *col_reader, d};
   reader.SetQuery(query, metric);
   std::vector<doc_id_t> docs(hits.size());
   std::vector<score_t> scores(hits.size());

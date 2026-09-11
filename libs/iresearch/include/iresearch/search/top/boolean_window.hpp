@@ -27,8 +27,8 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -41,7 +41,7 @@ class BooleanWindow : public Root {
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kTally = kOptional && search::Tallies<Optional>();
+  static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
   static_assert(kLead != kOptional);
   static_assert(!kTally || !kExcludes);
 
@@ -67,7 +67,7 @@ class BooleanWindow : public Root {
         break;
       }
       const auto min = next;
-      const auto max = min + search::kWindowDocs;
+      const auto max = min + irs::detail::kWindowDocs;
       if constexpr (kLead) {
         next = _lead.FillOr(min, max, _mask);
         if constexpr (kExcludes) {
@@ -82,24 +82,24 @@ class BooleanWindow : public Root {
           _excludes.Remove(min, max, _mask, _window, score_t{0});
         }
       }
-      _score.Apply(_window, _mask, search::kWindowWords);
-      _admit.Window(collector, _window, _mask, min, search::kWindowWords);
+      _score.Apply(_window, _mask, irs::detail::kWindowWords);
+      _admit.Window(collector, _window, _mask, min, irs::detail::kWindowWords);
     }
     _admit.Flush(collector);
   }
 
  private:
   void Tally() {
-    search::TallyMask(_mask, _mask, _optional.Counts(), _window,
-                      _optional.MinMatch(), search::kWindowWords);
+    irs::detail::TallyMask(_mask, _mask, _optional.Counts(), _window,
+                      _optional.MinMatch(), irs::detail::kWindowWords);
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs]{};
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs]{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  search::RootWindowScore _score;
+  irs::detail::RootWindowScore _score;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

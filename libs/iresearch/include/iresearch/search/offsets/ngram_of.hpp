@@ -24,19 +24,19 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/ngram_all_slots.hpp"
 #include "iresearch/search/offsets/ngram_slots.hpp"
-#include "iresearch/search/common/node_of.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/posting_pos.hpp"
+#include "iresearch/search/detail/node_of.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<bool Scored = false, typename F>
 auto Build(const NGramSimilarityQuery& query, F&& f) {
@@ -46,10 +46,10 @@ auto Build(const NGramSimilarityQuery& query, F&& f) {
   const auto min_match = static_cast<uint32_t>(query.MinMatchCount());
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
-      using Leaf = search::PostingPos<Input, Bounds>;
+      using Leaf = detail::PostingPos<Input, Bounds>;
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
         return f
-          .template operator()<search::NGramSlots<Leaf, Scored, false, N>>(
+          .template operator()<detail::NGramSlots<Leaf, Scored, false, N>>(
             metas.size(),
             [&](Leaf& leaf, size_t i) {
               leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
@@ -67,13 +67,13 @@ auto BuildAll(const NGramSimilarityQuery& query, F&& f) {
   const std::span metas{state.terms.data(), state.terms.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
-      using Leaf = search::PostingPos<Input, Bounds>;
+      using Leaf = detail::PostingPos<Input, Bounds>;
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
-        return f.template operator()<search::NGramAllSlots<Leaf, N, Scored>>(
+        return f.template operator()<detail::NGramAllSlots<Leaf, N, Scored>>(
           metas, *h.doc, h.Layout(), *h.pos, h.pay, state.total_terms);
       });
     });
   });
 }
 
-}  // namespace irs::search
+}  // namespace irs::detail

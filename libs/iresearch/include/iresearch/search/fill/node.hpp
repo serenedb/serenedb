@@ -28,7 +28,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 class BitsetStorage;
 
@@ -55,7 +55,7 @@ struct Node : memory::Managed {
     return FillOr(min, max, mask);
   }
 
-  virtual search::BitsetStorage* Folded() noexcept { return nullptr; }
+  virtual detail::BitsetStorage* Folded() noexcept { return nullptr; }
 };
 
 }  // namespace irs::fill

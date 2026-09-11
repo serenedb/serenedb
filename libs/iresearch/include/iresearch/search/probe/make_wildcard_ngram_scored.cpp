@@ -29,7 +29,7 @@ namespace irs::probe {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations) {
-  return search::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(
+  return detail::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(
     query, interrogations, score);
 }
 

@@ -27,8 +27,8 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -76,7 +76,7 @@ class BooleanSparse : public Root {
       if (probe == doc) {
         bool kept = true;
         if constexpr (kExcludes) {
-          kept = !search::IsExcluded(_excludes, doc);
+          kept = !detail::IsExcluded(_excludes, doc);
         }
         if constexpr (kTable) {
           _docs[n] = doc;
@@ -107,7 +107,7 @@ class BooleanSparse : public Root {
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] utils::Need<kTable, std::array<doc_id_t, kRun>> _docs;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::count

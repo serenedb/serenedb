@@ -23,7 +23,7 @@
 #include <cstdint>
 #include <span>
 
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/states/term_state.hpp"
@@ -52,7 +52,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
 
-Root::ptr MakePosting(const search::PostingClause& posting,
+Root::ptr MakePosting(const detail::PostingClause& posting,
                       const SubReader& segment, const Context& ctx);
 
 Root::ptr MakeSinglePosting(doc_id_t doc, const Context& ctx);

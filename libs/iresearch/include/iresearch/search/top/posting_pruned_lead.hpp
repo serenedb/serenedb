@@ -22,7 +22,7 @@
 
 #include "iresearch/search/top/detail/prune_leaf.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename InputType>
 class PostingPrunedLead : public PruneLeafBase<InputType, false> {
@@ -160,4 +160,4 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
   }
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

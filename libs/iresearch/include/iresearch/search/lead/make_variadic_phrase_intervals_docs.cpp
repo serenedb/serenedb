@@ -25,7 +25,7 @@
 namespace irs::lead {
 
 Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query) {
-  return search::MakeVariadicPhraseOf<search::PhraseMatch::Intervals, Impl,
+  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Intervals, Impl,
                                       Node::ptr>(query);
 }
 

@@ -28,7 +28,7 @@
 namespace irs::docs {
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx) {
-  return search::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+  return detail::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
     using Node = lead::TwoPhaseDocs<Slots>;
     return MakeShape<Walk, Node>(ctx, std::forward<decltype(args)>(args)...);
   });

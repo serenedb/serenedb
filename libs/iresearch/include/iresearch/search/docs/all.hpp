@@ -22,7 +22,7 @@
 
 #include <algorithm>
 
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -52,7 +52,7 @@ class All : public Root {
  private:
   doc_id_t _doc = doc_limits::min();
   doc_id_t _end;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

@@ -21,9 +21,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
 #include "iresearch/search/hnsw_query.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -35,13 +35,13 @@ namespace {
 class HnswHits : public Node {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           const search::ScoreArgs& args)
+           const detail::ScoreArgs& args)
     : _hits{std::move(hits)} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
       .segment = segment,
-      .field = search::NoField(),
+      .field = detail::NoField(),
       .doc_attrs = _provider,
       .fetcher = *args.fetcher,
       .stats = args.stats,
@@ -78,7 +78,7 @@ class HnswHits : public Node {
 
  private:
   std::vector<ScoreDoc> _hits;
-  search::BoostProvider _provider;
+  detail::BoostProvider _provider;
   ScoreFunction _score;
   score_t _block[kScoreBlock];
   size_t _pos = 0;
@@ -87,9 +87,9 @@ class HnswHits : public Node {
 
 }  // namespace
 
-Node::ptr Make(const HnswQuery& query, const search::ScoredCtx& ctx) {
+Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};

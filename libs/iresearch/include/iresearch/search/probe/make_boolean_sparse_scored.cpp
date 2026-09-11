@@ -25,12 +25,12 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/probe_leaves.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/probe_leaves.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
@@ -55,10 +55,10 @@ Node::ptr MakeSparseScored(MustsArgs&& musts, OptionalArgs&& optional,
 }  // namespace
 
 Node::ptr MakeSparseConjunctionScored(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed) {
+  std::span<const detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, detail::Terms uniformity,
+  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed) {
   const auto size = terms.size() + filters.size();
   if (size == 0) {
     return absorbed != 0 ? MakeAllScored(segment, absorbed) : Node::ptr{};
@@ -68,75 +68,75 @@ Node::ptr MakeSparseConjunctionScored(
     auto only =
       filters.empty()
         ? clause(terms.front(), nullptr, interrogations)
-        : clause(search::PostingClause{TermState{nullptr, PostingMeta{}}},
+        : clause(detail::PostingClause{TermState{nullptr, PostingMeta{}}},
                  filters.front().get(), interrogations);
     if (absorbed == 0 || !only) {
       return only;
     }
     return MakeSparseScored<Erased, utils::Empty, utils::Empty>(
       std::forward_as_tuple(std::move(only)), std::forward_as_tuple(),
-      std::forward_as_tuple(), search::Scored{merge, absorbed});
+      std::forward_as_tuple(), detail::Scored{merge, absorbed});
   }
-  return search::BuildOptionalLeaves<Node::ptr>(
+  return detail::BuildOptionalLeaves<Node::ptr>(
     terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
     interrogations, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return search::ResolveArity<search::kRunArity, search::kRunFloor>(
+      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparseScored<AndLeaves<Leaf, N>, utils::Empty,
                                   utils::Empty>(
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
             std::forward_as_tuple(), std::forward_as_tuple(),
-            search::Scored{merge, absorbed});
+            detail::Scored{merge, absorbed});
         });
     },
-    search::ProbeOrder::Narrowest);
+    detail::ProbeOrder::Narrowest);
 }
 
 Node::ptr MakeSparseThresholdScored(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint32_t min_match, uint64_t interrogations, const search::ScoredCtx& ctx,
+  std::span<const detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, detail::Terms uniformity,
+  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint32_t min_match, uint64_t interrogations, const detail::ScoredCtx& ctx,
   score_t absorbed) {
   SDB_ASSERT(min_match > 1);
   if (terms.size() + filters.size() < min_match) {
     return {};
   }
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  return search::BuildOptionalLeaves<Node::ptr>(
+  return detail::BuildOptionalLeaves<Node::ptr>(
     terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
     interrogations, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return search::ResolveArity<search::kRunArity, search::kRunFloor>(
+      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparseScored<utils::Empty, ThresholdLeaves<Leaf, N, true>,
                                   utils::Empty>(
             std::forward_as_tuple(),
             std::forward_as_tuple(size, std::forward<decltype(init)>(init),
                                   min_match),
-            std::forward_as_tuple(), search::Scored{merge, absorbed});
+            std::forward_as_tuple(), detail::Scored{merge, absorbed});
         });
     },
-    search::ProbeOrder::Densest);
+    detail::ProbeOrder::Densest);
 }
 
 Node::ptr MakeSparseExclusionScored(
-  std::span<const search::PostingClause> must,
+  std::span<const detail::PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
-  search::Terms must_uniformity, std::span<const search::PostingClause> should,
+  detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude,
+  detail::Terms should_uniformity, uint32_t min_should_match,
+  std::span<const detail::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const search::ScoredCtx& ctx, score_t absorbed) {
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const detail::ScoredCtx& ctx, score_t absorbed) {
   const bool no_must = must.empty() && must_filters.empty();
   const uint64_t docs_count = segment.docs_count();
-  uint64_t lead = search::IncludeCandidates(must, must_filters, segment);
+  uint64_t lead = detail::IncludeCandidates(must, must_filters, segment);
   if (no_must && min_should_match != 0) {
     lead = std::min(docs_count,
-                    search::LeadCandidates(should, should_filters,
+                    detail::LeadCandidates(should, should_filters,
                                            static_cast<doc_id_t>(docs_count)));
   }
   const auto candidates = std::max<uint64_t>(
@@ -145,17 +145,17 @@ Node::ptr MakeSparseExclusionScored(
       must_filters.empty() && ScoresPerDocTerm(must.front())) {
     const auto& posting = must.front();
     const auto& own = *posting.state.reader;
-    const auto* const doc = search::DocOf(own);
-    return search::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
-      using Include = search::PostingProbeScored<Input>;
-      return search::BuildExcludeSideOf<Node::ptr, Input>(
+    const auto* const doc = detail::DocOf(own);
+    return detail::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
+      using Include = detail::PostingProbeScored<Input>;
+      return detail::BuildExcludeSideOf<Node::ptr, Input>(
         exclude, exclude_filters, nullptr, segment, candidates, lead,
         [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
           return MakeSparseScored<Include, utils::Empty, Exclude>(
             std::forward_as_tuple(posting.state.cookie, *doc, segment, own,
                                   recipe.Args(posting.stats, posting.boost)),
             std::forward_as_tuple(), std::forward<decltype(excluded)>(excluded),
-            search::Inherited{});
+            detail::Inherited{});
         });
     });
   }
@@ -166,41 +166,41 @@ Node::ptr MakeSparseExclusionScored(
   if (!include) {
     return {};
   }
-  return search::BuildExcludeSide<Node::ptr>(
+  return detail::BuildExcludeSide<Node::ptr>(
     exclude, exclude_filters, nullptr, segment, candidates, lead,
     [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
       return MakeSparseScored<Erased, utils::Empty, Exclude>(
         std::forward_as_tuple(std::move(include)), std::forward_as_tuple(),
-        std::forward<decltype(excluded)>(excluded), search::Inherited{});
+        std::forward<decltype(excluded)>(excluded), detail::Inherited{});
     });
 }
 
 Node::ptr MakeSparseBoostScored(
-  std::span<const search::PostingClause> must,
+  std::span<const detail::PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
-  search::Terms must_uniformity, std::span<const search::PostingClause> should,
+  detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, const SubReader& segment,
-  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const search::ScoredCtx& ctx, score_t absorbed) {
+  detail::Terms should_uniformity, const SubReader& segment,
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const detail::ScoredCtx& ctx, score_t absorbed) {
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
   SDB_ASSERT(!should.empty() || !should_filters.empty());
   const auto no_must = must.empty() && must_filters.empty();
   const auto reach =
     no_must ? interrogations
             : std::min(interrogations,
-                       search::IncludeCandidates(must, must_filters, segment));
+                       detail::IncludeCandidates(must, must_filters, segment));
   const auto build = [&]<typename Head>(auto&& head) -> Node::ptr {
-    return search::BuildOptionalLeaves<Node::ptr>(
+    return detail::BuildOptionalLeaves<Node::ptr>(
       should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
       segment, recipe, reach, clause,
       [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-        return search::ResolveArity<search::kTailArity, search::kTailFloor>(
+        return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
           size, [&]<size_t N> -> Node::ptr {
             return MakeSparseScored<Head, BoostLeaves<Leaf, N>, utils::Empty>(
               std::forward<decltype(head)>(head),
               std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
-              std::forward_as_tuple(), search::Scored{merge, absorbed});
+              std::forward_as_tuple(), detail::Scored{merge, absorbed});
           });
       });
   };
@@ -208,12 +208,12 @@ Node::ptr MakeSparseBoostScored(
     return build.template operator()<utils::Empty>(std::forward_as_tuple());
   }
   if (must.size() == 1 && must_filters.empty() &&
-      search::ScoresPerDocTerm(must.front())) {
+      detail::ScoresPerDocTerm(must.front())) {
     const auto& posting = must.front();
     const auto& own = *posting.state.reader;
-    const auto* const doc = search::DocOf(own);
-    return search::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
-      using Head = search::PostingProbeScored<Input>;
+    const auto* const doc = detail::DocOf(own);
+    return detail::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
+      using Head = detail::PostingProbeScored<Input>;
       return build.template operator()<Head>(
         std::forward_as_tuple(posting.state.cookie, *doc, segment, own,
                               recipe.Args(posting.stats, posting.boost)));

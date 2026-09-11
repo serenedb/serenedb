@@ -417,7 +417,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
           reader, meta,
           occur == Occur::MustNot ? kNoBoost : composite_boost * run[i].boost,
           occur,
-          collector != nullptr ? collector->Record(i) : search::StatsRecord{});
+          collector != nullptr ? collector->Record(i) : detail::StatsRecord{});
       }
     },
     [&](const Filter& filter, Occur occur) {

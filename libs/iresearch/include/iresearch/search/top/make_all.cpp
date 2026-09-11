@@ -19,21 +19,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/top/all.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const search::StatsRecord& record, score_t boost) {
+                  const irs::detail::StatsRecord& record, score_t boost) {
   const auto count = static_cast<doc_id_t>(segment.docs_count());
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = boost};
   return MakeShape<All>(ctx, ctx.fetcher, count,
-                        search::AllDocsScore(segment, args));
+                        irs::detail::AllDocsScore(segment, args));
 }
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score) {

@@ -25,13 +25,13 @@
 
 #include "basics/memory.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 class LazyBitset;
 
-}  // namespace irs::search
+}  // namespace irs::detail
 namespace irs::count {
 
 struct TermCounts : memory::Managed {
@@ -42,7 +42,7 @@ struct TermCounts : memory::Managed {
   virtual bool Any(const PostingMeta& term) = 0;
 };
 
-TermCounts::ptr MakeTermCounts(search::LazyBitset& set, const TermReader& field,
+TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
                                size_t terms);
 
 }  // namespace irs::count

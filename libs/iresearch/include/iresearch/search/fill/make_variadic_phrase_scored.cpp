@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/offsets/phrase_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
@@ -27,16 +27,16 @@
 namespace irs::fill {
 
 Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const search::ScoredCtx& ctx, ScoreMergeType merge) {
+                                   const detail::ScoredCtx& ctx, ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
   if (stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
-  return search::MakeVariadicPhraseOf<search::PhraseMatch::Plain, ByWalkScored,
+  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Plain, ByWalkScored,
                                       Node::ptr, true, lead::TwoPhaseScored>(
     query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
-    search::ScoreArgs{.scorer = record.scorer,
+    detail::ScoreArgs{.scorer = record.scorer,
               .stats = stats,
               .fetcher = ctx.fetcher,
               .boost = query.Boost()});

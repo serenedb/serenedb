@@ -25,18 +25,18 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/subtract.hpp"
 
 namespace irs::count {
 
 Root::ptr Api::MakeNegation(
-  std::span<const search::PostingClause> exclude_terms,
+  std::span<const detail::PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context& ctx) {
   if (ctx.table != nullptr) {
-    return search::builder::MakeSparseNegation<Api>(
+    return detail::builder::MakeSparseNegation<Api>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }
   Root::ptr excluded;
@@ -50,7 +50,7 @@ Root::ptr Api::MakeNegation(
                                          exclude_terms.back(), segment, ctx);
     }
     if (!excluded) {
-      excluded = search::builder::MakeDisjunction<Api>(
+      excluded = detail::builder::MakeDisjunction<Api>(
         exclude_terms, exclude_filters, segment, ctx);
     }
   }
@@ -73,7 +73,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
     if (ctx.table == nullptr && should_terms.empty() &&
         should_filters.empty() && must_filters.empty() &&
         must_terms.size() == 2 &&
-        search::SubtractsConjunction(
+        detail::SubtractsConjunction(
           RarestOf(must_terms), static_cast<doc_id_t>(segment.docs_count()))) {
       if (auto subtracted =
             MakeSubtractConjunction(must_terms, must_filters, segment, ctx)) {
@@ -87,7 +87,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
       }
     }
   }
-  return search::builder::Make<Api>(query, ctx);
+  return detail::builder::Make<Api>(query, ctx);
 }
 
 }  // namespace irs::count

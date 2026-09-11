@@ -25,7 +25,7 @@
 #include <utility>
 
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -90,7 +90,7 @@ class Walk : public Root {
   ColumnArgsFetcher& _fetcher;
   Node _node;
   ScoreFunction _score;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 template<typename Node, typename Table>
@@ -126,7 +126,7 @@ class ConstantWalk : public Root {
  private:
   Node _node;
   score_t _score;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::scored::detail

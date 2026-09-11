@@ -25,7 +25,7 @@
 namespace irs::lead {
 
 Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query) {
-  return search::MakeVariadicPhraseOf<search::PhraseMatch::Slop, Impl,
+  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Slop, Impl,
                                       Node::ptr>(query);
 }
 

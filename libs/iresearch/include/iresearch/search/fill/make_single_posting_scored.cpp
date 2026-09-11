@@ -19,8 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
@@ -29,9 +29,9 @@
 
 namespace irs::fill {
 
-Node::ptr MakeSinglePostingScored(const search::PostingClause& posting,
+Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
-                                  const search::ScoredCtx& ctx, ScoreMergeType merge) {
+                                  const detail::ScoredCtx& ctx, ScoreMergeType merge) {
   SDB_ASSERT(posting.state.cookie.docs_count == 1);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& meta = posting.state.cookie;
@@ -40,8 +40,8 @@ Node::ptr MakeSinglePostingScored(const search::PostingClause& posting,
     return memory::make_managed<Impl<SingleDocs>>(doc);
   }
   const auto value =
-    search::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
-                           search::ScoreArgs{.scorer = posting.stats.scorer,
+    detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
+                           detail::ScoreArgs{.scorer = posting.stats.scorer,
                                              .stats = posting.stats.stats,
                                              .fetcher = ctx.fetcher,
                                              .boost = posting.boost});

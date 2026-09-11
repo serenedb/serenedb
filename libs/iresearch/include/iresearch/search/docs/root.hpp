@@ -21,13 +21,13 @@
 #pragma once
 
 #include "basics/memory.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
 struct Context {
-  search::DeadRuns* table = nullptr;
+  detail::DeadRuns* table = nullptr;
 };
 
 struct Root : memory::Managed {

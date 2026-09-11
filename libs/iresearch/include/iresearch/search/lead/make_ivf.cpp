@@ -18,37 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/lead/make.hpp"
 
 namespace irs::lead {
 
 Node::ptr Make(const RangeVectorQuery& query) {
-  auto inner = search::InnerProbe(query);
+  auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return search::MakeVectorDocs<
-      Impl, Node::ptr, search::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
+    return detail::MakeVectorDocs<
+      Impl, Node::ptr, detail::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
       query, query.Threshold(), std::move(inner));
   });
 }
 
-Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx) {
-  auto inner = search::InnerProbe(query);
+Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
+  auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = ctx.fetcher,
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return search::MakeVectorScored<Impl, Node::ptr,
-                                      search::RadiusGate<Inclusive>, Rescore,
+      return detail::MakeVectorScored<Impl, Node::ptr,
+                                      detail::RadiusGate<Inclusive>, Rescore,
                                       lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner));
@@ -56,19 +56,19 @@ Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx) {
   });
 }
 
-Node::ptr Make(const KnnVectorQuery& query, const search::ScoredCtx& ctx) {
-  auto inner = search::InnerProbe(query);
+Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
+  auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ctx);
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = ctx.fetcher,
                                 .boost = query.Boost()};
-  return search::MakeVectorScored<Impl, Node::ptr, search::AcceptAll, false,
+  return detail::MakeVectorScored<Impl, Node::ptr, detail::AcceptAll, false,
                                   lead::TwoPhaseScored>(
-    query, *query.State().reader, score, search::Unbounded(), std::move(inner));
+    query, *query.State().reader, score, detail::Unbounded(), std::move(inner));
 }
 
 }  // namespace irs::lead

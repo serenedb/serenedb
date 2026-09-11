@@ -30,8 +30,8 @@
 #include "iresearch/search/offsets/phrase_fixed_slots.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
 #include "iresearch/search/offsets/phrase_variadic_slots.hpp"
-#include "iresearch/search/common/posting_pos.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/posting_pos.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/offsets/impl.hpp"
 #include "iresearch/search/offsets/ngram.hpp"
@@ -40,7 +40,7 @@
 #include "iresearch/search/offsets/root.hpp"
 #include "iresearch/search/phrase_query.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<PhraseMatch M>
 inline constexpr bool kOffsetsCount = M == PhraseMatch::Slop;
@@ -55,10 +55,10 @@ offsets::Root::ptr MakeFixedPhraseOffsets(const FixedPhraseQuery& query) {
   const std::span metas{state.metas.data(), state.metas.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
     return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      using Leaf = search::PostingPos<Input, Bounds, true>;
+      using Leaf = detail::PostingPos<Input, Bounds, true>;
       return ResolveMatcherOf<M, 0, kOffsetsCount<M>, true>(
         query, [&]<typename Matcher>(auto&&... args) -> offsets::Root::ptr {
-          using Slots = search::PhraseFixedSlots<Matcher, Leaf>;
+          using Slots = detail::PhraseFixedSlots<Matcher, Leaf>;
           using Impl = offsets::Impl<offsets::Phrase<Slots>>;
           return memory::make_managed<Impl>(
             metas, std::span<const TermInterval>{query.positions}, *h.doc,
@@ -86,7 +86,7 @@ offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
         query,
         [&]<typename Matcher, typename Leaf>(
           auto&&... args) -> offsets::Root::ptr {
-          using Slots = search::PhraseVariadicSlots<Matcher, Leaf>;
+          using Slots = detail::PhraseVariadicSlots<Matcher, Leaf>;
           using Impl = offsets::Impl<offsets::Phrase<Slots>>;
           return memory::make_managed<Impl>(
             metas.size(),
@@ -110,14 +110,14 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
   const std::span metas{state.terms.data(), state.terms.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
     return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      using Leaf = search::PostingPos<Input, Bounds, true>;
+      using Leaf = detail::PostingPos<Input, Bounds, true>;
       if constexpr (All) {
-        using Slots = search::NGramAllSlots<Leaf, 0, false, true>;
+        using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
         return memory::make_managed<Impl>(metas, *h.doc, h.Layout(), *h.pos,
                                           h.pay, state.total_terms);
       } else {
-        using Slots = search::NGramSlots<Leaf, false, true>;
+        using Slots = detail::NGramSlots<Leaf, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
         return memory::make_managed<Impl>(
           metas.size(),
@@ -137,7 +137,7 @@ inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
   }
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
     return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      using Leaf = search::PostingPos<Input, Bounds, true>;
+      using Leaf = detail::PostingPos<Input, Bounds, true>;
       using Impl = offsets::Impl<offsets::Posting<Leaf>>;
       return memory::make_managed<Impl>(meta, *h.doc, h.Layout(), *h.pos,
                                         h.pay);
@@ -145,4 +145,4 @@ inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
   });
 }
 
-}  // namespace irs::search
+}  // namespace irs::detail

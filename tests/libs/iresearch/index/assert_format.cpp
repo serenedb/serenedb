@@ -614,9 +614,9 @@ void AssertDocs(irs::IndexFeatures features,
 irs::lead::Node::ptr MakeLeadDocs(const irs::SubReader& segment,
                                   const irs::TermReader& actual_terms,
                                   const irs::PostingMeta& actual_cookie) {
-  const irs::search::PostingClause posting{
+  const irs::detail::PostingClause posting{
     .state = irs::TermState{&actual_terms, actual_cookie}};
-  if (irs::search::DocOf(actual_terms) == nullptr) {
+  if (irs::detail::DocOf(actual_terms) == nullptr) {
     return {};
   }
   return irs::lead::MakePostingDocs(posting, segment);

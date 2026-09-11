@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
@@ -27,11 +27,11 @@
 
 namespace irs::fill {
 
-Node::ptr MakeAllScored(const SubReader& segment, const search::ScoredCtx& ctx,
-                        const search::StatsRecord& record, ScoreMergeType merge,
+Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoredCtx& ctx,
+                        const detail::StatsRecord& record, ScoreMergeType merge,
                         score_t boost) {
   const auto value =
-    search::AllDocsScore(segment, search::ScoreArgs{.scorer = record.scorer,
+    detail::AllDocsScore(segment, detail::ScoreArgs{.scorer = record.scorer,
                                             .stats = record.stats,
                                             .fetcher = ctx.fetcher,
                                             .boost = boost});

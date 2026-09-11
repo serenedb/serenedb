@@ -26,7 +26,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/prune_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -35,8 +35,8 @@ namespace irs::top {
 
 template<typename InputType, typename Excludes, typename Table>
 class PrunedPosting : public Root,
-                      public search::PruneLeafBase<InputType, true> {
-  using Base = search::PruneLeafBase<InputType, true>;
+                      public irs::detail::PruneLeafBase<InputType, true> {
+  using Base = irs::detail::PruneLeafBase<InputType, true>;
 
   using Base::_doc;
   using Base::_docs;
@@ -63,7 +63,7 @@ class PrunedPosting : public Root,
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
-               const TermReader& field, const search::ScoreArgs& args) {
+               const TermReader& field, const irs::detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
@@ -74,7 +74,7 @@ class PrunedPosting : public Root,
     const auto emit = [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                           score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
       if constexpr (kExcludes) {
-        len = search::ExcludeBlock(_excludes, docs, scores, len);
+        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
       }
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);

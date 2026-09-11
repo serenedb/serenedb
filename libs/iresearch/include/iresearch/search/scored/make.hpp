@@ -25,10 +25,10 @@
 #include <vector>
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/root.hpp"
 
@@ -38,7 +38,7 @@ namespace scored {
 template<template<typename...> class Shape, typename... Parts, typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., search::DeadRuns*>>(
+    return memory::make_managed<Shape<Parts..., irs::detail::DeadRuns*>>(
       ctx.table, std::forward<Args>(args)...);
   }
   return memory::make_managed<Shape<Parts..., utils::Empty>>(
@@ -56,11 +56,11 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
 template<typename Node>
 using PlainWalk = detail::Walk<Node, utils::Empty>;
 template<typename Node>
-using FilteredWalk = detail::Walk<Node, search::DeadRuns*>;
+using FilteredWalk = detail::Walk<Node, irs::detail::DeadRuns*>;
 template<typename Node>
 using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
 template<typename Node>
-using FilteredConstantWalk = detail::ConstantWalk<Node, search::DeadRuns*>;
+using FilteredConstantWalk = detail::ConstantWalk<Node, irs::detail::DeadRuns*>;
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
@@ -86,14 +86,14 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
 
-Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
                       const Context& ctx);
 
-Root::ptr MakeSinglePosting(const search::PostingClause& posting,
+Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const search::StatsRecord& record, score_t boost);
+                  const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);

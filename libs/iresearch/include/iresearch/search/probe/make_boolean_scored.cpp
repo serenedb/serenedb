@@ -26,9 +26,9 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/score_policy.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
@@ -37,13 +37,13 @@
 namespace irs::probe {
 
 Node::ptr MakeRequiredScored(
-  std::span<const search::PostingClause> must,
+  std::span<const detail::PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
-  search::Terms must_uniformity, std::span<const search::PostingClause> should,
+  detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed) {
+  detail::Terms should_uniformity, uint32_t min_should_match,
+  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed) {
   if (min_should_match == 0) {
     return MakeSparseConjunctionScored(must, must_filters, must_uniformity,
                                        segment, recipe, merge, interrogations,
@@ -53,7 +53,7 @@ Node::ptr MakeRequiredScored(
   const auto reach =
     no_must ? interrogations
             : std::min(interrogations,
-                       search::IncludeCandidates(must, must_filters, segment));
+                       detail::IncludeCandidates(must, must_filters, segment));
   const auto optional_absorbed = no_must ? absorbed : score_t{0};
   auto optional =
     min_should_match == 1
@@ -76,18 +76,18 @@ Node::ptr MakeRequiredScored(
   if (!required) {
     return {};
   }
-  using Node = BooleanSparse<Erased, Erased, utils::Empty, search::Scored>;
+  using Node = BooleanSparse<Erased, Erased, utils::Empty, detail::Scored>;
   return memory::make_managed<Impl<Node>>(
     std::piecewise_construct, std::forward_as_tuple(std::move(required)),
     std::forward_as_tuple(std::move(optional)), std::forward_as_tuple(),
-    search::Scored{merge, 0});
+    detail::Scored{merge, 0});
 }
 
-Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto& segment = query.Segment();
   const auto merge = query.MergeType();
-  const search::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  const detail::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   const auto absorbed = query.Absorbed();
   const auto must = query.Terms(Occur::Must);
   const auto must_filters = query.Queries(Occur::Must);

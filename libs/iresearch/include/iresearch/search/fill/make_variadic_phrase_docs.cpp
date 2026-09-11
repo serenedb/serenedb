@@ -25,7 +25,7 @@
 namespace irs::fill {
 
 Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query) {
-  return search::MakeVariadicPhraseOf<search::PhraseMatch::Plain, ByWalkDocs,
+  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Plain, ByWalkDocs,
                                       Node::ptr>(query);
 }
 

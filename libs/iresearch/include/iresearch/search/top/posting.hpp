@@ -29,8 +29,8 @@
 #include "basics/empty.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/term_block.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -57,7 +57,7 @@ class Posting : public Root {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
-               const search::ScoreArgs& args, IndexFeatures layout,
+               const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {
     _block.Prepare(meta, doc_in, segment, field, args, layout, bounds);
   }
@@ -78,7 +78,7 @@ class Posting : public Root {
         break;
       }
       if constexpr (kExcludes) {
-        len = search::ExcludeBlock(_excludes, docs, scores, len);
+        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
       }
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);

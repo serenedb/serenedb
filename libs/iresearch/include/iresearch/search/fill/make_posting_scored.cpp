@@ -19,55 +19,55 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/fill_posting_scored.hpp"
-#include "iresearch/search/common/posting_fill.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakePostingScored(const search::PostingClause& posting,
-                            const SubReader& segment, const search::ScoredCtx& ctx,
+Node::ptr MakePostingScored(const detail::PostingClause& posting,
+                            const SubReader& segment, const detail::ScoredCtx& ctx,
                             ScoreMergeType merge) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& meta = posting.state.cookie;
-  const auto& doc = *search::DocOf(own);
-  const auto bounds = search::BoundsOf(own);
-  const auto freq = search::FreqOf(own);
+  const auto& doc = *detail::DocOf(own);
+  const auto bounds = detail::BoundsOf(own);
+  const auto freq = detail::FreqOf(own);
 
   if (posting.stats.stats == nullptr) {
-    return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-      using Leaf = search::PlainFillScored<Input>;
+    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+      using Leaf = detail::PlainFillScored<Input>;
       return memory::make_managed<Impl<Leaf>>(meta, doc, bounds, freq);
     });
   }
 
   if (const auto constant =
-        search::ConstantOf(segment, own,
-                           search::ScoreArgs{.scorer = posting.stats.scorer,
+        detail::ConstantOf(segment, own,
+                           detail::ScoreArgs{.scorer = posting.stats.scorer,
                                              .stats = posting.stats.stats,
                                              .fetcher = ctx.fetcher,
                                              .boost = posting.boost})) {
     const auto value = *constant;
-    return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-      using Approx = search::PostingFill<Input>;
+    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+      using Approx = detail::PostingFill<Input>;
       using Node = ConstantScored<Approx>;
       return memory::make_managed<Impl<Node>>(merge, value, meta, doc, bounds,
                                               freq);
     });
   }
 
-  return search::ResolveFillScored<Node::ptr>(
+  return detail::ResolveFillScored<Node::ptr>(
     doc, freq && ScoresPerDoc(posting.stats.scorer), merge,
     [&]<typename Leaf, typename> -> Node::ptr {
       return memory::make_managed<Impl<Leaf>>(
         meta, doc, bounds, segment, own,
-        search::ScoreArgs{.scorer = posting.stats.scorer,
+        detail::ScoreArgs{.scorer = posting.stats.scorer,
                           .stats = posting.stats.stats,
                           .fetcher = ctx.fetcher,
                           .boost = posting.boost});

@@ -28,11 +28,11 @@
 namespace irs::probe {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const search::ScoreArgs& args) {
+                          const detail::ScoreArgs& args) {
   if (args.stats == nullptr) {
     return {};
   }
-  return search::Build<true>(query,
+  return detail::Build<true>(query,
                              [&]<typename Slots>(auto&&... slots) -> Node::ptr {
                                using Node = probe::TwoPhaseScored<Slots>;
                                return memory::make_managed<Impl<Node>>(

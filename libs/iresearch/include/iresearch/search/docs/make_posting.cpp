@@ -25,7 +25,7 @@
 
 namespace irs::docs {
 
-Root::ptr MakePosting(const search::PostingClause& posting, const SubReader&,
+Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
                       const Context& ctx) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
@@ -33,12 +33,12 @@ Root::ptr MakePosting(const search::PostingClause& posting, const SubReader&,
     return MakeSinglePosting(doc_limits::min() + meta.doc_delta, ctx);
   }
   const auto& own = *posting.state.reader;
-  const auto& in = *search::DocOf(own);
-  return search::ResolveInput(in, [&]<typename Input> -> Root::ptr {
+  const auto& in = *detail::DocOf(own);
+  return detail::ResolveInput(in, [&]<typename Input> -> Root::ptr {
     const auto make = [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<Posting<Input, decltype(table)>>(table);
-      root->Prepare(meta, in, search::LayoutOf(own), search::BoundsOf(own),
-                    search::FreqOf(own));
+      root->Prepare(meta, in, detail::LayoutOf(own), detail::BoundsOf(own),
+                    detail::FreqOf(own));
       return root;
     };
     if (ctx.table != nullptr) {
@@ -49,7 +49,7 @@ Root::ptr MakePosting(const search::PostingClause& posting, const SubReader&,
 }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  return MakePosting(search::PostingClause{query.State()}, query.Segment(),
+  return MakePosting(detail::PostingClause{query.State()}, query.Segment(),
                      ctx);
 }
 

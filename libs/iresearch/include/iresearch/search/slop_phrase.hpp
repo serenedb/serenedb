@@ -530,7 +530,7 @@ class SlopPhrase {
  public:
   using TermPosition = TermPositionT;
   using Traits = TermPositionTraits<TermPosition>;
-  using Positions = search::RunOf<TermPosition, N>;
+  using Positions = detail::RunOf<TermPosition, N>;
 
   static constexpr bool kHasBoost = false;
   static constexpr bool kHasFreq = HasFreq;

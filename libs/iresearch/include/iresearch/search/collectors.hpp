@@ -32,8 +32,8 @@
 #include "basics/down_cast.h"
 #include "basics/shared.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/stats_arena.hpp"
 
@@ -125,7 +125,7 @@ class CounterSlots {
       1, (terms + CounterBlock::kTerms - 1) / CounterBlock::kTerms);
   }
 
-  search::FixedArray<CounterBlock> _blocks;
+  detail::FixedArray<CounterBlock> _blocks;
   size_t _per_thread;
   size_t _terms;
   uint32_t _threads;
@@ -147,7 +147,7 @@ class PrepareCollector {
 
   const Scorer* GetScorer() const noexcept { return _scorer; }
 
-  search::StatsRecord Record() const noexcept { return {_stats, _scorer}; }
+  detail::StatsRecord Record() const noexcept { return {_stats, _scorer}; }
 
   void Retain(memory::managed_ptr<const memory::Managed> query) {
     _retained.emplace_back(std::move(query));
@@ -192,7 +192,7 @@ class ByTermsCollector final : public FieldPrepareCollector {
 
   using PrepareCollector::Record;
 
-  search::StatsRecord Record(size_t i) const noexcept {
+  detail::StatsRecord Record(size_t i) const noexcept {
     SDB_ASSERT(i < _size);
     return {_stats + i * _slot, _scorer};
   }
@@ -229,7 +229,7 @@ class PhraseCollector final : public FieldPrepareCollector {
 
  private:
   size_t _size;
-  search::FixedArray<std::vector<TermCollector>> _parts;
+  detail::FixedArray<std::vector<TermCollector>> _parts;
 };
 
 class AllCollector final : public PrepareCollector {

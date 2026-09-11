@@ -27,11 +27,11 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/ngram_matcher.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename Leaf, bool Scored = false, bool Offs = false, size_t N = 0>
 class NGramSlots {
@@ -140,12 +140,12 @@ class NGramSlots {
   using Base = std::conditional_t<Offs, ngram::NGramPosition, ngram::Dummy>;
   using Checker = ngram::SerialPositionsChecker<Base, Scored || Offs, N>;
 
-  search::RunOf<Leaf, N> _leaves;
-  search::RunOf<Leaf*, N> _live;
+  detail::RunOf<Leaf, N> _leaves;
+  detail::RunOf<Leaf*, N> _live;
   size_t _live_count = 0;
   Checker _checker;
   uint32_t _min_match;
   uint32_t _matches = 0;
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

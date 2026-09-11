@@ -23,8 +23,8 @@
 #pragma once
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 
 namespace irs {
 
@@ -38,7 +38,7 @@ struct TermState {
   PostingMeta cookie;
 };
 
-namespace search {
+namespace detail {
 
 struct PostingClause {
   TermState state;
@@ -51,5 +51,5 @@ struct AllDocsClause {
   StatsRecord stats;
 };
 
-}  // namespace search
+}  // namespace detail
 }  // namespace irs

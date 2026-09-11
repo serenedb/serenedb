@@ -26,8 +26,8 @@
 #include "basics/empty.hpp"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/common/erasure.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/erasure.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -59,10 +59,10 @@ class Impl : public Node {
     } else if constexpr (kRestricts) {
       return _leaf.FillAnd(min, max, mask);
     } else {
-      const auto words = search::WindowWords(min, max);
-      search::Clear(_own.data(), words);
+      const auto words = detail::WindowWords(min, max);
+      detail::Clear(_own.data(), words);
       const auto next = _leaf.FillOr(min, max, _own.data());
-      search::FoldAnd(mask, _own.data(), words);
+      detail::FoldAnd(mask, _own.data(), words);
       return next;
     }
   }
@@ -74,10 +74,10 @@ class Impl : public Node {
     } else if constexpr (kRestricts) {
       return _leaf.FillAndNot(min, max, mask);
     } else {
-      const auto words = search::WindowWords(min, max);
-      search::Clear(_own.data(), words);
+      const auto words = detail::WindowWords(min, max);
+      detail::Clear(_own.data(), words);
       const auto next = _leaf.FillOr(min, max, _own.data());
-      search::FoldAndNot(mask, _own.data(), words);
+      detail::FoldAndNot(mask, _own.data(), words);
       return next;
     }
   }
@@ -91,7 +91,7 @@ class Impl : public Node {
     }
   }
 
-  search::BitsetStorage* Folded() noexcept final {
+  detail::BitsetStorage* Folded() noexcept final {
     if constexpr (requires(Leaf& leaf) { leaf.Folded(); }) {
       return _leaf.Folded();
     } else {
@@ -101,7 +101,7 @@ class Impl : public Node {
 
  private:
   [[no_unique_address]] utils::Need<Producer<Leaf> && !kRestricts,
-                                    search::Scratch> _own;
+                                    detail::Scratch> _own;
   Leaf _leaf;
 };
 

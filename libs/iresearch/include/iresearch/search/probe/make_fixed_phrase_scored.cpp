@@ -26,11 +26,11 @@
 namespace irs::probe {
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const search::ScoreArgs& args) {
+                                const detail::ScoreArgs& args) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
-  return search::MakeFixedPhraseOf<search::PhraseMatch::Plain, Impl, Node::ptr,
+  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, Impl, Node::ptr,
                                    true, probe::TwoPhaseScored>(
     query, query.Segment(), *query.state.reader, args);
 }

@@ -21,8 +21,8 @@
 #include <cstddef>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"

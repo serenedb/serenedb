@@ -28,7 +28,7 @@
 namespace irs::count {
 
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx) {
-  return search::BuildAll(
+  return detail::BuildAll(
     query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
       using Node = lead::TwoPhaseDocs<Slots>;
       return MakeShape<Walk, Node>(ctx, std::forward<decltype(args)>(args)...);

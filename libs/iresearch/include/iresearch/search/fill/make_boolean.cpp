@@ -27,7 +27,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/boolean_sparse.hpp"
@@ -67,7 +67,7 @@ struct Api {
     return child.PlanFill({}, ScoreMergeType::Noop);
   }
 
-  static Result MakeTerm(const search::PostingClause& term,
+  static Result MakeTerm(const detail::PostingClause& term,
                          const SubReader& segment, const Context&) {
     return FillOf(term, nullptr, segment);
   }
@@ -76,15 +76,15 @@ struct Api {
     return MakeAllDocs(segment);
   }
 
-  static search::TableFilter* BitsetTable(const Context&) noexcept {
+  static detail::TableFilter* BitsetTable(const Context&) noexcept {
     return nullptr;
   }
 
   static Result MakeNegation(
-    std::span<const search::PostingClause> exclude_terms,
+    std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t, const Context& ctx) {
-    return search::builder::MakeWindowNegation<Api>(
+    return detail::builder::MakeWindowNegation<Api>(
       exclude_terms, exclude_filters, segment, ctx);
   }
 };
@@ -92,7 +92,7 @@ struct Api {
 }  // namespace
 
 Node::ptr Make(const BooleanQuery& query) {
-  return search::builder::Make<Api>(query, {});
+  return detail::builder::Make<Api>(query, {});
 }
 
 }  // namespace irs::fill

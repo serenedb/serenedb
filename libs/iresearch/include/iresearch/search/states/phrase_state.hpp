@@ -24,7 +24,7 @@
 
 #include "basics/resource_manager.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/types.hpp"
 
@@ -46,7 +46,7 @@ struct FixedPhraseState {
   Terms terms;
   ManagedVector<const PostingMeta*> metas;
   const TermReader* reader{};
-  search::PhraseHandles handles;
+  detail::PhraseHandles handles;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<FixedPhraseState>);
@@ -65,7 +65,7 @@ struct VariadicPhraseState {
   ManagedVector<const PostingMeta*> metas;
   ManagedVector<score_t> boosts;
   const TermReader* reader{};
-  search::PhraseHandles handles;
+  detail::PhraseHandles handles;
   bool volatile_boost{};
 };
 

@@ -33,12 +33,12 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace sdb::connector {
 
-class HitBatcher : public irs::search::DeadRuns {
+class HitBatcher : public irs::detail::DeadRuns {
  public:
   irs::doc_id_t Live(irs::doc_id_t doc) final {
     SDB_ASSERT(!_filters.Empty());
@@ -48,7 +48,7 @@ class HitBatcher : public irs::search::DeadRuns {
              : irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead);
   }
 
-  irs::search::DeadRuns* Skipper() noexcept {
+  irs::detail::DeadRuns* Skipper() noexcept {
     return _filters.Empty() ? nullptr : this;
   }
 

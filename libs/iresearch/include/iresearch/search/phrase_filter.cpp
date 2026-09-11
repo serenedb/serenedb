@@ -343,7 +343,7 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
   FixedPhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  if (!search::ResolvePhrase(reader, state.handles)) {
+  if (!detail::ResolvePhrase(reader, state.handles)) {
     return QueryBuilder::Empty();
   }
 
@@ -396,7 +396,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
   VariadicPhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  if (!search::ResolvePhrase(reader, state.handles)) {
+  if (!detail::ResolvePhrase(reader, state.handles)) {
     return QueryBuilder::Empty();
   }
 

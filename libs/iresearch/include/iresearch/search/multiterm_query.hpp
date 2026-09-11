@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/estimate.hpp"
 #include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"

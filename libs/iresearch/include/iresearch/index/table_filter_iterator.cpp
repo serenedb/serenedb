@@ -35,7 +35,7 @@
 #include <duckdb/storage/table/column_segment.hpp>
 
 #include "basics/assert.h"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 
 namespace sdb::connector {
 

@@ -23,17 +23,17 @@
 #include <bit>
 #include <utility>
 
-#include "iresearch/search/common/bitset_storage.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
 
 class BitsetDocs {
  public:
-  static constexpr auto kBits = search::BitsetStorage::kBits;
-  static constexpr auto kMin = search::BitsetStorage::kMin;
+  static constexpr auto kBits = detail::BitsetStorage::kBits;
+  static constexpr auto kMin = detail::BitsetStorage::kMin;
 
-  explicit BitsetDocs(search::BitsetStorage&& set) noexcept
+  explicit BitsetDocs(detail::BitsetStorage&& set) noexcept
     : _set{std::move(set)},
       _words{_set.Words()},
       _count{_set.WordCount()},
@@ -80,7 +80,7 @@ class BitsetDocs {
     return _doc;
   }
 
-  search::BitsetStorage _set;
+  detail::BitsetStorage _set;
   const uint64_t* _words;
   uint32_t _count;
   uint32_t _word = 0;

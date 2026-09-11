@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/common/score_provider.hpp"
-#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
@@ -30,8 +30,8 @@ class VectorChain : public Root {
  public:
   template<typename Args>
   VectorChain(ColumnArgsFetcher& fetcher, const SubReader& segment,
-              const TermReader& field, const search::ScoreArgs& score,
-              uint32_t k, search::TableFilter* table, size_t count, Args&& args)
+              const TermReader& field, const irs::detail::ScoreArgs& score,
+              uint32_t k, irs::detail::TableFilter* table, size_t count, Args&& args)
     : _clusters{count, std::forward<Args>(args)},
       _fetcher{fetcher},
       _table{table},
@@ -86,11 +86,11 @@ class VectorChain : public Root {
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
   ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
   ABSL_CACHELINE_ALIGNED doc_id_t _own[kRun];
-  search::VectorClusters<Cluster> _clusters;
-  search::BoostProvider _provider;
+  irs::detail::VectorClusters<Cluster> _clusters;
+  irs::detail::BoostProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  search::TableFilter* _table;
+  irs::detail::TableFilter* _table;
   score_t _boost;
   uint32_t _k;
 };
@@ -98,26 +98,26 @@ class VectorChain : public Root {
 }  // namespace
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  auto inner = search::InnerProbe(query);
+  auto inner = irs::detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ScoredOf(ctx));
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
       if (ctx.table != nullptr) {
-        return search::MakeVectorScored<FilteredWalk, Root::ptr,
-                                        search::RadiusGate<Inclusive>, Rescore,
+        return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
+                                        irs::detail::RadiusGate<Inclusive>, Rescore,
                                         lead::TwoPhaseScored>(
           query, *query.State().reader, score, query.Threshold(),
           std::move(inner), ctx.table, ctx.fetcher);
       }
-      return search::MakeVectorScored<PlainWalk, Root::ptr,
-                                      search::RadiusGate<Inclusive>, Rescore,
+      return irs::detail::MakeVectorScored<PlainWalk, Root::ptr,
+                                      irs::detail::RadiusGate<Inclusive>, Rescore,
                                       lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner), utils::Empty{}, ctx.fetcher);
@@ -127,7 +127,7 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = query.Boost()};
@@ -135,28 +135,28 @@ Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
   const auto& field = *query.State().reader;
 
   if (query.Inner() == nullptr) {
-    return search::ResolveClusters<search::AcceptAll>(
+    return irs::detail::ResolveClusters<irs::detail::AcceptAll>(
       query,
       [&]<typename Cluster>(size_t count,
-                            const search::ClusterFeed& feed) -> Root::ptr {
+                            const irs::detail::ClusterFeed& feed) -> Root::ptr {
         return memory::make_managed<VectorChain<Cluster>>(
           ctx.fetcher, segment, field, score, ctx.k, ctx.table, count, feed);
       });
   }
 
-  auto inner = search::InnerProbe(query);
+  auto inner = irs::detail::InnerProbe(query);
   if (!inner) {
     return {};
   }
   if (ctx.table != nullptr) {
-    return search::MakeVectorScored<FilteredWalk, Root::ptr, search::AcceptAll,
+    return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr, irs::detail::AcceptAll,
                                     false, lead::TwoPhaseScored>(
-      query, field, score, search::Unbounded(), std::move(inner), ctx.table,
+      query, field, score, irs::detail::Unbounded(), std::move(inner), ctx.table,
       ctx.fetcher);
   }
-  return search::MakeVectorScored<PlainWalk, Root::ptr, search::AcceptAll,
+  return irs::detail::MakeVectorScored<PlainWalk, Root::ptr, irs::detail::AcceptAll,
                                   false, lead::TwoPhaseScored>(
-    query, field, score, search::Unbounded(), std::move(inner), utils::Empty{},
+    query, field, score, irs::detail::Unbounded(), std::move(inner), utils::Empty{},
     ctx.fetcher);
 }
 

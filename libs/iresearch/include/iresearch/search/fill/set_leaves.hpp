@@ -25,7 +25,7 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {
@@ -70,9 +70,9 @@ class SetLeaves {
   }
 
  private:
-  search::RunOf<Leaf, N> _leaves;
-  search::RunOf<Leaf*, N> _live;
-  search::RunOf<doc_id_t, N> _next;
+  detail::RunOf<Leaf, N> _leaves;
+  detail::RunOf<Leaf*, N> _live;
+  detail::RunOf<doc_id_t, N> _next;
   size_t _live_count = 0;
 };
 

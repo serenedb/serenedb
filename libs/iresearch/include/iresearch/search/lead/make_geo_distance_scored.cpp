@@ -25,7 +25,7 @@ namespace irs::lead {
 
 #define IRS_GEO_CASE(Parser, ...)                               \
   template Node::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, \
-                          const search::ScoredCtx&);
+                          const detail::ScoredCtx&);
 IRS_GEO_DISTANCE_ACCEPTORS(IRS_GEO_CASE)
 #undef IRS_GEO_CASE
 

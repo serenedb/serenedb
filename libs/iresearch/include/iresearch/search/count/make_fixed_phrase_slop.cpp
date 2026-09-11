@@ -26,7 +26,7 @@ namespace irs::count {
 
 Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
                               const Context& ctx) {
-  return MakeFixedPhraseWalk<search::PhraseMatch::Slop>(query, ctx);
+  return MakeFixedPhraseWalk<detail::PhraseMatch::Slop>(query, ctx);
 }
 
 }  // namespace irs::count

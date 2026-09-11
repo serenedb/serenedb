@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
-  return search::MakeNGramOffsets<false>(query);
+  return detail::MakeNGramOffsets<false>(query);
 }
 
 }  // namespace irs::offsets

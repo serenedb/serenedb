@@ -18,32 +18,32 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scored/make.hpp"
 
 namespace irs::scored {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  auto inner = search::InnerProbe(query);
+  auto inner = irs::detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ScoredOf(ctx));
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
       if (ctx.table != nullptr) {
-        return search::MakeVectorScored<FilteredWalk, Root::ptr,
-                                        search::RadiusGate<Inclusive>, Rescore,
+        return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
+                                        irs::detail::RadiusGate<Inclusive>, Rescore,
                                         lead::TwoPhaseScored>(
           query, *query.State().reader, score, query.Threshold(),
           std::move(inner), ctx.table, ctx.fetcher);
       }
-      return search::MakeVectorScored<PlainWalk, Root::ptr,
-                                      search::RadiusGate<Inclusive>, Rescore,
+      return irs::detail::MakeVectorScored<PlainWalk, Root::ptr,
+                                      irs::detail::RadiusGate<Inclusive>, Rescore,
                                       lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner), utils::Empty{}, ctx.fetcher);
@@ -52,27 +52,27 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
-  auto inner = search::InnerProbe(query);
+  auto inner = irs::detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto record = query.Stats(ScoredOf(ctx));
-  const search::ScoreArgs score{.scorer = record.scorer,
+  const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = query.Boost()};
   const auto& field = *query.State().reader;
   return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
     if (ctx.table != nullptr) {
-      return search::MakeVectorScored<FilteredWalk, Root::ptr,
-                                      search::AcceptAll, Rescore,
+      return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
+                                      irs::detail::AcceptAll, Rescore,
                                       lead::TwoPhaseScored>(
-        query, field, score, search::Unbounded(), std::move(inner), ctx.table,
+        query, field, score, irs::detail::Unbounded(), std::move(inner), ctx.table,
         ctx.fetcher);
     }
-    return search::MakeVectorScored<PlainWalk, Root::ptr, search::AcceptAll,
+    return irs::detail::MakeVectorScored<PlainWalk, Root::ptr, irs::detail::AcceptAll,
                                     Rescore, lead::TwoPhaseScored>(
-      query, field, score, search::Unbounded(), std::move(inner),
+      query, field, score, irs::detail::Unbounded(), std::move(inner),
       utils::Empty{}, ctx.fetcher);
   });
 }

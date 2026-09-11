@@ -22,9 +22,9 @@
 
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -40,7 +40,7 @@
 #include "iresearch/search/term_query.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 inline const TermState& AsTerm(const QueryBuilder& query) noexcept {
   SDB_ASSERT(query.Kind() == QueryKind::Term);
@@ -169,4 +169,4 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
   }
 }
 
-}  // namespace irs::search
+}  // namespace irs::detail

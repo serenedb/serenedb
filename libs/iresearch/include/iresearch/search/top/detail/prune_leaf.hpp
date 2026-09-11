@@ -37,14 +37,14 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/enc_buf.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename InputType, bool Standalone>
 class PruneLeafBase {
@@ -414,4 +414,4 @@ class PruneLeafBase {
   bool _scored = false;
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

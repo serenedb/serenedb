@@ -27,8 +27,8 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/memory.hpp"
-#include "iresearch/search/common/bitset_storage.hpp"
-#include "iresearch/search/common/lazy_bitset.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/docs/boolean_bitset.hpp"
 #include "iresearch/search/docs/boolean_window.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
@@ -40,12 +40,12 @@
 
 namespace {
 
-constexpr auto kBits = irs::search::BitsetStorage::kBits;
-constexpr auto kMin = irs::search::BitsetStorage::kMin;
+constexpr auto kBits = irs::detail::BitsetStorage::kBits;
+constexpr auto kMin = irs::detail::BitsetStorage::kMin;
 
-irs::search::BitsetStorage MakeSet(irs::doc_id_t docs_count,
+irs::detail::BitsetStorage MakeSet(irs::doc_id_t docs_count,
                                    const std::vector<irs::doc_id_t>& docs) {
-  irs::search::BitsetStorage set{docs_count};
+  irs::detail::BitsetStorage set{docs_count};
   auto* words = set.Words();
   for (auto doc : docs) {
     EXPECT_TRUE(irs::doc_limits::valid(doc));
@@ -68,7 +68,7 @@ std::vector<irs::doc_id_t> Range(irs::doc_id_t first, irs::doc_id_t last,
 
 class Cursor {
  public:
-  explicit Cursor(irs::search::BitsetStorage&& set) : _it{std::move(set)} {}
+  explicit Cursor(irs::detail::BitsetStorage&& set) : _it{std::move(set)} {}
 
   irs::doc_id_t Value() const noexcept { return _doc; }
 
@@ -111,7 +111,7 @@ std::vector<irs::doc_id_t> Emit(irs::docs::Root& root, uint32_t capacity) {
 // reached and not what they found.
 class WindowFill : public irs::fill::Node {
  public:
-  explicit WindowFill(irs::search::BitsetStorage&& set) noexcept
+  explicit WindowFill(irs::detail::BitsetStorage&& set) noexcept
     : _set{std::move(set)} {}
 
   irs::doc_id_t FillOr(irs::doc_id_t min, irs::doc_id_t max,
@@ -159,7 +159,7 @@ TEST(bitset_lead_test, advance) {
   // empty segment
   {
     auto set = MakeSet(0, {});
-    ASSERT_EQ(0, irs::search::CountBits(set));
+    ASSERT_EQ(0, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
@@ -173,7 +173,7 @@ TEST(bitset_lead_test, advance) {
   // non-empty segment holding nothing
   {
     auto set = MakeSet(13, {});
-    ASSERT_EQ(0, irs::search::CountBits(set));
+    ASSERT_EQ(0, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
@@ -188,7 +188,7 @@ TEST(bitset_lead_test, advance) {
   {
     const auto expected = Range(1, 73);
     auto set = MakeSet(73, expected);
-    ASSERT_EQ(73, irs::search::CountBits(set));
+    ASSERT_EQ(73, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -202,7 +202,7 @@ TEST(bitset_lead_test, advance) {
   {
     const auto expected = Range(1, 175, 2);
     auto set = MakeSet(176, expected);
-    ASSERT_EQ(88, irs::search::CountBits(set));
+    ASSERT_EQ(88, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -216,7 +216,7 @@ TEST(bitset_lead_test, advance) {
     auto expected = Range(64, 126);
     expected.emplace_back(191);
     auto set = MakeSet(192, expected);
-    ASSERT_EQ(64, irs::search::CountBits(set));
+    ASSERT_EQ(64, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -230,7 +230,7 @@ TEST(bitset_lead_test, advance) {
     const std::vector<irs::doc_id_t> expected{71,  74,  82,  86,  93,
                                               101, 103, 113, 121, 126};
     auto set = MakeSet(173, expected);
-    ASSERT_EQ(10, irs::search::CountBits(set));
+    ASSERT_EQ(10, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -243,7 +243,7 @@ TEST(bitset_lead_test, advance) {
   {
     const std::vector<irs::doc_id_t> expected{185};
     auto set = MakeSet(189, expected);
-    ASSERT_EQ(1, irs::search::CountBits(set));
+    ASSERT_EQ(1, irs::detail::CountBits(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -617,7 +617,7 @@ TEST(bitset_probe_test, never_skips_a_document) {
   irs::probe::BitsetDocs it{MakeSet(kDocs, docs)};
 
   for (irs::doc_id_t target = 1; target <= kDocs; ++target) {
-    const auto next = irs::search::NextBit(reference, target);
+    const auto next = irs::detail::NextBit(reference, target);
     const auto bound = it.Probe(target);
 
     ASSERT_GE(bound, target);
@@ -691,12 +691,12 @@ TEST(bitset_docs_test, run) {
 
 // What a count's root reduces to once its buckets are folded.
 TEST(bitset_count_test, count) {
-  ASSERT_EQ(0, irs::search::CountBits(MakeSet(0, {})));
-  ASSERT_EQ(0, irs::search::CountBits(MakeSet(13, {})));
-  ASSERT_EQ(73, irs::search::CountBits(MakeSet(73, Range(1, 73))));
-  ASSERT_EQ(88, irs::search::CountBits(MakeSet(176, Range(1, 175, 2))));
-  ASSERT_EQ(1, irs::search::CountBits(MakeSet(189, {185})));
-  ASSERT_EQ(4, irs::search::CountBits(MakeSet(256, {1, 64, 130, 255})));
+  ASSERT_EQ(0, irs::detail::CountBits(MakeSet(0, {})));
+  ASSERT_EQ(0, irs::detail::CountBits(MakeSet(13, {})));
+  ASSERT_EQ(73, irs::detail::CountBits(MakeSet(73, Range(1, 73))));
+  ASSERT_EQ(88, irs::detail::CountBits(MakeSet(176, Range(1, 175, 2))));
+  ASSERT_EQ(1, irs::detail::CountBits(MakeSet(189, {185})));
+  ASSERT_EQ(4, irs::detail::CountBits(MakeSet(256, {1, 64, 130, 255})));
 }
 
 // A holder that is interrogated rather than swept fills only as far as the
@@ -708,7 +708,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::search::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
 
   ASSERT_EQ(0, fill->windows());
   ASSERT_EQ(kMin, set.Filled());
@@ -716,7 +716,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_EQ(1, fill->windows());
-  ASSERT_EQ(kMin + irs::search::kWindowDocs, set.Filled());
+  ASSERT_EQ(kMin + irs::detail::kWindowDocs, set.Filled());
 
   // Already decided, so nothing is filled to answer it.
   ASSERT_FALSE(set.Contains(7));
@@ -724,7 +724,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   ASSERT_TRUE(set.Contains(5000));
   ASSERT_EQ(2, fill->windows());
-  ASSERT_EQ(kMin + 2 * irs::search::kWindowDocs, set.Filled());
+  ASSERT_EQ(kMin + 2 * irs::detail::kWindowDocs, set.Filled());
 
   // A probe that finds nothing in what is decided fills on, and what it
   // reaches is coherent afterwards.
@@ -746,7 +746,7 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::search::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.

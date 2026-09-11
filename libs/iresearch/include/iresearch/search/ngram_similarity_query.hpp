@@ -25,7 +25,7 @@
 
 #include <algorithm>
 
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/estimate.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/query_builder_impl.hpp"

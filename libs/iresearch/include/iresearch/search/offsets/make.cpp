@@ -28,19 +28,19 @@
 namespace irs::offsets {
 
 bool Resolve(const TermReader* field, Handles& out) {
-  return search::ResolvePhrase(field, out) && out.HasOffsets() &&
+  return detail::ResolvePhrase(field, out) && out.HasOffsets() &&
          out.pay != nullptr;
 }
 
 Root::ptr Make(const FixedPhraseQuery& query) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeFixedPhraseSlop(query); },
     [&] { return MakeFixedPhraseIntervals(query); },
     [&] { return MakeFixedPhrase(query); });
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query) {
-  return search::ResolveMatch(
+  return detail::ResolveMatch(
     query, [&] { return MakeVariadicPhraseSlop(query); },
     [&] { return MakeVariadicPhraseIntervals(query); },
     [&] { return MakeVariadicPhrase(query); });

@@ -30,10 +30,10 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/posting_batch.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/posting_batch.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/root.hpp"
@@ -52,7 +52,7 @@ class BoostTerm {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
-               const search::ScoreArgs& args) {
+               const irs::detail::ScoreArgs& args) {
     _leaf.Prepare(meta, doc_in, segment, field, args);
     _score = _leaf.PrepareScore();
     _doc = doc_limits::invalid();
@@ -110,7 +110,7 @@ class BoostTerm {
   }
 
   ColumnArgsFetcher& _fetcher;
-  search::PostingLeadScored<InputType> _leaf;
+  irs::detail::PostingLeadScored<InputType> _leaf;
   doc_id_t _doc = doc_limits::invalid();
   ScoreFunction _score;
   ABSL_CACHELINE_ALIGNED doc_id_t _cand[kScoreBlock];
@@ -120,8 +120,8 @@ class BoostTerm {
 
 template<typename InputType, typename Boost, typename Excludes, typename Table>
 class Posting : public Root,
-                public search::PostingBatch<InputType, Table, true> {
-  using Base = search::PostingBatch<InputType, Table, true>;
+                public irs::detail::PostingBatch<InputType, Table, true> {
+  using Base = irs::detail::PostingBatch<InputType, Table, true>;
 
   using Base::_last;
   using Base::_left_in_list;
@@ -148,7 +148,7 @@ class Posting : public Root,
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
-               const search::ScoreArgs& args, IndexFeatures layout,
+               const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
     this->OpenInput(meta, doc_in, bounds);
@@ -182,7 +182,7 @@ class Posting : public Root,
         _boost.Apply(dest, out, len);
       }
       if constexpr (kExcludes) {
-        emitted += search::ExcludeBlock(_excludes, dest, out, len);
+        emitted += irs::detail::ExcludeBlock(_excludes, dest, out, len);
       } else {
         emitted += len;
       }
@@ -193,7 +193,7 @@ class Posting : public Root,
  private:
   [[no_unique_address]] Boost _boost;
   [[no_unique_address]] Excludes _excludes;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::scored

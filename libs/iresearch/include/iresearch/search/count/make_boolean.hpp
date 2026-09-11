@@ -28,10 +28,10 @@
 #include <vector>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/boolean_window.hpp"
 #include "iresearch/search/count/plan.hpp"
@@ -65,7 +65,7 @@ struct Api {
     return child.PlanCount(ctx);
   }
 
-  static Result MakeTerm(const search::PostingClause& term,
+  static Result MakeTerm(const detail::PostingClause& term,
                          const SubReader& segment, const Context& ctx) {
     return count::MakeTerm(term, segment, ctx);
   }
@@ -74,28 +74,28 @@ struct Api {
     return count::MakeAll(segment, ctx);
   }
 
-  static search::TableFilter* BitsetTable(const Context& ctx) noexcept {
+  static detail::TableFilter* BitsetTable(const Context& ctx) noexcept {
     return ctx.table;
   }
 
   static Result MakeNegation(
-    std::span<const search::PostingClause> exclude_terms,
+    std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t candidates, const Context& ctx);
 };
 
-Root::ptr MakeSubtractConjunction(std::span<const search::PostingClause> terms,
+Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment, const Context& ctx);
-Root::ptr MakeSubtractDisjunction(const search::PostingClause& first,
-                                  const search::PostingClause& second,
+Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
+                                  const detail::PostingClause& second,
                                   const SubReader& segment, const Context& ctx);
 
 template<typename Term>
 doc_id_t RarestOf(std::span<const Term> terms) noexcept {
   SDB_ASSERT(terms.size() == 2);
-  return std::min(search::CookieOf(terms.front()).docs_count,
-                  search::CookieOf(terms.back()).docs_count);
+  return std::min(detail::CookieOf(terms.front()).docs_count,
+                  detail::CookieOf(terms.back()).docs_count);
 }
 
 template<typename Term>
@@ -103,9 +103,9 @@ bool SubtractsPair(std::span<const Term> terms) noexcept {
   if (terms.size() != 2) {
     return false;
   }
-  const auto densest = std::max(search::CookieOf(terms.front()).docs_count,
-                                search::CookieOf(terms.back()).docs_count);
-  return search::SubtractsDisjunction(RarestOf(terms), densest);
+  const auto densest = std::max(detail::CookieOf(terms.front()).docs_count,
+                                detail::CookieOf(terms.back()).docs_count);
+  return detail::SubtractsDisjunction(RarestOf(terms), densest);
 }
 
 template<typename Term>
@@ -114,7 +114,7 @@ Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
                                        const IndexInput& doc,
                                        doc_id_t docs_count,
                                        const Context& ctx) {
-  return search::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
+  return detail::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
                                          ctx.table);
 }
 
@@ -124,15 +124,15 @@ Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                        const IndexInput& doc,
                                        const Context& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return search::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = search::PostingFill<Input>;
-    using Optional = search::OrGroup<fill::SetLeaves<Leaf>>;
+  return detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = detail::PostingFill<Input>;
+    using Optional = detail::OrGroup<fill::SetLeaves<Leaf>>;
     const auto init = [&](Leaf& leaf, size_t i) {
-      const auto& own = search::FieldOf(terms[i], field);
-      const auto& meta = search::CookieOf(terms[i]);
+      const auto& own = detail::FieldOf(terms[i], field);
+      const auto& meta = detail::CookieOf(terms[i]);
       SDB_ASSERT(meta.docs_count != 0);
-      leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                   meta.docs_count != 1 && search::FreqOf(own));
+      leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+                   meta.docs_count != 1 && detail::FreqOf(own));
     };
     return MakeShape<BooleanWindow, utils::Empty, utils::Empty, Optional,
                      utils::Empty>(

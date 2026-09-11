@@ -24,9 +24,9 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/offsets/phrase_fixed_slots.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
-#include "iresearch/search/common/posting_pos.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/posting_pos.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
@@ -38,10 +38,10 @@ namespace {
 template<typename Leaf, size_t Slots, typename... Prefix>
 Root::ptr MakeSlots(const FixedPhraseQuery& query,
                     std::span<const PostingMeta* const> metas,
-                    const search::PhraseHandles& h, const Context& ctx,
+                    const irs::detail::PhraseHandles& h, const Context& ctx,
                     Prefix&&... prefix) {
   using Matcher = FixedPhraseFrequency<false, true, false, Slots>;
-  using SlotsType = search::PhraseFixedSlots<Matcher, Leaf, Slots>;
+  using SlotsType = irs::detail::PhraseFixedSlots<Matcher, Leaf, Slots>;
   return MakeShape<PrunedPhrase, SlotsType>(
     ctx, std::forward<Prefix>(prefix)..., metas, query.positions, *h.doc,
     h.Layout(), *h.pos, h.pay);
@@ -61,15 +61,15 @@ Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = stats,
                                .fetcher = &ctx.fetcher,
                                .boost = query.Boost()};
 
-  return search::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
-    return search::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
-      using Leaf = search::PostingPos<Input, Bounds>;
-      return search::ResolveArity<search::kSlotArity, search::kSlotFloor>(
+  return irs::detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
+    return irs::detail::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
+      using Leaf = irs::detail::PostingPos<Input, Bounds>;
+      return irs::detail::ResolveArity<irs::detail::kSlotArity, irs::detail::kSlotFloor>(
         metas.size(), [&]<size_t N> -> Root::ptr {
           static constexpr size_t kSlots = N == 1 ? 0 : N;
           return MakeSlots<Leaf, kSlots>(query, metas, h, ctx, query.Segment(),

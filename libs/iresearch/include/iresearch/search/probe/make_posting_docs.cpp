@@ -19,15 +19,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/posting_probe.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/posting_probe.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakePostingDocs(const search::PostingClause& posting,
+Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader&) {
   return ResolvePostingDocs<Node::ptr>(
     posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {

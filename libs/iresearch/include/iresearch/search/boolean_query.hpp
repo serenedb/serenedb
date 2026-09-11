@@ -29,8 +29,8 @@
 #include "basics/resource_manager.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,10 +44,10 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   using Filters = ManagedVector<QueryBuilder::ptr>;
 
   struct PreparedBucket {
-    ManagedVector<search::PostingClause> postings;
-    ManagedVector<search::AllDocsClause> all_docs;
+    ManagedVector<detail::PostingClause> postings;
+    ManagedVector<detail::AllDocsClause> all_docs;
     Filters filters;
-    search::Terms uniformity = search::Terms::Mixed;
+    detail::Terms uniformity = detail::Terms::Mixed;
 
     explicit PreparedBucket(IResourceManager& memory)
       : postings{{memory}}, all_docs{{memory}}, filters{{memory}} {}
@@ -93,7 +93,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     return _clauses[OccurIndex(occur)];
   }
 
-  std::span<const search::PostingClause> Terms(Occur occur) const noexcept {
+  std::span<const detail::PostingClause> Terms(Occur occur) const noexcept {
     return _clauses[OccurIndex(occur)].postings;
   }
 
@@ -101,7 +101,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     return _clauses[OccurIndex(occur)].filters;
   }
 
-  search::Terms Uniformity(Occur occur) const noexcept {
+  detail::Terms Uniformity(Occur occur) const noexcept {
     return _clauses[OccurIndex(occur)].uniformity;
   }
 
@@ -116,8 +116,8 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   template<typename TermCb, typename QueryCb>
   bool VisitHead(Occur occur, TermCb&& term_cb, QueryCb&& query_cb) const {
     const auto& bucket = _clauses[OccurIndex(occur)];
-    return search::VisitOrderedOf(
-      std::span<const search::PostingClause>{bucket.postings},
+    return detail::VisitOrderedOf(
+      std::span<const detail::PostingClause>{bucket.postings},
       std::span<const QueryBuilder::ptr>{bucket.filters}, occur == Occur::Must,
       0, 1, std::forward<TermCb>(term_cb), std::forward<QueryCb>(query_cb));
   }
@@ -157,13 +157,13 @@ class BooleanBuilder {
   void Add(QueryBuilder::ptr query, Occur occur);
 
   void AddTerm(const TermReader* reader, const PostingMeta& meta, score_t boost,
-               Occur occur, search::StatsRecord stats);
+               Occur occur, detail::StatsRecord stats);
 
   QueryBuilder::ptr Finish();
 
  private:
   void Push(BooleanQuery::PreparedBucket& bucket, const TermReader* reader,
-            const PostingMeta& meta, score_t boost, search::StatsRecord stats);
+            const PostingMeta& meta, score_t boost, detail::StatsRecord stats);
 
   bool Absorb(QueryKind kind, Occur occur);
 

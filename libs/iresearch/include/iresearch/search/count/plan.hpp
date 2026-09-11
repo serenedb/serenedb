@@ -25,8 +25,8 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
 #include "iresearch/search/count/boolean_bitset.hpp"
 #include "iresearch/search/count/make.hpp"
@@ -38,7 +38,7 @@ namespace irs::count {
 template<template<typename...> class Shape, typename... Parts, typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., search::TableFilter*>>(
+    return memory::make_managed<Shape<Parts..., detail::TableFilter*>>(
       ctx.table, std::forward<Args>(args)...);
   }
   return memory::make_managed<Shape<Parts..., utils::Empty>>(
@@ -48,27 +48,27 @@ Root::ptr MakeShape(const Context& ctx, Args&&... args) {
 template<typename Node>
 using PlainWalk = Walk<Node, utils::Empty>;
 template<typename Node>
-using FilteredWalk = Walk<Node, search::TableFilter*>;
+using FilteredWalk = Walk<Node, detail::TableFilter*>;
 
-template<search::PhraseMatch M>
+template<detail::PhraseMatch M>
 Root::ptr MakeFixedPhraseWalk(const FixedPhraseQuery& query,
                               const Context& ctx) {
   if (ctx.table != nullptr) {
-    return search::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(query,
+    return detail::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(query,
                                                                  ctx.table);
   }
-  return search::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query,
+  return detail::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query,
                                                             utils::Empty{});
 }
 
-template<search::PhraseMatch M>
+template<detail::PhraseMatch M>
 Root::ptr MakeVariadicPhraseWalk(const VariadicPhraseQuery& query,
                                  const Context& ctx) {
   if (ctx.table != nullptr) {
-    return search::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(query,
+    return detail::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(query,
                                                                     ctx.table);
   }
-  return search::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
+  return detail::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
                                                                utils::Empty{});
 }
 

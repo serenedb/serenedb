@@ -26,7 +26,7 @@ namespace irs::docs {
 
 Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
                                    const Context& ctx) {
-  return MakeFixedPhraseWalk<search::PhraseMatch::Intervals>(query, ctx);
+  return MakeFixedPhraseWalk<detail::PhraseMatch::Intervals>(query, ctx);
 }
 
 }  // namespace irs::docs

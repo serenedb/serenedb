@@ -24,9 +24,9 @@
 #include <vector>
 
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
 #include "iresearch/search/hnsw_query.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scores/scorer.hpp"
@@ -38,13 +38,13 @@ namespace {
 class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           ColumnArgsFetcher& fetcher, const search::ScoreArgs& args)
+           ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
     : _hits{std::move(hits)}, _fetcher{fetcher} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
       .segment = segment,
-      .field = search::NoField(),
+      .field = irs::detail::NoField(),
       .doc_attrs = _provider,
       .fetcher = fetcher,
       .stats = args.stats,
@@ -69,7 +69,7 @@ class HnswHits : public Root {
 
  private:
   std::vector<ScoreDoc> _hits;
-  search::BoostProvider _provider;
+  irs::detail::BoostProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   score_t _block[kScoreBlock];
@@ -86,7 +86,7 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
     return {};
   }
   const auto record = query.Stats(ScoredOf(ctx));
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = &ctx.fetcher,
                                .boost = query.Boost()};

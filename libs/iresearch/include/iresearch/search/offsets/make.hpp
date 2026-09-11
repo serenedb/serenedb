@@ -21,7 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
 
 namespace irs {
@@ -34,7 +34,7 @@ struct TermReader;
 }  // namespace irs
 namespace irs::offsets {
 
-using Handles = search::PhraseHandles;
+using Handles = detail::PhraseHandles;
 
 bool Resolve(const TermReader* field, Handles& out);
 

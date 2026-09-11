@@ -23,7 +23,7 @@
 #include <algorithm>
 
 #include "basics/bit_utils.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -52,16 +52,16 @@ class SingleDocs {
   }
 
   doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    const auto words = search::WindowWords(min, max);
+    const auto words = detail::WindowWords(min, max);
     if (_doc < min || _doc >= max) {
-      search::Clear(mask, words);
+      detail::Clear(mask, words);
       return _doc >= max ? _doc : (_doc = doc_limits::eof());
     }
     const size_t offset = _doc - min;
-    const auto word = mask[offset / search::kWindowBits] &
-                      (uint64_t{1} << (offset % search::kWindowBits));
-    search::Clear(mask, words);
-    mask[offset / search::kWindowBits] = word;
+    const auto word = mask[offset / detail::kWindowBits] &
+                      (uint64_t{1} << (offset % detail::kWindowBits));
+    detail::Clear(mask, words);
+    mask[offset / detail::kWindowBits] = word;
     return _doc = doc_limits::eof();
   }
 
@@ -71,8 +71,8 @@ class SingleDocs {
     }
     if (_doc >= min) {
       const size_t offset = _doc - min;
-      UnsetBit(mask[offset / search::kWindowBits],
-               offset % search::kWindowBits);
+      UnsetBit(mask[offset / detail::kWindowBits],
+               offset % detail::kWindowBits);
     }
     return _doc = doc_limits::eof();
   }
@@ -86,7 +86,7 @@ class SingleDocs {
     }
     if (_doc >= min) {
       const size_t offset = _doc - min;
-      SetBit(mask[offset / search::kWindowBits], offset % search::kWindowBits);
+      SetBit(mask[offset / detail::kWindowBits], offset % detail::kWindowBits);
       write(offset);
     }
     return _doc = doc_limits::eof();

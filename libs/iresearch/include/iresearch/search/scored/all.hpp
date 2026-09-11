@@ -25,9 +25,9 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/scored_context.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -47,12 +47,12 @@ class All : public Root {
       _fetcher{fetcher},
       _table{table} {}
 
-  void Prepare(const SubReader& segment, const search::ScoreArgs& args) {
-    if (search::AllDocsConstant(args)) {
+  void Prepare(const SubReader& segment, const detail::ScoreArgs& args) {
+    if (detail::AllDocsConstant(args)) {
       _score = ScoreFunction::Constant(AllDocsScore(segment, args));
       return;
     }
-    _score = search::AllDocsScorer(segment, args);
+    _score = detail::AllDocsScorer(segment, args);
   }
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
@@ -84,7 +84,7 @@ class All : public Root {
   doc_id_t _end;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::scored

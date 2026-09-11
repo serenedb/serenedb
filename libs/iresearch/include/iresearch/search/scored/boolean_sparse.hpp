@@ -28,11 +28,11 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/score/make_conjunction.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_policy.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/score/make_conjunction.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/root.hpp"
@@ -54,7 +54,7 @@ class BooleanSparse : public Root {
   template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
            typename ExcludesArgs>
   BooleanSparse(Table table, std::piecewise_construct_t,
-                ColumnArgsFetcher& fetcher, search::Scored score,
+                ColumnArgsFetcher& fetcher, irs::detail::Scored score,
                 LeadArgs&& lead, ProbesArgs&& probes, OptionalArgs&& optional,
                 ExcludesArgs&& excludes)
     : _fetcher{fetcher},
@@ -97,7 +97,7 @@ class BooleanSparse : public Root {
         }
       }
       if constexpr (kExcludes) {
-        if (search::IsExcluded(_excludes, doc)) {
+        if (irs::detail::IsExcluded(_excludes, doc)) {
           doc = _lead.Advance();
           continue;
         }
@@ -127,23 +127,23 @@ class BooleanSparse : public Root {
   }
 
  private:
-  ScoreFunction Compose(search::Scored score) {
+  ScoreFunction Compose(irs::detail::Scored score) {
     if constexpr (!kProbes && !kOptional) {
       return _lead.PrepareScore();
     } else {
       std::vector<ScoreFunction> scorers;
-      search::AppendScorer(scorers, _lead.PrepareScore());
+      irs::detail::AppendScorer(scorers, _lead.PrepareScore());
       if constexpr (kProbes) {
         _probes.CollectScorers(scorers);
       }
       if constexpr (kOptional) {
         if constexpr (requires { _optional.PrepareScore(score.inner); }) {
-          search::AppendScorer(scorers, _optional.PrepareScore(score.inner));
+          irs::detail::AppendScorer(scorers, _optional.PrepareScore(score.inner));
         } else {
-          search::AppendScorer(scorers, _optional.PrepareScore());
+          irs::detail::AppendScorer(scorers, _optional.PrepareScore());
         }
       }
-      return search::MakeConjunctionScore(score.inner, std::move(scorers),
+      return irs::detail::MakeConjunctionScore(score.inner, std::move(scorers),
                                           score.absorbed);
     }
   }
@@ -165,7 +165,7 @@ class BooleanSparse : public Root {
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   ScoreFunction _score;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::scored

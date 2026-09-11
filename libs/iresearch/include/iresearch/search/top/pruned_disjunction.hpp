@@ -34,11 +34,11 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/exclude_block.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
-#include "iresearch/search/common/score_filter.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -102,12 +102,12 @@ class PrunedDisjunction : public Root {
         Finish(collector.ScoreThreshold());
         if (_first_essential == 0 && !doc_limits::eof(window_max)) {
           window_max =
-            std::max(window_max, window_min + search::kWindowDocs * _exhaustive_windows);
+            std::max(window_max, window_min + irs::detail::kWindowDocs * _exhaustive_windows);
         }
       }
       if (_first_essential == 0) {
-        if (window_max <= _docs_end - search::kWindowDocs && Saturating()) {
-          window_max = std::max(window_max, window_min + search::kWindowDocs);
+        if (window_max <= _docs_end - irs::detail::kWindowDocs && Saturating()) {
+          window_max = std::max(window_max, window_min + irs::detail::kWindowDocs);
         }
         _exhaustive_windows =
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
@@ -300,7 +300,7 @@ class PrunedDisjunction : public Root {
         second = cost;
       }
     }
-    return second * (search::kWindowDocs / 2.0) >= kDenseSecond * _docs_count;
+    return second * (irs::detail::kWindowDocs / 2.0) >= kDenseSecond * _docs_count;
   }
 
   double Cost(double fill, size_t first, double scale,
@@ -325,7 +325,7 @@ class PrunedDisjunction : public Root {
       return false;
     }
     const double scale = static_cast<double>(span) / _docs_count;
-    const double windows = static_cast<double>(span) / search::kWindowDocs;
+    const double windows = static_cast<double>(span) / irs::detail::kWindowDocs;
     double fill = 0;
     for (size_t i = scored; i != _sorted.size(); ++i) {
       fill += _sorted[i]->cost * scale;
@@ -365,7 +365,7 @@ class PrunedDisjunction : public Root {
       const auto sparse =
         32U * _num_outer_windows * static_cast<uint32_t>(_sorted.size());
       if (_num_candidates < sparse) {
-        _min_window_size = std::min<doc_id_t>(2 * _min_window_size, search::kWindowDocs);
+        _min_window_size = std::min<doc_id_t>(2 * _min_window_size, irs::detail::kWindowDocs);
       } else {
         _min_window_size = 1;
       }
@@ -382,7 +382,7 @@ class PrunedDisjunction : public Root {
       max, [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
         if constexpr (kExcludes) {
-          len = search::ExcludeBlock(_excludes, docs, scores, len);
+          len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
         }
         if (_has_non_essential) {
           View<doc_id_t> cand_docs{docs, len};
@@ -404,13 +404,13 @@ class PrunedDisjunction : public Root {
       ProcessSingleEssential(collector, max);
       return;
     }
-    if (const auto second = SecondEssentialDoc(); second >= min + search::kWindowDocs / 2) {
+    if (const auto second = SecondEssentialDoc(); second >= min + irs::detail::kWindowDocs / 2) {
       ProcessSingleEssential(collector, std::min(max, second));
       UpdateHeapTop();
       return;
     }
 
-    max = std::min(min + search::kWindowDocs, max);
+    max = std::min(min + irs::detail::kWindowDocs, max);
     ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
       entry->leaf.Fill(min, max, _mask, _scores);
     });
@@ -420,7 +420,7 @@ class PrunedDisjunction : public Root {
 
     if (!_has_non_essential) {
       const auto before = collector.TotalMatches();
-      _admit.Window(collector, _scores, _mask, min, search::kWindowWords);
+      _admit.Window(collector, _scores, _mask, min, irs::detail::kWindowWords);
       _num_candidates +=
         static_cast<uint32_t>(collector.TotalMatches() - before);
       return;
@@ -436,13 +436,13 @@ class PrunedDisjunction : public Root {
 
   size_t DrainCandidates(doc_id_t min) {
     size_t count = 0;
-    for (size_t i = 0; i != search::kWindowWords; ++i) {
+    for (size_t i = 0; i != irs::detail::kWindowWords; ++i) {
       auto word = _mask[i];
       if (word == 0) {
         continue;
       }
       _mask[i] = 0;
-      const size_t base = i * search::kWindowBits;
+      const size_t base = i * irs::detail::kWindowBits;
       do {
         const size_t offset =
           base + static_cast<size_t>(std::countr_zero(word));
@@ -460,7 +460,7 @@ class PrunedDisjunction : public Root {
                                 score_t score_threshold) {
     SDB_ASSERT(score_threshold > 0);
     const auto out =
-      search::FilterScores(docs.data, scores.data,
+      irs::detail::FilterScores(docs.data, scores.data,
                            static_cast<uint32_t>(docs.size()), score_threshold);
     docs.resize(out);
     scores.resize(out);
@@ -498,14 +498,14 @@ class PrunedDisjunction : public Root {
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _scores[search::kWindowDocs]{};
-  ABSL_CACHELINE_ALIGNED doc_id_t _cand_docs[search::kWindowDocs];
-  ABSL_CACHELINE_ALIGNED score_t _cand_scores[search::kWindowDocs];
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _scores[irs::detail::kWindowDocs]{};
+  ABSL_CACHELINE_ALIGNED doc_id_t _cand_docs[irs::detail::kWindowDocs];
+  ABSL_CACHELINE_ALIGNED score_t _cand_scores[irs::detail::kWindowDocs];
 
   LoserScoreCollector* _collector = nullptr;
-  search::FixedArray<Entry> _entries;
-  search::FixedArray<Entry*> _sorted;
+  irs::detail::FixedArray<Entry> _entries;
+  irs::detail::FixedArray<Entry*> _sorted;
   [[no_unique_address]] Excludes _excludes;
   size_t _first_essential = 0;
   size_t _first_required = 0;

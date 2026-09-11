@@ -27,7 +27,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/lead/boolean_sparse.hpp"
 
 namespace irs::lead {
@@ -65,7 +65,7 @@ struct Api {
     return child.PlanLead({});
   }
 
-  static Result MakeTerm(const search::PostingClause& term, const SubReader& segment,
+  static Result MakeTerm(const detail::PostingClause& term, const SubReader& segment,
                          const Context&) {
     return LeadOf(term, nullptr, segment);
   }
@@ -74,33 +74,33 @@ struct Api {
     return MakeAllDocs(segment);
   }
 
-  static search::TableFilter* BitsetTable(const Context&) noexcept {
+  static detail::TableFilter* BitsetTable(const Context&) noexcept {
     return nullptr;
   }
 
-  static Result MakeNegation(std::span<const search::PostingClause> exclude_terms,
+  static Result MakeNegation(std::span<const detail::PostingClause> exclude_terms,
                              std::span<const QueryBuilder::ptr> exclude_filters,
                              const SubReader& segment, uint64_t candidates,
                              const Context& ctx) {
-    return search::builder::MakeSparseNegation<Api>(
+    return detail::builder::MakeSparseNegation<Api>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }
 };
 
 }  // namespace
 
-Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
+Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const search::PostingClause> should,
+                           std::span<const detail::PostingClause> should,
                            std::span<const QueryBuilder::ptr> should_filters,
                            uint32_t min_should_match,
                            const SubReader& segment) {
-  return search::builder::MakeRequired<Api>(
+  return detail::builder::MakeRequired<Api>(
     must, must_filters, should, should_filters, min_should_match, segment, {});
 }
 
 Node::ptr Make(const BooleanQuery& query) {
-  return search::builder::Make<Api>(query, {});
+  return detail::builder::Make<Api>(query, {});
 }
 
 }  // namespace irs::lead

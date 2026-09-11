@@ -35,7 +35,7 @@
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
@@ -203,8 +203,8 @@ class DocList {
 
   irs::doc_id_t Window(irs::doc_id_t min, irs::doc_id_t max,
                        uint64_t* own) noexcept {
-    const auto words = irs::search::WindowWords(min, max);
-    irs::search::Clear(own, words);
+    const auto words = irs::detail::WindowWords(min, max);
+    irs::detail::Clear(own, words);
     if (!irs::doc_limits::valid(_doc)) {
       Advance();
     }
@@ -213,8 +213,8 @@ class DocList {
     }
     while (_doc < max) {
       const auto offset = _doc - min;
-      own[offset / irs::search::kWindowBits] |=
-        uint64_t{1} << (offset % irs::search::kWindowBits);
+      own[offset / irs::detail::kWindowBits] |=
+        uint64_t{1} << (offset % irs::detail::kWindowBits);
       Advance();
     }
     return _doc;
@@ -249,7 +249,7 @@ class LeadDocs : public irs::lead::Node {
 class LeadScored : public irs::lead::Node {
  public:
   LeadScored(DocList::DocidsT docs, const irs::SubReader& segment,
-             const irs::search::ScoredCtx& ctx, irs::score_t boost,
+             const irs::detail::ScoredCtx& ctx, irs::score_t boost,
              const irs::byte_type* stats) noexcept
     : _list{std::move(docs)},
       _segment{segment},
@@ -278,7 +278,7 @@ class LeadScored : public irs::lead::Node {
   DocList _list;
   NoAttrs _attrs;
   const irs::SubReader& _segment;
-  irs::search::ScoredCtx _ctx;
+  irs::detail::ScoredCtx _ctx;
   irs::score_t _boost;
   const irs::byte_type* _stats;
 };
@@ -296,7 +296,7 @@ class ProbeDocs : public irs::probe::Node {
 class ProbeScored : public irs::probe::Node {
  public:
   ProbeScored(DocList::DocidsT docs, const irs::SubReader& segment,
-              const irs::search::ScoredCtx& ctx, irs::score_t boost,
+              const irs::detail::ScoredCtx& ctx, irs::score_t boost,
               const irs::byte_type* stats) noexcept
     : _list{std::move(docs)},
       _segment{segment},
@@ -323,7 +323,7 @@ class ProbeScored : public irs::probe::Node {
   DocList _list;
   NoAttrs _attrs;
   const irs::SubReader& _segment;
-  irs::search::ScoredCtx _ctx;
+  irs::detail::ScoredCtx _ctx;
   irs::score_t _boost;
   const irs::byte_type* _stats;
 };
@@ -334,7 +334,7 @@ class FillDocs : public irs::fill::Node {
 
   irs::doc_id_t FillOr(irs::doc_id_t min, irs::doc_id_t max,
                        uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::search::WindowWords(min, max);
+    const auto words = irs::detail::WindowWords(min, max);
     const auto next = _list.Window(min, max, _own.data());
     for (size_t w = 0; w != words; ++w) {
       mask[w] |= _own[w];
@@ -344,7 +344,7 @@ class FillDocs : public irs::fill::Node {
 
   irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
                         uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::search::WindowWords(min, max);
+    const auto words = irs::detail::WindowWords(min, max);
     const auto next = _list.Window(min, max, _own.data());
     for (size_t w = 0; w != words; ++w) {
       mask[w] &= _own[w];
@@ -354,7 +354,7 @@ class FillDocs : public irs::fill::Node {
 
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
                            uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::search::WindowWords(min, max);
+    const auto words = irs::detail::WindowWords(min, max);
     const auto next = _list.Window(min, max, _own.data());
     for (size_t w = 0; w != words; ++w) {
       mask[w] &= ~_own[w];
@@ -363,14 +363,14 @@ class FillDocs : public irs::fill::Node {
   }
 
  private:
-  irs::search::Scratch _own{};
+  irs::detail::Scratch _own{};
   DocList _list;
 };
 
 class FillScored : public irs::fill::Node {
  public:
   FillScored(DocList::DocidsT docs, const irs::SubReader& segment,
-             const irs::search::ScoredCtx& ctx, irs::score_t boost,
+             const irs::detail::ScoredCtx& ctx, irs::score_t boost,
              const irs::byte_type* stats, irs::ScoreMergeType merge) noexcept
     : _list{std::move(docs)},
       _segment{segment},
@@ -382,7 +382,7 @@ class FillScored : public irs::fill::Node {
   irs::doc_id_t Fill(irs::doc_id_t min, irs::doc_id_t max,
                      uint64_t* IRS_RESTRICT mask,
                      irs::score_t* IRS_RESTRICT scores) final {
-    const auto words = irs::search::WindowWords(min, max);
+    const auto words = irs::detail::WindowWords(min, max);
     const auto next = _list.Window(min, max, _own.data());
     const auto score = _ctx.scorer->PrepareScorer({
       .segment = _segment,
@@ -397,7 +397,7 @@ class FillScored : public irs::fill::Node {
       for (size_t w = 0; w != words; ++w) {
         auto word = _own[w];
         mask[w] |= word;
-        const auto base = w * irs::search::kWindowBits;
+        const auto base = w * irs::detail::kWindowBits;
         while (word != 0) {
           const auto offset =
             base + static_cast<size_t>(std::countr_zero(word));
@@ -410,11 +410,11 @@ class FillScored : public irs::fill::Node {
   }
 
  private:
-  irs::search::Scratch _own{};
+  irs::detail::Scratch _own{};
   DocList _list;
   NoAttrs _attrs;
   const irs::SubReader& _segment;
-  irs::search::ScoredCtx _ctx;
+  irs::detail::ScoredCtx _ctx;
   irs::score_t _boost;
   const irs::byte_type* _stats;
   irs::ScoreMergeType _merge;
@@ -522,7 +522,7 @@ struct Boosted : public irs::FilterWithType<Boosted> {
     }
 
     irs::lead::Node::ptr PlanLead(
-      const irs::search::ScoredCtx& ctx) const final {
+      const irs::detail::ScoredCtx& ctx) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
         return irs::memory::make_managed<LeadDocs>(docs);
@@ -531,7 +531,7 @@ struct Boosted : public irs::FilterWithType<Boosted> {
                                                    Stats().stats);
     }
 
-    irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx& ctx,
+    irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
@@ -541,7 +541,7 @@ struct Boosted : public irs::FilterWithType<Boosted> {
                                                     _boost, Stats().stats);
     }
 
-    irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx& ctx,
+    irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
@@ -607,14 +607,14 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
       return {};
     }
     irs::lead::Node::ptr PlanLead(
-      const irs::search::ScoredCtx& ctx) const final {
+      const irs::detail::ScoredCtx& ctx) const final {
       if (!Scores()) {
         return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
       }
       return irs::memory::make_managed<LeadScored>(
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
     }
-    irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx& ctx,
+    irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       if (!Scores()) {
         return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
@@ -622,7 +622,7 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
       return irs::memory::make_managed<ProbeScored>(
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
     }
-    irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx& ctx,
+    irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       if (!Scores()) {
         return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});
@@ -671,14 +671,14 @@ struct Estimated : public irs::FilterWithType<Estimated> {
       return {};
     }
     irs::lead::Node::ptr PlanLead(
-      const irs::search::ScoredCtx& ctx) const final {
+      const irs::detail::ScoredCtx& ctx) const final {
       if (!Scores()) {
         return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
       }
       return irs::memory::make_managed<LeadScored>(
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
     }
-    irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx& ctx,
+    irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       if (!Scores()) {
         return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
@@ -686,7 +686,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
       return irs::memory::make_managed<ProbeScored>(
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
     }
-    irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx& ctx,
+    irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       if (!Scores()) {
         return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});

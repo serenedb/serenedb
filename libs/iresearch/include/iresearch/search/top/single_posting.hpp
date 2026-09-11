@@ -21,8 +21,8 @@
 #pragma once
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -36,10 +36,10 @@ class SinglePosting : public Root {
   explicit SinglePosting(Table table) noexcept : _admit{table} {}
 
   void Prepare(const PostingMeta& meta, const SubReader& segment,
-               const TermReader& field, const search::ScoreArgs& args) {
+               const TermReader& field, const irs::detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count == 1);
     _doc = doc_limits::min() + meta.doc_delta;
-    _score = search::SingleDocScore(segment, field, _doc, meta.freq, args);
+    _score = irs::detail::SingleDocScore(segment, field, _doc, meta.freq, args);
   }
 
   void Run(LoserScoreCollector& collector) final {

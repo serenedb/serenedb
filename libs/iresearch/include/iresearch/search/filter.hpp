@@ -37,7 +37,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scores/constant_score.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/docs/root.hpp"
@@ -72,8 +72,8 @@ struct PrepareContext {
     return collector != nullptr || needs_terms;
   }
 
-  search::StatsRecord Record() const noexcept {
-    return collector != nullptr ? collector->Record() : search::StatsRecord{};
+  detail::StatsRecord Record() const noexcept {
+    return collector != nullptr ? collector->Record() : detail::StatsRecord{};
   }
 };
 
@@ -114,11 +114,11 @@ class QueryBuilder : public memory::Managed {
   uint64_t Postings() const noexcept { return _postings; }
   uint32_t Leaves() const noexcept { return _leaves; }
 
-  void SetStats(search::StatsRecord stats) noexcept { _stats = stats; }
+  void SetStats(detail::StatsRecord stats) noexcept { _stats = stats; }
 
-  search::StatsRecord Stats() const noexcept { return _stats; }
+  detail::StatsRecord Stats() const noexcept { return _stats; }
 
-  search::StatsRecord Stats(const search::ScoredCtx& ctx) const noexcept {
+  detail::StatsRecord Stats(const detail::ScoredCtx& ctx) const noexcept {
     return {
       _stats.stats,
       _stats.scorer != nullptr ? _stats.scorer : ctx.scorer,
@@ -151,12 +151,12 @@ class QueryBuilder : public memory::Managed {
 
   virtual top::Root::ptr PlanTop(const top::Context& ctx) const = 0;
 
-  virtual lead::Node::ptr PlanLead(const search::ScoredCtx& ctx) const = 0;
+  virtual lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const = 0;
 
-  virtual probe::Node::ptr PlanProbe(const search::ScoredCtx& ctx,
+  virtual probe::Node::ptr PlanProbe(const detail::ScoredCtx& ctx,
                                      uint64_t interrogations) const = 0;
 
-  virtual fill::Node::ptr PlanFill(const search::ScoredCtx& ctx,
+  virtual fill::Node::ptr PlanFill(const detail::ScoredCtx& ctx,
                                    ScoreMergeType merge) const = 0;
 
  protected:
@@ -168,7 +168,7 @@ class QueryBuilder : public memory::Managed {
   QueryKind _kind = QueryKind::Other;
 
  private:
-  search::StatsRecord _stats;
+  detail::StatsRecord _stats;
 };
 
 class Filter {

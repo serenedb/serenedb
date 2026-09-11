@@ -24,8 +24,8 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/states/term_state.hpp"
 
@@ -47,60 +47,60 @@ Node::ptr Make(const BooleanQuery& query);
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query);
 
-Node::ptr Make(const TermQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const FixedPhraseQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const VariadicPhraseQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const AllQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const WildcardNGramQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-inline Node::ptr Make(const HnswQuery&, const search::ScoredCtx&, ScoreMergeType) {
+inline Node::ptr Make(const HnswQuery&, const detail::ScoredCtx&, ScoreMergeType) {
   return {};
 }
-inline Node::ptr Make(const KnnVectorQuery&, const search::ScoredCtx&, ScoreMergeType) {
+inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&, ScoreMergeType) {
   return {};
 }
-Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
-inline Node::ptr Make(const EmptyQueryBuilder&, const search::ScoredCtx&,
+inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&,
                       ScoreMergeType) {
   return {};
 }
-Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const search::ScoredCtx& ctx,
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 
-Node::ptr MakePostingDocs(const search::PostingClause& posting,
+Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader& segment);
-Node::ptr MakePostingScored(const search::PostingClause& posting,
-                            const SubReader& segment, const search::ScoredCtx& ctx,
+Node::ptr MakePostingScored(const detail::PostingClause& posting,
+                            const SubReader& segment, const detail::ScoredCtx& ctx,
                             ScoreMergeType merge);
 
-Node::ptr MakeSinglePostingDocs(const search::PostingClause& posting);
-Node::ptr MakeSinglePostingScored(const search::PostingClause& posting,
+Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting);
+Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
-                                  const search::ScoredCtx& ctx, ScoreMergeType merge);
+                                  const detail::ScoredCtx& ctx, ScoreMergeType merge);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
-Node::ptr MakeAllScored(const SubReader& segment, const search::ScoredCtx& ctx,
-                        const search::StatsRecord& record, ScoreMergeType merge,
+Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoredCtx& ctx,
+                        const detail::StatsRecord& record, ScoreMergeType merge,
                         score_t boost);
 Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
                         score_t score);
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  const search::ScoredCtx& ctx, ScoreMergeType merge);
+                                  const detail::ScoredCtx& ctx, ScoreMergeType merge);
 
 }  // namespace irs::fill

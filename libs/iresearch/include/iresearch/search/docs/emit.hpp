@@ -24,8 +24,8 @@
 #include <cstdint>
 
 #include "basics/bit_utils.hpp"
-#include "iresearch/search/common/table_filter.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
@@ -45,19 +45,19 @@ class Emit {
 
   IRS_FORCE_INLINE bool Drain(doc_id_t* IRS_RESTRICT out, uint32_t capacity,
                               uint32_t& n) noexcept {
-    [[clang::code_align(64)]] for (; _word != search::kWindowWords; ++_word) {
+    [[clang::code_align(64)]] for (; _word != detail::kWindowWords; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;
       }
-      if (n + search::kWindowBits > capacity) [[unlikely]] {
+      if (n + detail::kWindowBits > capacity) [[unlikely]] {
         if (n + static_cast<uint32_t>(std::popcount(word)) > capacity) {
           return false;
         }
       }
       _words[_word] = 0;
       n = static_cast<uint32_t>(
-        MaterializeWord(_base + _word * search::kWindowBits, word, out + n) -
+        MaterializeWord(_base + _word * detail::kWindowBits, word, out + n) -
         out);
     }
     return true;
@@ -65,9 +65,9 @@ class Emit {
 
  private:
   uint64_t* _words = nullptr;
-  uint32_t _word = search::kWindowWords;
+  uint32_t _word = detail::kWindowWords;
   doc_id_t _base = 0;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

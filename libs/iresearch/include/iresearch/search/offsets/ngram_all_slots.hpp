@@ -25,12 +25,12 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/conjunction_leaves.hpp"
+#include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/ngram_matcher.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::search {
+namespace irs::detail {
 
 template<typename Leaf, size_t N = 0, bool Scored = false, bool Offs = false>
 class NGramAllSlots {
@@ -93,4 +93,4 @@ class NGramAllSlots {
   Checker _checker;
 };
 
-}  // namespace irs::search
+}  // namespace irs::detail

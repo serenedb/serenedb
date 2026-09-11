@@ -28,11 +28,11 @@
 #include "basics/debugging.h"
 #include "basics/empty.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
@@ -46,7 +46,7 @@ namespace irs::top {
 template<template<typename...> class Shape, typename... Parts, typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., search::TableFilter*>>(
+    return memory::make_managed<Shape<Parts..., irs::detail::TableFilter*>>(
       ctx.table, std::forward<Args>(args)...);
   }
   return memory::make_managed<Shape<Parts..., utils::Empty>>(
@@ -75,11 +75,11 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
 template<typename Node>
 using PlainWalk = detail::Walk<Node, utils::Empty>;
 template<typename Node>
-using FilteredWalk = detail::Walk<Node, search::TableFilter*>;
+using FilteredWalk = detail::Walk<Node, irs::detail::TableFilter*>;
 template<typename Node>
 using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
 template<typename Node>
-using FilteredConstantWalk = detail::ConstantWalk<Node, search::TableFilter*>;
+using FilteredConstantWalk = detail::ConstantWalk<Node, irs::detail::TableFilter*>;
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
@@ -104,12 +104,12 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
-Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
                       const Context& ctx);
-Root::ptr MakeSinglePosting(const search::PostingClause& posting,
+Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const search::StatsRecord& record, score_t boost);
+                  const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
@@ -134,10 +134,10 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
                      const DocumentMask& mask);
 
-Root::ptr MakePrunedPosting(const search::PostingClause& posting,
+Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
-Root::ptr MakePrunedPosting(const search::PostingClause& posting,
-                            std::span<const search::PostingClause> excludes,
+Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
+                            std::span<const irs::detail::PostingClause> excludes,
                             std::span<const QueryBuilder::ptr> exclude_filters,
                             const SubReader& segment, const Context& ctx);
 
@@ -147,50 +147,50 @@ Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
                                          const Context& ctx);
 
 Root::ptr MakePrunedConjunction(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  std::span<const search::PostingClause> excludes,
+  std::span<const irs::detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
+  std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
 Root::ptr MakeNestedPrunedConjunction(
-  std::span<const search::PostingClause> terms,
+  std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> excludes,
+  std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
 template<typename Term>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
-  search::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, std::span<const search::PostingClause> excludes,
+  irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
+  score_t boost, std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge, uint32_t min_match = 1) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   SDB_ASSERT(min_match != 0);
   if (merge != ScoreMergeType::Sum || !filters.empty() ||
-      uniformity != search::Terms::Bounded || min_match != 1) {
+      uniformity != irs::detail::Terms::Bounded || min_match != 1) {
     return {};
   }
   for (size_t i = 0; i != terms.size(); ++i) {
-    if (!search::ScoresOf(terms[i], scorer)) {
+    if (!irs::detail::ScoresOf(terms[i], scorer)) {
       return {};
     }
   }
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const auto* const doc = search::DocOf(search::FieldOf(terms.front(), field));
-  return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = search::PostingPrunedDisj<Input>;
+  const auto* const doc = irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
+  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = irs::detail::PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
-      const auto posting = search::ClauseOf(terms[i], field, scorer, boost);
+      const auto posting = irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
-      SDB_ASSERT(search::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,
+      SDB_ASSERT(irs::detail::DocOf(own) == doc);
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
                    own,
-                   search::ScoreArgs{.scorer = posting.stats.scorer,
+                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
                              .stats = posting.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});
@@ -203,8 +203,8 @@ Root::ptr MakePrunedDisjunction(
           ctx, terms.size(), docs_count, init, std::forward_as_tuple());
       }
       const auto candidates =
-        std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
-      return search::BuildBlockExcludes<Root::ptr>(
+        std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
+      return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedDisjunction, Leaf,

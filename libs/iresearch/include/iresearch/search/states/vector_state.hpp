@@ -24,7 +24,7 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 

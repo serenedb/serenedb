@@ -23,8 +23,8 @@
 #include <algorithm>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/common/posting_batch.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/posting_batch.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -33,8 +33,8 @@ namespace irs::docs {
 
 template<typename InputType, typename Table>
 class Posting : public Root,
-                public search::PostingBatch<InputType, Table, false> {
-  using Base = search::PostingBatch<InputType, Table, false>;
+                public detail::PostingBatch<InputType, Table, false> {
+  using Base = detail::PostingBatch<InputType, Table, false>;
 
   using Base::_last;
   using Base::_left_in_list;
@@ -76,7 +76,7 @@ class Posting : public Root,
   }
 
  private:
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

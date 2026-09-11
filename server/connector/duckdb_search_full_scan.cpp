@@ -50,8 +50,8 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/common/lazy_bitset.hpp>
-#include <iresearch/search/common/resolve.hpp>
+#include <iresearch/search/detail/lazy_bitset.hpp>
+#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/term_counts.hpp>
 #include <iresearch/search/doc_collector.hpp>
@@ -111,7 +111,7 @@ inline constexpr uint32_t kPlanBatch = STANDARD_VECTOR_SIZE;
 // document: the codec filter and the zonemap both work per columnstore block,
 // so a run is narrowed block by block and a block no row can survive is
 // stepped over instead of being read.
-class ColFilterVerify : public irs::search::TableFilter {
+class ColFilterVerify : public irs::detail::TableFilter {
  public:
   // Binds this segment's active specs. Nothing to verify leaves it empty, and
   // the caller then asks its plan for the whole answer.
@@ -362,7 +362,7 @@ struct TsDictLocalState : public IResearchScanLocalState {
   // The one set the WHERE and the removals folded into, as the documents
   // rather than as a number: what a `.col` predicate has to be given, and what
   // a field too small for its own `TermCounts` is asked about.
-  irs::search::LazyBitset& Live();
+  irs::detail::LazyBitset& Live();
   uint32_t WalkLive(irs::TermIterator& it, bool count_all);
   // The counter for this field's terms, or null where the field is not worth
   // folding a set for and where the documents themselves are needed.
@@ -372,7 +372,7 @@ struct TsDictLocalState : public IResearchScanLocalState {
   ColFilterVerify _col_verify;
   // The set is the segment's and the counter is one field's, so the counter
   // borrows it and has to go first.
-  std::unique_ptr<irs::search::LazyBitset> _live;
+  std::unique_ptr<irs::detail::LazyBitset> _live;
   irs::count::TermCounts::ptr _term_counts;
   // The segment's every document, prepared where the count is masked but
   // unfiltered: the removals are then the whole of what the set says.
@@ -2675,13 +2675,13 @@ void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
   if (count_mode == CountMode::Meta || !_col_verify.Empty()) {
     return;
   }
-  if (irs::search::DocOf(reader) == nullptr) {
+  if (irs::detail::DocOf(reader) == nullptr) {
     return;
   }
   _term_counts = irs::count::MakeTermCounts(Live(), reader, reader.size());
 }
 
-irs::search::LazyBitset& TsDictLocalState::Live() {
+irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query != nullptr ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
@@ -2690,9 +2690,9 @@ irs::search::LazyBitset& TsDictLocalState::Live() {
     const auto* removals = _seg->docs_mask();
     if (auto* folded = node->Folded(); folded != nullptr) {
       _live =
-        std::make_unique<irs::search::LazyBitset>(std::move(*folded), removals);
+        std::make_unique<irs::detail::LazyBitset>(std::move(*folded), removals);
     } else {
-      _live = std::make_unique<irs::search::LazyBitset>(
+      _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
         removals);
     }

@@ -28,9 +28,9 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/boolean_of.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/boolean_of.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/ngram_of.hpp"
 #include "iresearch/search/offsets/phrase_of.hpp"
 #include "iresearch/search/lead/impl.hpp"
@@ -52,24 +52,24 @@ namespace {
 
 Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
   if (ctx.table != nullptr) {
-    return search::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
+    return irs::detail::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
       query, ctx.table, score_t{0});
   }
-  return search::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
+  return irs::detail::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
     query, utils::Empty{}, score_t{0});
 }
 
 Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
   if (ctx.table != nullptr) {
-    return search::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
+    return irs::detail::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
       query, ctx.table, score_t{0});
   }
-  return search::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
+  return irs::detail::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
     query, utils::Empty{}, score_t{0});
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
-  return search::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+  return irs::detail::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
     using Node = lead::TwoPhaseDocs<Slots>;
     return MakeShape<detail::ConstantWalk, Node>(
       ctx, score_t{0}, std::forward<decltype(args)>(args)...);
@@ -81,7 +81,7 @@ Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  const search::PostingClause posting{.state = query.State(),
+  const irs::detail::PostingClause posting{.state = query.State(),
                               .boost = query.Boost(),
                               .stats = query.Stats(ScoredOf(ctx))};
   return posting.state.cookie.docs_count == 1
@@ -97,13 +97,13 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
   const auto boost = query.Boost();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
-    const auto posting = search::ClauseOf(terms.front(), field, scorer, boost);
+    const auto posting = irs::detail::ClauseOf(terms.front(), field, scorer, boost);
     return posting.state.cookie.docs_count == 1
              ? MakeSinglePosting(posting, query.Segment(), ctx)
              : MakePosting(posting, query.Segment(), ctx);
   }
   return MakeWindowDisjunction(
-    terms, {}, search::UniformityOf(*state.Reader(), scorer), field, scorer,
+    terms, {}, irs::detail::UniformityOf(*state.Reader(), scorer), field, scorer,
     boost, query.Segment(), ctx, merge, {});
 }
 
@@ -111,7 +111,7 @@ Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
   if (query.Stats().stats == nullptr) {
     return MakeUnscored(query, ctx);
   }
-  return search::ResolveMatch(
+  return irs::detail::ResolveMatch(
     query, [&] { return MakeFixedPhraseSlop(query, ctx); },
     [&] { return MakeFixedPhraseIntervals(query, ctx); },
     [&] { return MakeFixedPhrase(query, ctx); });
@@ -121,7 +121,7 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
   if (query.Stats().stats == nullptr) {
     return MakeUnscored(query, ctx);
   }
-  return search::ResolveMatch(
+  return irs::detail::ResolveMatch(
     query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
     [&] { return MakeVariadicPhraseIntervals(query, ctx); },
     [&] { return MakeVariadicPhrase(query, ctx); });

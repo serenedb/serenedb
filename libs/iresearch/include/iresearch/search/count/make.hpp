@@ -23,8 +23,8 @@
 #include <cstdint>
 #include <span>
 
-#include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/states/term_state.hpp"
 
@@ -34,7 +34,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
 
 Root::ptr MakeConstant(uint64_t count);
 
-Root::ptr MakeTerm(const search::PostingClause& posting,
+Root::ptr MakeTerm(const detail::PostingClause& posting,
                    const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx);
 

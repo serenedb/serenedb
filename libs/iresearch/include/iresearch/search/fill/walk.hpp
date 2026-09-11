@@ -26,8 +26,8 @@
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/erasure.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/erasure.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
@@ -40,7 +40,7 @@ namespace irs::fill {
 template<lead::Type Leaf>
 class WalkDocs {
  public:
-  static_assert(!search::kIsErased<Leaf>);
+  static_assert(!detail::kIsErased<Leaf>);
 
   template<typename... Args>
   explicit WalkDocs(Args&&... args) : _leaf{std::forward<Args>(args)...} {}
@@ -49,14 +49,14 @@ class WalkDocs {
     auto doc = From(min);
     while (doc < max) {
       const size_t offset = doc - min;
-      SetBit(mask[offset / search::kWindowBits], offset % search::kWindowBits);
+      SetBit(mask[offset / detail::kWindowBits], offset % detail::kWindowBits);
       doc = _leaf.Advance();
     }
     return _doc = doc;
   }
 
   doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    search::AndCursor cursor{.words = mask};
+    detail::AndCursor cursor{.words = mask};
     auto doc = From(min);
     while (doc < max) {
       cursor.Doc(doc - min);
@@ -70,8 +70,8 @@ class WalkDocs {
     auto doc = From(min);
     while (doc < max) {
       const size_t offset = doc - min;
-      UnsetBit(mask[offset / search::kWindowBits],
-               offset % search::kWindowBits);
+      UnsetBit(mask[offset / detail::kWindowBits],
+               offset % detail::kWindowBits);
       doc = _leaf.Advance();
     }
     return _doc = doc;
@@ -94,7 +94,7 @@ class WalkDocs {
 template<typename Leaf>
 class WalkScored {
  public:
-  static_assert(!search::kIsErased<Leaf>);
+  static_assert(!detail::kIsErased<Leaf>);
 
   template<typename... Args>
   explicit WalkScored(ScoreMergeType merge, ColumnArgsFetcher& fetcher,
@@ -113,7 +113,7 @@ class WalkScored {
     scores_size_t n = 0;
     while (doc < max) {
       const uint32_t offset = doc - min;
-      SetBit(mask[offset / search::kWindowBits], offset % search::kWindowBits);
+      SetBit(mask[offset / detail::kWindowBits], offset % detail::kWindowBits);
       _docs[n] = doc;
       _leaf.FetchScoreArgs(n);
       if (++n == kScoreBlock) {

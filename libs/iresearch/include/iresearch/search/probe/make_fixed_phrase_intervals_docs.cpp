@@ -25,7 +25,7 @@
 namespace irs::probe {
 
 Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query) {
-  return search::MakeFixedPhraseOf<search::PhraseMatch::Intervals, Impl,
+  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Intervals, Impl,
                                    Node::ptr>(query);
 }
 

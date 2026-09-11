@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -49,7 +49,7 @@ class ConstantScored {
   ScoreFunction PrepareScore() { return ScoreFunction::Constant(_constant); }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:

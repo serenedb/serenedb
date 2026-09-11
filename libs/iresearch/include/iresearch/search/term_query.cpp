@@ -33,7 +33,7 @@ namespace irs {
 
 TermQuery::TermQuery(const SubReader& segment, const TermReader* reader,
                      const PostingMeta& cookie, score_t boost,
-                     search::StatsRecord stats)
+                     detail::StatsRecord stats)
   : QueryBuilderImpl{segment, cookie.docs_count, QueryKind::Term},
     _state{reader, cookie},
     _boost{boost} {
@@ -50,7 +50,7 @@ QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
-                                search::StatsRecord stats) {
+                                detail::StatsRecord stats) {
   if (meta.docs_count == 0) {
     return QueryBuilder::Empty();
   }

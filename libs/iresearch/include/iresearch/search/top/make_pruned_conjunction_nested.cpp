@@ -31,12 +31,12 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/score_policy.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -59,15 +59,15 @@ inline constexpr uint64_t kNestedOthersOverLead = 8;
 inline constexpr uint64_t kConstantLeadDensity = 16;
 
 struct NestedClause {
-  std::span<const search::PostingClause> terms;
+  std::span<const irs::detail::PostingClause> terms;
   uint64_t docs = 0;
   const QueryBuilder* constant = nullptr;
   score_t bound = 0;
 };
 
-bool BoundedPosting(const search::PostingClause& posting) noexcept {
-  return search::ScoresOf(posting, nullptr) &&
-         search::BoundsOf(*posting.state.reader);
+bool BoundedPosting(const irs::detail::PostingClause& posting) noexcept {
+  return irs::detail::ScoresOf(posting, nullptr) &&
+         irs::detail::BoundsOf(*posting.state.reader);
 }
 
 bool BoundedDisjunction(const QueryBuilder& child, NestedClause& out) noexcept {
@@ -80,10 +80,10 @@ bool BoundedDisjunction(const QueryBuilder& child, NestedClause& out) noexcept {
       nested.MinShouldMatch() != 1 || !nested.Bucket(Occur::Must).empty() ||
       !nested.Bucket(Occur::MustNot).empty() || !should.filters.empty() ||
       !should.all_docs.empty() ||
-      nested.Uniformity(Occur::Should) != search::Terms::Bounded) {
+      nested.Uniformity(Occur::Should) != irs::detail::Terms::Bounded) {
     return false;
   }
-  const std::span<const search::PostingClause> terms{should.postings};
+  const std::span<const irs::detail::PostingClause> terms{should.postings};
   if (terms.size() < 2) {
     return false;
   }
@@ -101,8 +101,8 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
   const auto* const field = state.Reader();
   const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
   if (query.MergeType() != ScoreMergeType::Sum || field == nullptr ||
-      scorer == nullptr || search::DocOf(*field) == nullptr ||
-      search::UniformityOf(*field, scorer) != search::Terms::Constant) {
+      scorer == nullptr || irs::detail::DocOf(*field) == nullptr ||
+      irs::detail::UniformityOf(*field, scorer) != irs::detail::Terms::Constant) {
     return false;
   }
   const auto boost = query.Boost();
@@ -112,7 +112,7 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
       return false;
     }
     bound +=
-      search::AllDocsScore(segment, search::ScoreArgs{.scorer = scorer,
+      irs::detail::AllDocsScore(segment, irs::detail::ScoreArgs{.scorer = scorer,
                                               .stats = entry.stats,
                                               .fetcher = &ctx.fetcher,
                                               .boost = entry.boost * boost});
@@ -124,9 +124,9 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
 }  // namespace
 
 Root::ptr MakeNestedPrunedConjunction(
-  std::span<const search::PostingClause> terms,
+  std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> excludes,
+  std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge) {
   SDB_ASSERT(!filters.empty());
@@ -135,9 +135,9 @@ Root::ptr MakeNestedPrunedConjunction(
   }
   std::vector<NestedClause> clauses;
   clauses.reserve(terms.size() + filters.size());
-  if (!search::VisitOrderedOf(
+  if (!irs::detail::VisitOrderedOf(
         terms, filters, true, 0, std::numeric_limits<size_t>::max(),
-        [&](const search::PostingClause& term) {
+        [&](const irs::detail::PostingClause& term) {
           if (!BoundedPosting(term)) {
             return false;
           }
@@ -194,26 +194,26 @@ Root::ptr MakeNestedPrunedConjunction(
     }
   }
   const auto* const doc =
-    search::DocOf(search::FieldOf(clauses.front().terms.front(), nullptr));
+    irs::detail::DocOf(irs::detail::FieldOf(clauses.front().terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
-  return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = search::PostingPrunedClause<Input>;
+  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = irs::detail::PostingPrunedClause<Input>;
     using Group = probe::OrLeaves<Leaf, 0, true>;
     using Window =
-      probe::BooleanWindow<search::OrGroup<fill::SetLeaves<fill::Erased>>,
-                           search::Scored, true>;
-    const auto args = [&](const search::PostingClause& posting) {
-      return search::ScoreArgs{.scorer = posting.stats.scorer,
+      probe::BooleanWindow<irs::detail::OrGroup<fill::SetLeaves<fill::Erased>>,
+                           irs::detail::Scored, true>;
+    const auto args = [&](const irs::detail::PostingClause& posting) {
+      return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
                        .stats = posting.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = posting.boost};
     };
-    const auto prepare = [&](auto& leaf, const search::PostingClause& posting) {
+    const auto prepare = [&](auto& leaf, const irs::detail::PostingClause& posting) {
       const auto& own = *posting.state.reader;
-      SDB_ASSERT(search::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,
+      SDB_ASSERT(irs::detail::DocOf(own) == doc);
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
                    own, args(posting));
     };
     const auto each = [&](const NestedClause& clause) {
@@ -230,13 +230,13 @@ Root::ptr MakeNestedPrunedConjunction(
                                 [&](fill::Erased& leaf, size_t) {
                                   leaf = fill::Erased{std::move(fills[i])};
                                 }),
-          search::Scored{merge, 0}, clause.bound);
+          irs::detail::Scored{merge, 0}, clause.bound);
       }
       if (clause.terms.size() == 1) {
         const auto& posting = clause.terms.front();
         const auto& own = *posting.state.reader;
         return memory::make_managed<detail::PrunedClauseImpl<Leaf>>(
-          posting.state.cookie, *doc, search::LayoutOf(own), segment, own,
+          posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
           args(posting));
       }
       return memory::make_managed<detail::PrunedClauseImpl<Group>>(
@@ -251,7 +251,7 @@ Root::ptr MakeNestedPrunedConjunction(
           std::forward_as_tuple());
       }
       const uint64_t lead_docs = clauses.front().docs;
-      return search::BuildBlockExcludes<Root::ptr>(
+      return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
@@ -278,9 +278,9 @@ Root::ptr MakeNestedPrunedConjunction(
     if (posting_lead) {
       const auto& posting = first.terms.front();
       const auto& own = *posting.state.reader;
-      SDB_ASSERT(search::DocOf(own) == doc);
-      return make.template operator()<search::PostingPrunedLead<Input>>(
-        std::forward_as_tuple(posting.state.cookie, *doc, search::LayoutOf(own),
+      SDB_ASSERT(irs::detail::DocOf(own) == doc);
+      return make.template operator()<irs::detail::PostingPrunedLead<Input>>(
+        std::forward_as_tuple(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                               segment, own, args(posting)));
     }
     return make.template operator()<detail::DisjunctionLead<Input>>(

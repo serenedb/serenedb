@@ -25,8 +25,8 @@
 
 #include "basics/assert.h"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -39,7 +39,7 @@ class RecipeScored {
  public:
   template<typename... Args>
   RecipeScored(const SubReader& segment, const TermReader& field,
-               const search::ScoreArgs& args, Args&&... leaf)
+               const detail::ScoreArgs& args, Args&&... leaf)
     : _leaf{std::forward<Args>(leaf)...},
       _segment{&segment},
       _field{&field},
@@ -48,7 +48,7 @@ class RecipeScored {
   }
 
   template<typename... Args>
-  RecipeScored(const SubReader& segment, const search::ScoreArgs& args, Args&&... leaf)
+  RecipeScored(const SubReader& segment, const detail::ScoreArgs& args, Args&&... leaf)
     : _leaf{std::forward<Args>(leaf)...}, _segment{&segment}, _args{args} {
     SDB_ASSERT(_args.scorer != nullptr);
   }
@@ -72,8 +72,8 @@ class RecipeScored {
   ScoreFunction PrepareScore() {
     return _args.scorer->PrepareScorer({
       .segment = *_segment,
-      .field = _field != nullptr ? _field->meta() : search::NoField(),
-      .doc_attrs = search::NoAttributes(),
+      .field = _field != nullptr ? _field->meta() : detail::NoField(),
+      .doc_attrs = detail::NoAttributes(),
       .fetcher = *_args.fetcher,
       .stats = _args.stats,
       .boost = _args.boost,
@@ -81,14 +81,14 @@ class RecipeScored {
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:
   Leaf _leaf;
   const SubReader* _segment;
   const TermReader* _field = nullptr;
-  search::ScoreArgs _args;
+  detail::ScoreArgs _args;
   doc_id_t _doc = doc_limits::invalid();
 };
 

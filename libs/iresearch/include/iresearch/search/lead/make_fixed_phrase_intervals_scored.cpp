@@ -28,11 +28,11 @@
 namespace irs::lead {
 
 Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const search::ScoreArgs& args) {
+                                         const detail::ScoreArgs& args) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
-  return search::MakeFixedPhraseOf<search::PhraseMatch::Intervals, Impl,
+  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Intervals, Impl,
                                    Node::ptr, true, TwoPhaseScored>(
     query, query.Segment(), *query.state.reader, args);
 }

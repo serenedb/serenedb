@@ -34,7 +34,7 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 
@@ -318,7 +318,7 @@ class PhraseFrequency {
  public:
   using TermPosition = TermPositionT;
   using Traits = TermPositionTraits<TermPosition>;
-  using Positions = search::RunOf<TermPosition, N>;
+  using Positions = detail::RunOf<TermPosition, N>;
   using ExecutionStrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,

@@ -25,10 +25,10 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
-#include "iresearch/search/common/conjunction_scored.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/conjunction_scored.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
@@ -37,7 +37,7 @@
 namespace irs::lead {
 
 template<typename Result, typename Make>
-Result ResolvePostingDocs(const search::PostingClause& posting, Make&& make) {
+Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
@@ -46,10 +46,10 @@ Result ResolvePostingDocs(const search::PostingClause& posting, Make&& make) {
   }
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const auto& doc = *search::DocOf(own);
-  return search::ResolveInput(doc, [&]<typename Input> -> Result {
-    return make.template operator()<search::PostingLead<Input>>(
-      meta, doc, search::LayoutOf(own), search::BoundsOf(own));
+  const auto& doc = *detail::DocOf(own);
+  return detail::ResolveInput(doc, [&]<typename Input> -> Result {
+    return make.template operator()<detail::PostingLead<Input>>(
+      meta, doc, detail::LayoutOf(own), detail::BoundsOf(own));
   });
 }
 

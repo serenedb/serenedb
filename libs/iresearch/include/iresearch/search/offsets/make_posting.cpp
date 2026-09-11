@@ -24,7 +24,7 @@
 namespace irs::offsets {
 
 Root::ptr MakePosting(const PostingMeta& meta, const Handles& handles) {
-  return search::MakePostingOffsets(meta, handles);
+  return detail::MakePostingOffsets(meta, handles);
 }
 
 }  // namespace irs::offsets

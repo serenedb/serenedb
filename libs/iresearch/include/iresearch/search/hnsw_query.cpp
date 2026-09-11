@@ -24,7 +24,7 @@
 #include <span>
 
 #include "basics/misc.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -127,7 +127,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 
 }  // namespace
 
-void HnswRefuseFilter(const search::TableFilter* table) {
+void HnswRefuseFilter(const detail::TableFilter* table) {
   if (table == nullptr) [[likely]] {
     return;
   }

@@ -25,8 +25,8 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/top/detail/prune_leaves.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
@@ -42,9 +42,9 @@ inline constexpr double kPruneMatchesPerHitPair = 75.0;
 }  // namespace
 
 Root::ptr MakePrunedConjunction(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  std::span<const search::PostingClause> excludes,
+  std::span<const irs::detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
+  std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge) {
   if (merge != ScoreMergeType::Sum) {
@@ -54,7 +54,7 @@ Root::ptr MakePrunedConjunction(
     return MakeNestedPrunedConjunction(terms, filters, excludes,
                                        exclude_filters, segment, ctx, merge);
   }
-  if (terms.size() < 2 || uniformity != search::Terms::Bounded) {
+  if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
     return {};
   }
   const auto docs = static_cast<double>(segment.docs_count());
@@ -70,19 +70,19 @@ Root::ptr MakePrunedConjunction(
     return {};
   }
   const auto* const doc =
-    search::DocOf(search::FieldOf(terms.front(), nullptr));
+    irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = terms.size();
-  return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Lead = search::PostingPrunedLead<Input>;
-    using Clause = search::PostingPrunedClause<Input>;
+  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+    using Lead = irs::detail::PostingPrunedLead<Input>;
+    using Clause = irs::detail::PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {
       const auto& posting = terms[i];
       const auto& own = *posting.state.reader;
-      SDB_ASSERT(search::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,
+      SDB_ASSERT(irs::detail::DocOf(own) == doc);
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
                    own,
-                   search::ScoreArgs{.scorer = posting.stats.scorer,
+                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
                              .stats = posting.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});
@@ -93,7 +93,7 @@ Root::ptr MakePrunedConjunction(
         ctx, ctx.fetcher, size, init, std::forward_as_tuple());
     }
     const uint64_t lead = terms.front().state.cookie.docs_count;
-    return search::BuildBlockExcludes<Root::ptr>(
+    return irs::detail::BuildBlockExcludes<Root::ptr>(
       excludes, exclude_filters, nullptr, segment, lead, lead,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<PrunedConjunction, Lead, Others, Exclude>(

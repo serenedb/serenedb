@@ -25,9 +25,9 @@
 #include <utility>
 
 #include "basics/bit_utils.hpp"
-#include "iresearch/search/common/bitset_build.hpp"
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/bitset_storage.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -35,12 +35,12 @@ namespace irs::docs {
 
 class BooleanBitset : public Root {
  public:
-  explicit BooleanBitset(search::BitsetStorage&& set) noexcept
+  explicit BooleanBitset(detail::BitsetStorage&& set) noexcept
     : _set{std::move(set)} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    constexpr auto kBits = search::BitsetStorage::kBits;
+    constexpr auto kBits = detail::BitsetStorage::kBits;
     const auto* const words = _set.Words();
     const auto count = _set.WordCount();
     uint32_t n = 0;
@@ -54,7 +54,7 @@ class BooleanBitset : public Root {
         return n;
       }
       n = static_cast<uint32_t>(
-        MaterializeWord(search::BitsetStorage::kMin + _word * kBits, word,
+        MaterializeWord(detail::BitsetStorage::kMin + _word * kBits, word,
                         out + n) -
         out);
     }
@@ -62,12 +62,12 @@ class BooleanBitset : public Root {
   }
 
  private:
-  search::BitsetStorage _set;
+  detail::BitsetStorage _set;
   uint32_t _word = 0;
 };
 
 }  // namespace irs::docs
-namespace irs::search {
+namespace irs::detail {
 
 template<>
 inline constexpr uint64_t kFoldPostings<docs::Root::ptr> = 4;
@@ -83,4 +83,4 @@ inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,
     BuildBitset(buckets, doc, docs_count));
 }
 
-}  // namespace irs::search
+}  // namespace irs::detail

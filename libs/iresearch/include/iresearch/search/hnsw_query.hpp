@@ -72,6 +72,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   bool _inclusive;
 };
 
-void HnswRefuseFilter(const search::TableFilter* table);
+void HnswRefuseFilter(const detail::TableFilter* table);
 
 }  // namespace irs

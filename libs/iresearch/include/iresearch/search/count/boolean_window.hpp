@@ -27,8 +27,8 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/table_filter.hpp"
-#include "iresearch/search/common/window.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -74,8 +74,8 @@ class BooleanWindow : public Root {
       if (!_table.Skip(min)) {
         return total;
       }
-      SDB_ASSERT(min <= doc_limits::eof() - search::kWindowDocs);
-      const doc_id_t max = min + search::kWindowDocs;
+      SDB_ASSERT(min <= doc_limits::eof() - detail::kWindowDocs);
+      const doc_id_t max = min + detail::kWindowDocs;
 
       auto* const words = _mask.data();
       doc_id_t next;
@@ -91,7 +91,7 @@ class BooleanWindow : public Root {
         _excludes.Remove(min, max, words);
       }
 
-      total += _table.CountAndClear(min, words, search::kWindowWords);
+      total += _table.CountAndClear(min, words, detail::kWindowWords);
 
       if (doc_limits::eof(next)) {
         return total;
@@ -101,12 +101,12 @@ class BooleanWindow : public Root {
   }
 
  private:
-  search::Scratch _mask{};
+  detail::Scratch _mask{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::count

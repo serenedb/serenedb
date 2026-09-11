@@ -34,7 +34,7 @@ Root::ptr MakeConstant(uint64_t count) {
   return memory::make_managed<Constant>(count);
 }
 
-Root::ptr MakeTerm(const search::PostingClause& posting, const SubReader&,
+Root::ptr MakeTerm(const detail::PostingClause& posting, const SubReader&,
                    const Context& ctx) {
   if (ctx.table == nullptr) {
     return MakeConstant(posting.state.cookie.docs_count);
@@ -53,7 +53,7 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
 }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  return MakeTerm(search::PostingClause{query.State()}, query.Segment(), ctx);
+  return MakeTerm(detail::PostingClause{query.State()}, query.Segment(), ctx);
 }
 
 Root::ptr Make(const AllQuery& query, const Context& ctx) {

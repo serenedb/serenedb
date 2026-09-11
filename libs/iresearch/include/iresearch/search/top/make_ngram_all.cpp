@@ -22,10 +22,10 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/offsets/ngram_of.hpp"
-#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
@@ -39,20 +39,20 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx) {
   if (stats == nullptr) {
     return {};
   }
-  const search::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = stats,
                                .fetcher = &ctx.fetcher,
                                .boost = query.Boost()};
   if (const auto value =
-        search::ConstantOf(query.Segment(), *query.State().reader, args)) {
-    return search::BuildAll(
+        irs::detail::ConstantOf(query.Segment(), *query.State().reader, args)) {
+    return irs::detail::BuildAll(
       query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
         using Node = lead::TwoPhaseDocs<Slots>;
         return MakeShape<detail::ConstantWalk, Node>(
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
   }
-  return search::BuildAll<true>(
+  return irs::detail::BuildAll<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return MakeShape<detail::Walk, Node>(

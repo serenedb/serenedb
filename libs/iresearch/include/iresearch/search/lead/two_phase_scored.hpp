@@ -30,8 +30,8 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/detail/score_provider.hpp"
 #include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -49,7 +49,7 @@ class TwoPhaseScored {
 
   template<typename... Args>
   TwoPhaseScored(const SubReader& segment, const TermReader& field,
-                 const search::ScoreArgs& args, Args&&... slots)
+                 const detail::ScoreArgs& args, Args&&... slots)
     : _slots{std::forward<Args>(slots)...}, _recipe{&segment, &field, args} {}
 
   TwoPhaseScored(TwoPhaseScored&&) = delete;
@@ -93,7 +93,7 @@ class TwoPhaseScored {
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {
-    search::AppendScorer(out, PrepareScore());
+    detail::AppendScorer(out, PrepareScore());
   }
 
  private:
@@ -129,7 +129,7 @@ class TwoPhaseScored {
     _boosts{};
   Slots _slots;
   Provider _provider;
-  search::LeafRecipe _recipe;
+  detail::LeafRecipe _recipe;
   doc_id_t _doc = doc_limits::invalid();
 };
 

@@ -64,7 +64,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
 
   NGramState state{ctx.memory};
   state.reader = field;
-  if (!search::ResolvePhrase(field, state.handles)) {
+  if (!detail::ResolvePhrase(field, state.handles)) {
     return QueryBuilder::Empty();
   }
 

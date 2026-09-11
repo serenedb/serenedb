@@ -26,7 +26,7 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -71,7 +71,7 @@ class Walk : public Root {
  private:
   Node _node;
   [[no_unique_address]] utils::Need<kTable, std::array<doc_id_t, kRun>> _docs;
-  [[no_unique_address]] search::Narrowing<Table> _table;
+  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::count

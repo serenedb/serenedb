@@ -25,11 +25,11 @@
 namespace irs::scored {
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const search::StatsRecord& record, score_t boost) {
+                  const irs::detail::StatsRecord& record, score_t boost) {
   return MakePrepared(ctx, [&](auto table) -> Root::ptr {
     auto root = memory::make_managed<All<decltype(table)>>(
       table, ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()));
-    root->Prepare(segment, search::ScoreArgs{.scorer = record.scorer,
+    root->Prepare(segment, irs::detail::ScoreArgs{.scorer = record.scorer,
                                      .stats = record.stats,
                                      .fetcher = &ctx.fetcher,
                                      .boost = boost});

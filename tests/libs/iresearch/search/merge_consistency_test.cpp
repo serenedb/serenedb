@@ -127,7 +127,7 @@ struct StatsEntry {
 
 using StatsDump = std::vector<StatsEntry>;
 
-void DumpRecord(const irs::search::StatsRecord& record, StatsDump& out) {
+void DumpRecord(const irs::detail::StatsRecord& record, StatsDump& out) {
   StatsEntry entry{.scorer = record.scorer, .scored = record.stats != nullptr};
   if (entry.scored) {
     ASSERT_NE(nullptr, record.scorer);

@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/hnsw_query.hpp"
 
@@ -30,7 +30,7 @@ namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, search::DeadRuns* table)
+  HnswHits(std::vector<ScoreDoc>&& hits, detail::DeadRuns* table)
     : _hits{std::move(hits)}, _table{table} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
@@ -47,7 +47,7 @@ class HnswHits : public Root {
 
  private:
   std::vector<ScoreDoc> _hits;
-  search::DeadRuns* _table;
+  detail::DeadRuns* _table;
   size_t _pos = 0;
 };
 

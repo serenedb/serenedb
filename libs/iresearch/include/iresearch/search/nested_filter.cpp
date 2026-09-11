@@ -610,7 +610,7 @@ Node::ptr Make(const ByNestedQuery& query) {
   return PlanNestedDocs<Impl, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
@@ -624,7 +624,7 @@ Node::ptr Make(const ByNestedQuery& query, uint64_t) {
   return PlanNestedDocs<Impl, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx, uint64_t) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
@@ -638,7 +638,7 @@ Node::ptr Make(const ByNestedQuery& query) {
   return PlanNestedDocs<ByWalkDocs, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx,
                ScoreMergeType merge) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge,

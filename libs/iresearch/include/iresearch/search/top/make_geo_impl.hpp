@@ -36,7 +36,7 @@ Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto record = query.Stats(ScoredOf(ctx));
   const auto value =
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = &ctx.fetcher,
                                                     .boost = query.Boost()});

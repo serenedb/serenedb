@@ -34,8 +34,8 @@
 
 namespace irs::top {
 
-Root::ptr MakePrunedPosting(const PostingClause& posting,
-                            std::span<const PostingClause> excludes,
+Root::ptr MakePrunedPosting(const search::PostingClause& posting,
+                            std::span<const search::PostingClause> excludes,
                             std::span<const QueryBuilder::ptr> exclude_filters,
                             const SubReader& segment, const Context& ctx) {
   SDB_ASSERT(posting.state.reader != nullptr);
@@ -57,7 +57,7 @@ Root::ptr MakePrunedPosting(const PostingClause& posting,
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   const auto& doc = *search::DocOf(own);
-  const ScoreArgs args{.scorer = posting.stats.scorer,
+  const search::ScoreArgs args{.scorer = posting.stats.scorer,
                        .stats = posting.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = posting.boost};
@@ -78,7 +78,7 @@ Root::ptr MakePrunedPosting(const PostingClause& posting,
   });
 }
 
-Root::ptr MakePrunedPosting(const PostingClause& posting,
+Root::ptr MakePrunedPosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx) {
   return MakePrunedPosting(posting, {}, {}, segment, ctx);
 }

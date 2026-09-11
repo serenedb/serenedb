@@ -35,8 +35,6 @@
 
 namespace irs::scored {
 
-using search::AllDocsScore;
-
 template<typename Table>
 class All : public Root {
  public:
@@ -49,7 +47,7 @@ class All : public Root {
       _fetcher{fetcher},
       _table{table} {}
 
-  void Prepare(const SubReader& segment, const ScoreArgs& args) {
+  void Prepare(const SubReader& segment, const search::ScoreArgs& args) {
     if (search::AllDocsConstant(args)) {
       _score = ScoreFunction::Constant(AllDocsScore(segment, args));
       return;

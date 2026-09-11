@@ -62,10 +62,6 @@ using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
 template<typename Node>
 using FilteredConstantWalk = detail::ConstantWalk<Node, search::DeadRuns*>;
 
-using search::PostingClause;
-using search::ScoreArgs;
-using search::ScoreRecipe;
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
 Root::ptr MakeEmpty();
@@ -90,10 +86,10 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
 
-Root::ptr MakePosting(const PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
                       const Context& ctx);
 
-Root::ptr MakeSinglePosting(const PostingClause& posting,
+Root::ptr MakeSinglePosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,

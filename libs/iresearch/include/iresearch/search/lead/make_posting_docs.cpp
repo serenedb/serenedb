@@ -24,7 +24,7 @@
 
 namespace irs::lead {
 
-Node::ptr MakePostingDocs(const PostingClause& posting, const SubReader&) {
+Node::ptr MakePostingDocs(const search::PostingClause& posting, const SubReader&) {
   return ResolvePostingDocs<Node::ptr>(
     posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
       return memory::make_managed<Impl<Leaf>>(

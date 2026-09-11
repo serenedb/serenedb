@@ -60,11 +60,11 @@ Root::ptr MakeBoostedPosting(const BooleanQuery& query,
       !search::FreqOf(own) || !search::FreqOf(boost_own)) {
     return {};
   }
-  const ScoreArgs args{.scorer = lead.stats.scorer,
+  const search::ScoreArgs args{.scorer = lead.stats.scorer,
                        .stats = lead.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = lead.boost};
-  const ScoreArgs boost_args{.scorer = boost.stats.scorer,
+  const search::ScoreArgs boost_args{.scorer = boost.stats.scorer,
                              .stats = boost.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = boost.boost};

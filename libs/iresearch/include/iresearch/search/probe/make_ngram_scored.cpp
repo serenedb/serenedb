@@ -28,7 +28,7 @@
 namespace irs::probe {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const ScoreArgs& args) {
+                          const search::ScoreArgs& args) {
   if (args.stats == nullptr) {
     return {};
   }

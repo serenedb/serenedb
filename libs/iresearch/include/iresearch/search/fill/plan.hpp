@@ -35,34 +35,6 @@
 
 namespace irs::fill {
 
-using search::kWindowBits;
-using search::kWindowDocs;
-using search::kWindowWords;
-
-using search::FillNode;
-using search::LeadNode;
-using search::ProbeNode;
-
-using search::BuildConjunction;
-using search::BuildDense;
-using search::BuildScoredSet;
-using search::CollectDense;
-using search::CollectDenseScored;
-using search::FillOf;
-using search::LeadOf;
-using search::ProbeOf;
-using search::ScoreArgs;
-using search::ScoreRecipe;
-
-using search::PostingFill;
-using search::PostingLead;
-using search::PostingProbe;
-using search::ResolveArity;
-using search::ResolveBounds;
-using search::ResolveFillScored;
-using search::ResolveInput;
-using search::SegmentDoc;
-
 Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
 Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
 Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query);
@@ -71,26 +43,26 @@ Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query);
 Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const ScoredCtx& ctx, ScoreMergeType merge);
+                                const search::ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const ScoredCtx& ctx,
+                                         const search::ScoredCtx& ctx,
                                          ScoreMergeType merge);
 Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const ScoredCtx& ctx, ScoreMergeType merge);
+                                    const search::ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const ScoredCtx& ctx, ScoreMergeType merge);
+                                   const search::ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const ScoredCtx& ctx,
+                                            const search::ScoredCtx& ctx,
                                             ScoreMergeType merge);
 Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const ScoredCtx& ctx,
+                                       const search::ScoredCtx& ctx,
                                        ScoreMergeType merge);
 
 Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
 Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const ScoredCtx& ctx, ScoreMergeType merge);
+                          const search::ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const ScoredCtx& ctx, ScoreMergeType merge);
+                             const search::ScoredCtx& ctx, ScoreMergeType merge);
 
 }  // namespace irs::fill

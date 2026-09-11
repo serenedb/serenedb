@@ -35,7 +35,7 @@ Node::ptr Make(const RangeVectorQuery& query) {
   });
 }
 
-Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx) {
   auto inner = search::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -56,7 +56,7 @@ Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx) {
   });
 }
 
-Node::ptr Make(const KnnVectorQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const KnnVectorQuery& query, const search::ScoredCtx& ctx) {
   auto inner = search::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

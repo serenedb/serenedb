@@ -99,7 +99,7 @@ class BooleanWindow : public Root {
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  RootWindowScore _score;
+  search::RootWindowScore _score;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

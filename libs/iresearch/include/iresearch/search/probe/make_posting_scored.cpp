@@ -32,7 +32,7 @@ namespace irs::probe {
 
 Node::ptr MakePostingScored(const search::PostingClause& posting,
                             const SubReader& segment,
-                            const ScoreRecipe& recipe) {
+                            const search::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {

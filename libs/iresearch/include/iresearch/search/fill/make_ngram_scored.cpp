@@ -31,13 +31,13 @@
 namespace irs::fill {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const ScoredCtx& ctx, ScoreMergeType merge) {
+                          const search::ScoredCtx& ctx, ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
   if (stats == nullptr) {
     return {};
   }
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};

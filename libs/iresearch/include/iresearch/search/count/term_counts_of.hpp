@@ -30,22 +30,16 @@
 
 namespace irs::count {
 
-using search::CountAgainst;
-using search::LazyBitset;
-using search::PostingProbe;
-using search::PostingReader;
-using search::ReadPosting;
-
 template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
-  TermCountsOf(LazyBitset& set, const IndexInput& doc, IndexFeatures layout,
+  TermCountsOf(search::LazyBitset& set, const IndexInput& doc, IndexFeatures layout,
                bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
   uint64_t Count(const PostingMeta& term) final {
     SDB_ASSERT(term.docs_count != 0);
-    CountAgainst sink{_set};
+    search::CountAgainst sink{_set};
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
@@ -60,7 +54,7 @@ class TermCountsOf : public TermCounts {
     if (term.docs_count == 1) {
       return _set.Contains(doc_limits::min() + term.doc_delta);
     }
-    PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+    search::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
     auto doc = doc_limits::min();
     for (;;) {
       doc = posting.Probe(doc);
@@ -79,8 +73,8 @@ class TermCountsOf : public TermCounts {
   }
 
  private:
-  LazyBitset& _set;
-  PostingReader<Input> _reader;
+  search::LazyBitset& _set;
+  search::PostingReader<Input> _reader;
   const IndexInput* _doc;
   IndexFeatures _layout;
   bool _bounds;

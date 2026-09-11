@@ -70,11 +70,11 @@ struct Api {
 
   template<typename Input, typename Exclude, typename ExcludeArgs>
   static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
-                                    const PostingClause& posting,
+                                    const search::PostingClause& posting,
                                     const IndexInput& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
-                                    const ScoreRecipe& recipe) {
+                                    const search::ScoreRecipe& recipe) {
     SDB_IF_FAILURE("irs::PruningIterator") {
       if (search::BoundsOf(own)) {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -97,7 +97,7 @@ struct Api {
     return ScoredOf(ctx);
   }
 
-  static ScoreRecipe Recipe(const SubReader& segment,
+  static search::ScoreRecipe Recipe(const SubReader& segment,
                             const Context& ctx) noexcept {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
@@ -110,12 +110,12 @@ struct Api {
                           .k = ctx.k});
   }
 
-  static Result MakePosting(const PostingClause& posting,
+  static Result MakePosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx) {
     return top::MakePosting(posting, segment, ctx);
   }
 
-  static Result MakeSinglePosting(const PostingClause& posting,
+  static Result MakeSinglePosting(const search::PostingClause& posting,
                                   const SubReader& segment,
                                   const Context& ctx) {
     return top::MakeSinglePosting(posting, segment, ctx);
@@ -137,9 +137,9 @@ struct Api {
   }
 
   static Result MakePrunedDisjunction(
-    std::span<const PostingClause> should,
+    std::span<const search::PostingClause> should,
     std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
-    std::span<const PostingClause> excludes,
+    std::span<const search::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge,
     uint32_t min_match) {
@@ -149,9 +149,9 @@ struct Api {
   }
 
   static Result MakePrunedConjunction(
-    std::span<const PostingClause> must,
+    std::span<const search::PostingClause> must,
     std::span<const QueryBuilder::ptr> must_filters, search::Terms uniformity,
-    std::span<const PostingClause> excludes,
+    std::span<const search::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge) {
     return top::MakePrunedConjunction(must, must_filters, uniformity, excludes,
@@ -159,7 +159,7 @@ struct Api {
   }
 
   static Result MakePrunedPosting(
-    const PostingClause& posting, std::span<const PostingClause> excludes,
+    const search::PostingClause& posting, std::span<const search::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx) {
     return top::MakePrunedPosting(posting, excludes, exclude_filters, segment,

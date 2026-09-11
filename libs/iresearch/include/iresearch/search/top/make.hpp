@@ -81,10 +81,6 @@ using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
 template<typename Node>
 using FilteredConstantWalk = detail::ConstantWalk<Node, search::TableFilter*>;
 
-using search::PostingClause;
-using search::ScoreArgs;
-using search::ScoreRecipe;
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
 Root::ptr MakeEmpty();
@@ -108,9 +104,9 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
-Root::ptr MakePosting(const PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
                       const Context& ctx);
-Root::ptr MakeSinglePosting(const PostingClause& posting,
+Root::ptr MakeSinglePosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const search::StatsRecord& record, score_t boost);
@@ -138,10 +134,10 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
                      const DocumentMask& mask);
 
-Root::ptr MakePrunedPosting(const PostingClause& posting,
+Root::ptr MakePrunedPosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
-Root::ptr MakePrunedPosting(const PostingClause& posting,
-                            std::span<const PostingClause> excludes,
+Root::ptr MakePrunedPosting(const search::PostingClause& posting,
+                            std::span<const search::PostingClause> excludes,
                             std::span<const QueryBuilder::ptr> exclude_filters,
                             const SubReader& segment, const Context& ctx);
 
@@ -151,16 +147,16 @@ Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
                                          const Context& ctx);
 
 Root::ptr MakePrunedConjunction(
-  std::span<const PostingClause> terms,
+  std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  std::span<const PostingClause> excludes,
+  std::span<const search::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
 Root::ptr MakeNestedPrunedConjunction(
-  std::span<const PostingClause> terms,
+  std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
-  std::span<const PostingClause> excludes,
+  std::span<const search::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
@@ -168,22 +164,19 @@ template<typename Term>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   search::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, std::span<const PostingClause> excludes,
+  score_t boost, std::span<const search::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge, uint32_t min_match = 1) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   SDB_ASSERT(min_match != 0);
   if (merge != ScoreMergeType::Sum || !filters.empty() ||
-      uniformity != search::Terms::Bounded || min_match >= terms.size()) {
+      uniformity != search::Terms::Bounded || min_match != 1) {
     return {};
   }
   for (size_t i = 0; i != terms.size(); ++i) {
     if (!search::ScoresOf(terms[i], scorer)) {
       return {};
     }
-  }
-  if (min_match != 1) {
-    return {};
   }
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -197,7 +190,7 @@ Root::ptr MakePrunedDisjunction(
       SDB_ASSERT(search::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,
                    own,
-                   ScoreArgs{.scorer = posting.stats.scorer,
+                   search::ScoreArgs{.scorer = posting.stats.scorer,
                              .stats = posting.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});

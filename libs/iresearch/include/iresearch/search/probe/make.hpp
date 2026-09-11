@@ -33,10 +33,6 @@
 
 namespace irs::probe {
 
-using search::ScoreArgs;
-using search::ScoredCtx;
-using search::ScoreRecipe;
-
 Node::ptr Make(const TermQuery& query, uint64_t interrogations);
 Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations);
 Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations);
@@ -54,38 +50,38 @@ template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                uint64_t interrogations);
 
-Node::ptr Make(const TermQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const TermQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const FixedPhraseQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const FixedPhraseQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const VariadicPhraseQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const VariadicPhraseQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const AllQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const ByNestedQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
 
-inline Node::ptr Make(const HnswQuery&, const ScoredCtx&, uint64_t) {
+inline Node::ptr Make(const HnswQuery&, const search::ScoredCtx&, uint64_t) {
   return {};
 }
-inline Node::ptr Make(const KnnVectorQuery&, const ScoredCtx&, uint64_t) {
+inline Node::ptr Make(const KnnVectorQuery&, const search::ScoredCtx&, uint64_t) {
   return {};
 }
-Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
-inline Node::ptr Make(const EmptyQueryBuilder&, const ScoredCtx&, uint64_t) {
+inline Node::ptr Make(const EmptyQueryBuilder&, const search::ScoredCtx&, uint64_t) {
   return {};
 }
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const search::ScoredCtx& ctx,
                uint64_t interrogations);
 
 Node::ptr MakePostingDocs(const search::PostingClause& posting,
@@ -140,16 +136,16 @@ Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
 
 Node::ptr MakePostingScored(const search::PostingClause& posting,
                             const SubReader& segment,
-                            const ScoreRecipe& recipe);
+                            const search::ScoreRecipe& recipe);
 
 Node::ptr MakeSinglePostingScored(const search::PostingClause& posting,
                                   const SubReader& segment,
-                                  const ScoreRecipe& recipe);
+                                  const search::ScoreRecipe& recipe);
 
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 
-inline auto ScoredClauseOf(const SubReader& segment, const ScoredCtx& ctx,
-                           const ScoreRecipe& recipe) {
+inline auto ScoredClauseOf(const SubReader& segment, const search::ScoredCtx& ctx,
+                           const search::ScoreRecipe& recipe) {
   return [&](const search::PostingClause& posting, const QueryBuilder* child,
              uint64_t interrogations) -> Node::ptr {
     if (child == nullptr) {
@@ -162,8 +158,8 @@ inline auto ScoredClauseOf(const SubReader& segment, const ScoredCtx& ctx,
 Node::ptr MakeSparseConjunctionScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const ScoredCtx& ctx, score_t absorbed = 0);
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeRequiredScored(
   std::span<const search::PostingClause> must,
@@ -171,14 +167,14 @@ Node::ptr MakeRequiredScored(
   search::Terms must_uniformity, std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   search::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const ScoredCtx& ctx, score_t absorbed = 0);
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeSparseThresholdScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint32_t min_match, uint64_t interrogations, const ScoredCtx& ctx,
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint32_t min_match, uint64_t interrogations, const search::ScoredCtx& ctx,
   score_t absorbed = 0);
 
 Node::ptr MakeSparseExclusionScored(
@@ -189,8 +185,8 @@ Node::ptr MakeSparseExclusionScored(
   search::Terms should_uniformity, uint32_t min_should_match,
   std::span<const search::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const ScoredCtx& ctx, score_t absorbed = 0);
+  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const search::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeSparseBoostScored(
   std::span<const search::PostingClause> must,
@@ -198,27 +194,27 @@ Node::ptr MakeSparseBoostScored(
   search::Terms must_uniformity, std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   search::Terms should_uniformity, const SubReader& segment,
-  const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const ScoredCtx& ctx, score_t absorbed = 0);
+  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const search::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const ScoreArgs& args);
+                                const search::ScoreArgs& args);
 Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const ScoreArgs& args);
+                                         const search::ScoreArgs& args);
 Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const ScoreArgs& args);
+                                    const search::ScoreArgs& args);
 
 Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const ScoreArgs& args);
+                                   const search::ScoreArgs& args);
 Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const ScoreArgs& args);
+                                            const search::ScoreArgs& args);
 Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const ScoreArgs& args);
+                                       const search::ScoreArgs& args);
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const ScoreArgs& args);
+                          const search::ScoreArgs& args);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const ScoreArgs& args);
+                             const search::ScoreArgs& args);
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations);

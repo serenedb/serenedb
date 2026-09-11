@@ -50,7 +50,7 @@ namespace irs::fill {
 
 struct ScoredApi {
   using Result = Node::ptr;
-  using Context = ScoredCtx;
+  using Context = search::ScoredCtx;
 
   static constexpr bool kLazyGroups = false;
   static constexpr bool kSingleClause = false;
@@ -158,7 +158,7 @@ template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
-  search::Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
+  search::Terms uniformity, const search::ScoreRecipe& recipe, ScoreMergeType merge,
   score_t absorbed = 0) {
   return search::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
     terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,

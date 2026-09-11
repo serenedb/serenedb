@@ -42,8 +42,8 @@ Node::ptr MakeRequiredScored(
   search::Terms must_uniformity, std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   search::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const ScoredCtx& ctx, score_t absorbed) {
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed) {
   if (min_should_match == 0) {
     return MakeSparseConjunctionScored(must, must_filters, must_uniformity,
                                        segment, recipe, merge, interrogations,
@@ -83,11 +83,11 @@ Node::ptr MakeRequiredScored(
     search::Scored{merge, 0});
 }
 
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto& segment = query.Segment();
   const auto merge = query.MergeType();
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  const search::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   const auto absorbed = query.Absorbed();
   const auto must = query.Terms(Occur::Must);
   const auto must_filters = query.Queries(Occur::Must);

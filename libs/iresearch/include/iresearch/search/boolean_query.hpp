@@ -39,16 +39,13 @@ namespace irs {
 
 struct TermReader;
 
-using search::AllDocsClause;
-using search::PostingClause;
-
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
   using Filters = ManagedVector<QueryBuilder::ptr>;
 
   struct PreparedBucket {
-    ManagedVector<PostingClause> postings;
-    ManagedVector<AllDocsClause> all_docs;
+    ManagedVector<search::PostingClause> postings;
+    ManagedVector<search::AllDocsClause> all_docs;
     Filters filters;
     search::Terms uniformity = search::Terms::Mixed;
 
@@ -96,7 +93,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     return _clauses[OccurIndex(occur)];
   }
 
-  std::span<const PostingClause> Terms(Occur occur) const noexcept {
+  std::span<const search::PostingClause> Terms(Occur occur) const noexcept {
     return _clauses[OccurIndex(occur)].postings;
   }
 

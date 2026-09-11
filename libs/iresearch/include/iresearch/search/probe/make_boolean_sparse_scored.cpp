@@ -57,8 +57,8 @@ Node::ptr MakeSparseScored(MustsArgs&& musts, OptionalArgs&& optional,
 Node::ptr MakeSparseConjunctionScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const ScoredCtx& ctx, score_t absorbed) {
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const search::ScoredCtx& ctx, score_t absorbed) {
   const auto size = terms.size() + filters.size();
   if (size == 0) {
     return absorbed != 0 ? MakeAllScored(segment, absorbed) : Node::ptr{};
@@ -96,8 +96,8 @@ Node::ptr MakeSparseConjunctionScored(
 Node::ptr MakeSparseThresholdScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint32_t min_match, uint64_t interrogations, const ScoredCtx& ctx,
+  const SubReader& segment, const search::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint32_t min_match, uint64_t interrogations, const search::ScoredCtx& ctx,
   score_t absorbed) {
   SDB_ASSERT(min_match > 1);
   if (terms.size() + filters.size() < min_match) {
@@ -129,8 +129,8 @@ Node::ptr MakeSparseExclusionScored(
   search::Terms should_uniformity, uint32_t min_should_match,
   std::span<const search::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const ScoredCtx& ctx, score_t absorbed) {
+  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const search::ScoredCtx& ctx, score_t absorbed) {
   const bool no_must = must.empty() && must_filters.empty();
   const uint64_t docs_count = segment.docs_count();
   uint64_t lead = search::IncludeCandidates(must, must_filters, segment);
@@ -181,8 +181,8 @@ Node::ptr MakeSparseBoostScored(
   search::Terms must_uniformity, std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   search::Terms should_uniformity, const SubReader& segment,
-  const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const ScoredCtx& ctx, score_t absorbed) {
+  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const search::ScoredCtx& ctx, score_t absorbed) {
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
   SDB_ASSERT(!should.empty() || !should_filters.empty());
   const auto no_must = must.empty() && must_filters.empty();

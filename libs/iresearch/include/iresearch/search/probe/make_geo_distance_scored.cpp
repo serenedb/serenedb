@@ -27,7 +27,7 @@ namespace irs::probe {
 
 #define IRS_GEO_CASE(Parser, ...)                               \
   template Node::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, \
-                          const ScoredCtx&, uint64_t);
+                          const search::ScoredCtx&, uint64_t);
 IRS_GEO_DISTANCE_ACCEPTORS(IRS_GEO_CASE)
 #undef IRS_GEO_CASE
 

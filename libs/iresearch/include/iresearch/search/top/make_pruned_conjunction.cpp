@@ -42,9 +42,9 @@ inline constexpr double kPruneMatchesPerHitPair = 75.0;
 }  // namespace
 
 Root::ptr MakePrunedConjunction(
-  std::span<const PostingClause> terms,
+  std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  std::span<const PostingClause> excludes,
+  std::span<const search::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge) {
   if (merge != ScoreMergeType::Sum) {
@@ -82,7 +82,7 @@ Root::ptr MakePrunedConjunction(
       SDB_ASSERT(search::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,
                    own,
-                   ScoreArgs{.scorer = posting.stats.scorer,
+                   search::ScoreArgs{.scorer = posting.stats.scorer,
                              .stats = posting.stats.stats,
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});

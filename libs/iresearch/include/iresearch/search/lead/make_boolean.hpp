@@ -45,7 +45,7 @@ namespace irs::lead {
 
 struct ScoredApi {
   using Result = Node::ptr;
-  using Context = ScoredCtx;
+  using Context = search::ScoredCtx;
 
   static constexpr bool kLazyGroups = true;
   static constexpr bool kSingleClause = true;
@@ -84,9 +84,9 @@ struct ScoredApi {
   }
 
   static Result MakeRequiredWith(
-    std::span<const PostingClause> must,
+    std::span<const search::PostingClause> must,
     std::span<const QueryBuilder::ptr> must_filters,
-    std::span<const PostingClause> should,
+    std::span<const search::PostingClause> should,
     std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
     uint32_t min_match, const SubReader& segment, const Context& ctx,
     ScoreMergeType merge, score_t absorbed) {
@@ -101,8 +101,8 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
                                            const TermReader* field,
                                            const IndexInput& doc) {
   SDB_ASSERT(terms.size() > 1);
-  return ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = PostingFill<Input>;
+  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    using Leaf = search::PostingFill<Input>;
     using Optional = search::OrGroup<fill::SetLeaves<Leaf>>;
     using Node =
       BooleanWindow<utils::Empty, utils::Empty, Optional, utils::Empty>;
@@ -112,8 +112,8 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
       std::forward_as_tuple(
         terms.size(),
         [&](Leaf& leaf, size_t i) {
-          const auto& own = FieldOf(terms[i], field);
-          const auto& meta = CookieOf(terms[i]);
+          const auto& own = search::FieldOf(terms[i], field);
+          const auto& meta = search::CookieOf(terms[i]);
           SDB_ASSERT(meta.docs_count != 0);
           leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
                        meta.docs_count != 1 && search::FreqOf(own));
@@ -139,9 +139,9 @@ template<typename Term>
 Node::ptr MakeWindowDisjunctionOfTermsScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput& doc, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
+  const SubReader& segment, const search::ScoredCtx& ctx, ScoreMergeType merge,
   score_t absorbed) {
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  const search::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   std::vector<fill::Node::ptr> rest;
   return search::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
     terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge,

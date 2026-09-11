@@ -101,7 +101,7 @@ template<typename Term, typename ClauseFn>
 Node::ptr MakeSparseDisjunctionScored(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   search::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, const SubReader& segment, const ScoreRecipe& recipe,
+  score_t boost, const SubReader& segment, const search::ScoreRecipe& recipe,
   ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
   score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
@@ -126,8 +126,8 @@ template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   search::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, const SubReader& segment, const ScoreRecipe& recipe,
-  ScoreMergeType merge, const ScoredCtx& ctx, score_t absorbed = 0) {
+  score_t boost, const SubReader& segment, const search::ScoreRecipe& recipe,
+  ScoreMergeType merge, const search::ScoredCtx& ctx, score_t absorbed = 0) {
   const IndexInput* doc = nullptr;
   std::vector<search::FillNode::ptr> rest;
   if (!search::CollectDenseScored(terms, filters, field, doc, rest,
@@ -153,9 +153,9 @@ Node::ptr MakeDisjunctionScored(std::span<const Term> terms,
                                 search::Terms uniformity,
                                 const TermReader* field, const Scorer* scorer,
                                 score_t boost, const SubReader& segment,
-                                const ScoreRecipe& recipe, ScoreMergeType merge,
+                                const search::ScoreRecipe& recipe, ScoreMergeType merge,
                                 uint64_t interrogations, ClauseFn clause,
-                                const ScoredCtx& ctx, score_t absorbed = 0) {
+                                const search::ScoredCtx& ctx, score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   if (filters.empty() && !terms.empty()) {
     const auto* const doc =
@@ -191,8 +191,8 @@ inline Node::ptr BuildOptionalProbeScored(
   std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
   uint32_t min_should_match, const SubReader& segment,
-  const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const ScoredCtx& ctx) {
+  const search::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
+  const search::ScoredCtx& ctx) {
   SDB_ASSERT(min_should_match != 0);
   SDB_ASSERT(should.size() + should_filters.size() >= min_should_match);
   return min_should_match == 1

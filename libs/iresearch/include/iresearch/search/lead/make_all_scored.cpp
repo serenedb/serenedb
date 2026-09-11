@@ -33,7 +33,7 @@ Node::ptr MakeAllScored(const SubReader& segment, score_t score) {
   return memory::make_managed<Impl<Node>>(score, segment);
 }
 
-Node::ptr MakeAllScored(const SubReader& segment, const ScoreArgs& args) {
+Node::ptr MakeAllScored(const SubReader& segment, const search::ScoreArgs& args) {
   return MakeAllScored(segment, search::AllDocsScore(segment, args));
 }
 

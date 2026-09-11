@@ -87,7 +87,7 @@ class HnswHits : public Node {
 
 }  // namespace
 
-Node::ptr Make(const HnswQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const HnswQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   const search::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,

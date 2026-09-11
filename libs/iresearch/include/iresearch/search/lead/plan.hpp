@@ -36,39 +36,8 @@
 
 namespace irs::lead {
 
-using search::kWindowBits;
-using search::kWindowDocs;
-using search::kWindowWords;
-
-using search::FillNode;
-using search::LeadNode;
-
-using search::BuildConjunction;
-using search::BuildDense;
-using search::BuildScoredConjunction;
-using search::BuildScoredSet;
-using search::BuildScoredTerms;
-using search::ClauseOf;
-using search::CollectDense;
-using search::CollectDenseScored;
-using search::CookieOf;
-using search::FieldOf;
-using search::FillOf;
-using search::IncludeCandidates;
-using search::LeadOf;
-using search::ProbeOf;
-
-using search::PostingFill;
-using search::PostingLead;
-using search::PostingLeadScored;
-using search::PostingProbe;
-using search::ResolveArity;
-using search::ResolveBounds;
-using search::ResolveInput;
-using search::SegmentDoc;
-
 template<typename Result, typename Make>
-Result ResolvePostingDocs(const PostingClause& posting, Make&& make) {
+Result ResolvePostingDocs(const search::PostingClause& posting, Make&& make) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
@@ -78,8 +47,8 @@ Result ResolvePostingDocs(const PostingClause& posting, Make&& make) {
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *search::DocOf(own);
-  return ResolveInput(doc, [&]<typename Input> -> Result {
-    return make.template operator()<PostingLead<Input>>(
+  return search::ResolveInput(doc, [&]<typename Input> -> Result {
+    return make.template operator()<search::PostingLead<Input>>(
       meta, doc, search::LayoutOf(own), search::BoundsOf(own));
   });
 }

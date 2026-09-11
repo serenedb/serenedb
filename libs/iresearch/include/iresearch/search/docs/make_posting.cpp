@@ -34,7 +34,7 @@ Root::ptr MakePosting(const search::PostingClause& posting, const SubReader&,
   }
   const auto& own = *posting.state.reader;
   const auto& in = *search::DocOf(own);
-  return ResolveInput(in, [&]<typename Input> -> Root::ptr {
+  return search::ResolveInput(in, [&]<typename Input> -> Root::ptr {
     const auto make = [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<Posting<Input, decltype(table)>>(table);
       root->Prepare(meta, in, search::LayoutOf(own), search::BoundsOf(own),

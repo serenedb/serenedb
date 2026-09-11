@@ -28,7 +28,7 @@
 namespace irs::lead {
 
 Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const ScoreArgs& args) {
+                                    const search::ScoreArgs& args) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }

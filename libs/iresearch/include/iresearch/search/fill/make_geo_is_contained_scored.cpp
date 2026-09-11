@@ -25,7 +25,7 @@ namespace irs::fill {
 
 #define IRS_GEO_CASE(Parser, ...)                               \
   template Node::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, \
-                          const ScoredCtx&, ScoreMergeType);
+                          const search::ScoredCtx&, ScoreMergeType);
 IRS_GEO_PARSERS(IRS_GEO_CASE, GeoIsContainedAcceptor)
 #undef IRS_GEO_CASE
 

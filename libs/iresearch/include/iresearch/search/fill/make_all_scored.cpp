@@ -27,11 +27,11 @@
 
 namespace irs::fill {
 
-Node::ptr MakeAllScored(const SubReader& segment, const ScoredCtx& ctx,
+Node::ptr MakeAllScored(const SubReader& segment, const search::ScoredCtx& ctx,
                         const search::StatsRecord& record, ScoreMergeType merge,
                         score_t boost) {
   const auto value =
-    search::AllDocsScore(segment, ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(segment, search::ScoreArgs{.scorer = record.scorer,
                                             .stats = record.stats,
                                             .fetcher = ctx.fetcher,
                                             .boost = boost});

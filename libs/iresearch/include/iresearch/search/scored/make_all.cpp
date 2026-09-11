@@ -29,7 +29,7 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
   return MakePrepared(ctx, [&](auto table) -> Root::ptr {
     auto root = memory::make_managed<All<decltype(table)>>(
       table, ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()));
-    root->Prepare(segment, ScoreArgs{.scorer = record.scorer,
+    root->Prepare(segment, search::ScoreArgs{.scorer = record.scorer,
                                      .stats = record.stats,
                                      .fetcher = &ctx.fetcher,
                                      .boost = boost});

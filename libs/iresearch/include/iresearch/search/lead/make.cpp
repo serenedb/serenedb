@@ -48,12 +48,12 @@
 namespace irs::lead {
 
 Node::ptr Make(const TermQuery& query) {
-  return MakePostingDocs(PostingClause{query.State()}, query.Segment());
+  return MakePostingDocs(search::PostingClause{query.State()}, query.Segment());
 }
 
-Node::ptr Make(const TermQuery& query, const ScoredCtx& ctx) {
-  const PostingClause posting{query.State(), query.Boost(), query.Stats(ctx)};
-  const ScoreRecipe recipe{.segment = &query.Segment(), .fetcher = ctx.fetcher};
+Node::ptr Make(const TermQuery& query, const search::ScoredCtx& ctx) {
+  const search::PostingClause posting{query.State(), query.Boost(), query.Stats(ctx)};
+  const search::ScoreRecipe recipe{.segment = &query.Segment(), .fetcher = ctx.fetcher};
   return MakePostingScored(posting, query.Segment(), recipe);
 }
 
@@ -70,7 +70,7 @@ Node::ptr Make(const MultiTermQuery& query) {
     static_cast<doc_id_t>(query.Segment().docs_count()));
 }
 
-Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx) {
   const auto& state = query.State();
   const auto merge = query.MergeType();
   const auto* const field = state.Reader();
@@ -78,7 +78,7 @@ Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx) {
   const auto boost = query.Boost();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
-    const ScoreRecipe recipe{.segment = &query.Segment(),
+    const search::ScoreRecipe recipe{.segment = &query.Segment(),
                              .fetcher = ctx.fetcher};
     return MakePostingScored(
       search::ClauseOf(terms.front(), field, scorer, boost), query.Segment(),
@@ -96,9 +96,9 @@ Node::ptr Make(const FixedPhraseQuery& query) {
     [&] { return MakeFixedPhraseDocs(query); });
 }
 
-Node::ptr Make(const FixedPhraseQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const FixedPhraseQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -118,9 +118,9 @@ Node::ptr Make(const VariadicPhraseQuery& query) {
     [&] { return MakeVariadicPhraseDocs(query); });
 }
 
-Node::ptr Make(const VariadicPhraseQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const VariadicPhraseQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -137,12 +137,12 @@ Node::ptr Make(const NGramSimilarityQuery& query) {
   return query.Every() ? MakeNGramAllDocs(query) : MakeNGramDocs(query);
 }
 
-Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   if (record.stats == nullptr) {
     return Make(query);
   }
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -152,9 +152,9 @@ Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx) {
 
 Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
-Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const AllQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  return MakeAllScored(query.Segment(), ScoreArgs{.scorer = record.scorer,
+  return MakeAllScored(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                   .stats = record.stats,
                                                   .fetcher = ctx.fetcher,
                                                   .boost = query.Boost()});
@@ -164,11 +164,11 @@ Node::ptr Make(const WildcardNGramQuery& query) {
   return MakeWildcardNGramDocs(query);
 }
 
-Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const WildcardNGramQuery& query, const search::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   return MakeWildcardNGramScored(
     query,
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}));

@@ -38,7 +38,7 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
 }
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const search::ScoredCtx& ctx,
                ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto value = search::AllDocsScore(

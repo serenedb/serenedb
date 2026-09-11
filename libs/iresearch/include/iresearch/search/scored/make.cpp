@@ -81,7 +81,7 @@ Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  const PostingClause posting{.state = query.State(),
+  const search::PostingClause posting{.state = query.State(),
                               .boost = query.Boost(),
                               .stats = query.Stats(ScoredOf(ctx))};
   return posting.state.cookie.docs_count == 1

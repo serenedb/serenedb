@@ -52,8 +52,8 @@ Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                        const IndexInput& doc,
                                        const Context& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return ResolveInput(doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = PostingFill<Input>;
+  return search::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = search::PostingFill<Input>;
     using Optional = search::OrGroup<fill::SetLeaves<Leaf>>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto& own = search::FieldOf(terms[i], field);

@@ -35,7 +35,7 @@ Node::ptr Make(const RangeVectorQuery& query) {
   });
 }
 
-Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const RangeVectorQuery& query, const search::ScoredCtx& ctx,
                ScoreMergeType merge) {
   auto inner = search::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {

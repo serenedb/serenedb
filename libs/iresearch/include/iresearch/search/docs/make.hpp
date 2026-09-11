@@ -30,8 +30,6 @@
 
 namespace irs::docs {
 
-using search::LeadNode;
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
 
 Root::ptr Make(const TermQuery& query, const Context& ctx);

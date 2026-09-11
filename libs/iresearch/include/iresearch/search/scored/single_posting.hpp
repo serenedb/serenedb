@@ -31,7 +31,7 @@ namespace irs::scored {
 class SinglePosting : public Root {
  public:
   void Prepare(const PostingMeta& meta, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const search::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count == 1);
     _doc = doc_limits::min() + meta.doc_delta;
     _score = search::SingleDocScore(segment, field, _doc, meta.freq, args);

@@ -30,27 +30,27 @@
 namespace irs::lead {
 
 Node::ptr MakeSparseConjunctionScored(
-  std::span<const PostingClause> terms,
+  std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed) {
+  const search::ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed) {
   return search::builder::MakeNodeConjunction<ScoredApi>(
     terms, filters, segment, ctx, merge, absorbed);
 }
 
-Node::ptr MakeRequiredScored(std::span<const PostingClause> must,
+Node::ptr MakeRequiredScored(std::span<const search::PostingClause> must,
                              std::span<const QueryBuilder::ptr> must_filters,
-                             std::span<const PostingClause> should,
+                             std::span<const search::PostingClause> should,
                              std::span<const QueryBuilder::ptr> should_filters,
                              search::Terms should_uniformity,
                              uint32_t min_should_match,
-                             const SubReader& segment, const ScoredCtx& ctx,
+                             const SubReader& segment, const search::ScoredCtx& ctx,
                              ScoreMergeType merge, score_t absorbed) {
   return search::builder::MakeNodeRequired<ScoredApi>(
     must, must_filters, should, should_filters, should_uniformity,
     min_should_match, segment, ctx, merge, absorbed);
 }
 
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx) {
   return search::builder::MakeNode<ScoredApi>(query, ctx, query.MergeType());
 }
 

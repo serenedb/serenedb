@@ -29,14 +29,14 @@
 
 namespace irs::top {
 
-Root::ptr MakePosting(const PostingClause& posting, const SubReader& segment,
+Root::ptr MakePosting(const search::PostingClause& posting, const SubReader& segment,
                       const Context& ctx) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count > 1, "a single document has its own unit");
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto* const doc = search::DocOf(own);
-  const ScoreArgs args{.scorer = posting.stats.scorer,
+  const search::ScoreArgs args{.scorer = posting.stats.scorer,
                        .stats = posting.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = posting.boost};

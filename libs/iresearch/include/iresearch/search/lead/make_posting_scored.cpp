@@ -29,9 +29,9 @@
 
 namespace irs::lead {
 
-Node::ptr MakePostingScored(const PostingClause& posting,
+Node::ptr MakePostingScored(const search::PostingClause& posting,
                             const SubReader& segment,
-                            const ScoreRecipe& recipe) {
+                            const search::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   const auto args = recipe.Args(posting.stats, posting.boost);
@@ -66,8 +66,8 @@ Node::ptr MakePostingScored(const PostingClause& posting,
       });
   }
   const auto& doc = *search::DocOf(own);
-  return ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = PostingLeadScored<Input>;
+  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    using Leaf = search::PostingLeadScored<Input>;
     return memory::make_managed<Impl<Leaf>>(meta, doc, segment, own, args);
   });
 }

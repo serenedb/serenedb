@@ -72,11 +72,11 @@ struct Api {
 
   template<typename Input, typename Exclude, typename ExcludeArgs>
   static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
-                                    const PostingClause& posting,
+                                    const search::PostingClause& posting,
                                     const IndexInput& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
-                                    const ScoreRecipe& recipe) {
+                                    const search::ScoreRecipe& recipe) {
     return MakePrepared(ctx, [&](auto table) -> Result {
       auto root = memory::make_managed<
         Posting<Input, utils::Empty, Exclude, decltype(table)>>(
@@ -95,7 +95,7 @@ struct Api {
     return ScoredOf(ctx);
   }
 
-  static ScoreRecipe Recipe(const SubReader& segment,
+  static search::ScoreRecipe Recipe(const SubReader& segment,
                             const Context& ctx) noexcept {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
@@ -104,12 +104,12 @@ struct Api {
     return child.PlanScored(ctx);
   }
 
-  static Result MakePosting(const PostingClause& posting,
+  static Result MakePosting(const search::PostingClause& posting,
                             const SubReader& segment, const Context& ctx) {
     return scored::MakePosting(posting, segment, ctx);
   }
 
-  static Result MakeSinglePosting(const PostingClause& posting,
+  static Result MakeSinglePosting(const search::PostingClause& posting,
                                   const SubReader& segment,
                                   const Context& ctx) {
     return scored::MakeSinglePosting(posting, segment, ctx);

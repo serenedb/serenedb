@@ -40,8 +40,6 @@ struct ScoredCtx {
 }  // namespace search
 namespace scored {
 
-using search::ScoreArgs;
-
 struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;

@@ -27,7 +27,7 @@
 namespace irs::fill {
 
 Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const ScoredCtx& ctx,
+                                            const search::ScoredCtx& ctx,
                                             ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
@@ -38,7 +38,7 @@ Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
                                       ByWalkScored, Node::ptr, true,
                                       lead::TwoPhaseScored>(
     query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
-    ScoreArgs{.scorer = record.scorer,
+    search::ScoreArgs{.scorer = record.scorer,
               .stats = stats,
               .fetcher = ctx.fetcher,
               .boost = query.Boost()});

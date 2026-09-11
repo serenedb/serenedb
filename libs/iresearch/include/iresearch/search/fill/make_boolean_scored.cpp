@@ -27,7 +27,7 @@
 
 namespace irs::fill {
 
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const BooleanQuery& query, const search::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return search::builder::MakeNode<ScoredApi>(query, ctx, merge);
 }

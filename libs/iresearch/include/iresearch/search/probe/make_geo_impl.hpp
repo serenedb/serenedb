@@ -40,11 +40,11 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
 }
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
   const auto score =
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});

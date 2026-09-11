@@ -39,7 +39,7 @@ class RecipeScored {
  public:
   template<typename... Args>
   RecipeScored(const SubReader& segment, const TermReader& field,
-               const ScoreArgs& args, Args&&... leaf)
+               const search::ScoreArgs& args, Args&&... leaf)
     : _leaf{std::forward<Args>(leaf)...},
       _segment{&segment},
       _field{&field},
@@ -48,7 +48,7 @@ class RecipeScored {
   }
 
   template<typename... Args>
-  RecipeScored(const SubReader& segment, const ScoreArgs& args, Args&&... leaf)
+  RecipeScored(const SubReader& segment, const search::ScoreArgs& args, Args&&... leaf)
     : _leaf{std::forward<Args>(leaf)...}, _segment{&segment}, _args{args} {
     SDB_ASSERT(_args.scorer != nullptr);
   }
@@ -88,7 +88,7 @@ class RecipeScored {
   Leaf _leaf;
   const SubReader* _segment;
   const TermReader* _field = nullptr;
-  ScoreArgs _args;
+  search::ScoreArgs _args;
   doc_id_t _doc = doc_limits::invalid();
 };
 

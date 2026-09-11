@@ -30,11 +30,11 @@
 namespace irs::fill {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  const ScoredCtx& ctx, ScoreMergeType merge) {
+                                  const search::ScoredCtx& ctx, ScoreMergeType merge) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto record = query.Stats(ctx);
   const auto value =
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});

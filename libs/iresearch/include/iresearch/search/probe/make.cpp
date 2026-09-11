@@ -45,7 +45,7 @@
 namespace irs::probe {
 namespace {
 
-search::ScoreRecipe RecipeOf(const SubReader& segment, const ScoredCtx& ctx) {
+search::ScoreRecipe RecipeOf(const SubReader& segment, const search::ScoredCtx& ctx) {
   return {.segment = &segment, .fetcher = ctx.fetcher};
 }
 
@@ -92,14 +92,14 @@ Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
   return MakeWildcardNGramDocs(query, interrogations);
 }
 
-Node::ptr Make(const TermQuery& query, const ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const TermQuery& query, const search::ScoredCtx& ctx, uint64_t) {
   const search::PostingClause posting{query.State(), query.Boost(),
                                       query.Stats(ctx)};
   return MakePostingScored(posting, query.Segment(),
                            RecipeOf(query.Segment(), ctx));
 }
 
-Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const MultiTermQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto merge = query.MergeType();
   const auto& segment = query.Segment();
@@ -119,10 +119,10 @@ Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx,
                                interrogations, clause, ctx);
 }
 
-Node::ptr Make(const FixedPhraseQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const FixedPhraseQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -135,10 +135,10 @@ Node::ptr Make(const FixedPhraseQuery& query, const ScoredCtx& ctx,
     [&] { return MakeFixedPhraseScored(query, args); });
 }
 
-Node::ptr Make(const VariadicPhraseQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const VariadicPhraseQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -151,13 +151,13 @@ Node::ptr Make(const VariadicPhraseQuery& query, const ScoredCtx& ctx,
     [&] { return MakeVariadicPhraseScored(query, args); });
 }
 
-Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const NGramSimilarityQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
   if (record.stats == nullptr) {
     return Make(query, interrogations);
   }
-  const ScoreArgs args{.scorer = record.scorer,
+  const search::ScoreArgs args{.scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
@@ -165,22 +165,22 @@ Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx,
                        : MakeNGramScored(query, args);
 }
 
-Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const AllQuery& query, const search::ScoredCtx& ctx, uint64_t) {
   const auto record = query.Stats(ctx);
   return MakeAllScored(
     query.Segment(),
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}));
 }
 
-Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const search::ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
   return MakeWildcardNGramScored(
     query,
-    search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+    search::AllDocsScore(query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}),

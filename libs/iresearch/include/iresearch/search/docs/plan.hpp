@@ -35,10 +35,6 @@
 
 namespace irs::docs {
 
-using search::kWindowBits;
-using search::kWindowDocs;
-using search::kWindowWords;
-
 template<template<typename...> class Shape, typename... Parts, typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
@@ -75,23 +71,6 @@ Root::ptr MakeVariadicPhraseWalk(const VariadicPhraseQuery& query,
   return search::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
                                                                utils::Empty{});
 }
-
-using search::FillNode;
-using search::ProbeNode;
-
-using search::BuildConjunction;
-using search::BuildDense;
-using search::CollectDense;
-using search::FillOf;
-using search::LeadOf;
-using search::ProbeOf;
-
-using search::PostingFill;
-using search::PostingLead;
-using search::ResolveArity;
-using search::ResolveBounds;
-using search::ResolveInput;
-using search::SegmentDoc;
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
 Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,

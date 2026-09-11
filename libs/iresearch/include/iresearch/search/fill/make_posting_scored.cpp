@@ -30,7 +30,7 @@
 namespace irs::fill {
 
 Node::ptr MakePostingScored(const search::PostingClause& posting,
-                            const SubReader& segment, const ScoredCtx& ctx,
+                            const SubReader& segment, const search::ScoredCtx& ctx,
                             ScoreMergeType merge) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);

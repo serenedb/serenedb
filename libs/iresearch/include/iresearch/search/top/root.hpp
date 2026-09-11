@@ -29,8 +29,6 @@
 
 namespace irs::top {
 
-using search::RootWindowScore;
-
 struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;

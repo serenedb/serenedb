@@ -27,7 +27,7 @@
 namespace irs::fill {
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const ScoredCtx& ctx, ScoreMergeType merge) {
+                                const search::ScoredCtx& ctx, ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
   if (stats == nullptr || query.state.reader == nullptr) {
@@ -36,7 +36,7 @@ Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
   return search::MakeFixedPhraseOf<search::PhraseMatch::Plain, ByWalkScored,
                                    Node::ptr, true, lead::TwoPhaseScored>(
     query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
-    ScoreArgs{.scorer = record.scorer,
+    search::ScoreArgs{.scorer = record.scorer,
               .stats = stats,
               .fetcher = ctx.fetcher,
               .boost = query.Boost()});

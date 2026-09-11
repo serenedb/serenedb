@@ -65,7 +65,7 @@ struct Api {
     return child.PlanLead({});
   }
 
-  static Result MakeTerm(const PostingClause& term, const SubReader& segment,
+  static Result MakeTerm(const search::PostingClause& term, const SubReader& segment,
                          const Context&) {
     return LeadOf(term, nullptr, segment);
   }
@@ -78,7 +78,7 @@ struct Api {
     return nullptr;
   }
 
-  static Result MakeNegation(std::span<const PostingClause> exclude_terms,
+  static Result MakeNegation(std::span<const search::PostingClause> exclude_terms,
                              std::span<const QueryBuilder::ptr> exclude_filters,
                              const SubReader& segment, uint64_t candidates,
                              const Context& ctx) {
@@ -89,9 +89,9 @@ struct Api {
 
 }  // namespace
 
-Node::ptr MakeRequiredDocs(std::span<const PostingClause> must,
+Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const PostingClause> should,
+                           std::span<const search::PostingClause> should,
                            std::span<const QueryBuilder::ptr> should_filters,
                            uint32_t min_should_match,
                            const SubReader& segment) {

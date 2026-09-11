@@ -59,13 +59,13 @@ inline constexpr uint64_t kNestedOthersOverLead = 8;
 inline constexpr uint64_t kConstantLeadDensity = 16;
 
 struct NestedClause {
-  std::span<const PostingClause> terms;
+  std::span<const search::PostingClause> terms;
   uint64_t docs = 0;
   const QueryBuilder* constant = nullptr;
   score_t bound = 0;
 };
 
-bool BoundedPosting(const PostingClause& posting) noexcept {
+bool BoundedPosting(const search::PostingClause& posting) noexcept {
   return search::ScoresOf(posting, nullptr) &&
          search::BoundsOf(*posting.state.reader);
 }
@@ -83,7 +83,7 @@ bool BoundedDisjunction(const QueryBuilder& child, NestedClause& out) noexcept {
       nested.Uniformity(Occur::Should) != search::Terms::Bounded) {
     return false;
   }
-  const std::span<const PostingClause> terms{should.postings};
+  const std::span<const search::PostingClause> terms{should.postings};
   if (terms.size() < 2) {
     return false;
   }
@@ -112,7 +112,7 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
       return false;
     }
     bound +=
-      search::AllDocsScore(segment, ScoreArgs{.scorer = scorer,
+      search::AllDocsScore(segment, search::ScoreArgs{.scorer = scorer,
                                               .stats = entry.stats,
                                               .fetcher = &ctx.fetcher,
                                               .boost = entry.boost * boost});
@@ -124,9 +124,9 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
 }  // namespace
 
 Root::ptr MakeNestedPrunedConjunction(
-  std::span<const PostingClause> terms,
+  std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
-  std::span<const PostingClause> excludes,
+  std::span<const search::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge) {
   SDB_ASSERT(!filters.empty());
@@ -137,7 +137,7 @@ Root::ptr MakeNestedPrunedConjunction(
   clauses.reserve(terms.size() + filters.size());
   if (!search::VisitOrderedOf(
         terms, filters, true, 0, std::numeric_limits<size_t>::max(),
-        [&](const PostingClause& term) {
+        [&](const search::PostingClause& term) {
           if (!BoundedPosting(term)) {
             return false;
           }
@@ -204,13 +204,13 @@ Root::ptr MakeNestedPrunedConjunction(
     using Window =
       probe::BooleanWindow<search::OrGroup<fill::SetLeaves<fill::Erased>>,
                            search::Scored, true>;
-    const auto args = [&](const PostingClause& posting) {
-      return ScoreArgs{.scorer = posting.stats.scorer,
+    const auto args = [&](const search::PostingClause& posting) {
+      return search::ScoreArgs{.scorer = posting.stats.scorer,
                        .stats = posting.stats.stats,
                        .fetcher = &ctx.fetcher,
                        .boost = posting.boost};
     };
-    const auto prepare = [&](auto& leaf, const PostingClause& posting) {
+    const auto prepare = [&](auto& leaf, const search::PostingClause& posting) {
       const auto& own = *posting.state.reader;
       SDB_ASSERT(search::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, search::LayoutOf(own), segment,

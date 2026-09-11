@@ -29,7 +29,7 @@
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/scored/make.hpp"
+#include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs {
@@ -47,8 +47,8 @@ class QueryBuilderImpl : public Base {
     return docs::Make(Self(), ctx);
   }
 
-  scored::Root::ptr PlanScored(const scored::Context& ctx) const final {
-    return scored::Make(Self(), ctx);
+  hits::Root::ptr PlanScored(const hits::Context& ctx) const final {
+    return hits::Make(Self(), ctx);
   }
 
   top::Root::ptr PlanTop(const top::Context& ctx) const final {

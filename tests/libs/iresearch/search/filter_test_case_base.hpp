@@ -140,8 +140,8 @@ class QueryWrapper : public irs::QueryBuilder {
     return _query->PlanDocs(ctx);
   }
 
-  irs::scored::Root::ptr PlanScored(
-    const irs::scored::Context& ctx) const final {
+  irs::hits::Root::ptr PlanScored(
+    const irs::hits::Context& ctx) const final {
     return _query->PlanScored(ctx);
   }
 

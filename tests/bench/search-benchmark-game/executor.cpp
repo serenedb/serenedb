@@ -39,7 +39,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/search/scored/root.hpp>
+#include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <stdexcept>
@@ -287,8 +287,8 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
       continue;
     }
     auto plan = ShapeDisabled("scored")
-                  ? irs::scored::Root::ptr{}
-                  : irs::scored::MakeRoot(
+                  ? irs::hits::Root::ptr{}
+                  : irs::hits::MakeRoot(
                       *query, {.scorer = *_scorer_ptr, .fetcher = fetcher});
     if (!plan) {
       throw std::runtime_error{"no scored plan for this query"};

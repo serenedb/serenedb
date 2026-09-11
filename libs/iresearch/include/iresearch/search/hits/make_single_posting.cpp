@@ -18,40 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/hits/single_posting.hpp"
 
-#include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/type_limits.hpp"
+namespace irs::hits {
 
-namespace irs {
-
-class ColumnArgsFetcher;
-
-namespace detail {
-
-struct ScoredCtx {
-  const Scorer* scorer = nullptr;
-  ColumnArgsFetcher* fetcher = nullptr;
-};
-
-}  // namespace detail
-namespace hits {
-
-struct Context {
-  const Scorer& scorer;
-  ColumnArgsFetcher& fetcher;
-  detail::DeadRuns* table = nullptr;
-};
-
-inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
-  return {
-    .scorer = &ctx.scorer,
-    .fetcher = &ctx.fetcher,
-  };
+Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
+                            const SubReader& segment, const Context& ctx) {
+  SDB_ASSERT(posting.state.cookie.docs_count == 1);
+  SDB_ASSERT(posting.state.reader != nullptr);
+  auto root = memory::make_managed<SinglePosting>();
+  root->Prepare(posting.state.cookie, segment, *posting.state.reader,
+                irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+                          .stats = posting.stats.stats,
+                          .fetcher = &ctx.fetcher,
+                          .boost = posting.boost});
+  return root;
 }
 
-}  // namespace hits
-}  // namespace irs
+}  // namespace irs::hits

@@ -446,10 +446,10 @@ class DocsRoot : public irs::docs::Root {
   DocList _list;
 };
 
-class ScoredRoot : public irs::scored::Root {
+class ScoredRoot : public irs::hits::Root {
  public:
   ScoredRoot(DocList::DocidsT docs, const irs::SubReader& segment,
-             const irs::scored::Context& ctx, irs::score_t boost,
+             const irs::hits::Context& ctx, irs::score_t boost,
              const irs::byte_type* stats) noexcept
     : _list{std::move(docs)},
       _segment{segment},
@@ -480,7 +480,7 @@ class ScoredRoot : public irs::scored::Root {
   DocList _list;
   NoAttrs _attrs;
   const irs::SubReader& _segment;
-  irs::scored::Context _ctx;
+  irs::hits::Context _ctx;
   irs::score_t _boost;
   const irs::byte_type* _stats;
 };
@@ -510,8 +510,8 @@ struct Boosted : public irs::FilterWithType<Boosted> {
       return irs::memory::make_managed<DocsRoot>(docs);
     }
 
-    irs::scored::Root::ptr PlanScored(
-      const irs::scored::Context& ctx) const final {
+    irs::hits::Root::ptr PlanScored(
+      const irs::hits::Context& ctx) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<ScoredRoot>(docs, Segment(), ctx, _boost,
                                                    Stats().stats);
@@ -600,7 +600,7 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
     irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
       return {};
     }
-    irs::scored::Root::ptr PlanScored(const irs::scored::Context&) const final {
+    irs::hits::Root::ptr PlanScored(const irs::hits::Context&) const final {
       return {};
     }
     irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
@@ -664,7 +664,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
     irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
       return {};
     }
-    irs::scored::Root::ptr PlanScored(const irs::scored::Context&) const final {
+    irs::hits::Root::ptr PlanScored(const irs::hits::Context&) const final {
       return {};
     }
     irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {

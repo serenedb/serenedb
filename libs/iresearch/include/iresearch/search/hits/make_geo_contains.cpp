@@ -18,40 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/detail/geo_instantiate.hpp"
+#include "iresearch/search/hits/make_geo_impl.hpp"
 
-#include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/type_limits.hpp"
+namespace irs::hits {
 
-namespace irs {
+#define IRS_GEO_CASE(Parser, ...) \
+  template Root::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, const Context&);
+IRS_GEO_PARSERS(IRS_GEO_CASE, GeoContainsAcceptor)
+#undef IRS_GEO_CASE
 
-class ColumnArgsFetcher;
-
-namespace detail {
-
-struct ScoredCtx {
-  const Scorer* scorer = nullptr;
-  ColumnArgsFetcher* fetcher = nullptr;
-};
-
-}  // namespace detail
-namespace hits {
-
-struct Context {
-  const Scorer& scorer;
-  ColumnArgsFetcher& fetcher;
-  detail::DeadRuns* table = nullptr;
-};
-
-inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
-  return {
-    .scorer = &ctx.scorer,
-    .fetcher = &ctx.fetcher,
-  };
-}
-
-}  // namespace hits
-}  // namespace irs
+}  // namespace irs::hits

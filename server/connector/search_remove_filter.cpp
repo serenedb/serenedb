@@ -55,7 +55,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
   irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
     return {};
   }
-  irs::scored::Root::ptr PlanScored(const irs::scored::Context&) const final {
+  irs::hits::Root::ptr PlanScored(const irs::hits::Context&) const final {
     return {};
   }
   irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {

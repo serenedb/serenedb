@@ -45,7 +45,7 @@
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scored/root.hpp"
+#include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -147,7 +147,7 @@ class QueryBuilder : public memory::Managed {
 
   virtual docs::Root::ptr PlanDocs(const docs::Context& ctx) const = 0;
 
-  virtual scored::Root::ptr PlanScored(const scored::Context& ctx) const = 0;
+  virtual hits::Root::ptr PlanScored(const hits::Context& ctx) const = 0;
 
   virtual top::Root::ptr PlanTop(const top::Context& ctx) const = 0;
 

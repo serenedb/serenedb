@@ -307,27 +307,27 @@ set(IResearch_core_sources
     ./search/docs/make_geo_contains.cpp
     ./search/docs/make_geo_is_contained.cpp
     ./search/docs/make_geo_distance.cpp
-    ./search/scored/make.cpp
-    ./search/scored/make_hnsw.cpp
-    ./search/scored/make_ivf.cpp
-    ./search/scored/make_posting.cpp
-    ./search/scored/make_single_posting.cpp
-    ./search/scored/make_all.cpp
-    ./search/scored/make_boolean.cpp
-    ./search/scored/make_boosted_posting.cpp
-    ./search/scored/make_fixed_phrase.cpp
-    ./search/scored/make_fixed_phrase_intervals.cpp
-    ./search/scored/make_fixed_phrase_slop.cpp
-    ./search/scored/make_variadic_phrase.cpp
-    ./search/scored/make_variadic_phrase_intervals.cpp
-    ./search/scored/make_variadic_phrase_slop.cpp
-    ./search/scored/make_ngram.cpp
-    ./search/scored/make_ngram_all.cpp
-    ./search/scored/make_wildcard_ngram.cpp
-    ./search/scored/make_geo_intersects.cpp
-    ./search/scored/make_geo_contains.cpp
-    ./search/scored/make_geo_is_contained.cpp
-    ./search/scored/make_geo_distance.cpp
+    ./search/hits/make.cpp
+    ./search/hits/make_hnsw.cpp
+    ./search/hits/make_ivf.cpp
+    ./search/hits/make_posting.cpp
+    ./search/hits/make_single_posting.cpp
+    ./search/hits/make_all.cpp
+    ./search/hits/make_boolean.cpp
+    ./search/hits/make_boosted_posting.cpp
+    ./search/hits/make_fixed_phrase.cpp
+    ./search/hits/make_fixed_phrase_intervals.cpp
+    ./search/hits/make_fixed_phrase_slop.cpp
+    ./search/hits/make_variadic_phrase.cpp
+    ./search/hits/make_variadic_phrase_intervals.cpp
+    ./search/hits/make_variadic_phrase_slop.cpp
+    ./search/hits/make_ngram.cpp
+    ./search/hits/make_ngram_all.cpp
+    ./search/hits/make_wildcard_ngram.cpp
+    ./search/hits/make_geo_intersects.cpp
+    ./search/hits/make_geo_contains.cpp
+    ./search/hits/make_geo_is_contained.cpp
+    ./search/hits/make_geo_distance.cpp
     ./search/top/make.cpp
     ./search/top/make_hnsw.cpp
     ./search/top/make_ivf.cpp

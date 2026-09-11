@@ -61,7 +61,7 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
-#include <iresearch/search/scored/make.hpp>
+#include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/detail/term_set.hpp>
@@ -233,7 +233,7 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
   bool emit_prepared = false;
   // A `.col` predicate is a fact about a document rather than about its
   // score, so it is verified before the collector is entered: the candidates
-  // come from a `scored::Root` a batch at a time instead of from the
+  // come from a `hits::Root` a batch at a time instead of from the
   // run-to-completion `top::Root`. The batch it is drained into belongs to
   // that branch, not to every top-k scan.
   ColFilterVerify col_verify;
@@ -242,7 +242,7 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
 };
 
 struct StreamScanLocalState : public SegDocBufferedScanLocalState {
-  // Whichever root this query's shape produced -- `scored::Root` when the
+  // Whichever root this query's shape produced -- `hits::Root` when the
   // scan scores, `docs::Root` when it does not. The four roots share no base
   // but `memory::Managed`, so the pointer is one and the call site downcasts.
   irs::memory::managed_ptr<irs::memory::Managed> streaming;
@@ -258,7 +258,7 @@ struct StreamScanLocalState : public SegDocBufferedScanLocalState {
   uint32_t stage_at = 0;
   uint32_t stage_len = 0;
   // What a scored root would be allowed to skip below, refreshed per batch
-  // from the static floor and the dynamic TOP_N boundary. `scored::Root` emits
+  // from the static floor and the dynamic TOP_N boundary. `hits::Root` emits
   // every match today, so nothing reads it yet.
   irs::score_t prune_threshold = std::numeric_limits<irs::score_t>::lowest();
 
@@ -2168,7 +2168,7 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that emits a score has a scorer to compute it with");
     score_fetcher.Clear();
-    auto plan = irs::scored::MakeRoot(seg_query, {
+    auto plan = irs::hits::MakeRoot(seg_query, {
                                                    .scorer = *g.scorer_obj,
                                                    .fetcher = score_fetcher,
                                                    .table = skipper,
@@ -2236,7 +2236,7 @@ bool StreamScanLocalState::Refill() {
     return false;
   }
   const auto n = streaming_scored
-                   ? static_cast<irs::scored::Root*>(streaming.get())
+                   ? static_cast<irs::hits::Root*>(streaming.get())
                        ->Run(stage_docs.data(), stage_scores.data(), kPlanBatch)
                    : static_cast<irs::docs::Root*>(streaming.get())
                        ->Run(stage_docs.data(), kPlanBatch);

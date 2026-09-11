@@ -20,38 +20,13 @@
 
 #pragma once
 
-#include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/search/hits/root.hpp"
 
-namespace irs {
+namespace irs::hits {
 
-class ColumnArgsFetcher;
-
-namespace detail {
-
-struct ScoredCtx {
-  const Scorer* scorer = nullptr;
-  ColumnArgsFetcher* fetcher = nullptr;
+class Empty : public Root {
+ public:
+  uint32_t Run(doc_id_t*, score_t*, uint32_t) final { return 0; }
 };
 
-}  // namespace detail
-namespace hits {
-
-struct Context {
-  const Scorer& scorer;
-  ColumnArgsFetcher& fetcher;
-  detail::DeadRuns* table = nullptr;
-};
-
-inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
-  return {
-    .scorer = &ctx.scorer,
-    .fetcher = &ctx.fetcher,
-  };
-}
-
-}  // namespace hits
-}  // namespace irs
+}  // namespace irs::hits

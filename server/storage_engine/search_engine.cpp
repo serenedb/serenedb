@@ -42,14 +42,15 @@
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "basics/static_strings.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
+#include "search/wal_recovery.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
@@ -80,6 +81,7 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 void SearchEngine::start() {
+  InitInvertedIndexes();
   // Replay each database's search-table WAL into iresearch (delta-based and
   // unconditional).
   RunSearchTableRecovery(false);

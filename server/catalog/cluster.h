@@ -24,10 +24,11 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/enums/database_modification_type.hpp>
 #include <string>
 
-#include "catalog1/entry/database.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/role.h"
 
 namespace sdb::catalog {
 

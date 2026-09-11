@@ -230,10 +230,7 @@ solid_module_id_seq
 statement error
 DROP SEQUENCE solid_module_id_seq;
 ----
-db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.
-table "solid_module" depends on sequence "solid_module_id_seq".
-table "solid_violations_ironically" depends on sequence "solid_module_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 

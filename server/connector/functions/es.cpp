@@ -34,6 +34,8 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/enums/database_modification_type.hpp>
+#include <duckdb/common/enums/statement_type.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -46,6 +48,8 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <map>
 
 #include "basics/assert.h"
@@ -54,9 +58,9 @@
 #include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_bind.h"
@@ -269,10 +273,18 @@ duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
   auto data = BindIndexArgs(input);
+  if (input.binder) {
+    input.binder->GetStatementProperties().RegisterDBModify(
+      duckdb::Catalog::GetCatalog(
+        context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()}),
+      context,
+      duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY |
+        duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  }
   return_types.push_back(duckdb::LogicalType::BOOLEAN);
   names.push_back("acknowledged");
   return data;
@@ -308,25 +320,31 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
   info.SetIndexName(duckdb::Identifier{index_name});
   info.table = table.name;
   info.index_type = InvertedStoreIndex::kTypeName;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions;
   for (const auto name : text_columns) {
     const duckdb::Identifier column{std::string{name}};
     SDB_ASSERT(table.GetColumns().ColumnExists(column));
+    const auto& definition = table.GetColumns().GetColumn(column);
+    bound_expressions.push_back(
+      duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        definition.Type(), duckdb::ColumnBinding{
+                             duckdb::TableIndex{0},
+                             duckdb::ProjectionIndex{info.column_ids.size()}}));
+    info.column_ids.push_back(definition.Physical().index);
     info.parsed_expressions.push_back(
       duckdb::make_uniq<duckdb::ColumnRefExpression>(column));
     info.column_opclasses.emplace_back(kTextTokenizer);
     info.column_opclass_options.emplace_back(std::nullopt);
   }
-  static const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>
-    kNoBoundExpressions;
   auto& schema = table.ParentSchema();
   auto entry = schema.CreateIndex(
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);
   SDB_ASSERT(entry);
   auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
   index_entry.SetConfig(BindInvertedIndexConfig(context, index_entry, table,
-                                                kNoBoundExpressions,
+                                                bound_expressions,
                                                 duckdb::LogicalType::INVALID));
-  PublishInvertedIndex(context, index_entry, table, kNoBoundExpressions);
+  PublishInvertedIndex(context, index_entry, table, bound_expressions);
   const auto& storage = index_entry.Storage();
   SDB_ASSERT(storage);
   storage->StartTasks();

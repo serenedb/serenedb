@@ -1084,19 +1084,19 @@ class Enforcer {
         ERR_MSG("permission denied to change default privileges"));
     }
     info.grantee_id = GranteeId(info.grantee);
+    std::string database{_connection.GetDatabase()};
     if (!info.default_schema.empty()) {
-      info.entry_catalog_type = CatalogType::SCHEMA_ENTRY;
-      info.SetQualifiedName(duckdb::Identifier{}, duckdb::Identifier{},
-                            duckdb::Identifier{info.default_schema});
-      auto& schema = ResolveTarget(info);
+      auto& schema =
+        duckdb::Catalog::GetSchema(_context, duckdb::Identifier{},
+                                   duckdb::Identifier{info.default_schema});
       if (_enforce && !ClosureOf(info.target_role)
                          .Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
                               AclMode::Create)) {
         Denied(schema);
       }
-      return;
+      info.default_scope = schema.oid;
+      database = schema.ParentCatalog().GetName().GetIdentifierName();
     }
-    const auto& database = _connection.GetDatabase();
     if (!DatabaseEntry(database)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                       ERR_MSG("database \"", database, "\" does not exist"));
@@ -1163,9 +1163,11 @@ class Enforcer {
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
     info.permissions.owner = _caller;
     duckdb::vector<duckdb::AclItem> acl;
-    const auto apply = [&](const duckdb::Permissions& holder) {
+    const auto apply = [&](const duckdb::Permissions& holder,
+                           duckdb::idx_t scope) {
       for (const auto& defaults : holder.defaults) {
-        if (defaults.role != _caller || defaults.objtype != objtype) {
+        if (defaults.role != _caller || defaults.objtype != objtype ||
+            defaults.scope != scope) {
           continue;
         }
         if (acl.empty()) {
@@ -1176,11 +1178,14 @@ class Enforcer {
         }
       }
     };
-    if (schema) {
-      apply(schema->permissions);
-    }
-    if (auto database = DatabaseEntry(_connection.GetDatabase())) {
-      apply(database->permissions);
+    const auto database = DatabaseEntry(
+      schema ? schema->ParentCatalog().GetName().GetIdentifierName()
+             : std::string{_connection.GetDatabase()});
+    if (database) {
+      if (schema) {
+        apply(database->permissions, schema->oid);
+      }
+      apply(database->permissions, 0);
     }
     if (!acl.empty()) {
       info.permissions.acl = std::move(acl);

@@ -74,8 +74,7 @@ n
 query error
 SELECT nextval('clickclack_dashboards_id_seq');
 ----
-db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
 
 
 
@@ -107,8 +106,7 @@ Did you mean "<slt:ignore>"?
 statement error
 DROP SEQUENCE clickclack_dashboards_id_seq CASCADE;
 ----
-db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
 
 
 

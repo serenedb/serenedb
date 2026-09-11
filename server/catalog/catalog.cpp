@@ -224,7 +224,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
   const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
-  if (entry == nullptr) {
+  if (!entry) {
     return duckdb::DuckCatalog::PlanUpdate(context, planner, op, plan);
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
@@ -249,10 +249,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo&) {
   return {};
-}
-
-std::string SereneDBCatalog::GetDefaultSchema() const {
-  return std::string{StaticStrings::kPublic};
 }
 
 void SereneDBCatalog::Initialize(bool load_builtin) {
@@ -298,13 +294,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(
   duckdb::CreateTokenizerInfo& info) {
   DeclareModified(transaction, *this);
   return schema.CreateTokenizer(transaction, info);
-}
-
-void SereneDBCatalog::DropTokenizer(duckdb::ClientContext& context,
-                                    duckdb::DropInfo& info) {
-  DeclareModified(GetCatalogTransaction(context), *this,
-                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  DropEntry(context, info);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(

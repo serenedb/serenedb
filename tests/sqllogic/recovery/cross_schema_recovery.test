@@ -3,9 +3,11 @@ control substitution on
 
 # Vedernikoff cross-schema cascade with crash midway. Tables/types/sequences
 # across three schemas; drop the source schema with CASCADE and crash before
-# the seq counter wipe completes. Recovery must end up with: source schema
-# fully gone, sibling tables intact with DEFAULT cleared and ENUM column
-# dropped.
+# the seq counter wipe completes. A sibling table takes its DEFAULT from the
+# core sequence, which makes it a dependent, so CASCADE drops it along with the
+# sequence -- the same outcome the drop has without a crash. Recovery must end
+# up with: source schema fully gone, both dependents gone with it, and the two
+# sibling schemas still usable.
 
 statement ok
 CREATE SCHEMA vedernikoff_ml_paper_core;
@@ -87,49 +89,50 @@ count
 0
 
 
+# Both sibling tables take their DEFAULT from the core sequence, which makes
+# them dependents of it: CASCADE dropped them along with the sequence.
 connection after_crash
 query
+SELECT count(*) FROM information_schema.tables
+WHERE table_schema IN ('vedernikoff_ml_paper_alpha', 'vedernikoff_ml_paper_bravo');
+----
+count
+0
+
+
+connection after_crash
+statement error
 SELECT note FROM vedernikoff_ml_paper_alpha.runs;
 ----
-note
-alpha_pre
+db error: ERROR: Table with name runs does not exist!
+Did you mean "<slt:ignore>"?
 
 
 connection after_crash
 query
-SELECT note FROM vedernikoff_ml_paper_bravo.runs;
+SELECT count(*) FROM pg_type WHERE typname = 'status';
 ----
-note
-bravo_pre
+count
+0
 
 
-# DEFAULT cleared and 's' column dropped: insert with just (note).
+# The sibling schemas themselves survived, and still take DDL and rows.
 connection after_crash
 statement ok
-INSERT INTO vedernikoff_ml_paper_alpha.runs (note) VALUES ('alpha_post');
+CREATE TABLE vedernikoff_ml_paper_alpha.runs (id INT, note TEXT);
 
 
 connection after_crash
-statement ok
-INSERT INTO vedernikoff_ml_paper_bravo.runs (note) VALUES ('bravo_post');
-
-
-connection after_crash
-query
-SELECT id, note FROM vedernikoff_ml_paper_alpha.runs ORDER BY note;
-----
-id    note
-NULL  alpha_post
-200   alpha_pre
+statement count 1
+INSERT INTO vedernikoff_ml_paper_alpha.runs VALUES (1, 'alpha_post');
 
 
 connection after_crash
 query
-SELECT id, note FROM vedernikoff_ml_paper_bravo.runs ORDER BY note;
+SELECT id, note FROM vedernikoff_ml_paper_alpha.runs;
 ----
-id    note
-NULL  bravo_post
-201   bravo_pre
+id	note
+1	alpha_post
 
 
 connection after_crash

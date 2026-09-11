@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "basics/duckdb_engine.h"
 #include "basics/message_buffer.h"
 #include "network/pg/wire_frames.h"
 #include "pg/errcodes.h"
@@ -72,7 +73,8 @@ TEST(NetworkPgFrames, RowDescriptionSingleInt) {
   const std::vector<duckdb::LogicalType> types{duckdb::LogicalType::INTEGER};
   const std::vector<duckdb::Identifier> names{"answer"};
   const std::vector<sdb::pg::VarFormat> formats{};
-  WriteRowDescription(buf, types, names, formats);
+  auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+  WriteRowDescription(buf, *conn->context, types, names, formats);
   const std::string bytes = Flatten(buf.Written());
   ASSERT_GE(bytes.size(), 7u);
   EXPECT_EQ(bytes[0], PQ_MSG_ROW_DESCRIPTION);

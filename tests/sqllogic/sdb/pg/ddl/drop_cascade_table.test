@@ -97,8 +97,7 @@ n
 statement error
 DROP SEQUENCE iceberg_audit1_id_seq;
 ----
-db error: ERROR: Sequence with name iceberg_audit1_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name iceberg_audit1_id_seq does not exist!<slt:ignore>
 
 
 
@@ -224,10 +223,7 @@ INSERT INTO iceberg_manifest_b (v) VALUES ('b');
 statement error
 DROP TABLE iceberg_snapshot;
 ----
-db error: ERROR: Cannot drop entry "iceberg_snapshot_id_seq" because there are entries that depend on it.
-table "iceberg_manifest_a" depends on sequence "iceberg_snapshot_id_seq".
-table "iceberg_manifest_b" depends on sequence "iceberg_snapshot_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_snapshot_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 

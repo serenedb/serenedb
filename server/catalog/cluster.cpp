@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/cluster.h"
+#include "catalog/cluster.h"
 
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
@@ -28,8 +28,8 @@
 #include <string_view>
 
 #include "basics/duckdb_engine.h"
-#include "catalog1/entry/database.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_types.h"
 
 namespace sdb::catalog {
@@ -38,13 +38,14 @@ namespace {
 constexpr std::string_view kRootRole = "postgres";
 
 void DeclareModified(duckdb::CatalogTransaction transaction,
-                     duckdb::Catalog& catalog) {
+                     duckdb::Catalog& catalog,
+                     duckdb::DatabaseModificationType type =
+                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY) {
   if (!transaction.context) {
     return;
   }
   duckdb::MetaTransaction::Get(transaction.GetContext())
-    .ModifyDatabase(catalog.GetAttached(),
-                    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+    .ModifyDatabase(catalog.GetAttached(), type);
 }
 
 }  // namespace
@@ -92,7 +93,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
 
 void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                               duckdb::DropInfo& info) {
-  DeclareModified(transaction, *this);
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropRole(transaction, info);
 }
 
@@ -114,7 +116,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
 
 void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   duckdb::DropInfo& info) {
-  DeclareModified(transaction, *this);
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropDatabase(transaction, info);
 }
 

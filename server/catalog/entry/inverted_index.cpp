@@ -365,10 +365,6 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   return info;
 }
 
-std::string InvertedIndexEntry::ToSQL() const {
-  return duckdb::IndexCatalogEntry::GetInfo()->ToString();
-}
-
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
   if (!info || !info->info) {
     return _relation_name;

@@ -33,7 +33,7 @@
 #include <string_view>
 
 #include "basics/assert.h"
-#include "catalog1/persistence/search_table.h"
+#include "catalog/persistence/search_table.h"
 
 namespace duckdb {
 
@@ -55,6 +55,7 @@ enum class TableEngine : uint8_t {
 };
 
 inline constexpr std::string_view kStorageOption = "storage";
+inline constexpr std::string_view kPayloadOption = "sdb_payload";
 
 using persistence::SearchTableOptions;
 
@@ -66,7 +67,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
                    std::shared_ptr<search::SearchTable> inherited_storage = {});
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext& context, duckdb::column_t column_id) override;
+    duckdb::ClientContext&, duckdb::column_t) override {
+    return nullptr;
+  }
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,

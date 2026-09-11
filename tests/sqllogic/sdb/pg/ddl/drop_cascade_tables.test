@@ -233,8 +233,7 @@ DROP TABLE vedernikoff_clickclack_writeups;
 statement error
 DROP SEQUENCE vedernikoff_clickclack_writeups_id_seq;
 ----
-db error: ERROR: Sequence with name vedernikoff_clickclack_writeups_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name vedernikoff_clickclack_writeups_id_seq does not exist!<slt:ignore>
 
 
 
@@ -332,8 +331,7 @@ Did you mean "<slt:ignore>"?
 statement error
 DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
 ----
-db error: ERROR: Sequence with name vedernikoff_clickclack_owner_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name vedernikoff_clickclack_owner_id_seq does not exist!<slt:ignore>
 
 
 
@@ -623,13 +621,11 @@ DROP TABLE vedernikoff_iceberg_runs CASCADE;
 query error
 SELECT nextval('vedernikoff_iceberg_runs_id_seq');
 ----
-db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!<slt:ignore>
 
 
 
 statement error
 DROP SEQUENCE vedernikoff_iceberg_runs_id_seq;
 ----
-db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!<slt:ignore>

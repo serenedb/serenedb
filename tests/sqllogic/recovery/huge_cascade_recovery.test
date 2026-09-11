@@ -141,53 +141,50 @@ count
 0
 
 
-# Sibling records survived with their payload, lost the 'c' column.
+# Each sibling table takes its DEFAULT from the core sequence, which makes it a
+# dependent: the cascade took all three, and the views took their base tables
+# with them. The three schemas themselves survived, empty.
+connection after_crash
+query
+SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('vedernikoff_x_alpha', 'vedernikoff_x_bravo',
+                    'vedernikoff_x_charlie');
+----
+count
+0
+
+
+connection after_crash
+statement error
+SELECT id, payload FROM vedernikoff_x_alpha.records;
+----
+db error: ERROR: Table with name records does not exist!<slt:ignore>
+
+
+connection after_crash
+statement error
+SELECT count(*) FROM vedernikoff_x_charlie.payload_pulse;
+----
+db error: ERROR: Table with name payload_pulse does not exist!<slt:ignore>
+
+
+# The schemas still take DDL after the cascade.
+connection after_crash
+statement ok
+CREATE TABLE vedernikoff_x_alpha.records (id INT, payload TEXT);
+
+
+connection after_crash
+statement count 1
+INSERT INTO vedernikoff_x_alpha.records VALUES (1, 'alpha_post');
+
+
 connection after_crash
 query
 SELECT id, payload FROM vedernikoff_x_alpha.records;
 ----
-id     payload
-10000  alpha_pre
-
-
-connection after_crash
-query
-SELECT id, payload FROM vedernikoff_x_bravo.records;
-----
-id     payload
-10001  bravo_pre
-
-
-connection after_crash
-query
-SELECT id, payload FROM vedernikoff_x_charlie.records;
-----
-id     payload
-10002  charlie_pre
-
-
-# DEFAULT cleared.
-connection after_crash
-statement ok
-INSERT INTO vedernikoff_x_alpha.records (payload) VALUES ('alpha_post');
-
-
-connection after_crash
-query
-SELECT id, payload FROM vedernikoff_x_alpha.records ORDER BY payload;
-----
-id     payload
-NULL   alpha_post
-10000  alpha_pre
-
-
-# Payload-only view survived (only references columns that still exist).
-connection after_crash
-query
-SELECT count(*) FROM vedernikoff_x_charlie.payload_pulse;
-----
-count
-2
+id	payload
+1	alpha_post
 
 
 # Witness schema unaffected.

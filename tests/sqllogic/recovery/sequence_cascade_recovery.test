@@ -40,51 +40,45 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
+# A SERIAL column's sequence is owned by its table, so the recovered drop takes
+# the sequence with the table, and CASCADE takes the table that defaults to the
+# sequence. Recovery applies the whole cascade, not half of it.
 connection after_crash
 query
+SELECT count(*) FROM pg_class WHERE relname IN
+  ('iceberg_manifest', 'iceberg_manifest_id_seq', 'iceberg_partition');
+----
+count
+0
+
+
+connection after_crash
+statement error
 SELECT id, payload FROM iceberg_partition ORDER BY id;
 ----
-id	payload
-3	pre-crash
+db error: ERROR: Table with name iceberg_partition does not exist!<slt:ignore>
 
 
-# A SERIAL column's sequence is not owned by its table, so the recovered drop
-# takes the table and leaves the sequence, which another table still defaults
-# to.
+# Every name the cascade took is free again, and the sequence comes back with
+# the table.
 connection after_crash
-query
-SELECT
-  EXISTS(SELECT 1 FROM pg_class WHERE relname = 'iceberg_manifest') AS table_alive,
-  EXISTS(SELECT 1 FROM pg_class WHERE relname = 'iceberg_manifest_id_seq') AS seq_alive;
-----
-table_alive	seq_alive
-f	t
+statement ok
+CREATE TABLE iceberg_manifest (id SERIAL PRIMARY KEY, name TEXT);
 
 
 connection after_crash
 statement count 1
-INSERT INTO iceberg_partition (id, payload) VALUES (500, 'after-crash-explicit');
+INSERT INTO iceberg_manifest (name) VALUES ('post-crash');
 
 
 connection after_crash
 query
-SELECT id, payload FROM iceberg_partition WHERE id IN (3, 500) ORDER BY id;
+SELECT id, name FROM iceberg_manifest;
 ----
-id	payload
-3	pre-crash
-500	after-crash-explicit
+id	name
+1	post-crash
 
 
 connection after_crash
 statement ok
-DROP TABLE IF EXISTS iceberg_partition;
-
-
-connection after_crash
-statement ok
-DROP TABLE IF EXISTS iceberg_manifest CASCADE;
-
-
-connection after_crash
-statement ok
-DROP SEQUENCE IF EXISTS iceberg_manifest_id_seq;
+DROP TABLE iceberg_manifest CASCADE;

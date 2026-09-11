@@ -247,11 +247,8 @@ count
 
 # ALTER INDEX SET clones the catalog object; the predicate must survive the
 # round-trip and keep filtering DML.
-statement error
+statement ok
 ALTER INDEX pt_live SET (refresh_interval = 200);
-----
-db error: ERROR: Table with name pt_live does not exist!
-Did you mean "pg_policies"?
 
 
 

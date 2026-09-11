@@ -67,10 +67,8 @@ ORDER BY 1, 2;
 entry_type	name	same_oid
 Index	ceo_i	t
 Schema	ceo	t
-Sequence	before_pk_seq	t
 Sequence	sq	t
 Table	before	t
-Table	ceo_i	t
 Table	t	t
 View	v	t
 

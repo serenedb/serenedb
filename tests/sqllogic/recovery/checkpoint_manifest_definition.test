@@ -168,7 +168,7 @@ query
 SELECT indexname FROM pg_indexes WHERE tablename = 'cmd_child' ORDER BY 1;
 ----
 indexname
-PRIMARY_cmd_child_id
+cmd_child_pkey
 cmd_late_idx
 
 

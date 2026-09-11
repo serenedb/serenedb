@@ -128,11 +128,6 @@ SearchTableEntry::SearchTableEntry(
   }
 }
 
-duckdb::unique_ptr<duckdb::BaseStatistics> SearchTableEntry::GetStatistics(
-  duckdb::ClientContext&, duckdb::column_t) {
-  return nullptr;
-}
-
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
   duckdb::ClientContext&) {
   return {};

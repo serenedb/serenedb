@@ -86,10 +86,14 @@ statement ok
 CREATE VIEW v_babsky AS SELECT babsky(n) AS c FROM vedernikoff_nums;
 
 
-# A replace substitutes the definition under the same name, so a dependent view
-# keeps working and reads the new body.
-statement ok
+# A replace is a drop and a create of the same name, so a dependent view blocks
+# it: the old definition stays in effect.
+statement error
 CREATE OR REPLACE FUNCTION babsky(x INT) AS x + 100;
+----
+db error: ERROR: Cannot drop entry "babsky" because there are entries that depend on it.
+view "v_babsky" depends on macro function "babsky".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -104,9 +108,9 @@ query
 SELECT c FROM v_babsky ORDER BY c;
 ----
 c
-101
-102
-103
+2
+3
+4
 
 
 statement error
@@ -305,10 +309,12 @@ statement ok
 CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
 
 
-# A replace substitutes the definition under the same name, so a dependent
-# inverted index stays where it is; what it holds is what the index build read.
-statement ok
+# A replace is a drop and a create, and an index whose expression calls the
+# function depends on it, so the replace is refused until the index is gone.
+statement error
 CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
+----
+db error: ERROR: Cannot drop entry "babsky_or" because there are entries that depend on it.<slt:ignore>
 
 
 query
@@ -320,6 +326,10 @@ count
 
 statement ok
 DROP INDEX clickclack_or_idx;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
 
 
 query

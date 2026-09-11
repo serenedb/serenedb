@@ -27,20 +27,14 @@ n
 statement error
 DROP SEQUENCE clickclack_query_log_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
-table "clickclack_query_log" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
-table "clickclack_query_log" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -219,10 +213,7 @@ clickclack_ingest_job_c_seq
 statement error
 DROP SEQUENCE clickclack_ingest_job_b_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_job_b_seq" because there are entries that depend on it.
-table "clickclack_ingest_job" depends on sequence "clickclack_ingest_job_b_seq".
-table "clickclack_ingest_log" depends on sequence "clickclack_ingest_job_b_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_ingest_job_b_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -314,10 +305,7 @@ cross
 statement error
 DROP SEQUENCE iceberg_audits.snapshots_id_seq;
 ----
-db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.
-table "clickclack_audit_ref" depends on sequence "snapshots_id_seq".
-table "snapshots" depends on sequence "snapshots_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 

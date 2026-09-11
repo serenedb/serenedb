@@ -29,8 +29,8 @@
 #include <optional>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/memory.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/memory.hpp"
 
 namespace sdb::connector {
 

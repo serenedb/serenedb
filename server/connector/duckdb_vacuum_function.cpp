@@ -32,8 +32,8 @@
 #include <iresearch/utils/index_utils.hpp>
 
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -45,8 +45,8 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

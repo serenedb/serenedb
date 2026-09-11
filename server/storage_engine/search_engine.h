@@ -30,7 +30,7 @@
 #include <yaclib/algo/wait_group.hpp>
 
 #include "absl/synchronization/mutex.h"
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "rest_server/database_path_feature.h"
 #include "search/search_db_wal.h"

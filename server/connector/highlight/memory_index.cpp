@@ -22,7 +22,7 @@
 
 #include <duckdb/main/database.hpp>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace sdb::connector::highlight {
 

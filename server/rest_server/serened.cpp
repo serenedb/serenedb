@@ -28,11 +28,11 @@
 #include <functional>
 #include <utility>
 
-#include "app/app_server.h"
-#include "app/init.h"
-#include "basics/crash_handler.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
+#include "server/utils/app_server.h"
+#include "server/utils/init.h"
+#include "iresearch/utils/crash_handler.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/data_store.h"
 #include "catalog/log/duckdb_global_catalog.h"

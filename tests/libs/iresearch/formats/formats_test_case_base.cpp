@@ -30,8 +30,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "basics/duckdb_engine.h"
-#include "basics/resource_manager.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/resource_manager.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/col_reader.hpp"

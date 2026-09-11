@@ -25,7 +25,7 @@
 #include <string>
 #include <string_view>
 
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 #include "network/pg/frame_reader.h"
 #include "pg/protocol.h"
 

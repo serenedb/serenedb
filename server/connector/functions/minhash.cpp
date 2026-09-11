@@ -34,9 +34,9 @@
 #include <iresearch/utils/minhash_utils.hpp>
 #include <iterator>
 
-#include "basics/wyhash.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/wyhash.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -131,7 +131,7 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       }
       const auto& token = tokens[token_idx];
       sketch.Insert(
-        sdb::basics::WyHash(token.GetData(), token.GetSize(), kHashSeed));
+        irs::utils::WyHash(token.GetData(), token.GetSize(), kHashSeed));
     }
     const auto row_offset = offset;
     const auto produced =

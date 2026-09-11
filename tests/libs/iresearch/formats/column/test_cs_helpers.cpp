@@ -27,8 +27,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 
-#include "basics/assert.h"
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::tests {

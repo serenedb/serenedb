@@ -41,39 +41,39 @@
 #include <variant>
 #include <vector>
 
-#include "basics/serialization.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/serializer.h"
 
 namespace {
 
 // Round-trip a value through the duckdb-binary tuple pipeline and assert
 // that the deserialised result compares equal to the original.
-template<typename T, typename Arg = sdb::basics::detail::Empty>
+template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, in, arg);
+    irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
   T out{};
   duckdb::BinaryDeserializer source{stream};
-  sdb::basics::ReadTuple(source, out, arg);
+  irs::utils::ReadTuple(source, out, arg);
   EXPECT_EQ(in, out);
 }
 
 // Round-trip in-place: deserialised value is read into `out` (caller-owned)
 // for cases where the test wants to inspect the read-back value separately.
-template<typename T, typename Arg = sdb::basics::detail::Empty>
+template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTripInto(const T& in, T& out, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, in, arg);
+    irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
   duckdb::BinaryDeserializer source{stream};
-  sdb::basics::ReadTuple(source, out, arg);
+  irs::utils::ReadTuple(source, out, arg);
 }
 
 // ------------------------------------------------------------------
@@ -353,7 +353,7 @@ TEST(DuckRoundTrip, write_invalid_enum_throws) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
   EXPECT_ANY_THROW(
-    sdb::basics::WriteTuple(sink, EnumField{static_cast<MyIntEnum>(999)}));
+    irs::utils::WriteTuple(sink, EnumField{static_cast<MyIntEnum>(999)}));
 }
 
 // ------------------------------------------------------------------
@@ -379,7 +379,7 @@ template<typename Context>
 void SerdeWrite(Context ctx, const WithContext& v) {
   ctx.io().OnListBegin(2);
   ctx.io().WriteValue(static_cast<uint64_t>(v.i));
-  sdb::basics::detail::WriteString(ctx.io(), v.s);
+  irs::utils::detail::WriteString(ctx.io(), v.s);
   ctx.io().OnListEnd();
 }
 
@@ -439,12 +439,12 @@ TEST(DuckRoundTrip, truncated_payload_throws) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, Narrow{.i = 42});
+    irs::utils::WriteTuple(sink, Narrow{.i = 42});
   }
   stream.Rewind();
   duckdb::BinaryDeserializer source{stream};
   Wide out{};
-  EXPECT_ANY_THROW(sdb::basics::ReadTuple(source, out));
+  EXPECT_ANY_THROW(irs::utils::ReadTuple(source, out));
 }
 
 // Serializes `in` as a `Src`, then reads it back as a `Dst`; returns the error
@@ -454,13 +454,13 @@ std::string ReadTupleError(const Src& in) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, in);
+    irs::utils::WriteTuple(sink, in);
   }
   stream.Rewind();
   duckdb::BinaryDeserializer source{stream};
   Dst out{};
   try {
-    sdb::basics::ReadTuple(source, out);
+    irs::utils::ReadTuple(source, out);
   } catch (const std::exception& e) {
     return e.what();
   }

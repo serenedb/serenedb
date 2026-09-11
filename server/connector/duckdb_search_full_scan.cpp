@@ -75,10 +75,10 @@
 #include <span>
 #include <type_traits>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -94,8 +94,8 @@
 #include "iresearch/index/hit_batcher.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 

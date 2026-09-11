@@ -38,10 +38,10 @@
 #include <string>
 #include <utility>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "connector/functions/embedding/provider.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

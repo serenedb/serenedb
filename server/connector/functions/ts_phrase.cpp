@@ -32,10 +32,10 @@
 #include <iresearch/utils/string.hpp>
 #include <limits>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "connector/functions/ts_query_codec.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search.h"
 #include "string.h"
 #include "ts_common.hpp"

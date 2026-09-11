@@ -27,8 +27,8 @@
 
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

@@ -21,7 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "insert_field.hpp"

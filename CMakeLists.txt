@@ -183,8 +183,8 @@ set(INSTALL_CONFIGFILES_LIST)
 string(TIMESTAMP SERENEDB_BUILD_DATE "%Y-%m-%d %H:%M:%S")
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/libs/basics/build.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/libs/basics/build.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/build.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/server/utils/build.h"
     NEWLINE_STYLE UNIX
 )
 
@@ -195,8 +195,8 @@ if(NOT DEFINED GENERATE_BUILD_DATE OR GENERATE_BUILD_DATE)
         "whether we should generate the build date"
     )
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/libs/basics/build-date.h.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/libs/basics/build-date.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/build-date.h.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/server/utils/build-date.h"
         NEWLINE_STYLE UNIX
     )
 else()
@@ -299,8 +299,8 @@ else()
 endif()
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/libs/basics/build-repository.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/libs/basics/build-repository.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/build-repository.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/server/utils/build-repository.h"
     NEWLINE_STYLE UNIX
 )
 
@@ -833,10 +833,10 @@ include(SereneDBInstall)
 # If "make clean" removes these files, afterwards neither "make" nor "cmake" work any more.
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
-set(EXIT_CODE_FILES libs/basics/exitcodes.h js/common/bootstrap/exitcodes.js)
+set(EXIT_CODE_FILES server/utils/exitcodes.h js/common/bootstrap/exitcodes.js)
 
 set(EXIT_CODE_FILES_GEN)
-set(EXIT_CODES_DAT libs/basics/exitcodes.dat)
+set(EXIT_CODES_DAT server/utils/exitcodes.dat)
 
 foreach(m IN LISTS EXIT_CODE_FILES)
     get_filename_component(GEN_BASENAME "${m}" NAME)
@@ -871,7 +871,8 @@ add_custom_target(exitcodefiles ALL DEPENDS ${EXIT_CODE_FILES_GEN})
 
 list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
-add_subdirectory(libs)
+add_subdirectory(iresearch)
+add_subdirectory(server/utils)
 add_subdirectory(server)
 add_subdirectory(tests)
 

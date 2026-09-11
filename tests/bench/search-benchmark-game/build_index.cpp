@@ -25,7 +25,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "executor.h"
 #include "index_builder.h"
 #include "insert_field.hpp"

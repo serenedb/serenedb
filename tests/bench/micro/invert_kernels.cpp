@@ -33,7 +33,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
@@ -1293,7 +1293,7 @@ void BM_FieldsMapNode(benchmark::State& state) {
   auto mem = DefaultMemory();
   duckdb::ArenaAllocator arena{mem.allocator};
   std::array<uint32_t, TokenBatch::kCapacity> term_ids;
-  sdb::containers::NodeHashMap<field_id, FieldInverter> map;
+  irs::containers::NodeHashMap<field_id, FieldInverter> map;
   for (size_t i = 0; i < nfields; ++i) {
     map.try_emplace(static_cast<field_id>(i), static_cast<field_id>(i), arena,
                     term_ids, mem.rm, kTermsFeatures, nullptr, nullptr);

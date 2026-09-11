@@ -31,8 +31,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"

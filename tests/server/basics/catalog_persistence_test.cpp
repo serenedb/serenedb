@@ -44,7 +44,7 @@
 #include <utility>
 #include <variant>
 
-#include "basics/serializer.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"

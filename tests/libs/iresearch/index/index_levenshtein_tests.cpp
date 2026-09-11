@@ -22,7 +22,7 @@
 
 #include <simdutf.h>
 
-#include "basics/containers/small_vector.h"
+#include "iresearch/utils/containers/small_vector.h"
 #include "index/index_tests.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
@@ -37,7 +37,7 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
     auto acceptor = irs::MakeLevenshteinAutomaton(description, prefix, target);
     irs::automaton_table_matcher matcher(acceptor, true);
 
-    sdb::containers::SmallVector<uint32_t, 16> target_chars;
+    irs::containers::SmallVector<uint32_t, 16> target_chars;
     irs::utf8_utils::ToUTF32<false>(target, std::back_inserter(target_chars));
 
     for (auto& segment : *reader) {
@@ -57,7 +57,7 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
         while (expected_terms->next()) {
           auto expected_term = expected_terms->value();
 
-          sdb::containers::SmallVector<uint32_t, 16> expected_chars;
+          irs::containers::SmallVector<uint32_t, 16> expected_chars;
           if (!irs::utf8_utils::ToUTF32<true>(
                 expected_term, std::back_inserter(expected_chars))) {
             continue;

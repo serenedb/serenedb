@@ -25,7 +25,7 @@
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 
 // For more safety
 template<>

@@ -56,8 +56,8 @@
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {

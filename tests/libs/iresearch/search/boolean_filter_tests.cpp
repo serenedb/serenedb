@@ -1982,7 +1982,7 @@ TEST(BooleanFilter_test, duplicate_term_merges_boost) {
 
     const auto optimized = tests::Optimized(std::move(q), &sort);
     ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
-    const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
+    const auto& node = irs::utils::downCast<irs::BooleanFilter>(*optimized);
     EXPECT_EQ(2, node.Size(irs::Occur::Must));
   }
 
@@ -2135,7 +2135,7 @@ TEST(BooleanFilter_test, optimize_double_negation) {
 TEST(BooleanFilter_test, optimize_single_node) {
   auto expect_lone_term = [](const irs::Filter& filter) {
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter.type());
-    const auto& term = sdb::basics::downCast<irs::ByTerm>(filter);
+    const auto& term = irs::utils::downCast<irs::ByTerm>(filter);
     EXPECT_EQ(kFieldTestField, term.field_id());
     EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("test_term")),
               term.options().term);
@@ -2209,7 +2209,7 @@ TEST(BooleanFilter_test, optimize_all_filters) {
     irs::Optimize(f, {.scored = true});
 
     ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
-    const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*f);
+    const auto& node = irs::utils::downCast<irs::BooleanFilter>(*f);
     const auto filters = node.Filters(irs::Occur::Must);
     ASSERT_EQ(3, filters.size());
     irs::score_t total = 0;
@@ -2230,7 +2230,7 @@ TEST(BooleanFilter_test, optimize_all_filters) {
     irs::Optimize(f, {.scored = true});
 
     ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
-    const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*f);
+    const auto& node = irs::utils::downCast<irs::BooleanFilter>(*f);
     ASSERT_EQ(1, node.Terms(irs::Occur::Must).size());
     const auto filters = node.Filters(irs::Occur::Must);
     ASSERT_EQ(2, filters.size());
@@ -2325,7 +2325,7 @@ TEST(BooleanFilter_test, optimize_only_all_boosted) {
   irs::ColumnArgsFetcher fetcher;
   prep.ExecuteScored(0, fetcher);
   ASSERT_NE(nullptr, dynamic_cast<const irs::BooleanQuery*>(prep.Query(0)));
-  auto& node = sdb::basics::downCast<irs::BooleanQuery>(*prep.Query(0));
+  auto& node = irs::utils::downCast<irs::BooleanQuery>(*prep.Query(0));
   const auto& should = node.Bucket(irs::Occur::Should);
   ASSERT_EQ(2, should.all_docs.size());
   irs::score_t total = 0;
@@ -2460,7 +2460,7 @@ TEST(AndRangeMerge_test, merges_complementary_bounds) {
   irs::Optimize(filter, {.scored = true});
 
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
-  const auto& merged = sdb::basics::downCast<irs::ByRange>(*filter);
+  const auto& merged = irs::utils::downCast<irs::ByRange>(*filter);
   EXPECT_EQ(kFieldTestField, merged.field_id());
   EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min);
   EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.min_type);
@@ -2489,7 +2489,7 @@ TEST(AndRangeMerge_test, max_merge_type_takes_max_boost) {
   irs::Optimize(filter, {.scored = true});
 
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
-  EXPECT_EQ(3.f, sdb::basics::downCast<irs::ByRange>(*filter).GetBoost());
+  EXPECT_EQ(3.f, irs::utils::downCast<irs::ByRange>(*filter).GetBoost());
 }
 
 TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
@@ -2513,7 +2513,7 @@ TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
 
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
   EXPECT_EQ(irs::kNoBoost,
-            sdb::basics::downCast<irs::ByRange>(*filter).GetBoost());
+            irs::utils::downCast<irs::ByRange>(*filter).GetBoost());
 }
 
 TEST(AndRangeMerge_test, equal_bounds_inclusive_become_term) {
@@ -2533,7 +2533,7 @@ TEST(AndRangeMerge_test, equal_bounds_inclusive_become_term) {
   irs::Optimize(filter);
 
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
-  const auto& term = sdb::basics::downCast<irs::ByTerm>(*filter);
+  const auto& term = irs::utils::downCast<irs::ByTerm>(*filter);
   EXPECT_EQ(kFieldTestField, term.field_id());
   EXPECT_EQ(irs::bstring{B("b")}, term.options().term);
 }
@@ -2634,7 +2634,7 @@ TEST(AndRangeMerge_test, granular_merges_complementary_bounds) {
   irs::Optimize(filter);
 
   ASSERT_EQ(irs::Type<irs::ByGranularRange>::id(), filter->type());
-  const auto& merged = sdb::basics::downCast<irs::ByGranularRange>(*filter);
+  const auto& merged = irs::utils::downCast<irs::ByGranularRange>(*filter);
   ASSERT_EQ(1, merged.options().range.min.size());
   ASSERT_EQ(1, merged.options().range.max.size());
   EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min.front());
@@ -2675,7 +2675,7 @@ TEST(RangeDegenerate_test, equal_inclusive_bounds_become_term) {
   irs::Optimize(filter);
 
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
-  const auto& term = sdb::basics::downCast<irs::ByTerm>(*filter);
+  const auto& term = irs::utils::downCast<irs::ByTerm>(*filter);
   EXPECT_EQ(kFieldTestField, term.field_id());
   EXPECT_EQ(irs::bstring{B("b")}, term.options().term);
   EXPECT_EQ(2.f, term.GetBoost());
@@ -2694,7 +2694,7 @@ TEST(GranularRangeDegenerate_test, equal_inclusive_bounds_become_term) {
 
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
   EXPECT_EQ(irs::bstring{B("b")},
-            sdb::basics::downCast<irs::ByTerm>(*filter).options().term);
+            irs::utils::downCast<irs::ByTerm>(*filter).options().term);
 }
 
 TEST(OrAcceptorFusion_test, fuses_mixed_acceptors) {
@@ -2762,7 +2762,7 @@ TEST(OrAcceptorFusion_test, pure_terms_stay_clauses) {
   irs::Optimize(filter);
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
-  const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
   ASSERT_EQ(2, node.Terms(irs::Occur::Should).size());
   EXPECT_TRUE(node.Filters(irs::Occur::Should).empty());
   EXPECT_EQ(1, node.MinShouldMatch());
@@ -3052,12 +3052,12 @@ TEST(AndAcceptorFusion_test, nested_disjunction_driver_bails) {
   irs::Optimize(filter, {.fuse_acceptor_intersections = true});
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
-  const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
   ASSERT_EQ(2, node.Size(irs::Occur::Must));
   const auto filters = node.Filters(irs::Occur::Must);
   ASSERT_EQ(2, filters.size());
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filters[0]->type());
-  const auto& inner = sdb::basics::downCast<irs::BooleanFilter>(*filters[0]);
+  const auto& inner = irs::utils::downCast<irs::BooleanFilter>(*filters[0]);
   EXPECT_EQ(2, inner.Terms(irs::Occur::Should).size());
 }
 
@@ -3071,7 +3071,7 @@ TEST(AndAcceptorFusion_test, keeps_other_field_children) {
   irs::Optimize(filter, {.fuse_acceptor_intersections = true});
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
-  const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
   ASSERT_EQ(2, node.Size(irs::Occur::Must));
 }
 
@@ -4127,7 +4127,7 @@ TEST_P(BooleanFilterTestCase, lowered_wildcard_dedups_against_a_literal_term) {
   // with itself.
   auto optimized = tests::Optimized(std::move(root));
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
-  const auto& term = sdb::basics::downCast<irs::ByTerm>(*optimized);
+  const auto& term = irs::utils::downCast<irs::ByTerm>(*optimized);
   EXPECT_EQ(kFieldName, term.field_id());
   EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"fox"}),
             irs::bytes_view{term.options().term});
@@ -4599,7 +4599,7 @@ TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
       return {};
     }
     const auto& should =
-      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+      irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
         irs::Occur::Should);
     return {should.postings.size(), should.filters.size()};
   };
@@ -4616,7 +4616,7 @@ TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
       return {};
     }
     const auto& should =
-      sdb::basics::downCast<irs::BooleanFilter>(*filter).Bucket(
+      irs::utils::downCast<irs::BooleanFilter>(*filter).Bucket(
         irs::Occur::Should);
     return {should.terms.size(), should.filters.size()};
   };

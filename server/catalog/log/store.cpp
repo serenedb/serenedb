@@ -40,13 +40,13 @@
 #include <ranges>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "server/utils/file_utils.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -59,8 +59,8 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
 #include "connector/inverted_store_index.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

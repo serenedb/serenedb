@@ -27,8 +27,8 @@
 #include <utility>
 
 #include "network/pg/wire_frames.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception.h"
 
 namespace sdb::network::http::es {
 

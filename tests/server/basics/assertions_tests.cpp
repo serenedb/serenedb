@@ -21,7 +21,7 @@
 
 #include <gtest/gtest.h>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 
 using namespace sdb;
 

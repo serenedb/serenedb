@@ -32,7 +32,7 @@
 #include <limits>
 #include <random>
 
-#include "basics/shared.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace {
 

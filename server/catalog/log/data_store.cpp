@@ -40,11 +40,11 @@
 #include <optional>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"

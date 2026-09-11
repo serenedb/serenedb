@@ -24,8 +24,8 @@
 #include <iresearch/search/queries/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {

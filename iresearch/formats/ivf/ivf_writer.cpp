@@ -1,0 +1,441 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/ivf/ivf_writer.hpp"
+
+#include <absl/random/random.h>
+
+#include <algorithm>
+#include <cstring>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <random>
+#include <span>
+#include <utility>
+#include <yaclib/async/make.hpp>
+
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.h"
+
+namespace irs {
+namespace {
+
+constexpr uint32_t kDefaultClusterIters = 25;
+constexpr uint64_t kMinCentroidTrainSample = 256;
+constexpr uint32_t kTrainSeed = 0x51ED270Bu;
+
+struct DocRowView {
+  const doc_id_t* docs;
+  size_t n;
+  size_t size() const noexcept { return n; }
+  uint64_t operator[](size_t i) const noexcept {
+    return static_cast<uint64_t>(docs[i]) - doc_limits::min();
+  }
+};
+
+}  // namespace
+
+BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
+                             ReadContext& ctx, QuantizerWriter* qw) const {
+  SDB_ASSERT(qw);
+  const auto d = static_cast<uint32_t>(vector_column.ArraySize());
+  const auto rows = vector_column.RowCount();
+
+  BuiltIvf result;
+  result.d = d;
+  if (rows == 0 || d == 0) {
+    return result;
+  }
+
+  const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
+  const bool normalize = _info.metric == VectorMetric::Cosine;
+  const size_t train_cap = qw->TrainSamples(rows);
+  const bool stream_train = train_cap == QuantizerWriter::kTrainStreaming;
+  const bool sample_train = train_cap != 0 && !stream_train;
+  const bool train_residuals = sample_train && needs_centroid;
+
+  auto centroids = CentroidsBuilder::Create(
+    vector_column, ctx, rows, _info.metric, d,
+    CentroidsBuildParams{
+      .posting_size = _info.posting_size,
+      .sample_factor = _info.sample_factor,
+      .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
+    });
+  const size_t n_clusters = centroids.NumClusters();
+
+  std::vector<float> train;
+  size_t train_seen = 0;
+  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
+
+  std::vector<uint32_t> doc_cluster;
+  doc_cluster.reserve(rows);
+  std::vector<doc_id_t> valid_rows;
+  valid_rows.reserve(rows);
+
+  {
+    std::vector<float> gather;
+    gather.reserve(STANDARD_VECTOR_SIZE * d);
+    std::vector<std::span<const float>> cents(
+      needs_centroid ? STANDARD_VECTOR_SIZE : 0);
+    size_t gathered = 0;
+    const auto reservoir = [&] -> float* {
+      size_t slot = train_seen;
+      if (train_seen >= train_cap) {
+        slot = absl::Uniform<size_t>(train_rng, 0, train_seen + 1);
+      } else {
+        train.insert(train.end(), d, 0.f);
+      }
+      ++train_seen;
+      return slot < train_cap ? train.data() + slot * d : nullptr;
+    };
+    const auto flush = [&] {
+      if (gathered == 0) {
+        return;
+      }
+      if (normalize) {
+        NormalizeRows(gather.data(), gathered, d);
+      }
+      auto assigned = centroids.AssignCentroids(
+        {gather.data(), gathered * d}, d,
+        needs_centroid ? std::span{cents.data(), gathered}
+                       : std::span<std::span<const float>>{});
+      SDB_ASSERT(assigned.ids.size() == gathered);
+      const size_t base = doc_cluster.size();
+      doc_cluster.resize(base + gathered);
+      for (size_t j = 0; j < gathered; ++j) {
+        const auto cluster = static_cast<uint32_t>(assigned.ids[j]);
+        doc_cluster[base + assigned.perm[j]] = cluster;
+        if (needs_centroid) {
+          SDB_ASSERT(!cents[j].empty());
+          result.cluster_centroids.try_emplace(cluster, cents[j]);
+        }
+        if (sample_train) {
+          if (float* dst = reservoir()) {
+            const float* v = gather.data() + j * d;
+            if (train_residuals) {
+              const auto c = cents[j];
+              for (uint32_t t = 0; t < d; ++t) {
+                dst[t] = v[t] - c[t];
+              }
+            } else {
+              std::memcpy(dst, v, size_t{d} * sizeof(float));
+            }
+          }
+        }
+      }
+      if (stream_train) {
+        qw->Train(gather.data(), gathered);
+      }
+      gather.clear();
+      gathered = 0;
+    };
+    StreamRowBatches(vector_column, rows, ctx,
+                     [&](uint64_t first, duckdb::idx_t n, const float* p,
+                         const duckdb::ValidityMask& mask) {
+                       for (duckdb::idx_t k = 0; k < n; ++k) {
+                         if (!mask.RowIsValid(k)) {
+                           continue;
+                         }
+                         valid_rows.push_back(static_cast<doc_id_t>(
+                           first + k + doc_limits::min()));
+                         const float* v = p + static_cast<size_t>(k) * d;
+                         gather.insert(gather.end(), v, v + d);
+                         if (++gathered >= STANDARD_VECTOR_SIZE) {
+                           flush();
+                         }
+                       }
+                     });
+    flush();
+    SDB_ASSERT(doc_cluster.size() == valid_rows.size());
+  }
+
+  if (sample_train && train_seen != 0) {
+    qw->Train(train.data(), train.size() / d);
+  }
+
+  result.cluster_offsets.assign(n_clusters + 1, 0);
+  for (const uint32_t c : doc_cluster) {
+    ++result.cluster_offsets[c + 1];
+  }
+  for (size_t c = 0; c < n_clusters; ++c) {
+    result.cluster_offsets[c + 1] += result.cluster_offsets[c];
+  }
+  result.cluster_docs.resize(valid_rows.size());
+  {
+    std::vector<uint64_t> cursor(result.cluster_offsets.begin(),
+                                 result.cluster_offsets.begin() + n_clusters);
+    for (size_t i = 0; i < valid_rows.size(); ++i) {
+      const uint32_t c = doc_cluster[i];
+      result.cluster_docs[cursor[c]++] = valid_rows[i];
+    }
+  }
+
+  result.centroids = std::move(centroids);
+  result.empty = false;
+  return result;
+}
+
+class IvfTermIterator final : public TermOnlyIterator {
+ public:
+  static constexpr size_t kWidth = kCentroidTermWidth;
+
+  IvfTermIterator(std::span<const doc_id_t> cluster_docs,
+                  std::span<const uint64_t> cluster_offsets)
+    : _cluster_docs{cluster_docs},
+      _cluster_offsets{cluster_offsets},
+      _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
+      _terms(_count * kWidth) {
+    for (size_t c = 0; c < _count; ++c) {
+      EncodeCentroidTerm(static_cast<uint32_t>(c), _terms.data() + c * kWidth);
+    }
+  }
+
+  bytes_view value() const noexcept final {
+    return {_terms.data() + _cur * kWidth, kWidth};
+  }
+
+  bool next() final {
+    if (_next >= _count) {
+      return false;
+    }
+    _cur = _next++;
+    return true;
+  }
+
+  TermPostings::ptr postings(IndexFeatures /*features*/) const final {
+    const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
+    const size_t len = _cluster_offsets[_cur + 1] - _cluster_offsets[_cur];
+    _doc_itr.Reset({p, len});
+    return memory::to_managed<TermPostings>(_doc_itr);
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
+
+  size_t NextTermsWithPostings(std::span<bytes_view> terms,
+                               std::span<PostingRows> postings,
+                               IndexFeatures /*features*/) final {
+    const auto n = std::min({terms.size(), postings.size(), _count - _next});
+    if (n == 0) {
+      return 0;
+    }
+    const auto first = _next;
+    for (size_t i = 0; i < n; ++i) {
+      // a cluster's docs are one contiguous slice: always a single span
+      const auto b = _cluster_offsets[first + i];
+      const auto e = _cluster_offsets[first + i + 1];
+      postings[i] = {.span = {.docs = _cluster_docs.data() + b,
+                              .pos = nullptr,
+                              .offs_start = nullptr,
+                              .offs_end = nullptr,
+                              .count = static_cast<size_t>(e - b)}};
+      terms[i] = bytes_view{_terms.data() + (first + i) * kWidth, kWidth};
+    }
+    _next += n;
+    _cur = _next == 0 ? 0 : _next - 1;
+    return n;
+  }
+
+ private:
+  class DocIter final : public TermPostings {
+   public:
+    void Reset(std::span<const doc_id_t> docs) noexcept {
+      _docs = docs;
+      _pos = 0;
+      _doc = doc_limits::invalid();
+    }
+
+    doc_id_t Next() noexcept final {
+      if (_pos >= _docs.size()) {
+        return _doc = doc_limits::eof();
+      }
+      return _doc = _docs[_pos++];
+    }
+
+    uint32_t GetFreq() const final { return 1; }
+
+    // The provider never changes, so the one call it owes is made at once.
+
+   private:
+    std::span<const doc_id_t> _docs;
+    size_t _pos = 0;
+  };
+
+  std::span<const doc_id_t> _cluster_docs;
+  std::span<const uint64_t> _cluster_offsets;
+  size_t _count;
+  std::vector<byte_type> _terms;
+  size_t _cur = 0;
+  size_t _next = 0;
+  mutable DocIter _doc_itr;
+};
+
+IvfTermReader::IvfTermReader(
+  field_id postings_id, std::span<const doc_id_t> cluster_docs,
+  std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
+  const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
+  const irs::containers::FlatHashMap<uint32_t, std::span<const float>>*
+    cluster_centroids,
+  bool normalize)
+  : _cluster_docs{cluster_docs},
+    _cluster_offsets{cluster_offsets},
+    _qw{qw},
+    _vectors{vectors},
+    _ctx{ctx},
+    _d{d},
+    _cluster_centroids{cluster_centroids},
+    _normalize{normalize},
+    _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
+    _meta{postings_id, IndexFeatures::Vec} {
+  SDB_ASSERT(qw->BlockSetting().record_size != 0);
+  size_t first = _count;
+  size_t last = _count;
+  for (size_t c = 0; c < _count; ++c) {
+    if (cluster_offsets[c + 1] == cluster_offsets[c]) {
+      continue;
+    }
+    if (first == _count) {
+      first = c;
+    }
+    last = c;
+  }
+  if (first != _count) {
+    EncodeCentroidTerm(static_cast<uint32_t>(first), _min_buf.data());
+    _min = {_min_buf.data(), _min_buf.size()};
+    EncodeCentroidTerm(static_cast<uint32_t>(last), _max_buf.data());
+    _max = {_max_buf.data(), _max_buf.size()};
+  }
+}
+
+IvfTermReader::~IvfTermReader() = default;
+
+TermOnlyIterator::ptr IvfTermReader::iterator() const {
+  _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
+  return memory::to_managed<TermOnlyIterator>(*_it);
+}
+
+void IvfTermReader::WriteTermPayload(IndexOutput& out,
+                                     std::span<const doc_id_t> docs) {
+  SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
+  const size_t cluster = _term_idx++;
+  if (_cluster_centroids != nullptr) {
+    const auto it = _cluster_centroids->find(static_cast<uint32_t>(cluster));
+    if (it != _cluster_centroids->end()) {
+      SDB_ASSERT(it->second.size() == _d);
+      _qw->SetClusterCentroid(it->second.data());
+    }
+  }
+  const size_t n = docs.size();
+  if (n == 0) {
+    return;
+  }
+  ColumnReader::VectorScratch scratch{_vectors->Type()};
+  auto scan = _vectors->InitScan(*_ctx);
+  for (size_t b = 0; b < n;) {
+    const auto m = std::min<size_t>(STANDARD_VECTOR_SIZE, n - b);
+    auto& out_vec = scratch.Reset();
+    column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
+                                out_vec, /*out_offset=*/0,
+                                /*whole_output=*/true);
+    float* vecs = duckdb::FlatVector::GetDataMutable<float>(
+      duckdb::ArrayVector::GetChildMutable(out_vec));
+    if (_normalize) {
+      NormalizeRows(vecs, m, _d);
+    }
+    _qw->Encode(out, vecs, m);
+    b += m;
+  }
+}
+
+void IvfTermReader::Finish(IndexOutput& out) {
+  SDB_ASSERT(_qw);
+  _qw->Finish(out);
+}
+
+yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                                  const AnnBuildEnv* /*env*/) {
+  SDB_ASSERT(_idx != nullptr,
+             "IvfWriter::Compute: SetIdxWriter must be called first");
+  const auto d = static_cast<uint32_t>(col.ArraySize());
+  auto qw = MakeQuantizerWriter(
+    _info.quant.kind, d, EffectiveQuantMetric(_info.metric), _info.quant.pq_m,
+    kDefaultClusterIters, _info.quant.nb_bits);
+
+  IvfBuilder builder{_info};
+  auto built = builder.Compute(col, ctx, qw.get());
+  if (built.empty) {
+    co_return {};
+  }
+  _result = Result{.postings_id = _info.postings_id,
+                   .qw = std::move(qw),
+                   .data = std::move(built)};
+  _built = true;
+  co_return {};
+}
+
+void IvfWriter::Flush() {
+  if (!_built) {
+    return;
+  }
+  auto& out = _idx->BlocksOut();
+  const auto tree_span = _result.data.centroids.Serialize(out);
+  const uint64_t stats_offset = out.Position();
+  _result.qw->Serialize(out);
+  const uint64_t stats_byte_size = out.Position() - stats_offset;
+  _idx->AddIvf(_info.centroids_id,
+               IvfCentroidMeta{.tree_offset = tree_span.offset,
+                               .tree_byte_size = tree_span.byte_size,
+                               .stats_offset = stats_offset,
+                               .stats_byte_size = stats_byte_size});
+}
+
+const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
+                                                const ColReader& col_reader) {
+  if (!_built) {
+    return nullptr;
+  }
+  if (!_reader) {
+    _reader = std::make_unique<IvfTermReader>(
+      _result.postings_id, _result.data.cluster_docs,
+      _result.data.cluster_offsets, _result.qw.get(),
+      col_reader.Column(_result.postings_id), &ctx, _result.data.d,
+      &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
+  }
+  return _reader.get();
+}
+
+IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
+
+IvfWriter::~IvfWriter() = default;
+
+}  // namespace irs

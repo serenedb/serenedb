@@ -27,9 +27,9 @@
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
-#include "basics/string_utils.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/string_utils.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector::key_encoding {
 namespace {

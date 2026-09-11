@@ -24,7 +24,7 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 
 namespace sdb::connector {
 

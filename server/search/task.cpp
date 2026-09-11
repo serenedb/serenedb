@@ -38,9 +38,9 @@
 #include <yaclib/coro/on.hpp>
 #include <yaclib/util/result.hpp>
 
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/metrics.h"
+#include "server/utils/lifecycle.h"
+#include "iresearch/utils/log.h"
+#include "server/utils/metrics.h"
 #include "catalog/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"

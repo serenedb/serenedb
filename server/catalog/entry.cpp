@@ -25,7 +25,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database_manager.hpp>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/database.h"
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"

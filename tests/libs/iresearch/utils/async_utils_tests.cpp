@@ -25,7 +25,7 @@
 #include <condition_variable>
 #include <mutex>
 
-#include "basics/async_utils.hpp"
+#include "iresearch/utils/async_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

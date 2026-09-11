@@ -418,7 +418,7 @@ static constexpr Value kTrivialValues[] = {
 static_assert(std::size(kTrivialValues) == kN);
 
 constexpr auto kTrivialMap =
-  sdb::containers::MakeTrivialBiMap<kLowerKeys, kTrivialValues>();
+  irs::containers::MakeTrivialBiMap<kLowerKeys, kTrivialValues>();
 #endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 // Helpers

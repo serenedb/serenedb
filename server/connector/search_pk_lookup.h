@@ -31,11 +31,11 @@
 #include <optional>
 #include <span>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/table_options.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

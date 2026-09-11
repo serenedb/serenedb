@@ -33,9 +33,9 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/debugging.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
@@ -47,8 +47,8 @@
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

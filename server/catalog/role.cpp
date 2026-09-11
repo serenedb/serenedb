@@ -31,9 +31,9 @@
 #include <string_view>
 
 #include "auth/acl.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/persistence/role.h"

@@ -37,8 +37,8 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/message_buffer.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
 #include "network/cancel_registry.h"
 #include "network/cpu_resumer.h"
 #include "network/gate.h"

@@ -42,11 +42,11 @@
 #include <limits>
 #include <string>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -55,8 +55,8 @@
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
 
@@ -720,7 +720,7 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
       }
       if (is_geojson) {
         const auto& geojson =
-          sdb::basics::downCast<irs::analysis::GeoJsonTokenizer>(analyzer);
+          irs::utils::downCast<irs::analysis::GeoJsonTokenizer>(analyzer);
         using Coding = irs::analysis::GeoJsonTokenizer::Coding;
         const auto coding = geojson.coding();
         if (coding != Coding::Source && coding != Coding::S2Point) {
@@ -959,7 +959,7 @@ bool IsGeoSourceAnalyzer(const irs::analysis::Tokenizer& analyzer) {
     return true;
   }
   if (type_id == irs::Type<irs::analysis::GeoJsonTokenizer>::id()) {
-    return sdb::basics::downCast<irs::analysis::GeoJsonTokenizer>(analyzer)
+    return irs::utils::downCast<irs::analysis::GeoJsonTokenizer>(analyzer)
              .coding() == irs::analysis::GeoJsonTokenizer::Coding::Source;
   }
   return false;

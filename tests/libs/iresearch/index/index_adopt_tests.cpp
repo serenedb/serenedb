@@ -27,7 +27,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/formats/formats.hpp"

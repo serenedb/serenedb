@@ -30,9 +30,9 @@
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::search {

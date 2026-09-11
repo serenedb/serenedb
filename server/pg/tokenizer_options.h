@@ -49,7 +49,7 @@
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 

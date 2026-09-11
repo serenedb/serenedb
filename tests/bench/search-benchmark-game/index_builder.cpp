@@ -31,7 +31,7 @@
 #include <istream>
 #include <memory>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace bench {
 

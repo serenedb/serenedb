@@ -38,10 +38,10 @@
 #include <string>
 #include <vector>
 
-#include "basics/bit_utils.hpp"
-#include "basics/files.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/bit_utils.hpp"
+#include "server/utils/files.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
@@ -477,13 +477,13 @@ void HashResults(std::vector<QueryResult>& results) {
 }
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
-  // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
+  // Drive the templated reflection-based writer through `irs::utils::JsonSink`
   // (simdjson::builder), emitting JSON text directly without an intermediate
   // builder + slice round-trip.
   simdjson::builder::string_builder sb(1024);
   {
-    sdb::basics::JsonSink sink{sb};
-    sdb::basics::WriteObject(sink, results);
+    irs::utils::JsonSink sink{sb};
+    irs::utils::WriteObject(sink, results);
   }
   std::string_view body;
   if (sb.view().get(body) != simdjson::SUCCESS) {
@@ -494,7 +494,7 @@ std::string SerializeResults(const std::vector<QueryResult>& results) {
 
 std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
   // Mirror SerializeResults' simdjson path on the read side: parse JSON via
-  // simdjson::ondemand and feed it through `sdb::basics::JsonSource` + the
+  // simdjson::ondemand and feed it through `irs::utils::JsonSource` + the
   // reflection reader.
   simdjson::padded_string padded{json_str};
   simdjson::ondemand::parser parser;
@@ -504,8 +504,8 @@ std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
     return {};
   }
   std::vector<QueryResult> results;
-  sdb::basics::JsonSource source{doc};
-  sdb::basics::ReadObject(source, results);
+  irs::utils::JsonSource source{doc};
+  irs::utils::ReadObject(source, results);
   return results;
 }
 

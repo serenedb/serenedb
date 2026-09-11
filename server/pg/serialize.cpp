@@ -58,16 +58,16 @@
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 
-#include "basics/assert.h"
-#include "basics/dtoa.h"
-#include "basics/log.h"
-#include "basics/misc.hpp"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "server/utils/dtoa.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/system-compiler.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
 

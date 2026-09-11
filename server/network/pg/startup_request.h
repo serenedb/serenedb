@@ -25,7 +25,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 
 namespace sdb::network::pg {
 

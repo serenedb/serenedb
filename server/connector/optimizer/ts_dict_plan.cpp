@@ -62,9 +62,9 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -75,8 +75,8 @@
 #include "connector/search_filter_builder.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::optimizer {
 namespace {

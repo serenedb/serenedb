@@ -26,7 +26,7 @@
 #include <latch>
 #include <thread>
 
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"

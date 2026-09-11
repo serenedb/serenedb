@@ -51,15 +51,15 @@
 #include <variant>
 #include <vector>
 
-#include "basics/serialization.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/serializer.h"
 
 namespace {
 
-using sdb::basics::ReadTuple;
-using sdb::basics::WriteTuple;
+using irs::utils::ReadTuple;
+using irs::utils::WriteTuple;
 
-template<typename T, typename Arg = sdb::basics::detail::Empty>
+template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {

@@ -33,7 +33,7 @@
 #include <system_error>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "insert_field.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"

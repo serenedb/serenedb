@@ -31,7 +31,7 @@
 #include <fstream>
 #include <functional>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "insert_field.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
@@ -446,7 +446,7 @@ class PtrIterator
   template<typename T>
   typename AdjustConst<T>::reference as() const {
     static_assert(std::is_base_of_v<base_element_type, T>);
-    return sdb::basics::downCast<T>(dereference());
+    return irs::utils::downCast<T>(dereference());
   }
 
   //////////////////////////////////////////////////////////////////////////////

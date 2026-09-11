@@ -40,12 +40,12 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/log.h"
-#include "basics/serialization.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/serializer.h"
 #include "iresearch/formats/formats.hpp"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::search {
 namespace {

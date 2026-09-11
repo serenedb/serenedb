@@ -47,11 +47,11 @@
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 #include <ranges>
 
-#include "basics/system-compiler.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
 namespace duckdb {

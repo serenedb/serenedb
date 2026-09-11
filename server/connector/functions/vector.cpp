@@ -34,9 +34,9 @@
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 
-#include "basics/system-compiler.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

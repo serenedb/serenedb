@@ -34,7 +34,7 @@
 #include <numeric>
 #include <sstream>
 
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/index/typed_terms.hpp"

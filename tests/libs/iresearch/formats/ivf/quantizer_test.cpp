@@ -31,7 +31,7 @@
 #include <utility>
 #include <vector>
 
-#include "basics/misc.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/scorers/score_function.hpp"

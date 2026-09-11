@@ -32,7 +32,7 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/database.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -45,8 +45,8 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

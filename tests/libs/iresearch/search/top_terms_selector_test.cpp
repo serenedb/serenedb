@@ -22,8 +22,8 @@
 
 #include <cstdint>
 
-#include "basics/down_cast.h"
-#include "basics/memory.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"

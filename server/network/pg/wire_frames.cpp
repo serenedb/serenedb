@@ -33,12 +33,12 @@
 #include <utility>
 #include <vector>
 
-#include "basics/dtoa.h"
+#include "server/utils/dtoa.h"
 #include "pg/command_tag.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception.h"
 #include "pg/sql_utils.h"
 #include "query/utils.h"
 

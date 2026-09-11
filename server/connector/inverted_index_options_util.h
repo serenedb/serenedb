@@ -27,8 +27,8 @@
 #include <limits>
 #include <string_view>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::connector {

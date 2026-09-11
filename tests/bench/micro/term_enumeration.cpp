@@ -48,8 +48,8 @@
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "basics/containers/bitset.hpp"
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "fst/arcsort.h"
 #include "fst/minimize.h"
 #include "insert_field.hpp"

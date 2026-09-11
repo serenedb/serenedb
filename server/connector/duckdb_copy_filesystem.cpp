@@ -29,14 +29,14 @@
 #include <optional>
 #include <span>
 
-#include "basics/assert.h"
-#include "basics/message_buffer.h"
+#include "iresearch/utils/assert.h"
+#include "server/utils/message_buffer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/protocol.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

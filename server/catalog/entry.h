@@ -36,10 +36,10 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/identifier.h"
-#include "basics/serialization.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/assert.h"
+#include "server/utils/identifier.h"
+#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 

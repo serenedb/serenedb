@@ -30,7 +30,7 @@
 #include <filesystem>
 #include <memory>
 
-#include "basics/resource_manager.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 

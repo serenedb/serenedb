@@ -23,7 +23,7 @@
 
 #include <string>
 
-#include "basics/common.h"
+#include "iresearch/utils/common.h"
 
 struct IcuInitializer {
   static void setup(const char* path);

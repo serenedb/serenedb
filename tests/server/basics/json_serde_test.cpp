@@ -29,8 +29,8 @@
 #include <variant>
 #include <vector>
 
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace {
 
@@ -38,8 +38,8 @@ template<typename T>
 std::string ToJson(const T& value) {
   simdjson::builder::string_builder sb(256);
   {
-    sdb::basics::JsonSink sink{sb};
-    sdb::basics::WriteObject(sink, value);
+    irs::utils::JsonSink sink{sb};
+    irs::utils::WriteObject(sink, value);
   }
   std::string_view body;
   EXPECT_EQ(sb.view().get(body), simdjson::SUCCESS);
@@ -53,8 +53,8 @@ T FromJson(std::string_view json) {
   simdjson::ondemand::document doc;
   EXPECT_EQ(parser.iterate(padded).get(doc), simdjson::SUCCESS);
   T out{};
-  sdb::basics::JsonSource source{doc};
-  sdb::basics::ReadObject(source, out);
+  irs::utils::JsonSource source{doc};
+  irs::utils::ReadObject(source, out);
   return out;
 }
 

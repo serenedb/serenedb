@@ -32,7 +32,7 @@
 #include <optional>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
@@ -182,7 +182,7 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return;
   }
-  auto& node = sdb::basics::downCast<irs::BooleanFilter>(filter);
+  auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
   node.VisitChildren([](irs::Filter::ptr& child) {
     if (child) {
       EnsureIncludeSides(*child);

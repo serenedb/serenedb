@@ -32,8 +32,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "iresearch/formats/formats.hpp"

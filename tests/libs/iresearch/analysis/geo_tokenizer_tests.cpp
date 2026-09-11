@@ -35,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-#include "geo/coding.h"
+#include "iresearch/utils/geo/coding.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
@@ -215,7 +215,7 @@ TEST(GeoTokenizerTests, geojson_point_terms_match_indexer_oracle) {
 
   Encoder encoder;
   encoder.Ensure(30);
-  sdb::geo::EncodePoint(encoder, point);
+  irs::geo::EncodePoint(encoder, point);
   EXPECT_EQ(std::string_view(encoder.base(), encoder.length()),
             analysis->store);
 }
@@ -504,7 +504,7 @@ S2Point OraclePoint(const LatLngCase& c) {
 std::string PointStoreBytes(const S2Point& point) {
   Encoder encoder;
   encoder.Ensure(30);
-  sdb::geo::EncodePoint(encoder, point);
+  irs::geo::EncodePoint(encoder, point);
   return std::string(encoder.base(), encoder.length());
 }
 
@@ -613,13 +613,13 @@ TEST(GeoTokenizerTests, query_terms_match_s2_oracle) {
   const S2Polygon polygon{std::make_unique<S2Loop>(vertices)};
   const auto point = S2LatLng::FromDegrees(1.0, 2.0).ToPoint();
 
-  for (const auto& opts : {sdb::geo::GeoOptions{},
-                           sdb::geo::GeoOptions{.max_cells = 8,
+  for (const auto& opts : {irs::geo::GeoOptions{},
+                           irs::geo::GeoOptions{.max_cells = 8,
                                                 .min_level = 2,
                                                 .max_level = 20,
                                                 .level_mod = 2,
                                                 .optimize_for_space = true},
-                           sdb::geo::GeoOptions{.max_cells = 30,
+                           irs::geo::GeoOptions{.max_cells = 30,
                                                 .min_level = 6,
                                                 .max_level = 24,
                                                 .level_mod = 3,
@@ -629,7 +629,7 @@ TEST(GeoTokenizerTests, query_terms_match_s2_oracle) {
                                       << " mod=" << int(opts.level_mod)
                                       << " space=" << opts.optimize_for_space
                                       << " points_only=" << points_only);
-      const auto options = sdb::geo::S2Options(opts, points_only);
+      const auto options = irs::geo::S2Options(opts, points_only);
       S2RegionTermIndexer oracle{options};
       S2RegionCoverer coverer{options};
       const auto ring_union = coverer.GetCovering(polygon).Difference(
@@ -679,17 +679,17 @@ TEST(GeoTokenizerTests, covering_terms_match_region_oracle_across_options) {
   }
   const S2Polygon region{std::make_unique<S2Loop>(vertices)};
 
-  for (const auto& opts : {sdb::geo::GeoOptions{.max_cells = 20,
+  for (const auto& opts : {irs::geo::GeoOptions{.max_cells = 20,
                                                 .min_level = 4,
                                                 .max_level = 23,
                                                 .level_mod = 1,
                                                 .optimize_for_space = false},
-                           sdb::geo::GeoOptions{.max_cells = 8,
+                           irs::geo::GeoOptions{.max_cells = 8,
                                                 .min_level = 2,
                                                 .max_level = 20,
                                                 .level_mod = 2,
                                                 .optimize_for_space = true},
-                           sdb::geo::GeoOptions{.max_cells = 30,
+                           irs::geo::GeoOptions{.max_cells = 30,
                                                 .min_level = 6,
                                                 .max_level = 24,
                                                 .level_mod = 3,

@@ -30,8 +30,8 @@
 #include <charconv>
 #include <set>
 
-#include "basics/log.h"
-#include "basics/string_utils.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/string_utils.h"
 
 namespace sdb::network {
 namespace {

@@ -27,7 +27,7 @@
 #include "gtest/gtest.h"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception.h"
 #include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 

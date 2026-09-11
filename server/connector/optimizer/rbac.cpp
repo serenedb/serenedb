@@ -32,9 +32,9 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -47,8 +47,8 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::optimizer {
 namespace {

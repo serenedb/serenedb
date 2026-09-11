@@ -32,8 +32,8 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 
-#include "basics/assert.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/serializer.h"
 #include "core/deletes/iceberg_deletion_vector.hpp"
 #include "core/deletes/iceberg_positional_delete.hpp"
 #include "core/metadata/iceberg_table_metadata.hpp"

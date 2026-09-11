@@ -33,10 +33,10 @@
 #include <optional>
 #include <string_view>
 
-#include "basics/assert.h"
-#include "basics/bit_utils.hpp"
-#include "basics/down_cast.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"

@@ -40,8 +40,8 @@
 #include <utility>
 
 #include "catalog/scorer_options.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::catalog {

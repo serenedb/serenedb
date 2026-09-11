@@ -33,11 +33,11 @@
 #include <utility>
 #include <vector>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"

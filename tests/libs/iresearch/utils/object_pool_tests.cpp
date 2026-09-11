@@ -25,8 +25,8 @@
 #include <shared_mutex>
 #include <thread>
 
-#include "basics/misc.hpp"
-#include "basics/object_pool.hpp"
+#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/object_pool.hpp"
 #include "gtest/gtest.h"
 
 using namespace std::chrono_literals;

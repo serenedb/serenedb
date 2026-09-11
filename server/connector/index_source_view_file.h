@@ -25,7 +25,7 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
 

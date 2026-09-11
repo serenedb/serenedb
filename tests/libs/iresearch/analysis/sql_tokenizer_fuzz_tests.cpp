@@ -29,10 +29,10 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/analysis/sql_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception.h"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

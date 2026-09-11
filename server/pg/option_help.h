@@ -35,8 +35,8 @@
 #include <variant>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/system-compiler.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/sql_utils.h"
 

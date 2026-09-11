@@ -28,8 +28,8 @@
 #include <variant>
 #include <vector>
 
-#include "basics/memory.hpp"
-#include "basics/singleton.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/singleton.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/detail/collectors.hpp"

@@ -25,7 +25,7 @@
 #include <duckdb/common/optional_ptr.hpp>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"

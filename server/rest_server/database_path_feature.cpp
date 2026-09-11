@@ -26,14 +26,14 @@
 #include <filesystem>
 #include <system_error>
 
-#include "basics/application-exit.h"
-#include "basics/exitcodes.h"
-#include "basics/file_utils.h"
-#include "basics/lifecycle.h"
-#include "basics/lockfile.h"
-#include "basics/log.h"
-#include "basics/operating-system.h"
-#include "basics/string_utils.h"
+#include "iresearch/utils/application-exit.h"
+#include "server/utils/exitcodes.h"
+#include "server/utils/file_utils.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/lockfile.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/operating-system.h"
+#include "iresearch/utils/string_utils.h"
 
 ABSL_FLAG(std::string, server_directory, "serenedb-data",
           "Path to the database directory. A positional argument, if given, "

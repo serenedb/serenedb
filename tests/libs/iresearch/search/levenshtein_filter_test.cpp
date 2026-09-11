@@ -22,8 +22,8 @@
 
 #include <map>
 
-#include "basics/down_cast.h"
-#include "basics/misc.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/misc.hpp"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -913,7 +913,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
   {
     auto lowered = Lower(MakeFilter("prefix", "abc", 0));
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), lowered->type());
-    const auto& filter = sdb::basics::downCast<irs::ByTerm>(*lowered);
+    const auto& filter = irs::utils::downCast<irs::ByTerm>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
     irs::ByTerm::Visit(segment, *reader, filter.options(), visitor);
@@ -930,7 +930,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
     ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
               lowered->type());
     const auto& filter =
-      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
+      irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
     auto field_visitor =
@@ -964,7 +964,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
     ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
               lowered->type());
     const auto& filter =
-      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
+      irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
     auto field_visitor =
@@ -1043,7 +1043,7 @@ TEST(by_edit_distance_test, fuse_prefix_multiple) {
   AppendEditDistance(root, MakeFilter("title", "aab", 1, 0));
   auto optimized = tests::Optimized(std::move(root));
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
-  auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
+  auto& node = irs::utils::downCast<irs::BooleanFilter>(*optimized);
   ASSERT_EQ(2, node.Size(irs::Occur::Must));
   auto must = node.Filters(irs::Occur::Must);
   ASSERT_EQ(2, must.size());
@@ -1057,7 +1057,7 @@ TEST(by_edit_distance_test, fuse_prefix_non_matching) {
   AppendEditDistance(root, MakeFilter("title", "aaaa", 2, 0));
   auto optimized = tests::Optimized(std::move(root));
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
-  auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
+  auto& node = irs::utils::downCast<irs::BooleanFilter>(*optimized);
   ASSERT_EQ(2, node.Size(irs::Occur::Must));
   auto must = node.Filters(irs::Occur::Must);
   ASSERT_EQ(2, must.size());
@@ -1071,7 +1071,7 @@ TEST(by_edit_distance_test, fuse_prefix_different_field) {
   AppendEditDistance(root, MakeFilter("body", "aaaa", 2, 0));
   auto optimized = tests::Optimized(std::move(root));
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::BooleanFilter>(*optimized)
+  ASSERT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*optimized)
                  .Size(irs::Occur::Must));
 }
 
@@ -1174,7 +1174,7 @@ TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
       return {};
     }
     const auto& should =
-      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+      irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
         irs::Occur::Should);
     return {should.postings.size(), should.filters.size()};
   };

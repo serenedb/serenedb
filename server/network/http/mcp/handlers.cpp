@@ -34,9 +34,9 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "basics/build.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "server/utils/build.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
 #include "network/http/mcp/tools.h"

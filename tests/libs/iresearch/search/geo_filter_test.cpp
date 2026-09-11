@@ -21,7 +21,7 @@
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "geo/geo_json.h"
+#include "iresearch/utils/geo/geo_json.h"
 #include "geo_test_helpers.hpp"
 #include "insert_field.hpp"
 #include "iresearch/index/directory_reader.hpp"

@@ -23,7 +23,7 @@
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <string_view>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/entry.h"
 
 namespace sdb::pg {

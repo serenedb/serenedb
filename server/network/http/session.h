@@ -42,11 +42,11 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/duckdb_engine.h"
-#include "basics/message_buffer.h"
-#include "basics/metrics.h"
-#include "basics/static_strings.h"
+#include "server/utils/asio_ns.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "server/utils/message_buffer.h"
+#include "server/utils/metrics.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -63,8 +63,8 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::network {
 

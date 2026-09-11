@@ -24,8 +24,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -39,8 +39,8 @@
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/read/duckdb_dependency.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

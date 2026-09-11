@@ -30,7 +30,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "gtest/gtest.h"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"

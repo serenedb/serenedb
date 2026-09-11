@@ -37,9 +37,9 @@
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/primary_key.hpp"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "server/utils/primary_key.hpp"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"

@@ -29,14 +29,14 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/serializer.h"
-#include "basics/static_strings.h"
-#include "basics/system-compiler.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/static_strings.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"

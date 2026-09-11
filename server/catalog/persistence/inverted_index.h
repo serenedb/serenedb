@@ -31,7 +31,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
 #include "catalog/table_options.h"
 #include "search/search_analyzer_impl.h"

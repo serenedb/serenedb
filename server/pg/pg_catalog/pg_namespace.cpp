@@ -20,7 +20,7 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/identifiers/object_id.h"

@@ -46,7 +46,7 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -64,8 +64,8 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/search_table.h"
 

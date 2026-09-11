@@ -28,9 +28,9 @@
 #include <optional>
 #include <string>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/system-compiler.h"
 
 namespace sdb::auth {
 namespace {

@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"

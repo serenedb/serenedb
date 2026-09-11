@@ -23,7 +23,7 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"

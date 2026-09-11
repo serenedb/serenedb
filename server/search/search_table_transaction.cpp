@@ -25,11 +25,11 @@
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/system-compiler.h"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
 

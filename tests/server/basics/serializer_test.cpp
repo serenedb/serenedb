@@ -40,24 +40,24 @@
 #include <unordered_set>
 #include <vector>
 
-#include "basics/serialization.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/serializer.h"
 
 namespace {
 
 // Round-trip a value through the duckdb-binary pipeline and assert it
 // survives.
-template<typename T, typename Arg = sdb::basics::detail::Empty>
+template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, in, arg);
+    irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
   T out{};
   duckdb::BinaryDeserializer source{stream};
-  sdb::basics::ReadTuple(source, out, arg);
+  irs::utils::ReadTuple(source, out, arg);
   EXPECT_EQ(in, out);
 }
 
@@ -70,12 +70,12 @@ void ExpectReadFails(const Input& in) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, in);
+    irs::utils::WriteTuple(sink, in);
   }
   stream.Rewind();
   duckdb::BinaryDeserializer source{stream};
   T out{};
-  EXPECT_ANY_THROW(sdb::basics::ReadTuple(source, out));
+  EXPECT_ANY_THROW(irs::utils::ReadTuple(source, out));
 }
 
 // ------------------------------------------------------------------
@@ -257,12 +257,12 @@ TEST(SerializerTest, testRange) {
   duckdb::MemoryStream stream;
   {
     duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
-    sdb::basics::WriteTuple(sink, view);
+    irs::utils::WriteTuple(sink, view);
   }
   stream.Rewind();
   std::array<int, 3> read_values{};
   duckdb::BinaryDeserializer source{stream};
-  sdb::basics::ReadTuple(source, read_values);
+  irs::utils::ReadTuple(source, read_values);
 
   std::array<int, 3> expected = values;
   absl::c_transform(expected, expected.begin(), func);

@@ -50,9 +50,9 @@
 #include <thread>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/log.h"
-#include "basics/primary_key.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/log.h"
+#include "server/utils/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"

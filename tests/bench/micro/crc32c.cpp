@@ -25,7 +25,7 @@
 
 #include <string>
 
-#include "basics/crc.hpp"
+#include "iresearch/utils/crc.hpp"
 
 #ifdef SDB_ENABLE_FOLLY
 #include <folly/hash/Checksum.h>

@@ -44,7 +44,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 

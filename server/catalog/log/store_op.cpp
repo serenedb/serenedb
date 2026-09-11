@@ -27,7 +27,7 @@
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <utility>
 
-#include "basics/serialization.h"
+#include "iresearch/utils/serialization.h"
 
 namespace sdb::catalog::store_op {
 

@@ -24,7 +24,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "basics/bit_packing.hpp"
+#include "iresearch/utils/bit_packing.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

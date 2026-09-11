@@ -32,8 +32,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/asio_ns.h"
-#include "basics/message_sequence_view.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_sequence_view.h"
 #include "network/asio_awaitable.h"
 
 namespace sdb::network {

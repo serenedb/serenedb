@@ -34,7 +34,7 @@
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/utf8_character_tables.hpp"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception.h"
 #include "tests_config.hpp"
 #include "token_sink_asserts.hpp"
 #include "token_sink_utils.hpp"

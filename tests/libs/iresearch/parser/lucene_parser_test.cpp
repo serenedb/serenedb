@@ -26,7 +26,7 @@
 #include <thread>
 #include <vector>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -48,7 +48,7 @@ namespace {
 constexpr irs::field_id kFieldId = 1;
 
 const irs::BooleanFilter& AsBoolean(const irs::Filter& f) {
-  return sdb::basics::downCast<irs::BooleanFilter>(f);
+  return irs::utils::downCast<irs::BooleanFilter>(f);
 }
 
 const irs::Clauses& SubOptional(const irs::Filter& f) {
@@ -74,7 +74,7 @@ void AssertTerm(const irs::TermClause& clause, irs::field_id field,
 
 void AssertPhrase(const irs::Filter& f, irs::field_id field, float boost = 0.0f,
                   irs::PosAttr::value_t slop = 0) {
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(f);
+  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(f);
   EXPECT_EQ(field, phrase.field_id());
   if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, phrase.GetBoost());
@@ -84,7 +84,7 @@ void AssertPhrase(const irs::Filter& f, irs::field_id field, float boost = 0.0f,
 
 void AssertPrefix(const irs::Filter& f, irs::field_id field,
                   std::string_view value, float boost = 0.0f) {
-  const auto& prefix = sdb::basics::downCast<irs::ByPrefix>(f);
+  const auto& prefix = irs::utils::downCast<irs::ByPrefix>(f);
   EXPECT_EQ(field, prefix.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{prefix.options().term}));
   if (boost > 0.0f) {
@@ -94,7 +94,7 @@ void AssertPrefix(const irs::Filter& f, irs::field_id field,
 
 void AssertWildcard(const irs::Filter& f, irs::field_id field,
                     std::string_view value, float boost = 0.0f) {
-  const auto& wc = sdb::basics::downCast<irs::ByWildcard>(f);
+  const auto& wc = irs::utils::downCast<irs::ByWildcard>(f);
   EXPECT_EQ(field, wc.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{wc.options().term}));
   if (boost > 0.0f) {
@@ -104,7 +104,7 @@ void AssertWildcard(const irs::Filter& f, irs::field_id field,
 
 void AssertFuzzy(const irs::Filter& f, irs::field_id field,
                  std::string_view value, int distance, float boost = 0.0f) {
-  const auto& fuzzy = sdb::basics::downCast<irs::ByEditDistance>(f);
+  const auto& fuzzy = irs::utils::downCast<irs::ByEditDistance>(f);
   EXPECT_EQ(field, fuzzy.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(distance, fuzzy.options().max_distance);
@@ -118,7 +118,7 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
                  std::string_view min, irs::BoundType min_type,
                  std::string_view max, irs::BoundType max_type,
                  float boost = 0.0f) {
-  const auto& range = sdb::basics::downCast<irs::ByRange>(f);
+  const auto& range = irs::utils::downCast<irs::ByRange>(f);
   EXPECT_EQ(field, range.field_id());
   EXPECT_EQ(min_type, range.options().range.min_type);
   if (min_type != irs::BoundType::Unbounded) {
@@ -298,7 +298,7 @@ TEST_F(LuceneParserTest, FuzzyTermLimitFromContext) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~1"));
   ASSERT_EQ(1, Optional().filters.size());
   const auto& fuzzy =
-    sdb::basics::downCast<irs::ByEditDistance>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByEditDistance>(*Optional().filters[0]);
   EXPECT_EQ(7, fuzzy.options().max_terms);
 }
 
@@ -1861,7 +1861,7 @@ TEST_F(LuceneParserTest, RegexKeepsItsPattern) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& regex =
-    sdb::basics::downCast<irs::ByRegexp>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByRegexp>(*Optional().filters[0]);
   EXPECT_EQ(kFieldId, regex.field_id());
   EXPECT_EQ("hel.o",
             irs::ViewCast<char>(irs::bytes_view{regex.options().pattern}));
@@ -1877,7 +1877,7 @@ TEST_F(LuceneParserTest, PhraseKeepsPunctuation) {
   ASSERT_EQ(1, Optional().filters.size());
   AssertPhrase(*Optional().filters[0], kFieldId);
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(3, phrase.options().size());
 }
 
@@ -1886,7 +1886,7 @@ TEST_F(LuceneParserTest, PhraseWithNumber) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(3, phrase.options().size());
 }
 
@@ -1896,7 +1896,7 @@ TEST_F(LuceneParserTest, PhraseWithGap) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -1905,7 +1905,7 @@ TEST_F(LuceneParserTest, PhraseWithPrefixPart) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -1914,7 +1914,7 @@ TEST_F(LuceneParserTest, PhraseWithFuzzyPart) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -1999,7 +1999,7 @@ TEST_F(LuceneParserTest, FnOrderedIsAPhrase) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -2017,7 +2017,7 @@ TEST_F(LuceneParserTest, NGram) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& ngram =
-    sdb::basics::downCast<irs::ByNGramSimilarity>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByNGramSimilarity>(*Optional().filters[0]);
   EXPECT_EQ(kFieldId, ngram.field_id());
   EXPECT_FLOAT_EQ(0.6f, ngram.options().threshold);
   EXPECT_EQ(3, ngram.options().ngrams.size());
@@ -2100,7 +2100,7 @@ TEST_F(LuceneParserTest, FnPhrase) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -2131,7 +2131,7 @@ TEST_F(LuceneParserTest, FnMaxGapsOverAPair) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -2140,7 +2140,7 @@ TEST_F(LuceneParserTest, FnMaxWidthOverAPair) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   const auto& phrase =
-    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 

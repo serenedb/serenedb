@@ -36,10 +36,10 @@
 #include <duckdb/transaction/transaction.hpp>
 #include <utility>
 
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils.h"
-#include "basics/log.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "server/utils/file_utils.h"
+#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -47,8 +47,8 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/read/duckdb_dependency.h"
 #include "connector/duckdb_storage_extension.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

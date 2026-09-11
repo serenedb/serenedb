@@ -26,7 +26,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"

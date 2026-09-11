@@ -30,7 +30,7 @@
 #include <boost/container/devector.hpp>
 #include <boost/container/string.hpp>
 
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 
 namespace {
 

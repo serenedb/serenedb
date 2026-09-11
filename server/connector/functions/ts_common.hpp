@@ -38,13 +38,13 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {

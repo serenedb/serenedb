@@ -91,9 +91,9 @@
 #include <ranges>
 #include <utility>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -129,8 +129,8 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

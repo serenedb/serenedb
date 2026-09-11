@@ -27,7 +27,7 @@
 #include <fstream>
 #include <thread>
 
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

@@ -27,7 +27,7 @@
 #ifdef IRESEARCH_URING
 #include "iresearch/store/async_directory.hpp"
 #endif
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/store/fs_directory.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"

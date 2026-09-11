@@ -25,8 +25,8 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/storage/data_table.hpp>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"

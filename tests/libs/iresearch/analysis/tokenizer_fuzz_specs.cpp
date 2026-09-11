@@ -27,7 +27,7 @@
 #include <memory>
 #include <utility>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
@@ -845,9 +845,9 @@ void AddGeo(std::vector<Spec>& out) {
     }
   }
   for (const auto& tuned :
-       {sdb::geo::GeoOptions{
+       {irs::geo::GeoOptions{
           .max_cells = 4, .min_level = 0, .max_level = 12, .level_mod = 2},
-        sdb::geo::GeoOptions{.max_cells = 64,
+        irs::geo::GeoOptions{.max_cells = 64,
                              .min_level = 8,
                              .max_level = 30,
                              .level_mod = 3,

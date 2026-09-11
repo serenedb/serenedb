@@ -22,9 +22,9 @@
 
 #include <duckdb/common/types/timestamp.hpp>
 
-#include "app/app_server.h"
-#include "basics/down_cast.h"
-#include "basics/static_strings.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"

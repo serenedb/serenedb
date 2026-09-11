@@ -27,8 +27,8 @@
 #include <memory>
 #include <optional>
 
-#include "basics/down_cast.h"
-#include "geo/geo_json.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/geo/geo_json.h"
 #include "geo_test_helpers.hpp"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"

@@ -33,10 +33,10 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

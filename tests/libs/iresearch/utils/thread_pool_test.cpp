@@ -25,8 +25,8 @@
 #include <condition_variable>
 #include <mutex>
 
-#include "basics/async_utils.hpp"
-#include "basics/misc.hpp"
+#include "iresearch/utils/async_utils.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "tests_shared.hpp"
 
 namespace {

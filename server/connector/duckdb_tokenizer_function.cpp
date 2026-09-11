@@ -42,8 +42,8 @@
 #include <type_traits>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -53,8 +53,8 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/search_analyzer_impl.h"
 

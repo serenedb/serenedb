@@ -27,8 +27,8 @@
 #include <duckdb/main/connection.hpp>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/log/store.h"
 
 namespace sdb {

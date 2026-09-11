@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"

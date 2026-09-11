@@ -29,8 +29,8 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"

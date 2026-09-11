@@ -26,7 +26,7 @@
 #include <string>
 #include <string_view>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 
 namespace sdb::connector {
 

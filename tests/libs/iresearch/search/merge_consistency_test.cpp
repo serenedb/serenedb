@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
@@ -141,7 +141,7 @@ void DumpQuery(const irs::QueryBuilder& query, StatsDump& out) {
   ASSERT_NO_FATAL_FAILURE(DumpRecord(query.Stats(), out));
   switch (query.Kind()) {
     case irs::QueryKind::Boolean: {
-      const auto& boolean = sdb::basics::downCast<irs::BooleanQuery>(query);
+      const auto& boolean = irs::utils::downCast<irs::BooleanQuery>(query);
       for (const auto occur : irs::kAllOccur) {
         const auto& bucket = boolean.Bucket(occur);
         for (const auto& clause : bucket.postings) {
@@ -158,7 +158,7 @@ void DumpQuery(const irs::QueryBuilder& query, StatsDump& out) {
       break;
     }
     case irs::QueryKind::Terms: {
-      const auto& multi = sdb::basics::downCast<irs::MultiTermQuery>(query);
+      const auto& multi = irs::utils::downCast<irs::MultiTermQuery>(query);
       const auto* const scorer = multi.Stats().scorer;
       for (const auto& entry : multi.State().Terms()) {
         ASSERT_NO_FATAL_FAILURE(

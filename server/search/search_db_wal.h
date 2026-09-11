@@ -32,7 +32,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace duckdb {

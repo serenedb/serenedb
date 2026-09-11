@@ -66,10 +66,10 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "functions/search.h"
@@ -77,8 +77,8 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace magic_enum {
 
@@ -1416,7 +1416,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
         clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
       break;
     }
-    group = &sdb::basics::downCast<irs::BooleanFilter>(*clauses[0]);
+    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
     node = group;
   }
   if (!group) {

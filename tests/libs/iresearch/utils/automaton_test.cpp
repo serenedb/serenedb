@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "basics/misc.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "tests_shared.hpp"
 

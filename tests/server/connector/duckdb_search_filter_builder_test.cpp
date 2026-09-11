@@ -58,9 +58,9 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -609,7 +609,7 @@ void CloseShouldBuckets(irs::BooleanFilter& node) {
   for (const auto occur : irs::kAllOccur) {
     for (auto& child : node.Bucket(occur).filters) {
       if (child->type() == irs::Type<irs::BooleanFilter>::id()) {
-        CloseShouldBuckets(sdb::basics::downCast<irs::BooleanFilter>(*child));
+        CloseShouldBuckets(irs::utils::downCast<irs::BooleanFilter>(*child));
       }
     }
   }
@@ -803,18 +803,18 @@ class SearchFilterBuilderTest : public ::testing::Test {
         const auto type = f.type();
         const auto name = [&]() -> std::string {
           if (type == irs::Type<irs::BooleanFilter>::id()) {
-            const auto& node = sdb::basics::downCast<irs::BooleanFilter>(f);
+            const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
             return "Boolean(mm=" + std::to_string(node.MinShouldMatch()) + ")";
           }
           if (type == irs::Type<irs::ByRange>::id()) {
             return "ByRange(f=" +
                    std::to_string(
-                     sdb::basics::downCast<irs::ByRange>(f).field_id()) +
+                     irs::utils::downCast<irs::ByRange>(f).field_id()) +
                    ")";
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
             return "ByGranularRange(f=" +
-                   std::to_string(sdb::basics::downCast<irs::ByGranularRange>(f)
+                   std::to_string(irs::utils::downCast<irs::ByGranularRange>(f)
                                     .field_id()) +
                    ")";
           }
@@ -822,7 +822,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
         }();
         out += name + "\n";
         if (type == irs::Type<irs::BooleanFilter>::id()) {
-          const auto& node = sdb::basics::downCast<irs::BooleanFilter>(f);
+          const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
           for (const auto occur : irs::kAllOccur) {
             for (const auto& clause : node.Terms(occur)) {
               out.append((depth + 1) * 2, ' ');

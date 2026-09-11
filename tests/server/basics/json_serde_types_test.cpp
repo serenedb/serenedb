@@ -52,15 +52,15 @@
 #include <variant>
 #include <vector>
 
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace {
 
-using sdb::basics::JsonSink;
-using sdb::basics::JsonSource;
-using sdb::basics::ReadObject;
-using sdb::basics::WriteObject;
+using irs::utils::JsonSink;
+using irs::utils::JsonSource;
+using irs::utils::ReadObject;
+using irs::utils::WriteObject;
 
 template<typename T>
 std::string ToJson(const T& value) {

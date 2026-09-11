@@ -45,9 +45,9 @@
 #include <utility>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 namespace {

@@ -26,16 +26,16 @@
 #include <cstring>
 #include <string>
 
-#include "geo/s2/multi_point_region.h"
-#include "geo/s2/multi_polyline_region.h"
-#include "geo/shape_container.h"
-#include "geo/wkb.h"
+#include "iresearch/utils/geo/s2/multi_point_region.h"
+#include "iresearch/utils/geo/s2/multi_polyline_region.h"
+#include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/geo/wkb.h"
 #include "gtest/gtest.h"
 
 namespace {
 
-using sdb::geo::ParseShapeWKB;
-using sdb::geo::ShapeContainer;
+using irs::geo::ParseShapeWKB;
+using irs::geo::ShapeContainer;
 
 // Little-endian WKB builder. Matches what native x86/arm emit by default.
 class WkbBuilder {

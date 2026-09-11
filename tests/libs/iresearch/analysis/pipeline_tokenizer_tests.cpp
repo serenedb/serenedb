@@ -42,7 +42,7 @@
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
-#include "pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception.h"
 #include "pipeline_reference.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"

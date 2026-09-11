@@ -1,0 +1,233 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <s2/s2cell_id.h>
+#include <s2/s2latlng.h>
+#include <s2/s2region_coverer.h>
+#include <s2/s2region_term_indexer.h>
+#include <s2/util/coding/coder.h>
+#include <simdjson.h>
+
+#include <span>
+#include <string>
+#include <tuple>
+
+#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/geo/coding.h"
+#include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/analysis/tokenizer.hpp"
+
+namespace irs {
+
+struct GeoFilterOptionsBase;
+
+}
+namespace irs::analysis {
+
+class GeoTokenizer : private util::Noncopyable {
+ public:
+  static bool IsGeoTokenizer(const Tokenizer& tokens) noexcept;
+
+  static GeoTokenizer& Cast(Tokenizer& tokens) noexcept;
+  static const GeoTokenizer& Cast(const Tokenizer& tokens) noexcept {
+    return Cast(const_cast<Tokenizer&>(tokens));
+  }
+
+  auto PrepareBatch(BlockTraits) const { return std::tuple{_wkb_input}; }
+
+  template<TokenLayout Layout, bool Wkb>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
+
+  void SetWkbInput(bool wkb) noexcept { _wkb_input = wkb; }
+
+  virtual ~GeoTokenizer() = default;
+
+  virtual bool reset(simdjson::ondemand::value json) = 0;
+
+  virtual bool resetWKB(duckdb::string_t wkb) = 0;
+
+  virtual void prepare(GeoFilterOptionsBase& options) const = 0;
+
+#ifdef SDB_GTEST
+  const auto& options() const noexcept { return _options; }
+#endif
+
+ protected:
+  explicit GeoTokenizer(const S2RegionTermIndexer::Options& options);
+
+  size_t ScratchMemoryUsage() const noexcept {
+    return _json_cap + _covering.capacity() * sizeof(S2CellId);
+  }
+
+  void ClearStaged() noexcept {
+    _covering.clear();
+    _point_id = S2CellId::None();
+  }
+  void StagePoint(const S2Point& point) noexcept {
+    _point_id = S2CellId{point};
+  }
+  void RestagePoint(const S2Point& point) noexcept {
+    ClearStaged();
+    StagePoint(point);
+  }
+  void StageCovering(const S2Region& region) {
+    _coverer.GetCovering(region, &_covering);
+  }
+
+  virtual void Store(TokenSink& /*sink*/) {}
+
+  S2RegionTermIndexer::Options _options;
+
+ private:
+  template<TokenLayout Layout>
+  void EmitTerms(TokenSink& sink);
+
+  S2RegionCoverer _coverer;
+  std::vector<S2CellId> _covering;
+  S2CellId _point_id = S2CellId::None();
+  simdjson::ondemand::parser _json_parser;
+  std::unique_ptr<char[]> _json_buf;
+  size_t _json_cap = 0;
+  bool _wkb_input = false;
+};
+
+class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
+                                public GeoTokenizer {
+ public:
+  struct Options {
+    using Owner = GeoPointTokenizer;
+    irs::geo::GeoOptions options;
+    std::vector<std::string> latitude;
+    std::vector<std::string> longitude;
+  };
+  static analysis::Tokenizer::ptr Make(Options opts);
+
+  static constexpr std::string_view type_name() noexcept { return "geopoint"; }
+
+  explicit GeoPointTokenizer(const Options& options);
+
+  using GeoTokenizer::PrepareBatch;
+
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB};
+  }
+
+  void Unbind() noexcept final { SetWkbInput(false); }
+
+  size_t MemoryUsage() const noexcept final { return ScratchMemoryUsage(); }
+
+  bool reset(simdjson::ondemand::value json) final;
+  bool resetWKB(duckdb::string_t wkb) final;
+
+  void prepare(GeoFilterOptionsBase& options) const final;
+
+#ifdef SDB_GTEST
+  const auto& latitude() const noexcept { return _latitude; }
+  const auto& longitude() const noexcept { return _longitude; }
+#endif
+
+ private:
+  static bool FindDouble(simdjson::ondemand::object& object,
+                         std::span<const std::string> path, double& out);
+
+  bool ParsePoint(simdjson::ondemand::value json, S2LatLng& out) const;
+
+  bool _from_array;
+  std::vector<std::string> _latitude;
+  std::vector<std::string> _longitude;
+};
+
+class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
+                               public GeoTokenizer {
+ public:
+  enum class Type : uint8_t {
+    Shape = 0,
+    Centroid,
+    Point,
+  };
+
+  enum class Coding : uint8_t {
+    S2Point = std::to_underlying(irs::geo::coding::Options::S2Point),
+    S2LatLngF64 = std::to_underlying(irs::geo::coding::Options::S2LatLngF64),
+    S2LatLngU32 = std::to_underlying(irs::geo::coding::Options::S2LatLngU32),
+    Source,
+  };
+
+  struct Options {
+    using Owner = GeoJsonTokenizer;
+    irs::geo::GeoOptions options;
+    Type type{Type::Shape};
+    Coding coding{Coding::Source};
+  };
+  static analysis::Tokenizer::ptr Make(Options opts);
+
+  static constexpr std::string_view type_name() noexcept { return "geojson"; }
+
+  explicit GeoJsonTokenizer(const Options& options);
+
+  using GeoTokenizer::PrepareBatch;
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .output = duckdb::LogicalTypeId::BLOB,
+      .store = _coding != Coding::Source,
+    };
+  }
+
+  void Unbind() noexcept final { SetWkbInput(false); }
+
+  size_t MemoryUsage() const noexcept final {
+    return ScratchMemoryUsage() + _cache.capacity() * sizeof(S2LatLng) +
+           _encoder.capacity();
+  }
+
+  Coding coding() const noexcept { return _coding; }
+
+  bool reset(simdjson::ondemand::value json) final;
+  bool resetWKB(duckdb::string_t wkb) final;
+
+  void prepare(GeoFilterOptionsBase& options) const final;
+
+#ifdef SDB_GTEST
+  auto shapeType() const noexcept { return _type; }
+#endif
+
+ private:
+  bool SerializesShape() const noexcept {
+    return _coding != Coding::Source && _type != Type::Centroid;
+  }
+
+  void StageTerms();
+
+  void Store(TokenSink& sink) final;
+
+  irs::geo::ShapeContainer _shape;
+  S2Point _centroid;
+  std::vector<S2LatLng> _cache;
+  Encoder _encoder;
+  irs::geo::coding::Options _s2_coding{irs::geo::coding::Options::Invalid};
+  Type _type;
+  Coding _coding;
+};
+
+}  // namespace irs::analysis

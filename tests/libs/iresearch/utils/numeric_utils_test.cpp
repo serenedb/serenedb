@@ -24,7 +24,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "basics/bit_utils.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/numeric_utils.hpp"
 #include "tests_shared.hpp"
 

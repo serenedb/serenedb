@@ -26,7 +26,7 @@
 #include <span>
 #include <vector>
 
-#include "basics/serializer.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/column_id.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
@@ -52,9 +52,9 @@ enum class TableEngine : uint8_t {
 namespace duckdb {
 
 template<typename Context>
-  requires std::is_same_v<typename Context::Format, sdb::basics::ObjectFormat>
+  requires std::is_same_v<typename Context::Format, irs::utils::ObjectFormat>
 void SerdeWrite(Context ctx, const LogicalType& type) {
-  sdb::basics::detail::WriteString(ctx.io(), type.ToString());
+  irs::utils::detail::WriteString(ctx.io(), type.ToString());
 }
 
 }  // namespace duckdb

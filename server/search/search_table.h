@@ -35,8 +35,8 @@
 #include <shared_mutex>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/column_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"

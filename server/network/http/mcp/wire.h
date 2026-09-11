@@ -28,9 +28,9 @@
 #include <string_view>
 #include <variant>
 
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::network::http::mcp {
 

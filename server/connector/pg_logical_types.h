@@ -24,7 +24,7 @@
 #include <duckdb/inet/inet_type.hpp>
 #include <string_view>
 
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 
 namespace sdb::pg {
 

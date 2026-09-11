@@ -33,8 +33,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/index.h"
 #include "catalog/scorer_options.h"

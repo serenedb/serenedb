@@ -24,8 +24,8 @@
 #include <string>
 #include <vector>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"

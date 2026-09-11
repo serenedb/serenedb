@@ -32,8 +32,8 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "pg/serialize.h"
 
 namespace sdb::pg {

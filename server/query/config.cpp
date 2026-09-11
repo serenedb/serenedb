@@ -37,12 +37,12 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb {
 namespace {

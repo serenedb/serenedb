@@ -30,8 +30,8 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <unordered_set>
 
-#include "basics/bit_utils.hpp"
-#include "basics/down_cast.h"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"

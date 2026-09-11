@@ -35,10 +35,10 @@
 #include <utility>
 #include <vector>
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/index.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

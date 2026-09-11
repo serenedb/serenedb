@@ -86,8 +86,8 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "insert_field.hpp"
 
 namespace {

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "geo/geo_json.h"
+#include "iresearch/utils/geo/geo_json.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/store/store_utils.hpp"

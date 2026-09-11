@@ -67,12 +67,12 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/util/helper.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/message_buffer.h"
-#include "basics/static_strings.h"
+#include "server/utils/asio_ns.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "server/utils/message_buffer.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
@@ -93,12 +93,12 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::network::pg {
 

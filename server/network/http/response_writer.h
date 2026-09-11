@@ -29,8 +29,8 @@
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "basics/debugging.h"
-#include "basics/message_buffer.h"
+#include "iresearch/utils/debugging.h"
+#include "server/utils/message_buffer.h"
 #include "network/http/common.h"
 
 namespace sdb::network::http {

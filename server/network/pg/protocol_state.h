@@ -39,12 +39,12 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
-#include "basics/debugging.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/debugging.h"
 #include "network/pg/wire_frames.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::network::pg {
 

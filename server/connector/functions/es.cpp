@@ -37,12 +37,12 @@
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <map>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -57,9 +57,9 @@
 #include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 

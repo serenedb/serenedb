@@ -22,7 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
-#include "basics/std.hpp"
+#include "iresearch/utils/std.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"

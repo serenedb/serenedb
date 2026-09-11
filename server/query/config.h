@@ -28,9 +28,9 @@
 #include <string>
 #include <string_view>
 
-#include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace duckdb {
 

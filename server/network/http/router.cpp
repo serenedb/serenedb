@@ -26,7 +26,7 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 
 namespace sdb::network {
 

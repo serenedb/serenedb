@@ -45,14 +45,14 @@
 #include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
-#include "basics/down_cast.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
 
 using duckdb::ExplainNode;
-using sdb::basics::downCast;
+using irs::utils::downCast;
 using sdb::catalog::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
@@ -227,8 +227,8 @@ std::string_view GeoFilterTypeName(GeoFilterType type) {
   return "?";
 }
 
-std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
-  using T = sdb::geo::ShapeContainer::Type;
+std::string_view GeoShapeTypeName(irs::geo::ShapeContainer::Type type) {
+  using T = irs::geo::ShapeContainer::Type;
   switch (type) {
     case T::Empty:
       return "Empty";

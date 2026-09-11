@@ -61,8 +61,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/misc.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/misc.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -70,7 +70,7 @@
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 #include "search/search_analyzer_impl.h"
@@ -678,8 +678,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
-  void ResolveGeoS2(std::string_view prefix, sdb::geo::GeoOptions& opts,
-                    const sdb::geo::GeoOptions* parent) {
+  void ResolveGeoS2(std::string_view prefix, irs::geo::GeoOptions& opts,
+                    const irs::geo::GeoOptions* parent) {
     int parent_mc = parent ? parent->max_cells : 20;
     int parent_min = parent ? parent->min_level : 4;
     int parent_max = parent ? parent->max_level : 23;

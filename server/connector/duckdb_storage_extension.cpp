@@ -26,10 +26,10 @@
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 
-#include "app/app_server.h"
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
-#include "basics/system-compiler.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -45,9 +45,9 @@
 #include "connector/optimizer/rbac.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

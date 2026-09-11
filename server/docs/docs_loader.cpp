@@ -38,9 +38,9 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"

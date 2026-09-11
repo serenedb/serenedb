@@ -44,7 +44,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 
 #include "auth/role_closure.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -66,8 +66,8 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"

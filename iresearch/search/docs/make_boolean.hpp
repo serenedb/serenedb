@@ -1,0 +1,85 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <span>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/docs/boolean_window.hpp"
+#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
+
+namespace irs::docs {
+
+template<typename Term>
+Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
+                                       const TermReader* field,
+                                       const IndexInput& doc,
+                                       doc_id_t docs_count, const Context&) {
+  return detail::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
+                                         nullptr);
+}
+
+template<typename Term>
+Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
+                                       const TermReader* field,
+                                       const IndexInput& doc,
+                                       const Context& ctx) {
+  SDB_ASSERT(terms.size() > 1);
+  return detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+    using Leaf = detail::PostingFill<Input>;
+    using Optional = detail::OrGroup<fill::SetLeaves<Leaf>>;
+    const auto init = [&](Leaf& leaf, size_t i) {
+      const auto& own = detail::FieldOf(terms[i], field);
+      const auto& meta = detail::CookieOf(terms[i]);
+      SDB_ASSERT(meta.docs_count != 0);
+      leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+                   meta.docs_count != 1 && detail::FreqOf(own));
+    };
+    return MakeShape<BooleanWindow, utils::Empty, utils::Empty, Optional,
+                     utils::Empty>(
+      ctx, std::piecewise_construct, std::forward_as_tuple(),
+      std::forward_as_tuple(), std::forward_as_tuple(terms.size(), init),
+      std::forward_as_tuple());
+  });
+}
+
+template<typename Term>
+Root::ptr MakeDisjunctionOfTerms(std::span<const Term> terms,
+                                 const TermReader* field, const IndexInput& doc,
+                                 doc_id_t docs_count, const Context& ctx) {
+  SDB_ASSERT(terms.size() > 1);
+  if (auto folded =
+        MakeBitsetDisjunctionOfTerms(terms, field, doc, docs_count, ctx)) {
+    return folded;
+  }
+  return MakeWindowDisjunctionOfTerms(terms, field, doc, ctx);
+}
+
+}  // namespace irs::docs

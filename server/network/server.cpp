@@ -30,10 +30,10 @@
 #include <memory>
 #include <utility>
 
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/number_of_cores.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/log.h"
+#include "server/utils/number_of_cores.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"

@@ -23,8 +23,8 @@
 #include <iresearch/index/index_reader.hpp>
 #include <limits>
 
-#include "basics/memory.hpp"
-#include "basics/primary_key.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "server/utils/primary_key.hpp"
 
 namespace sdb::connector {
 namespace {

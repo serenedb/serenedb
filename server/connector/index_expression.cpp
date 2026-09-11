@@ -50,10 +50,10 @@
 #include <utility>
 #include <vector>
 
-#include "basics/serialization.h"
+#include "iresearch/utils/serialization.h"
 #include "connector/common.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

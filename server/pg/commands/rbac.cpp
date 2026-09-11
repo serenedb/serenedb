@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-#include "app/app_server.h"
+#include "server/utils/app_server.h"
 #include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "catalog/ddl/catalog.h"
@@ -46,9 +46,9 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
 #include "network/credentials.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::pg {

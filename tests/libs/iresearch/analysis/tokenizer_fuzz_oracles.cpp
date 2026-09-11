@@ -26,7 +26,7 @@
 #include <format>
 #include <unordered_map>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "pipeline_reference.hpp"
 
 namespace tests::fuzz {

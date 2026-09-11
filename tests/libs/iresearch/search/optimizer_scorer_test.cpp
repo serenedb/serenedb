@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "basics/down_cast.h"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
@@ -47,7 +47,7 @@ irs::Filter::ptr Scored(std::string_view term, const irs::Scorer& scorer) {
 }
 
 std::span<const irs::TermClause> OptionalTerms(const irs::Filter& filter) {
-  return sdb::basics::downCast<irs::BooleanFilter>(filter).Terms(
+  return irs::utils::downCast<irs::BooleanFilter>(filter).Terms(
     irs::Occur::Should);
 }
 

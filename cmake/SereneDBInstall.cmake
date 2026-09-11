@@ -84,12 +84,12 @@ to_native_path("CMAKE_INSTALL_BINDIR")
 to_native_path("CMAKE_TEST_DIRECTORY")
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/libs/basics/directories.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/libs/basics/directories.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/directories.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/server/utils/directories.h"
     NEWLINE_STYLE UNIX
 )
 
 install(
-    FILES "${CMAKE_SOURCE_DIR}/libs/basics/exitcodes.dat"
+    FILES "${CMAKE_SOURCE_DIR}/server/utils/exitcodes.dat"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
 )

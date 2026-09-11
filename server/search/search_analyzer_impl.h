@@ -28,9 +28,9 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "basics/object_pool.hpp"
-#include "basics/serializer.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/object_pool.hpp"
+#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::search {
 

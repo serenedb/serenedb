@@ -36,7 +36,7 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/search_table_options.h"
 #include "catalog/sequence.h"

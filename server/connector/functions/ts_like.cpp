@@ -25,9 +25,9 @@
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "basics/down_cast.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {

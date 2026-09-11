@@ -28,7 +28,7 @@
 #include <random>
 #include <vector>
 
-#include "basics/shared.hpp"
+#include "iresearch/utils/shared.hpp"
 
 #ifdef __AVX2__
 #include <immintrin.h>

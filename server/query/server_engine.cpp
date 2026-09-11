@@ -28,9 +28,9 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
-#include "basics/file_utils.h"
-#include "basics/lifecycle.h"
-#include "basics/number_of_cores.h"
+#include "server/utils/file_utils.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/number_of_cores.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "connector/duckdb_copy_filesystem.h"

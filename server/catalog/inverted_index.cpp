@@ -28,17 +28,17 @@
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "absl/algorithm/container.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/down_cast.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {

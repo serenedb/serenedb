@@ -29,8 +29,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/random/random_generator.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "server/utils/random_generator.h"
 
 namespace sdb::network {
 

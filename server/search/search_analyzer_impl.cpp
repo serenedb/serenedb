@@ -31,11 +31,11 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/serializer.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/serializer.h"
 #include "catalog/entry.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::search {
 

@@ -33,9 +33,9 @@
 #include <memory>
 #include <ranges>
 
-#include "basics/file_utils.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
+#include "server/utils/file_utils.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/static_strings.h"
 
 namespace sdb::network::pg::hba {
 namespace {

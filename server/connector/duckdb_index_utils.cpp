@@ -22,7 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "connector/search_sink_writer.hpp"

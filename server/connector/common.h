@@ -27,7 +27,7 @@
 #include <span>
 #include <string_view>
 
-#include "basics/bit_utils.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "catalog/table_options.h"
 
 namespace sdb::connector {

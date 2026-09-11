@@ -29,15 +29,15 @@
 #include <utility>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/log/data_store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 namespace {

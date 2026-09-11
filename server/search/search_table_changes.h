@@ -29,8 +29,8 @@
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 

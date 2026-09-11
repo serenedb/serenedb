@@ -38,16 +38,16 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "basics/debugging.h"
-#include "basics/serializer.h"
-#include "basics/static_strings.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "iresearch/index/column_info.hpp"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 

@@ -185,7 +185,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 #include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
 
@@ -958,7 +958,7 @@ class RefTable {
 
   duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
   std::vector<Entry> _entries;
-  sdb::containers::FlatHashSet<Ref, RefHashEq<Entry>, RefHashEq<Entry>> _map;
+  irs::containers::FlatHashSet<Ref, RefHashEq<Entry>, RefHashEq<Entry>> _map;
 };
 
 struct LongKey {

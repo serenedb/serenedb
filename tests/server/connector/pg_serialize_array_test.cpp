@@ -48,7 +48,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 #include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"

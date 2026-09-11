@@ -26,7 +26,7 @@
 #include <string>
 #include <utility>
 
-#include "basics/assert.h"
+#include "iresearch/utils/assert.h"
 #include "catalog/log/store.h"
 
 namespace sdb::catalog {

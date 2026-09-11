@@ -20,7 +20,7 @@
 
 #include "pg/information_schema/sql_implementation_info.h"
 
-#include "basics/build.h"
+#include "server/utils/build.h"
 
 namespace sdb::pg {
 namespace {

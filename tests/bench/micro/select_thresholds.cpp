@@ -51,7 +51,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"

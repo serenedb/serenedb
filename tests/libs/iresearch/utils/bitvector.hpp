@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "basics/containers/bitset.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 
 namespace irs {
 

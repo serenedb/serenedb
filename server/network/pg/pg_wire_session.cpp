@@ -30,11 +30,11 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/lifecycle.h"
-#include "basics/metrics.h"
-#include "basics/system-compiler.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/metrics.h"
+#include "iresearch/utils/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"

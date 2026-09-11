@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-#include "basics/bit_utils.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 

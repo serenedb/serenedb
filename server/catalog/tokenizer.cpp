@@ -33,10 +33,10 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/duckdb_engine.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/serializer.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 

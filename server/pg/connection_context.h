@@ -24,11 +24,11 @@
 #include <memory>
 #include <string_view>
 
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
-#include "pg/sql_error.h"
+#include "iresearch/utils/pg/sql_error.h"
 #include "query/transaction.h"
 
 namespace sdb::pg {

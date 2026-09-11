@@ -71,7 +71,7 @@
 #include <utility>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "insert_field.hpp"
 #include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"

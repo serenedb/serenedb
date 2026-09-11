@@ -35,14 +35,14 @@
 #include <type_traits>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/primary_key.hpp"
-#include "basics/string_utils.h"
+#include "iresearch/utils/assert.h"
+#include "server/utils/primary_key.hpp"
+#include "iresearch/utils/string_utils.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/key_encoding.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog::duckdb_primary_key {
 

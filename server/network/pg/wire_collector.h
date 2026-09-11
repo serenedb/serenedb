@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 #include "network/cpu_resumer.h"
 #include "network/pg/wire_frames.h"
 #include "pg/serialize.h"

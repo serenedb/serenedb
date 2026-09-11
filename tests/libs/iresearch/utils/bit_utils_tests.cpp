@@ -23,8 +23,8 @@
 
 #include <climits>
 
-#include "basics/bit_utils.hpp"
-#include "basics/number_utils.h"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/number_utils.h"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 

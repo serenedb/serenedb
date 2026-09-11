@@ -29,7 +29,7 @@
 
 #include <unordered_set>
 
-#include "basics/file_utils_ext.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"

@@ -29,8 +29,8 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <memory>
 
-#include "basics/containers/node_hash_map.h"
-#include "basics/message_buffer.h"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "server/utils/message_buffer.h"
 #include "query/config.h"
 
 namespace duckdb {

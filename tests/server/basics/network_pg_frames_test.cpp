@@ -25,11 +25,11 @@
 #include <string>
 #include <vector>
 
-#include "basics/message_buffer.h"
+#include "server/utils/message_buffer.h"
 #include "network/pg/wire_frames.h"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/protocol.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 using namespace sdb;
 using namespace sdb::network::pg;

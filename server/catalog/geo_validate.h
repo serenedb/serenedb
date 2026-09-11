@@ -23,8 +23,8 @@
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <string_view>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/errcodes.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 

@@ -33,9 +33,9 @@
 
 #include "connector/pg_logical_types.h"
 #include "iresearch/utils/utf8_utils.hpp"
-#include "pg/errcodes.h"
+#include "iresearch/utils/pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

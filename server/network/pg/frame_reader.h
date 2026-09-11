@@ -29,8 +29,8 @@
 #include <string>
 #include <string_view>
 
-#include "basics/message_buffer.h"
-#include "basics/string_utils.h"
+#include "server/utils/message_buffer.h"
+#include "iresearch/utils/string_utils.h"
 #include "network/pg/pg_frame_codec.h"
 
 namespace sdb::network::pg {

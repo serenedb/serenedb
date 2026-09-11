@@ -27,7 +27,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "basics/application-exit.h"
+#include "iresearch/utils/application-exit.h"
 
 #if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
@@ -42,11 +42,11 @@
 #include <filesystem>
 #include <vector>
 
-#include "basics/containers/bitset.hpp"
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils_ext.hpp"
-#include "basics/log.h"
-#include "basics/network_utils.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/network_utils.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/formats.hpp"

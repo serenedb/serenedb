@@ -25,9 +25,9 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

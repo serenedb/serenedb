@@ -33,7 +33,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/log/store_op.h"

@@ -28,7 +28,7 @@
 #include <variant>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
 #include "connector/highlight/highlight_types.h"
 
 namespace irs {

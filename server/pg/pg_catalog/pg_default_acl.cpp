@@ -20,8 +20,8 @@
 
 #include "pg/pg_catalog/pg_default_acl.h"
 
-#include "app/app_server.h"
-#include "basics/down_cast.h"
+#include "server/utils/app_server.h"
+#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"

@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-#include "geo/coding.h"
+#include "iresearch/utils/geo/coding.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/wildcard_tokenizer.hpp"
@@ -235,7 +235,7 @@ TEST(TokenizerStore, ShingleBlobDecodesToTheBaseTokensWithFillers) {
 
 TEST(TokenizerStore, GeoBlobCarriesTheDeclaredCoding) {
   using irs::analysis::GeoJsonTokenizer;
-  namespace coding = sdb::geo::coding;
+  namespace coding = irs::geo::coding;
 
   for (const auto* spec : SelectedSpecs()) {
     if (!IsGeoJsonSpec(*spec)) {

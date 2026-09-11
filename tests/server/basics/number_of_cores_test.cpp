@@ -24,9 +24,9 @@
 #include <thread>
 #include <utility>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/number_of_cores.h"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_set.h"
+#include "server/utils/number_of_cores.h"
 
 using sdb::CountLogicalCores;
 using sdb::CountPhysicalCores;
@@ -61,7 +61,7 @@ namespace {
 
 // 4 physical cores (package 0, core 0-3), each with a 2nd HT thread: logical
 // 0-3 are the first threads, 16-19 the siblings -- like a real /proc/cpuinfo.
-const sdb::containers::FlatHashMap<int64_t, std::pair<int64_t, int64_t>>
+const irs::containers::FlatHashMap<int64_t, std::pair<int64_t, int64_t>>
   kHt4Cores = {
     {0, {0, 0}},  {1, {0, 1}},  {2, {0, 2}},  {3, {0, 3}},
     {16, {0, 0}}, {17, {0, 1}}, {18, {0, 2}}, {19, {0, 3}},

@@ -31,14 +31,14 @@
 #include <random>
 #include <thread>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "connector/inverted_store_index.h"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"

@@ -22,7 +22,7 @@
 
 #include <duckdb/main/connection.hpp>
 
-#include "basics/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "network/pg/protocol_state.h"
 
 using namespace sdb::network::pg;

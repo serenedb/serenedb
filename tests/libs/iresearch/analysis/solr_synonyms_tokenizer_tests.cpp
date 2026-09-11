@@ -23,7 +23,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 

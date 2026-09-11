@@ -20,8 +20,8 @@
 
 #include "iresearch/search/filters/vector_similarity_filter.hpp"
 
-#include "iresearch/search/ann_index.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 
 namespace irs {
 

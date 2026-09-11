@@ -31,7 +31,7 @@
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"

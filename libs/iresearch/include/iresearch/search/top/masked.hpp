@@ -24,7 +24,7 @@
 #include <utility>
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"

@@ -28,7 +28,7 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/search/geo_terms.hpp"
+#include "iresearch/search/detail/geo_terms.hpp"
 
 namespace irs::tests {
 

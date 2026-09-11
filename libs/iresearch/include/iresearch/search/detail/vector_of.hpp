@@ -42,7 +42,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scorers/score_args.hpp"

@@ -38,7 +38,7 @@
 #include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/term_set.hpp"
+#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 
 namespace irs::optimizer {

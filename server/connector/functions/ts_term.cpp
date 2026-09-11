@@ -22,7 +22,7 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "pg/errcodes.h"

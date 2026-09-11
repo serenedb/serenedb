@@ -32,7 +32,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/ann_index.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/vector_state.hpp"
 #include "iresearch/utils/string.hpp"

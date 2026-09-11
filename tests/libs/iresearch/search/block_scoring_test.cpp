@@ -41,7 +41,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/detail/doc_collector.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/types.hpp"

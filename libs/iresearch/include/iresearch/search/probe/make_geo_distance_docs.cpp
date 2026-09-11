@@ -20,7 +20,7 @@
 
 #include <cstdint>
 
-#include "iresearch/search/geo_instantiate.hpp"
+#include "iresearch/search/detail/geo_instantiate.hpp"
 #include "iresearch/search/probe/make_geo_impl.hpp"
 
 namespace irs::probe {

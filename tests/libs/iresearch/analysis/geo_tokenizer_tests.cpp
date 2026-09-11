@@ -39,7 +39,7 @@
 #include "gtest/gtest.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/search/geo_terms.hpp"
+#include "iresearch/search/detail/geo_terms.hpp"
 #include "search/geo_test_helpers.hpp"
 #include "token_sink_utils.hpp"
 

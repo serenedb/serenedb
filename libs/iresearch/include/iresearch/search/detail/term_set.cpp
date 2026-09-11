@@ -24,7 +24,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
-#include "iresearch/search/term_iterator.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 
 namespace irs {
 namespace {

@@ -32,7 +32,7 @@
 #include "basics/memory.hpp"
 #include "basics/misc.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/search/vector_filter_util.hpp"
+#include "iresearch/search/detail/vector_filter_util.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

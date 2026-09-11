@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"

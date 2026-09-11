@@ -33,7 +33,7 @@
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/posting_skip.hpp"

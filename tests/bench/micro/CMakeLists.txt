@@ -89,7 +89,7 @@ target_compile_options(
     PRIVATE -fno-lto
 )
 
-# Same relaxed FP search/bm25.cpp is built with, otherwise the kernels here
+# Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
 # aren't the ones we ship.
 target_compile_options(
     serenedb-bench-micro-bm25_byte_norm

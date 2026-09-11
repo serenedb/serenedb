@@ -30,7 +30,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/filters/term_filter.hpp"

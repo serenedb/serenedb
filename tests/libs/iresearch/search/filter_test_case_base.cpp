@@ -27,7 +27,7 @@
 #include <compare>
 #include <duckdb/common/allocator.hpp>
 
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 
 namespace tests {
 

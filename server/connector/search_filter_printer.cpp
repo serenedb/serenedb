@@ -37,9 +37,9 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
-#include <iresearch/search/search_range.hpp>
+#include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>

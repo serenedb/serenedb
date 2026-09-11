@@ -27,7 +27,7 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/scorers/raw_boost.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

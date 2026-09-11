@@ -26,7 +26,7 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/volatile_boost_score.hpp"
+#include "iresearch/search/detail/volatile_boost_score.hpp"
 
 namespace irs {
 

@@ -33,7 +33,7 @@
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

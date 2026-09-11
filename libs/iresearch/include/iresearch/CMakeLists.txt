@@ -134,11 +134,11 @@ set(IResearch_core_sources
     ./search/scorers/make_probe.cpp
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
-    ./search/collectors.cpp
+    ./search/detail/collectors.cpp
     ./search/filters/filter.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
-    ./search/term_set.cpp
+    ./search/detail/term_set.cpp
     ./search/filters/prefix_filter.cpp
     ./search/filters/range_filter.cpp
     ./search/filters/phrase_filter.cpp

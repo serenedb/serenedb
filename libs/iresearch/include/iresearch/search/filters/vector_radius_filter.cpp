@@ -21,8 +21,8 @@
 #include "iresearch/search/filters/vector_radius_filter.hpp"
 
 #include "basics/assert.h"
-#include "iresearch/search/ann_index.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 
 namespace irs {
 

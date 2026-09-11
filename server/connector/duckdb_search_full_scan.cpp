@@ -54,7 +54,7 @@
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/term_counts.hpp>
-#include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
@@ -64,7 +64,7 @@
 #include <iresearch/search/scored/make.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>

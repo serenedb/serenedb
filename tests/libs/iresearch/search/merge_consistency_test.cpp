@@ -35,7 +35,7 @@
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/term_set.hpp"
+#include "iresearch/search/detail/term_set.hpp"
 
 namespace {
 

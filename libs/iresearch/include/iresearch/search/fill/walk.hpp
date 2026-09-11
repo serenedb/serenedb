@@ -25,7 +25,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/erasure.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/impl.hpp"

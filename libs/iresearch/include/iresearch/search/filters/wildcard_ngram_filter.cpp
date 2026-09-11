@@ -36,7 +36,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"

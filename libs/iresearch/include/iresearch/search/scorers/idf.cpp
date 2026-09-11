@@ -23,8 +23,8 @@
 #include <cmath>
 
 #include "basics/assert.h"
-#include "iresearch/search/collectors.hpp"
-#include "iresearch/search/volatile_boost_score.hpp"
+#include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/volatile_boost_score.hpp"
 
 namespace irs {
 

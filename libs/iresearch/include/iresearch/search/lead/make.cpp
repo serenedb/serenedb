@@ -29,7 +29,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"

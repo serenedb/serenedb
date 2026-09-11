@@ -25,7 +25,7 @@
 #include "basics/noncopyable.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
-#include "iresearch/search/multiterm_collector.hpp"
+#include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
 

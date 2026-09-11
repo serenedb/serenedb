@@ -33,7 +33,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

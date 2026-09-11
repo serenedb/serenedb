@@ -28,7 +28,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 

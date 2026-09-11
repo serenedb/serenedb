@@ -32,7 +32,7 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/ann_index.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 

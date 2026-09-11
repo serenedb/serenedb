@@ -30,7 +30,7 @@
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/detail/doc_collector.hpp"
 #include "iresearch/search/filters/vector_similarity_filter.hpp"
 #include "iresearch/search/scorers/vector_similarity_scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"

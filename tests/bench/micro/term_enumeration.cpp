@@ -60,7 +60,7 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/term_iterator.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"

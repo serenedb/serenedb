@@ -29,7 +29,7 @@
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/search/ann_index.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 
 namespace irs {
 

@@ -30,7 +30,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"

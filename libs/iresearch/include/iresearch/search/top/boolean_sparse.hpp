@@ -30,7 +30,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/score_args.hpp"

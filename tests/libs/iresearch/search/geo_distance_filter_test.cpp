@@ -27,7 +27,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

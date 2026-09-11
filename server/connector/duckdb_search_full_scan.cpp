@@ -2311,8 +2311,8 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              IResearchScanGlobalState& g,
                              SegDocBufferedScanLocalState& l,
                              duckdb::DataChunk& output) {
-  if (!g.cs_projections.empty()) {
-    SDB_IF_FAILURE("SearchIncludeFetchFault") {
+  SDB_IF_FAILURE("SearchIncludeFetchFault") {
+    if (!g.cs_projections.empty()) {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
   }

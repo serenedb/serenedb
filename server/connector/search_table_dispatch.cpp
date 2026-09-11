@@ -30,8 +30,10 @@
 #include "basics/assert.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/table.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -128,7 +130,8 @@ void RejectIfSearchTable(catalog::TableEngine engine,
   }
 }
 
-void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
+void ValidateSearchTableCreateIndex(duckdb::ClientContext& context,
+                                    const catalog::SereneDBTableEntry& entry,
                                     std::string_view index_type) {
   if (!entry.IsSearchTable()) {
     return;
@@ -138,14 +141,13 @@ void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("only inverted indexes are supported on a search-backed table"));
   }
-  const auto& shard = entry.GetSearchData();
-  SDB_ASSERT(shard);
-  shard->VacuumRefresh();  // publish committed WAL rows so live_docs is exact
-  if (shard->GetDirectoryReader().live_docs_count() != 0) {
+  if (GetSereneDBContext(context).SearchTxn().HasWritesFor(
+        catalog::IdOf(entry))) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("CREATE INDEX on a non-empty search-backed table is not yet "
-              "supported (indexing existing rows)"));
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "
+              "transaction that has already written to \"",
+              entry.name.GetIdentifierName(), "\""));
   }
 }
 

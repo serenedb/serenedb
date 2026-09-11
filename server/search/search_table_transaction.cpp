@@ -29,6 +29,7 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/log.h"
+#include "basics/primary_key.hpp"
 #include "basics/system-compiler.h"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -47,7 +48,48 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
   return span;
 }
 
+// The rowids this transaction deleted, decoded back out of the encoded PK terms
+// the WAL carries. A build's log holds raw ids (8 bytes, no per-entry string)
+// and re-encodes at replay, the way the transactional build's does.
+void RecordDeletesForBuild(SearchTable& shard,
+                           const LocalTableChangesEntry& changes) {
+  std::vector<int64_t> rows;
+  for (const auto& op : changes.ops) {
+    if (!op.IsDelete()) {
+      continue;
+    }
+    rows.reserve(rows.size() + op.delete_pks.size());
+    for (const auto& pk : op.delete_pks) {
+      rows.push_back(
+        connector::primary_key::ReadSigned<int64_t>(std::string_view{pk}));
+    }
+  }
+  shard.AppendDeleteLog(rows);
+}
+
 }  // namespace
+
+SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
+
+void SearchTableTransaction::RegisterWriter(
+  const std::shared_ptr<SearchTable>& shard) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  if (w.writer_slot < 0) {
+    w.writer_slot = static_cast<int>(shard->RegisterWriter());
+  }
+}
+
+void SearchTableTransaction::ReleaseWriters() noexcept {
+  for (auto& [table_id, w] : _writes) {
+    if (w.writer_slot >= 0) {
+      w.shard->DeregisterWriter(static_cast<unsigned>(w.writer_slot));
+      w.writer_slot = -1;
+    }
+  }
+}
 
 void SearchTableTransaction::AddParallelSearchTransaction(
   const std::shared_ptr<SearchTable>& shard,
@@ -120,6 +162,7 @@ void SearchTableTransaction::Abort() noexcept {
       trx->Abort();
     }
   }
+  ReleaseWriters();
   _writes.clear();
   _changes.clear();
   _readers.clear();
@@ -133,6 +176,19 @@ void SearchTableTransaction::Commit() {
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
 
   for (auto& [table_id, w] : _writes) {
+    auto cit = _changes.find(table_id);
+    // Before the iresearch commit, never after. Once a removal is queued, the
+    // next RefreshCommit applies it -- including the one a running build
+    // publishes its own swap with -- and a build that drained the log before
+    // this ran would never reissue it, leaving the rows it had already copied
+    // resurrected for good. AppendCommit has made these durable, so the log can
+    // only ever name rows that are certainly deleted; that, not the position
+    // relative to the iresearch commit, is what keeps a reissue from removing a
+    // live row.
+    if (cit != _changes.end() && w.shard->IsDeleteLogOpen()) {
+      RecordDeletesForBuild(*w.shard, cit->second);
+    }
+
     uint64_t tick = record_tick;
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
@@ -145,11 +201,20 @@ void SearchTableTransaction::Commit() {
       tick -= trx.GetQueries() + 1;
     }
 
-    auto cit = _changes.find(table_id);
+    // Tripwire for the ordering above: parking here leaves the removals queued
+    // and visible to the next refresh while this commit has not returned. The
+    // delete-log record must already have happened, so it has to sit above the
+    // loop -- move it below this point and
+    // recovery/search_table_backfill_concurrent_dml.test loses a row.
+    SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
+
     if (cit != _changes.end() && cit->second.HasTruncate()) {
       w.shard->Clear(record_tick);
     }
   }
+  // Only now: a rebuild waiting on one of these registrations may proceed as
+  // soon as it is released, so the rows have to be committed first.
+  ReleaseWriters();
 }
 
 uint64_t SearchTableTransaction::AppendCommit() {

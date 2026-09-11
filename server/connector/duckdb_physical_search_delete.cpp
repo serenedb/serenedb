@@ -127,6 +127,7 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_id = _target.table_id;
   state->search_table = _target.data;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
 
   SDB_ASSERT(_pk_col_indices.size() == 1,
              "a search table is identified by one synthetic rowid slot");

@@ -84,6 +84,13 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
   ~SearchInsertGlobalState() override {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
+      // DropTable takes the global catalog mutex, and CREATE INDEX takes it
+      // before the table lock (MergeIndexConfig). Holding the table lock
+      // across the drop would be the reverse order, so let it go first --
+      // the statement is over and `search_table` still pins the shard.
+      if (table_lock.owns_lock()) {
+        table_lock.unlock();
+      }
       try {
         catalog::DropTable(catalog::NoAccessCheck(), ctas_database_name,
                            ctas_schema_name, ctas_table_name, /*cascade=*/true,
@@ -240,6 +247,9 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->search_table = target.data;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
+  // Before any sink reads the shard's index config, so a rebuild can tell
+  // that this transaction predates a config it publishes.
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
 
   state->generated_pk_seq = target.generated_pk_seq;
   state->column_ids = target.column_ids;

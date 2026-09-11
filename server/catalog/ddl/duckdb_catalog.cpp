@@ -72,6 +72,7 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_empty_result.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
@@ -1503,7 +1504,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // narrower gate than RejectIfSearchTable: only the kind and the
     // index-existing-rows limit.
     connector::ValidateSearchTableCreateIndex(
-      RequireBaseTable(table),
+      binder.context, RequireBaseTable(table),
       stmt.info->Cast<duckdb::CreateIndexInfo>().index_type);
     // A plain index is duckdb's ART in full -- bind, plan, build -- whatever
     // serenedb calls the kind; SereneDBSchemaEntry::CreateIndex files the
@@ -2056,6 +2057,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   auto& target_for_op = view_backed
                           ? static_cast<duckdb::CatalogEntry&>(target)
                           : static_cast<duckdb::CatalogEntry&>(*resolved_table);
+  if (sdb_entry != nullptr && sdb_entry->IsSearchTable()) {
+    // A search table's build does not consume the scan: the index shares the
+    // table's own store, so the operator rewrites the segments that predate the
+    // config in place (RunSearchTableBackfill) and reads them itself. Keep the
+    // scan's shape for the plan but produce no rows, or every CREATE INDEX
+    // would first stream the whole table through a sink that ignores it.
+    plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
+  }
   if (backfill_filter_predicate) {
     auto filter = duckdb::make_uniq<duckdb::LogicalFilter>(
       std::move(backfill_filter_predicate));

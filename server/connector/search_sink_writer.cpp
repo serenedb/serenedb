@@ -848,6 +848,17 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     std::move(indexed_exprs), shard.GetTermsByColumn());
 }
 
+namespace {
+
+// Shared tail of the two chunk writers: the PK terms are already encoded in
+// the sink's key scratch, `gen_pk` holds the rowid each row stores.
+void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
+                     std::span<const catalog::ColumnId> column_ids,
+                     const duckdb::Vector& gen_pk, ObjectId table_id,
+                     duckdb::ClientContext& context);
+
+}  // namespace
+
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const catalog::ColumnId> column_ids,
@@ -861,12 +872,58 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key = row_keys[row];
     key.clear();
     catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
     key_views.emplace_back(key);
+    ids[row] = static_cast<int64_t>(pk_base + row);
   }
+  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
+}
+
+void WriteRebuiltChunkToSearchSink(
+  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
+  std::span<const catalog::ColumnId> column_ids, duckdb::idx_t rowid_slot,
+  ObjectId table_id, duckdb::ClientContext& context) {
+  const auto num_rows = chunk.size();
+  SDB_ASSERT(rowid_slot < chunk.ColumnCount());
+
+  duckdb::UnifiedVectorFormat rowids;
+  chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
+  const auto* rowid_data =
+    duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
+
+  auto& scratch = sink.GetKeyScratch();
+  auto& row_keys = scratch.row_keys;
+  auto& key_views = scratch.key_views;
+  row_keys.resize(num_rows);
+  key_views.clear();
+  key_views.reserve(num_rows);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const auto rowid = rowid_data[rowids.sel->get_index(row)];
+    auto& key = row_keys[row];
+    key.clear();
+    catalog::duckdb_primary_key::AppendGenerated(key,
+                                                 static_cast<uint64_t>(rowid));
+    key_views.emplace_back(key);
+    ids[row] = rowid;
+  }
+  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
+}
+
+namespace {
+
+void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
+                     std::span<const catalog::ColumnId> column_ids,
+                     const duckdb::Vector& gen_pk, ObjectId table_id,
+                     duckdb::ClientContext& context) {
+  const auto num_rows = chunk.size();
+  auto& key_views = sink.GetKeyScratch().key_views;
 
   sink.InitImpl(num_rows, PkChunk{.keys = key_views});
   // The value goes under the column id; the terms go under whatever term fields
@@ -883,11 +940,6 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   for (size_t col = 0; col < column_ids.size(); ++col) {
     write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    data[row] = static_cast<int64_t>(pk_base + row);
-  }
   write_column(catalog::kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
   for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
     SDB_ASSERT(indexed_expr.normalized_expr);
@@ -900,4 +952,5 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   sink.FinishImpl();
 }
 
+}  // namespace
 }  // namespace sdb::connector

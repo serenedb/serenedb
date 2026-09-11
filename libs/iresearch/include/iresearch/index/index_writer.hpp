@@ -27,10 +27,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 
 #include "basics/async_utils.hpp"
@@ -650,6 +655,85 @@ class IndexWriter : private util::Noncopyable {
   bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
                     uint64_t tick);
 
+  // Arms a compaction floor for the guard's lifetime: every compaction skips
+  // segments whose id is at or below it, whatever policy selected them, while
+  // everything above keeps merging as usual.
+  //
+  // A host rewriting a set of segments needs this rather than a per-segment
+  // reservation, because a merge's output takes a fresh id: consolidating
+  // segments from below the boundary would produce one from above it, hiding
+  // their contents behind an id that says "written later". A boundary also
+  // covers segments an open transaction has allocated but not yet committed,
+  // which no reader can see and so nothing could name.
+  //
+  // Fails (Held() == false) while any compaction is in flight, and while
+  // another floor is already armed -- one holder at a time. The in-flight case
+  // is not conservatism: candidate selection happens under _compacting.lock,
+  // but the output id is minted after it is released, so a merge already past
+  // selection would still stamp a fresh id on segments from below the floor.
+  class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
+   public:
+    CompactionFloorGuard() = default;
+    CompactionFloorGuard(IndexWriter& writer, uint64_t floor) noexcept
+      : _writer{&writer}, _floor{floor} {}
+    CompactionFloorGuard(CompactionFloorGuard&& rhs) noexcept
+      : _writer{std::exchange(rhs._writer, nullptr)}, _floor{rhs._floor} {}
+    CompactionFloorGuard& operator=(CompactionFloorGuard&& rhs) noexcept {
+      if (this != &rhs) {
+        Release();
+        _writer = std::exchange(rhs._writer, nullptr);
+        _floor = rhs._floor;
+      }
+      return *this;
+    }
+    ~CompactionFloorGuard() { Release(); }
+
+    bool Held() const noexcept { return _writer != nullptr; }
+    // Segments at or below this id are the ones the holder owns.
+    uint64_t Floor() const noexcept { return _floor; }
+
+   private:
+    void Release() noexcept;
+
+    IndexWriter* _writer = nullptr;
+    uint64_t _floor = 0;
+  };
+
+  CompactionFloorGuard ArmCompactionFloor();
+
+  // The format this writer creates segments with.
+  const Format::ptr& Codec() const noexcept { return _codec; }
+
+  // Highest segment id handed out so far. Monotonic, and persisted in the index
+  // meta, so it is usable as a boundary: every segment already written OR IN
+  // FLIGHT has an id at or below it -- including one an open transaction has
+  // not committed yet, and which no reader can therefore see -- while every
+  // segment started later has a higher one. A merge's output always takes a
+  // fresh id, so a merged segment is never below a boundary its inputs were.
+  uint64_t CurrentSegmentId() const noexcept;
+
+  // Replaces the segments named by `replaced` with the already-flushed ones
+  // named by `adopted_metas`, in a single index meta commit.
+  //
+  // Both halves land in one FlushContext -- the sources masked out, the
+  // replacements imported -- so the pending_segments -> segments rename
+  // publishes them together and no reader sees one without the other. Same
+  // mechanism a compaction uses, minus the merge: the host has already written
+  // the replacements itself.
+  //
+  // `tick` is the caller's, as for AdoptSegment: a removal reaches an imported
+  // segment only when `import.tick <= query.tick`, so adopting at the tick the
+  // sources were read at leaves later removals free to land on the
+  // replacements.
+  //
+  // Returns false and changes nothing when a named source is no longer in the
+  // committed index (someone else retired it) or a replacement cannot be
+  // opened, so a losing caller can re-read and retry rather than commit half a
+  // swap.
+  bool ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<const std::string_view> adopted_metas,
+                       const Format::ptr& codec, uint64_t tick);
+
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.
   // Desired format that will be used for segment creation,
@@ -978,6 +1062,10 @@ class IndexWriter : private util::Noncopyable {
 
     // set of segments to be removed from the index upon commit
     CompactingSegments segment_mask;
+    // Backing store for segment_mask entries whose name is not kept alive by a
+    // pinned reader in `imports`. A deque so an append never invalidates the
+    // views already handed to segment_mask.
+    std::deque<std::string> masked_names;
 
     FlushContext() = default;
 
@@ -1064,8 +1152,6 @@ class IndexWriter : private util::Noncopyable {
 
   // Return next segment identifier
   uint64_t NextSegmentId() noexcept;
-  // Return current segment identifier
-  uint64_t CurrentSegmentId() const noexcept;
   // Initialize new index meta
   void InitMeta(IndexMeta& meta, uint64_t tick) const;
 
@@ -1092,6 +1178,8 @@ class IndexWriter : private util::Noncopyable {
     std::recursive_mutex lock;  // TODO(mbkkt) make it absl::Mutex
     // It's recursive because our tests, where compaction policy calls commit
     CompactingSegments segments;  // segments that are under compaction
+    // Segments at or below this are excluded from compaction; 0 == unarmed.
+    uint64_t floor = 0;
   } _compacting;
   // directory used for initialization of readers
   Directory& _dir;

@@ -38,6 +38,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <system_error>
+#include <utility>
 
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
@@ -246,6 +247,54 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
   }
   return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, &context),
                                     it->second);
+}
+
+unsigned SearchTable::RegisterWriter() { return _writers.Register(); }
+
+void SearchTable::DeregisterWriter(unsigned slot) noexcept {
+  _writers.Deregister(slot);
+}
+
+void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
+  SDB_ASSERT(_build_in_flight.load(std::memory_order_acquire),
+             "DrainPriorWriters requires a held BuildClaim");
+  if (!_writers.Drain(cancelled, kWriterWaitPoll)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_QUERY_CANCELED),
+      ERR_MSG("canceled while waiting for write transactions "
+              "on search table ",
+              _table_id.id(), " that started before the index was declared"));
+  }
+}
+
+void SearchTable::OpenDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  _delete_log.clear();
+  _delete_log_open.store(true, std::memory_order_release);
+}
+
+void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+  if (rows.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_delete_log_mutex};
+  // Re-test under the lock: the flag can drop between the caller's check and
+  // here, and a build that has closed the log is no longer draining it.
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
+}
+
+std::vector<int64_t> SearchTable::TakeDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  return std::exchange(_delete_log, {});
+}
+
+void SearchTable::CloseDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  _delete_log_open.store(false, std::memory_order_release);
+  _delete_log.clear();
 }
 
 void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {

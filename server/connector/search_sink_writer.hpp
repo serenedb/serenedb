@@ -401,4 +401,13 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             uint64_t pk_base, ObjectId table_id,
                             duckdb::ClientContext& context);
 
+// The rebuild's twin: rows that already have a rowid keep it. `rowid_slot` is
+// the chunk column holding each row's existing kGeneratedPKId (BIGINT), which
+// becomes both its PK term and its stored kGeneratedPKId, so a rebuilt row is
+// the same row -- deletes recorded against it during the build still find it.
+void WriteRebuiltChunkToSearchSink(
+  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
+  std::span<const catalog::ColumnId> column_ids, duckdb::idx_t rowid_slot,
+  ObjectId table_id, duckdb::ClientContext& context);
+
 }  // namespace sdb::connector

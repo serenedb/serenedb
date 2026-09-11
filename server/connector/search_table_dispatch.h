@@ -88,8 +88,11 @@ SearchWriteTarget ResolveSearchWriteTarget(
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,
                       std::span<const duckdb::idx_t> column_map);
 
-// v1 does not index existing rows, hence the empty-table requirement.
-void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
+// Refuses a non-inverted kind, and a transaction that has already written to
+// the table: the build waits out writers that predate the index, and this one
+// cannot finish until the statement running it does.
+void ValidateSearchTableCreateIndex(duckdb::ClientContext& context,
+                                    const catalog::SereneDBTableEntry& entry,
                                     std::string_view index_type);
 
 catalog::TableEngine ReadStorageEngine(

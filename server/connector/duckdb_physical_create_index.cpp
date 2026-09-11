@@ -41,6 +41,7 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <optional>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -62,6 +63,7 @@
 #include "connector/inverted_index_options_util.h"
 #include "connector/inverted_store_index.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/search_table_backfill.h"
 #include "connector/view_fast_path.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
@@ -120,6 +122,10 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Index> index_for_providers;
+  // A search table's index shares the table's own store, so instead of a
+  // storage to fill there is a set of existing segments to rewrite; Finalize
+  // drives that once the config is published.
+  std::optional<SearchBackfillTarget> search_backfill;
 
   struct Backfill {
     duckdb::AttachedDatabase* store_db = nullptr;
@@ -610,6 +616,24 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   const bool is_table = IsDuckDBTable();
   state->table_id = catalog::IdOf(_relation);
+  if (const auto* table_obj = TableOrNull();
+      table_obj != nullptr && table_obj->IsSearchTable() && !IsReindexPass()) {
+    // CreateIndexImpl has published the config into the shard, so every write
+    // from here on emits the new field; what remains is rewriting the segments
+    // that predate it, which Finalize does once the (empty) child is drained.
+    SearchBackfillTarget backfill;
+    backfill.shard = table_obj->GetSearchData();
+    backfill.table_id = state->table_id;
+    backfill.column_ids.reserve(columns.size());
+    backfill.column_types.reserve(columns.size());
+    for (const auto& col : columns) {
+      backfill.column_ids.push_back(col.id);
+      backfill.column_types.push_back(col.type);
+    }
+    backfill.group_bytes = ResolveUbigintWithOption(
+      context, kSearchBackfillGroupBytesSetting, /*with_value=*/nullptr);
+    state->search_backfill = std::move(backfill);
+  }
   if (is_table) {
     const auto projection =
       BuildCreateIndexProjection(_pk_positions, _info->column_ids);
@@ -932,6 +956,13 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     gstate.backfill->store_db->GetTransactionManager().RollbackTransaction(
       *gstate.backfill->txn);
     gstate.backfill->txn = nullptr;
+  }
+
+  if (gstate.search_backfill) {
+    RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
+    if (gstate.progress) {
+      gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
+    }
   }
 
   if (gstate.inverted_index && gstate.index_storage) {

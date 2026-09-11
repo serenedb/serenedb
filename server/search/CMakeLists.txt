@@ -9,4 +9,5 @@ target_sources(
         search_table_transaction.cpp
         task.cpp
         wal_recovery.cpp
+        writer_generations.cpp
 )

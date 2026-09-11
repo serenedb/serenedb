@@ -43,6 +43,7 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
+  conn_ctx.SearchTxn().RegisterWriter(_data);
   conn_ctx.SearchTxn().AddSearchTruncate(_data);
   return duckdb::SourceResultType::FINISHED;
 }

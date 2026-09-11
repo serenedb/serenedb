@@ -88,6 +88,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->search_table = _target.data;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
 
   state->column_ids = _target.column_ids;
   state->chunk_types = _target.chunk_types;

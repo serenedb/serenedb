@@ -40,31 +40,9 @@
 namespace irs {
 namespace detail::slop {
 
-constexpr PosAttr::value_t StepCost(int64_t delta,
-                                    PosAttr::value_t expected) noexcept {
-  if (expected == 1) {
-    if (delta >= 2) {
-      return static_cast<PosAttr::value_t>(delta - 1);
-    }
-    if (delta <= -1) {
-      return static_cast<PosAttr::value_t>(-delta + 1);
-    }
-    if (delta == 0) {
-      return 1;
-    }
-    return 0;
-  }
-  const int64_t exp = static_cast<int64_t>(expected);
-  if (delta == exp) {
-    return 0;
-  }
-  if (delta > exp) {
-    return static_cast<PosAttr::value_t>(delta - exp);
-  }
-  if (delta >= 0) {
-    return static_cast<PosAttr::value_t>(exp - delta);
-  }
-  return static_cast<PosAttr::value_t>(exp - delta + 1);
+constexpr uint64_t StepCost(int64_t delta, PosAttr::value_t expected) noexcept {
+  const int64_t diff = delta - expected;
+  return static_cast<uint64_t>(diff < 0 ? -diff : diff);
 }
 
 struct MatchResult {
@@ -76,6 +54,7 @@ struct MatchResult {
 struct MatchScratch {
   std::vector<PosAttr::value_t> chain;
   std::vector<uint32_t> order;
+  std::vector<int64_t> offsets;
 };
 
 #ifdef SDB_DEV
@@ -278,13 +257,14 @@ MatchResult JoinPair(AnchorIt& anchor, PartnerIt& partner,
       const int64_t delta =
         anchor_is_slot0 ? static_cast<int64_t>(v) - static_cast<int64_t>(pa)
                         : static_cast<int64_t>(pa) - static_cast<int64_t>(v);
-      const PosAttr::value_t step = StepCost(delta, expected);
+      const uint64_t step = StepCost(delta, expected);
       if (step > slop) {
         continue;
       }
       ++res.freq;
-      if (!res.any || step < res.best_distance) {
-        res.best_distance = step;
+      const auto distance = static_cast<PosAttr::value_t>(step);
+      if (!res.any || distance < res.best_distance) {
+        res.best_distance = distance;
       }
       res.any = true;
       if constexpr (!HasFreq) {
@@ -345,16 +325,17 @@ inline bool EnforceUniqueness(const std::vector<uint32_t>& groups) noexcept {
 
 inline void CountFromAnchor(
   const std::vector<std::vector<PosAttr::value_t>>& slots,
-  PosAttr::value_t slop, const std::vector<PosAttr::value_t>& expected_steps,
+  PosAttr::value_t slop, const std::vector<int64_t>& offsets,
   std::vector<PosAttr::value_t>& chain, const std::vector<uint32_t>& order,
-  uint32_t anchor, size_t d, PosAttr::value_t cost_so_far, MatchResult& res,
+  size_t d, int64_t min_shift, int64_t max_shift, MatchResult& res,
   bool early_exit, const std::vector<uint32_t>& groups, bool enforce_uniqueness,
   std::vector<EnumeratedMatch>* out) {
   const size_t n = slots.size();
   if (d == n) {
     ++res.freq;
-    if (!res.any || cost_so_far < res.best_distance) {
-      res.best_distance = cost_so_far;
+    const auto distance = static_cast<PosAttr::value_t>(max_shift - min_shift);
+    if (!res.any || distance < res.best_distance) {
+      res.best_distance = distance;
     }
     res.any = true;
     if (out) {
@@ -377,34 +358,21 @@ inline void CountFromAnchor(
     return;
   }
 
-  constexpr PosAttr::value_t kMax =
-    std::numeric_limits<PosAttr::value_t>::max();
+  constexpr int64_t kMax = std::numeric_limits<PosAttr::value_t>::max();
 
   const uint32_t slot = order[d];
-  const bool forward = slot > anchor;
-  const uint32_t partner = forward ? slot - 1 : slot + 1;
-  const PosAttr::value_t expected =
-    forward ? expected_steps[slot - 1] : expected_steps[slot];
-  const PosAttr::value_t pv = chain[partner];
-
-  const PosAttr::value_t budget = slop - cost_so_far;
-  const PosAttr::value_t span = budget + 1;
-
-  PosAttr::value_t lo;
-  PosAttr::value_t hi;
-  if (forward) {
-    const PosAttr::value_t center =
-      (pv > kMax - expected) ? kMax : pv + expected;
-    lo = (center > span) ? static_cast<PosAttr::value_t>(center - span) : 0;
-    hi = (center > kMax - span) ? kMax
-                                : static_cast<PosAttr::value_t>(center + span);
-  } else {
-    const PosAttr::value_t center =
-      (pv > expected) ? static_cast<PosAttr::value_t>(pv - expected) : 0;
-    lo = (center > span) ? static_cast<PosAttr::value_t>(center - span) : 0;
-    hi = (center > kMax - span) ? kMax
-                                : static_cast<PosAttr::value_t>(center + span);
+  // A chain's cost is max_shift - min_shift, and adding a slot can only
+  // widen that range, so a new shift must lie in
+  // [max_shift - slop, min_shift + slop]. That is both the pruning window
+  // and what keeps lo/hi safe to narrow.
+  const int64_t slop64 = slop;
+  const int64_t lo64 = offsets[slot] + max_shift - slop64;
+  const int64_t hi64 = offsets[slot] + min_shift + slop64;
+  if (hi64 < 0 || lo64 > kMax) {
+    return;
   }
+  const auto lo = static_cast<PosAttr::value_t>(std::max<int64_t>(lo64, 0));
+  const auto hi = static_cast<PosAttr::value_t>(std::min<int64_t>(hi64, kMax));
 
   const auto& sp = slots[slot];
   auto begin = std::lower_bound(sp.begin(), sp.end(), lo);
@@ -424,17 +392,13 @@ inline void CountFromAnchor(
         continue;
       }
     }
-    const int64_t delta =
-      forward ? static_cast<int64_t>(p) - static_cast<int64_t>(pv)
-              : static_cast<int64_t>(pv) - static_cast<int64_t>(p);
-    const PosAttr::value_t step = StepCost(delta, expected);
-    if (cost_so_far + step > slop) {
-      continue;
-    }
+    const int64_t shift = p - offsets[slot];
+    const int64_t next_min = std::min(min_shift, shift);
+    const int64_t next_max = std::max(max_shift, shift);
+    SDB_ASSERT(next_max - next_min <= slop64);
     chain[slot] = p;
-    CountFromAnchor(slots, slop, expected_steps, chain, order, anchor, d + 1,
-                    static_cast<PosAttr::value_t>(cost_so_far + step), res,
-                    early_exit, groups, enforce_uniqueness, out);
+    CountFromAnchor(slots, slop, offsets, chain, order, d + 1, next_min,
+                    next_max, res, early_exit, groups, enforce_uniqueness, out);
     if (early_exit && res.any) {
       return;
     }
@@ -485,12 +449,20 @@ inline MatchResult Run(
   }
   SDB_ASSERT(idx == n);
 
+  auto& offsets = scratch.offsets;
+  offsets.resize(n);
+  offsets[0] = 0;
+  for (size_t i = 1; i < n; ++i) {
+    offsets[i] = offsets[i - 1] + expected_steps[i - 1];
+  }
+
   auto& chain = scratch.chain;
   chain.resize(n);
   for (PosAttr::value_t pa : slot_pos[anchor]) {
     chain[anchor] = pa;
-    CountFromAnchor(slot_pos, slop, expected_steps, chain, order, anchor, 1, 0,
-                    res, early_exit, groups, enforce_uniqueness, out);
+    const int64_t shift = pa - offsets[anchor];
+    CountFromAnchor(slot_pos, slop, offsets, chain, order, 1, shift, shift, res,
+                    early_exit, groups, enforce_uniqueness, out);
     if (early_exit && res.any) {
       return res;
     }

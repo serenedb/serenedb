@@ -65,6 +65,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -355,8 +356,7 @@ constexpr TermPair kTermPairs[] = {
   // buffer (windows overlap heavily, the buffer never drains).
   {"of_the", "of", "the"},
   // Reversed real bigram: forward occurrences are rare, so matches at
-  // higher slop come mostly through the reversal branch of StepCost
-  // (adjacent reversal costs 2).
+  // higher slop come mostly through reversals (adjacent reversal costs 2).
   {"union_european", "union", "european"},
 };
 
@@ -846,7 +846,7 @@ irs::BooleanFilter MakeDisjunctionEquivalent(std::string_view t0,
 }
 
 // General slop-phrase disjunction equivalent for n >= 2 terms: enumerates
-// every distinct-position layout whose slot-order StepCost (expected step 1)
+// every distinct-position layout whose slop cost (expected step 1)
 // is <= slop and ORs one exact phrase per layout. Matches exactly the docs
 // the sloppy phrase matches over distinct-position layouts; same-position
 // (synonym) layouts aren't represented, but real text has none, so its docs=
@@ -874,14 +874,15 @@ void AppendSlopPhraseVariants(irs::BooleanFilter& or_filter,
       tp = static_cast<irs::PosAttr::value_t>(tp + gaps[j - 1]);
       pos[perm[j]] = tp;
     }
-    irs::PosAttr::value_t cost = 0;
-    for (size_t i = 0; i + 1 < n; ++i) {
-      const int64_t delta =
-        static_cast<int64_t>(pos[i + 1]) - static_cast<int64_t>(pos[i]);
-      cost = static_cast<irs::PosAttr::value_t>(cost + spm::StepCost(delta, 1));
-      if (cost > slop) {
-        return;
-      }
+    int64_t min_shift = std::numeric_limits<int64_t>::max();
+    int64_t max_shift = std::numeric_limits<int64_t>::min();
+    for (size_t i = 0; i < n; ++i) {
+      const int64_t shift = pos[i] - static_cast<int64_t>(i);
+      min_shift = std::min(min_shift, shift);
+      max_shift = std::max(max_shift, shift);
+    }
+    if (max_shift - min_shift > slop) {
+      return;
     }
     auto phrase = std::make_unique<irs::ByPhrase>();
     *phrase->mutable_field_id() = kFieldId;

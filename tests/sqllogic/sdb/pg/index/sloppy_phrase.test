@@ -383,3 +383,45 @@ QUERY PLAN
 │ Projections: a                         │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
+
+# ----------------------------------------------------------------------
+# Transposition inside a longer phrase: cost is the spread of per-token
+# shifts, so 'quick fox brown' is 2 away from 'quick brown fox'.
+# ----------------------------------------------------------------------
+
+statement ok
+INSERT INTO sloppy values (10, 'quick fox brown');
+
+statement ok
+INSERT INTO sloppy values (11, 'quick fox brown jumps');
+
+statement ok
+VACUUM (REFRESH_TABLE) sloppy;
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox', slop := 1) ORDER BY a;
+----
+a
+1
+7
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox', slop := 2) ORDER BY a;
+----
+a
+1
+7
+8
+10
+11
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox jumps', slop := 1) ORDER BY a;
+----
+a
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox jumps', slop := 2) ORDER BY a;
+----
+a
+11

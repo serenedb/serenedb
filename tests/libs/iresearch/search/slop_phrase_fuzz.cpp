@@ -73,17 +73,22 @@ bool GroupDistinct(const std::vector<value_t>& chain,
   return true;
 }
 
-// Independently re-derived step cost, deliberately not calling
-// spm::StepCost so a cost-model bug cannot cancel out between the
-// matcher and the oracle: plain |delta - expected| distance, plus one
-// extra move for a reversal (delta < 0) - except at expected == 1,
-// where |delta - 1| already absorbs it. StepCostSpec pins the two
-// formulations against each other, including expected == 0.
-uint64_t BruteStepCost(int64_t delta, value_t expected) {
-  const int64_t e = static_cast<int64_t>(expected);
-  const int64_t dist = delta > e ? delta - e : e - delta;
-  const int64_t reversal = (expected != 1 && delta < 0) ? 1 : 0;
-  return static_cast<uint64_t>(dist + reversal);
+// Independently re-derived cost, deliberately not calling into spm:: so a
+// cost-model bug cannot cancel out between the matcher and the oracle: every
+// slot is shifted by (document position - query position) and the tuple
+// costs the spread between the largest and the smallest shift.
+uint64_t BruteCost(const std::vector<value_t>& chain,
+                   const std::vector<value_t>& expected_steps) {
+  int64_t q = 0;
+  int64_t lo = chain[0];
+  int64_t hi = lo;
+  for (size_t k = 1; k < chain.size(); ++k) {
+    q += expected_steps[k - 1];
+    const int64_t shift = chain[k] - q;
+    lo = std::min(lo, shift);
+    hi = std::max(hi, shift);
+  }
+  return static_cast<uint64_t>(hi - lo);
 }
 
 // Counts valid tuples; cost is computed only at a full tuple, so none of
@@ -106,13 +111,7 @@ spm::MatchResult BruteRun(const Case& c) {
       if (!GroupDistinct(chain, c.groups)) {
         return;
       }
-      // 64-bit so it never wraps; counts iff total cost <= slop.
-      uint64_t cost = 0;
-      for (size_t k = 1; k < n; ++k) {
-        const int64_t delta =
-          static_cast<int64_t>(chain[k]) - static_cast<int64_t>(chain[k - 1]);
-        cost += BruteStepCost(delta, c.expected_steps[k - 1]);
-      }
+      const uint64_t cost = BruteCost(chain, c.expected_steps);
       if (cost > c.slop) {
         return;
       }
@@ -543,10 +542,34 @@ int RunEdgeCases() {
   expect(
     {.slots = {{1}, {1}}, .expected_steps = {1}, .groups = {0, 1}, .slop = 1},
     true, 1, 1, "samepos_distinct_groups");
+  // Reversed pair under a declared gap: query offsets [0, 2], document
+  // [2, 1], shifts {2, -1} -> cost 3, no extra reversal surcharge.
+  expect({.slots = {{2}, {1}}, .expected_steps = {2}, .groups = {}, .slop = 2},
+         false, 0, 0, "reversed_gap2_slop2_miss");
+  expect({.slots = {{2}, {1}}, .expected_steps = {2}, .groups = {}, .slop = 3},
+         true, 1, 3, "reversed_gap2_slop3_hit");
+  // Adjacent swap inside a three-term phrase ("a b c" vs "a c b"): shifts
+  // {0, 1, -1} -> cost 2, not the 3 a per-pair sum would charge.
+  expect({.slots = {{1}, {3}, {2}},
+          .expected_steps = {1, 1},
+          .groups = {},
+          .slop = 1},
+         false, 0, 0, "adjacent_swap_three_terms_slop1_miss");
+  expect({.slots = {{1}, {3}, {2}},
+          .expected_steps = {1, 1},
+          .groups = {},
+          .slop = 2},
+         true, 1, 2, "adjacent_swap_three_terms_slop2_hit");
+  // "a b c d" vs "a c b d": shifts {0, 1, -1, 0} -> cost 2.
+  expect({.slots = {{1}, {3}, {2}, {4}},
+          .expected_steps = {1, 1, 1},
+          .groups = {},
+          .slop = 2},
+         true, 1, 2, "adjacent_swap_four_terms_slop2_hit");
   // ES-verified (b): repeat + a third term on the repeat's position.
   // Groups {0,1,0}: slot 1 may share position 2 with slot 2 (different
   // groups); the two group-0 slots sit on distinct positions. One tuple
-  // (1,2,2), cost StepCost(1)+StepCost(0) = 1.
+  // (1,2,2), cost 1.
   expect({.slots = {{1}, {2}, {2}},
           .expected_steps = {1, 1},
           .groups = {0, 1, 0},
@@ -700,14 +723,16 @@ TEST(SlopMatcherFuzz, RandomMergedPairCases) {
   }
 }
 
-// The production case ladder and the oracle's |delta - expected| form
-// must agree everywhere; exhaustive over a domain wider than any fuzz
-// case generates.
+// The production pair cost and the oracle's |delta - expected| form must
+// agree everywhere; exhaustive over a domain wider than any fuzz case
+// generates.
 TEST(SlopMatcherFuzz, StepCostSpec) {
   for (value_t expected = 0; expected <= 16; ++expected) {
     for (int64_t delta = -256; delta <= 256; ++delta) {
-      ASSERT_EQ(BruteStepCost(delta, expected),
-                static_cast<uint64_t>(spm::StepCost(delta, expected)))
+      const int64_t e = expected;
+      const uint64_t want =
+        static_cast<uint64_t>(delta > e ? delta - e : e - delta);
+      ASSERT_EQ(want, spm::StepCost(delta, expected))
         << "delta=" << delta << " expected=" << expected;
     }
   }

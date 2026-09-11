@@ -177,15 +177,12 @@ Root::ptr MakePrunedDisjunction(
       uniformity != search::Terms::Bounded || min_match >= terms.size()) {
     return {};
   }
-  uint64_t densest = 0;
   for (size_t i = 0; i != terms.size(); ++i) {
     if (!search::ScoresOf(terms[i], scorer)) {
       return {};
     }
-    densest =
-      std::max<uint64_t>(densest, search::CookieOf(terms[i]).docs_count);
   }
-  if (min_match > 1 && 2 * densest < segment.docs_count()) {
+  if (min_match != 1) {
     return {};
   }
   SDB_IF_FAILURE("irs::PruningIterator") {
@@ -207,27 +204,24 @@ Root::ptr MakePrunedDisjunction(
       return posting.state.cookie.docs_count;
     };
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    const auto make = [&]<typename Match>(Match match) -> Root::ptr {
+    const auto make = [&]() -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedDisjunction, Leaf, Match, utils::Empty>(
-          ctx, terms.size(), docs_count, match, init, std::forward_as_tuple());
+        return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
+          ctx, terms.size(), docs_count, init, std::forward_as_tuple());
       }
       const auto candidates =
         std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
       return search::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedDisjunction, Leaf, Match,
+          return MakeShape<PrunedDisjunction, Leaf,
                            fill::ProbedAndNot<Exclude>>(
-            ctx, terms.size(), docs_count, match, init,
+            ctx, terms.size(), docs_count, init,
             std::forward_as_tuple(std::piecewise_construct,
                                   std::forward<decltype(negated)>(negated)));
         });
     };
-    if (min_match > 1) {
-      return make(MinMatch{min_match});
-    }
-    return make(utils::Empty{});
+    return make();
   });
 }
 

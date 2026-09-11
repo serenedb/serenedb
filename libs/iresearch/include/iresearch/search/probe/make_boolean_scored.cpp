@@ -31,6 +31,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/classify.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 
@@ -83,36 +84,55 @@ Node::ptr MakeRequiredScored(
     detail::Scored{merge, 0});
 }
 
+struct ScoredApi {
+  using Result = Node::ptr;
+  using Context = detail::ScoredCtx;
+
+  static constexpr bool kScored = true;
+
+  static Result MakeRequired(const BooleanQuery& query, const Context& ctx,
+                             uint64_t interrogations,
+                             const BooleanGroups& groups) {
+    const auto& segment = query.Segment();
+    const detail::ScoreRecipe recipe{.segment = &segment,
+                                     .fetcher = ctx.fetcher};
+    return MakeRequiredScored(
+      groups.must, groups.must_filters, query.Uniformity(Occur::Must),
+      groups.should, groups.should_filters, query.Uniformity(Occur::Should),
+      groups.min_should_match, segment, recipe, query.MergeType(),
+      interrogations, ctx, query.Absorbed());
+  }
+
+  static Result MakeBoost(const BooleanQuery& query, const Context& ctx,
+                          uint64_t interrogations,
+                          const BooleanGroups& groups) {
+    const auto& segment = query.Segment();
+    const detail::ScoreRecipe recipe{.segment = &segment,
+                                     .fetcher = ctx.fetcher};
+    return MakeSparseBoostScored(
+      groups.must, groups.must_filters, query.Uniformity(Occur::Must),
+      groups.should, groups.should_filters, query.Uniformity(Occur::Should),
+      segment, recipe, query.MergeType(), interrogations, ctx,
+      query.Absorbed());
+  }
+
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              uint64_t interrogations,
+                              const BooleanGroups& groups) {
+    const auto& segment = query.Segment();
+    const detail::ScoreRecipe recipe{.segment = &segment,
+                                     .fetcher = ctx.fetcher};
+    return MakeSparseExclusionScored(
+      groups.must, groups.must_filters, query.Uniformity(Occur::Must),
+      groups.should, groups.should_filters, query.Uniformity(Occur::Should),
+      groups.min_should_match, groups.exclude, groups.exclude_filters, segment,
+      recipe, query.MergeType(), interrogations, ctx, query.Absorbed());
+  }
+};
+
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  const auto& segment = query.Segment();
-  const auto merge = query.MergeType();
-  const detail::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  const auto absorbed = query.Absorbed();
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto must_uniformity = query.Uniformity(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto should_uniformity = query.Uniformity(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  const auto exclude = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  if (!exclude.empty() || !exclude_filters.empty()) {
-    return MakeSparseExclusionScored(
-      must, must_filters, must_uniformity, should, should_filters,
-      should_uniformity, min_should_match, exclude, exclude_filters, segment,
-      recipe, merge, interrogations, ctx, absorbed);
-  }
-  if ((!should.empty() || !should_filters.empty()) && min_should_match == 0) {
-    return MakeSparseBoostScored(must, must_filters, must_uniformity, should,
-                                 should_filters, should_uniformity, segment,
-                                 recipe, merge, interrogations, ctx, absorbed);
-  }
-  return MakeRequiredScored(must, must_filters, must_uniformity, should,
-                            should_filters, should_uniformity, min_should_match,
-                            segment, recipe, merge, interrogations, ctx,
-                            absorbed);
+  return MakeBoolean<ScoredApi>(query, ctx, interrogations);
 }
 
 }  // namespace irs::probe

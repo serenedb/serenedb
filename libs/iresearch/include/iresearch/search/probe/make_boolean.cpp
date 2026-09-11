@@ -25,6 +25,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "basics/empty.hpp"
+#include "iresearch/search/probe/classify.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 
@@ -55,22 +57,32 @@ Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                                        interrogations, std::move(other));
 }
 
-Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
-  const auto& segment = query.Segment();
-  const auto exclude = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  if (exclude.empty() && exclude_filters.empty()) {
-    return MakeRequiredDocs(must, must_filters, should, should_filters,
-                            min_should_match, segment, interrogations);
+struct DocsApi {
+  using Result = Node::ptr;
+  using Context = utils::Empty;
+
+  static constexpr bool kScored = false;
+
+  static Result MakeRequired(const BooleanQuery& query, Context,
+                             uint64_t interrogations,
+                             const BooleanGroups& groups) {
+    return MakeRequiredDocs(groups.must, groups.must_filters, groups.should,
+                            groups.should_filters, groups.min_should_match,
+                            query.Segment(), interrogations);
   }
-  return MakeSparseExclusionDocs(must, must_filters, should, should_filters,
-                                 min_should_match, exclude, exclude_filters,
-                                 segment, interrogations);
+
+  static Result MakeExclusion(const BooleanQuery& query, Context,
+                              uint64_t interrogations,
+                              const BooleanGroups& groups) {
+    return MakeSparseExclusionDocs(
+      groups.must, groups.must_filters, groups.should, groups.should_filters,
+      groups.min_should_match, groups.exclude, groups.exclude_filters,
+      query.Segment(), interrogations);
+  }
+};
+
+Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
+  return MakeBoolean<DocsApi>(query, utils::Empty{}, interrogations);
 }
 
 }  // namespace irs::probe

@@ -49,6 +49,7 @@
 #include "connector/functions/es.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
+#include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/search.h"
 #include "connector/functions/sequence.h"
@@ -338,6 +339,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterEsFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
+
+  connector::RegisterMarkdownRenderFunctions(db);
 
   connector::RegisterDuckDBAliases(db);
 

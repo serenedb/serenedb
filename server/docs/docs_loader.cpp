@@ -57,7 +57,7 @@ namespace {
 constexpr std::string_view kSchema = irs::StaticStrings::kDocsSchema;
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kMeta = "sdb_docs.meta";
-constexpr int kLayout = 13;
+constexpr int kLayout = 14;
 constexpr size_t kInsertBatch = 32;
 
 constexpr std::string_view kSchemaToken = "@schema@";
@@ -71,6 +71,7 @@ DROP FUNCTION IF EXISTS @schema@.search(TEXT, INTEGER);
 DROP FUNCTION IF EXISTS @schema@.read(TEXT);
 DROP FUNCTION IF EXISTS @schema@.sections(TEXT);
 DROP FUNCTION IF EXISTS @schema@.reference(TEXT);
+DROP FUNCTION IF EXISTS @schema@.render(TEXT, INTEGER, BOOLEAN);
 DROP FUNCTION IF EXISTS @schema@.objects();
 DROP FUNCTION IF EXISTS @schema@.summary(TEXT);
 DROP TABLE IF EXISTS @schema@.docs;
@@ -212,6 +213,16 @@ FROM rows_named WHERE page = 'configuration/overview.md' AND first_header = 'Nam
 UNION ALL
 SELECT 'index_type', bare, name, summary, NULL, path, page, NULL, breadcrumb
 FROM rows_named WHERE page = 'sql/indexes/index.md' AND first_header = 'Index';
+END)sql",
+  R"sql(
+CREATE FUNCTION @schema@.render(doc_path TEXT, width INTEGER, color BOOLEAN)
+RETURNS TEXT LANGUAGE SQL BEGIN ATOMIC
+  SELECT main.sdb_md_to_ansi(
+           CASE WHEN position('#' IN d.path) > 0
+                THEN '# ' || d.title || chr(10) || chr(10) ELSE '' END ||
+           d.content,
+           width, color, d.path)
+  FROM @schema@.docs d WHERE d.path = doc_path;
 END)sql",
   R"sql(CREATE TABLE @schema@.meta (hash TEXT, layout INTEGER))sql",
 };

@@ -1,0 +1,143 @@
+# Terminal rendering of the embedded docs. Assertions are either invariants
+# over the whole corpus or exact bounds on synthetic markdown, so editing a
+# documentation page does not touch this file.
+
+# Every page renders, and plain mode never emits an escape sequence. This is
+# the assertion that matters most: the renderer runs a markdown parser and a
+# SQL tokenizer over every row, and neither may throw or leak ANSI.
+connection docs database=postgres
+query
+SELECT count(*) FILTER (WHERE position(chr(27) IN r) > 0),
+       count(*) FILTER (WHERE length(r) = 0 AND length(trim(content)) > 0)
+FROM (SELECT content, sdb_md_to_ansi(content, 80, false, path) AS r FROM sdb_docs.docs);
+----
+count	count
+0	0
+
+# The corpus itself carries no escape sequences, so a docs example that showed
+# coloured output would be caught here rather than by the invariant above.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.docs WHERE position(chr(27) IN content) > 0;
+----
+count
+0
+
+# Wrapping honours the requested width.
+connection docs database=postgres
+query
+SELECT max(length(l)) <= 40
+FROM unnest(string_split(sdb_md_to_ansi(repeat('alpha beta gamma ', 40), 40, false, NULL), chr(10))) AS t(l);
+----
+?column?
+t
+
+# width => 0 means do not wrap: one logical line for one paragraph.
+connection docs database=postgres
+query
+SELECT count(*) FROM unnest(string_split(rtrim(sdb_md_to_ansi(repeat('alpha beta ', 60), 0, false, NULL), chr(10)), chr(10))) AS t(l);
+----
+count
+1
+
+# Colour is a mode, not a second renderer: the same input with colour off is
+# escape-free, and with colour on highlights the sql fence.
+connection docs database=postgres
+query
+SELECT position(chr(27) IN sdb_md_to_ansi(E'```sql\nSELECT 1;\n```', 80, true, NULL)) > 0,
+       position(chr(27) IN sdb_md_to_ansi(E'```sql\nSELECT 1;\n```', 80, false, NULL)) = 0;
+----
+?column?	?column?
+t	t
+
+# A fence the SQL tokenizer cannot parse still renders.
+connection docs database=postgres
+query
+SELECT length(sdb_md_to_ansi(E'```sql\nSELECT <placeholder> FROM …\n```', 80, true, NULL)) > 0;
+----
+?column?
+t
+
+# Adjacent inline spans keep the source spacing: no space before punctuation.
+connection docs database=postgres
+query
+SELECT rtrim(sdb_md_to_ansi(E'a `code`, then **bold**.', 80, false, NULL), chr(10));
+----
+rtrim
+a code, then bold.
+
+# Headings keep their level, and a nested heading is not promoted.
+connection docs database=postgres
+query
+SELECT rtrim(sdb_md_to_ansi(E'## Syntax', 80, false, NULL), chr(10));
+----
+rtrim
+## Syntax
+
+# Relative links resolve against the page they came from.
+connection docs database=postgres
+query
+SELECT rtrim(sdb_md_to_ansi('[precision](../../sql/functions/datepart.md)', 80, false, 'sql/functions/timestamp.md'), chr(10)) LIKE '%(sql/functions/datepart.md)';
+----
+?column?
+t
+
+# External links keep their label and drop the target, which is not a doc path.
+connection docs database=postgres
+query
+SELECT rtrim(sdb_md_to_ansi('[Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25)', 80, false, NULL), chr(10));
+----
+rtrim
+Okapi BM25
+
+# NULL markdown yields NULL; the other arguments fall back to their defaults.
+connection docs database=postgres
+query
+SELECT sdb_md_to_ansi(NULL, 80, false, NULL) IS NULL,
+       length(sdb_md_to_ansi('text', NULL, NULL, NULL)) > 0;
+----
+?column?	?column?
+t	t
+
+connection docs database=postgres
+statement error
+SELECT sdb_md_to_ansi('x', -1, false, NULL);
+----
+db error: ERROR: sdb_md_to_ansi: width must not be negative, got -1
+
+
+# render() prepends the title for a heading row, and is NULL for an unknown
+# path, matching read().
+connection docs database=postgres
+query
+SELECT starts_with(sdb_docs.render('sql/indexes/index.md#Indexes#Index_Types', 80, false), '# Index Types'),
+       sdb_docs.render('no/such/page.md', 80, false) IS NULL;
+----
+starts_with	?column?
+t	t
+
+# A whole-page doc carries no heading row, so render() must not prepend a
+# title that the page body already provides.
+connection docs database=postgres
+query
+SELECT (length(r) - length(replace(r, '# Autocomplete', ''))) / length('# Autocomplete') <= 1
+FROM (SELECT sdb_docs.render('cookbook/search/autocomplete.md', 80, false) AS r);
+----
+?column?
+t
+
+# Table cells lose their markdown link syntax, the way objects() does.
+connection docs database=postgres
+query
+SELECT sdb_docs.render('sql/indexes/index.md#Indexes#Index_Types', 74, false) NOT LIKE '%](%';
+----
+?column?
+t
+
+connection docs database=postgres
+statement error
+DROP FUNCTION sdb_docs.render(TEXT, INTEGER, BOOLEAN);
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+

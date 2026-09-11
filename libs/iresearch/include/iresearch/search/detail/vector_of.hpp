@@ -65,7 +65,7 @@
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/probe/two_phase_scored.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scored/detail/walk.hpp"
+#include "iresearch/search/scored/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/walk.hpp"

@@ -25,7 +25,7 @@
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
-#include "iresearch/search/scored/detail/walk.hpp"
+#include "iresearch/search/scored/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 
 namespace irs::scored {

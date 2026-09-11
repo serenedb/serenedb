@@ -28,7 +28,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/scored/detail/walk.hpp"
+#include "iresearch/search/scored/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 
 namespace irs::scored {
@@ -46,7 +46,7 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx) {
   return irs::detail::Build<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
-      return MakeShape<detail::Walk, Node>(
+      return MakeShape<Walk, Node>(
         ctx, ctx.fetcher, query.Segment(), *query.State().reader, args,
         std::forward<decltype(rest)>(rest)...);
     });

@@ -40,7 +40,7 @@
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/search/scored/detail/walk.hpp"
+#include "iresearch/search/scored/walk.hpp"
 #include "iresearch/search/scored/empty.hpp"
 #include "iresearch/search/scored/make_boolean.hpp"
 #include "iresearch/search/scored/masked.hpp"
@@ -71,7 +71,7 @@ Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
   return irs::detail::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
     using Node = lead::TwoPhaseDocs<Slots>;
-    return MakeShape<detail::ConstantWalk, Node>(
+    return MakeShape<ConstantWalk, Node>(
       ctx, score_t{0}, std::forward<decltype(args)>(args)...);
   });
 }

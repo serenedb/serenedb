@@ -29,7 +29,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/scored/detail/walk.hpp"
+#include "iresearch/search/scored/walk.hpp"
 #include "iresearch/search/scored/root.hpp"
 
 namespace irs {
@@ -54,13 +54,13 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
 }
 
 template<typename Node>
-using PlainWalk = detail::Walk<Node, utils::Empty>;
+using PlainWalk = Walk<Node, utils::Empty>;
 template<typename Node>
-using FilteredWalk = detail::Walk<Node, irs::detail::DeadRuns*>;
+using FilteredWalk = Walk<Node, irs::detail::DeadRuns*>;
 template<typename Node>
-using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
+using PlainConstantWalk = ConstantWalk<Node, utils::Empty>;
 template<typename Node>
-using FilteredConstantWalk = detail::ConstantWalk<Node, irs::detail::DeadRuns*>;
+using FilteredConstantWalk = ConstantWalk<Node, irs::detail::DeadRuns*>;
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 

@@ -30,7 +30,7 @@
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::scored::detail {
+namespace irs::scored {
 
 template<typename Node, typename Table>
 class Walk : public Root {
@@ -129,4 +129,4 @@ class ConstantWalk : public Root {
   [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
-}  // namespace irs::scored::detail
+}  // namespace irs::scored

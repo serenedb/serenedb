@@ -174,6 +174,30 @@ delim::Finder SplitOnAlternation(re2::Regexp& re, bool fold_case) {
   return delim::FinderFor(std::move(delimiters));
 }
 
+inline constexpr int kMaxClassRunes = 8;
+
+delim::Finder SplitOnRunes(re2::CharClass& cc) {
+  if (cc.size() > kMaxClassRunes) {
+    return {};
+  }
+  std::vector<bstring> delimiters;
+  delimiters.reserve(static_cast<size_t>(cc.size()));
+  for (const auto& range : cc) {
+    if (range.lo <= 0xDFFF && range.hi >= 0xD800) {
+      return {};
+    }
+    for (auto r = range.lo; r <= range.hi; ++r) {
+      byte_type buf[utf8_utils::kMaxCharSize];
+      delimiters.emplace_back(
+        buf, utf8_utils::FromChar32(static_cast<uint32_t>(r), buf));
+    }
+  }
+  if (delimiters.empty()) {
+    return {};
+  }
+  return delim::FinderFor(std::move(delimiters));
+}
+
 delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   if (group > 0) {
     return {};
@@ -206,7 +230,7 @@ delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   }
   const auto last = *(cc->end() - 1);
   if (last.hi >= 128 && (last.lo > 128 || last.hi != re2::Runemax)) {
-    return {};
+    return group < 0 ? SplitOnRunes(*cc) : delim::Finder{};
   }
   classify::ByteSet set;
   for (const auto& range : *cc) {

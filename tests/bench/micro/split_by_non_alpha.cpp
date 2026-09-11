@@ -226,6 +226,12 @@ BENCHMARK_DEFINE_F(MixedCorpus, BmPatternLiterals)(benchmark::State& state) {
 }
 BENCHMARK_DEFINE_F(MixedCorpus, BmPatternLiteralsRegex)
 (benchmark::State& state) { RunPatternWith(state, data, "(?:, |! |-_){1}"); }
+BENCHMARK_DEFINE_F(MixedCorpus, BmPatternRunes)(benchmark::State& state) {
+  RunPatternWith(state, data, "[,;§]");
+}
+BENCHMARK_DEFINE_F(MixedCorpus, BmPatternRunesRegex)(benchmark::State& state) {
+  RunPatternWith(state, data, "(?:[,;§]){1}");
+}
 BENCHMARK_DEFINE_F(MixedCorpus, BmSegmentation)(benchmark::State& state) {
   RunSegmentation(state, data);
 }
@@ -263,6 +269,8 @@ BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerValueAbsl)
 
 BENCHMARK_REGISTER_F(MixedCorpus, BmPatternLiterals);
 BENCHMARK_REGISTER_F(MixedCorpus, BmPatternLiteralsRegex);
+BENCHMARK_REGISTER_F(MixedCorpus, BmPatternRunes);
+BENCHMARK_REGISTER_F(MixedCorpus, BmPatternRunesRegex);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitCopy);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenAbsl);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenExact);

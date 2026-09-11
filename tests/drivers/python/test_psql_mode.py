@@ -1034,3 +1034,96 @@ def test_pset_combines_with_other_flags() -> None:
               "-c", "SELECT NULL::TEXT, 'x';"])
     assert r.returncode == 0, r.stderr
     assert "NULL|x" in r.stdout
+
+
+# ---- .docs (embedded documentation) ---------------------------------------
+
+def _docs_shell(arg: str) -> subprocess.CompletedProcess:
+    return _run_shell(["-c", f".docs {arg}".rstrip()])
+
+
+def test_docs_appears_in_help() -> None:
+    r = _run_shell(["-c", ".help"])
+    assert r.returncode == 0, r.stderr
+    assert ".docs" in r.stdout
+
+
+def test_docs_index_lists_sections() -> None:
+    r = _docs_shell("")
+    assert r.returncode == 0, r.stderr
+    assert "SereneDB documentation" in r.stdout
+    assert "sql (" in r.stdout
+    assert ".docs --search" in r.stdout
+
+
+def test_docs_renders_a_page_with_its_sections() -> None:
+    r = _docs_shell("sql/indexes/index.md")
+    assert r.returncode == 0, r.stderr
+    assert "path: sql/indexes/index.md#Indexes" in r.stdout
+    assert "Sections" in r.stdout
+    assert ".docs sql/indexes/index.md#Indexes#Index_Types" in r.stdout
+
+
+def test_docs_looks_up_an_object_by_name() -> None:
+    r = _docs_shell("BM25")
+    assert r.returncode == 0, r.stderr
+    assert "BM25(tableoid" in r.stdout
+
+
+def test_docs_browses_a_section() -> None:
+    r = _docs_shell("cookbook")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation under 'cookbook'" in r.stdout
+    assert ".docs cookbook/" in r.stdout
+
+
+def test_docs_list_flag_emits_paths() -> None:
+    r = _docs_shell("--list sql/functions/search/")
+    assert r.returncode == 0, r.stderr
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
+    assert lines
+    for line in lines:
+        assert line.startswith("sql/functions/search/")
+
+
+def test_docs_search_flag_returns_pasteable_paths() -> None:
+    r = _docs_shell("--search phrase search")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation matching 'phrase search'" in r.stdout
+    assert ".docs sql/functions/search/full-text.md" in r.stdout
+
+
+def test_docs_unknown_name_offers_candidates_and_fails() -> None:
+    r = _docs_shell("to_tsvector")
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "Closest matches" in out or "No documentation matches" in out
+
+
+def test_docs_rejects_unknown_option() -> None:
+    r = _docs_shell("--nope")
+    assert r.returncode != 0
+    assert "Unknown option" in (r.stdout + r.stderr)
+
+
+def test_docs_emits_no_escapes_without_a_tty() -> None:
+    r = _docs_shell("sql/functions/search/scoring.md")
+    assert r.returncode == 0, r.stderr
+    assert "\x1b" not in r.stdout
+
+
+def test_docs_wraps_table_cells_instead_of_truncating() -> None:
+    r = _docs_shell("sql/functions/aggregates/index.md")
+    assert r.returncode == 0, r.stderr
+    assert "approx_count_distinct(x)" in r.stdout
+    assert "…" not in r.stdout
+
+
+def test_docs_shell_and_psql_modes_agree_byte_for_byte() -> None:
+    k = _kw()
+    shell = _run_shell(["-c", ".docs sql/indexes/index.md"])
+    psql = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
+                 "-d", k["dbname"], "-c", ".docs sql/indexes/index.md"])
+    assert shell.returncode == 0, shell.stderr
+    assert psql.returncode == 0, psql.stderr
+    assert shell.stdout == psql.stdout

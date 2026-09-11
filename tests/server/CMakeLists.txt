@@ -6,6 +6,7 @@ add_executable(
     assertions_tests.cpp
     catalog_persistence_test.cpp
     catalog_table_info_test.cpp
+    docs_lookup_test.cpp
     duckdb_roundtrip_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp

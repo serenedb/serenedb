@@ -19,6 +19,11 @@ The schema holds two tables and a set of functions over them:
 `sdb_docs` is read-only for every user, including superusers. The server rebuilds it
 when the embedded documentation or its layout changes; writing to it raises an error.
 
+The functions on this page are the server-side surface, for `psql`, DBeaver, Grafana and
+anything else that speaks SQL. [`serened shell` and `serened psql`](../../clients/serened-shell.md#browsing-the-documentation)
+carry the same documentation in the client binary and render it with the `.docs`
+command, which works without a connection.
+
 ## Documentation paths
 
 Every row is addressed by a `path`. A page indexed as a whole is addressed by its file

@@ -20,16 +20,8 @@
 
 #pragma once
 
-#include <cstdint>
-#include <duckdb/main/database.hpp>
-#include <string>
-#include <string_view>
+namespace sdb::docs {
 
-namespace sdb::connector {
+void RegisterShellDocsBackend();
 
-std::string RenderMarkdown(std::string_view markdown, int32_t width, bool color,
-                           std::string_view base_path);
-
-void RegisterMarkdownRenderFunctions(duckdb::DatabaseInstance& db);
-
-}  // namespace sdb::connector
+}  // namespace sdb::docs

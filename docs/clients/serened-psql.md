@@ -54,6 +54,20 @@ serened psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
 └───────┘
 ```
 
+## Browsing the documentation
+
+`.docs` renders this documentation set inside the client, exactly as it does in
+[`serened shell`](./serened-shell.md#browsing-the-documentation) — same arguments, same
+output. The pages come from the `serened` binary rather than from the server, so a newer
+client shows its own documentation when connected to an older server.
+
+```sh
+serened psql -h localhost -p 7890 -d postgres -c ".docs BM25"
+```
+
+To read the server's copy instead — the version that server actually runs — query the
+[`sdb_docs` schema](../sql/functions/docs.md).
+
 ## Connection options
 
 | Option                  | Description                                                        |

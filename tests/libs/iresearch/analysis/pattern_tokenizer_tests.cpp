@@ -636,7 +636,25 @@ TEST(PatternTokenizerFastSplit, eligibility) {
   ASSERT_TRUE(Detects<delim::OneCharFinder>("(,)"));
   ASSERT_TRUE(Detects<Regex>("(,)", 1));
   ASSERT_TRUE(Detects<Regex>(":{2}"));
-  ASSERT_TRUE(Detects<Regex>(",|;;"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>(",|;;"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("ab|cd"));
+  ASSERT_TRUE(Detects<Regex>("a|ab"));
+  ASSERT_TRUE(Detects<Regex>("ab|a"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("(?:,|;;)+"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("(?i),|;;"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("§|€"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("§x|€y"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("[§€]"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("[§€]+"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("[,;§]"));
+  ASSERT_TRUE(Detects<delim::MultiStringFinder>("[€汉]"));
+  ASSERT_TRUE(Detects<Regex>("[§€]", 0));
+  ASSERT_TRUE(Detects<Regex>("[\\x{4E00}-\\x{9FFF}]"));
+  ASSERT_TRUE(Detects<Regex>("[§€０-９]"));
+  ASSERT_TRUE(Detects<Regex>("(?i)ab|cd"));
+  ASSERT_TRUE(Detects<Regex>("a|"));
+  ASSERT_TRUE(Detects<Regex>("a|b+"));
+  ASSERT_TRUE(Detects<Regex>(",|;;", 0));
   ASSERT_TRUE(Detects<Regex>("\\p{L}"));
   ASSERT_TRUE(Detects<Regex>("x?"));
 
@@ -683,7 +701,13 @@ TEST(PatternTokenizerFastSplit, property_oracle) {
                                    {"[0-9]+", 0},      {"[^,]+", 0},
                                    {"[a-z]+", 0},      {"\\d+", 0},
                                    {"[^\\n]+", 0},     {".+", 0},
-                                   {"(\\d+)", 0},      {"[,;]+", 0}};
+                                   {"(\\d+)", 0},      {"[,;]+", 0},
+                                   {",|;;", -1},       {"ab|cd", -1},
+                                   {"(?:,|;;)+", -1},  {"(?i),|;;", -1},
+                                   {"§x|€y", -1},      {"abc|d|ef", -1},
+                                   {"[§€]", -1},       {"§|€", -1},
+                                   {"[§€]+", -1},      {"[,;§]", -1},
+                                   {"[€汉]", -1}};
   constexpr std::array<std::string_view, 32> kAlphabet = {"a",
                                                           "b",
                                                           "c",

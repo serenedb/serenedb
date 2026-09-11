@@ -81,6 +81,25 @@ IRS_FORCE_INLINE inline void CaseConvertAsciiWide(char* dst, const char* src,
 }
 
 template<bool ToLower>
+IRS_FORCE_INLINE inline void CaseConvertAsciiExact(char* dst, const char* src,
+                                                   size_t n) noexcept {
+  if (n >= kCaseLane) {
+    CaseConvertAsciiLanes<ToLower, kCaseLane>(dst, src, n);
+    return;
+  }
+  if (n >= kCaseLane / 2) {
+    CaseConvertAsciiLanes<ToLower, kCaseLane / 2>(dst, src, n);
+    return;
+  }
+  constexpr uint8_t kLo = ToLower ? 'A' : 'a';
+  for (size_t i = 0; i < n; ++i) {
+    const auto c = static_cast<uint8_t>(src[i]);
+    dst[i] = static_cast<char>(
+      c ^ (static_cast<uint8_t>(c - kLo) <= uint8_t{25} ? 0x20U : 0U));
+  }
+}
+
+template<bool ToLower>
 IRS_NO_INLINE inline void CaseConvertAsciiTerm(char* dst, const char* src,
                                                size_t n) noexcept {
   if (n >= kCaseBulk) {

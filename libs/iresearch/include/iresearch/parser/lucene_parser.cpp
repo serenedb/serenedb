@@ -68,7 +68,7 @@
 
 
 /* First part of user prologue.  */
-#line 42 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 65 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 #include "parser.hpp"
 
@@ -185,10 +185,10 @@ typedef enum yysymbol_kind_t yysymbol_kind_t;
 
 
 /* Unqualified %code blocks.  */
-#line 48 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 71 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
-int yylex(YYSTYPE* yylval);
-void yyerror(sdb::ParserContext& ctx, const char *s);
+int yylex(YYSTYPE* yylval, yyscan_t yyscanner);
+void yyerror(sdb::ParserContext& ctx, yyscan_t yyscanner, const char *s);
 
 #line 193 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
@@ -575,16 +575,16 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,    95,    95,    99,   100,   101,   102,   106,   107,   108,
-     109,   113,   114,   115,   118,   119,   120,   121,   125,   126,
-     130,   138,   139,   142,   149,   153,   156,   163,   164,   165,
-     166,   167,   168,   169,   170,   171,   172,   173,   174,   178,
-     178,   188,   188,   193,   194,   195,   195,   200,   201,   202,
-     203,   213,   213,   215,   215,   217,   218,   219,   220,   221,
-     225,   225,   227,   227,   229,   229,   231,   231,   236,   236,
-     238,   238,   240,   250,   251,   255,   256,   257,   258,   259,
-     260,   263,   265,   266,   267,   271,   272,   276,   277,   281,
-     283,   285,   287,   292,   293
+       0,   119,   119,   123,   124,   125,   126,   130,   131,   132,
+     133,   137,   138,   139,   142,   143,   144,   145,   149,   150,
+     154,   162,   163,   166,   173,   177,   180,   187,   188,   189,
+     190,   191,   192,   193,   194,   195,   196,   197,   198,   202,
+     202,   212,   212,   217,   218,   219,   219,   224,   225,   226,
+     227,   237,   237,   239,   239,   241,   242,   243,   244,   245,
+     249,   249,   251,   251,   253,   253,   255,   255,   260,   260,
+     262,   262,   264,   274,   275,   279,   280,   281,   282,   283,
+     284,   287,   289,   290,   291,   295,   296,   300,   301,   305,
+     307,   309,   311,   316,   317
 };
 #endif
 
@@ -898,7 +898,7 @@ enum { YYENOMEM = -2 };
       }                                                           \
     else                                                          \
       {                                                           \
-        yyerror (ctx, YY_("syntax error: cannot back up")); \
+        yyerror (ctx, yyscanner, YY_("syntax error: cannot back up")); \
         YYERROR;                                                  \
       }                                                           \
   while (0)
@@ -931,7 +931,7 @@ do {                                                                      \
     {                                                                     \
       YYFPRINTF (stderr, "%s ", Title);                                   \
       yy_symbol_print (stderr,                                            \
-                  Kind, Value, ctx); \
+                  Kind, Value, ctx, yyscanner); \
       YYFPRINTF (stderr, "\n");                                           \
     }                                                                     \
 } while (0)
@@ -943,11 +943,12 @@ do {                                                                      \
 
 static void
 yy_symbol_value_print (FILE *yyo,
-                       yysymbol_kind_t yykind, YYSTYPE const * const yyvaluep, sdb::ParserContext& ctx)
+                       yysymbol_kind_t yykind, YYSTYPE const * const yyvaluep, sdb::ParserContext& ctx, yyscan_t yyscanner)
 {
   FILE *yyoutput = yyo;
   YY_USE (yyoutput);
   YY_USE (ctx);
+  YY_USE (yyscanner);
   if (!yyvaluep)
     return;
   YY_IGNORE_MAYBE_UNINITIALIZED_BEGIN
@@ -962,12 +963,12 @@ yy_symbol_value_print (FILE *yyo,
 
 static void
 yy_symbol_print (FILE *yyo,
-                 yysymbol_kind_t yykind, YYSTYPE const * const yyvaluep, sdb::ParserContext& ctx)
+                 yysymbol_kind_t yykind, YYSTYPE const * const yyvaluep, sdb::ParserContext& ctx, yyscan_t yyscanner)
 {
   YYFPRINTF (yyo, "%s %s (",
              yykind < YYNTOKENS ? "token" : "nterm", yysymbol_name (yykind));
 
-  yy_symbol_value_print (yyo, yykind, yyvaluep, ctx);
+  yy_symbol_value_print (yyo, yykind, yyvaluep, ctx, yyscanner);
   YYFPRINTF (yyo, ")");
 }
 
@@ -1001,7 +1002,7 @@ do {                                                            \
 
 static void
 yy_reduce_print (yy_state_t *yyssp, YYSTYPE *yyvsp,
-                 int yyrule, sdb::ParserContext& ctx)
+                 int yyrule, sdb::ParserContext& ctx, yyscan_t yyscanner)
 {
   int yylno = yyrline[yyrule];
   int yynrhs = yyr2[yyrule];
@@ -1014,7 +1015,7 @@ yy_reduce_print (yy_state_t *yyssp, YYSTYPE *yyvsp,
       YYFPRINTF (stderr, "   $%d = ", yyi + 1);
       yy_symbol_print (stderr,
                        YY_ACCESSING_SYMBOL (+yyssp[yyi + 1 - yynrhs]),
-                       &yyvsp[(yyi + 1) - (yynrhs)], ctx);
+                       &yyvsp[(yyi + 1) - (yynrhs)], ctx, yyscanner);
       YYFPRINTF (stderr, "\n");
     }
 }
@@ -1022,7 +1023,7 @@ yy_reduce_print (yy_state_t *yyssp, YYSTYPE *yyvsp,
 # define YY_REDUCE_PRINT(Rule)          \
 do {                                    \
   if (yydebug)                          \
-    yy_reduce_print (yyssp, yyvsp, Rule, ctx); \
+    yy_reduce_print (yyssp, yyvsp, Rule, ctx, yyscanner); \
 } while (0)
 
 /* Nonzero means print parse trace.  It is left uninitialized so that
@@ -1063,10 +1064,11 @@ int yydebug;
 
 static void
 yydestruct (const char *yymsg,
-            yysymbol_kind_t yykind, YYSTYPE *yyvaluep, sdb::ParserContext& ctx)
+            yysymbol_kind_t yykind, YYSTYPE *yyvaluep, sdb::ParserContext& ctx, yyscan_t yyscanner)
 {
   YY_USE (yyvaluep);
   YY_USE (ctx);
+  YY_USE (yyscanner);
   if (!yymsg)
     yymsg = "Deleting";
   YY_SYMBOL_PRINT (yymsg, yykind, yyvaluep, yylocationp);
@@ -1086,7 +1088,7 @@ yydestruct (const char *yymsg,
 `----------*/
 
 int
-yyparse (sdb::ParserContext& ctx)
+yyparse (sdb::ParserContext& ctx, yyscan_t yyscanner)
 {
 /* Lookahead token kind.  */
 int yychar;
@@ -1253,7 +1255,7 @@ yybackup:
   if (yychar == YYEMPTY)
     {
       YYDPRINTF ((stderr, "Reading a token\n"));
-      yychar = yylex (&yylval);
+      yychar = yylex (&yylval, yyscanner);
     }
 
   if (yychar <= YYEOF)
@@ -1341,516 +1343,516 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* query: clause_list  */
-#line 95 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.EndClauseList(); }
-#line 1346 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1348 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 3: /* clause_list: mod_clause  */
-#line 99 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 123 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1352 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1354 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 4: /* clause_list: clause_list mod_clause  */
-#line 100 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 124 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1358 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1360 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 5: /* clause_list: clause_list AND mod_clause  */
-#line 101 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 125 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::And); }
-#line 1364 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1366 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 6: /* clause_list: clause_list OR mod_clause  */
-#line 102 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 126 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1370 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1372 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 7: /* mod_clause: term_expr  */
-#line 106 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 130 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::None; }
-#line 1376 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1378 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 8: /* mod_clause: PLUS term_expr  */
-#line 107 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 131 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Required; }
-#line 1382 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1384 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 9: /* mod_clause: MINUS term_expr  */
-#line 108 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 132 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Not; }
-#line 1388 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1390 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 10: /* mod_clause: NOT term_expr  */
-#line 109 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 133 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Not; }
-#line 1394 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1396 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 11: /* term_expr: boosted_expr  */
-#line 113 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 137 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1400 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1402 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 12: /* term_expr: STAR COLON STAR  */
-#line 114 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 138 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddAll(); }
-#line 1406 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1408 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 13: /* term_expr: field_prefix term_expr  */
-#line 115 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 139 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1412 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1414 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 14: /* term_expr: field_name LT range_bound  */
-#line 118 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 142 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange("*", (yyvsp[0].sv), false, false); }
-#line 1418 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1420 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 15: /* term_expr: field_name LE range_bound  */
-#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 143 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange("*", (yyvsp[0].sv), false, true); }
-#line 1424 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1426 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 16: /* term_expr: field_name GT range_bound  */
-#line 120 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 144 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[0].sv), "*", false, false); }
-#line 1430 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1432 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 17: /* term_expr: field_name GE range_bound  */
-#line 121 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 145 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[0].sv), "*", true, false); }
-#line 1436 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1438 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 20: /* field_name: TERM  */
-#line 130 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 154 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       if (!ctx.CheckField((yyvsp[0].sv))) {
                                         YYABORT;
                                       }
                                     }
-#line 1446 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1448 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 21: /* boosted_expr: modified_term  */
-#line 138 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 162 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1452 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1454 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 22: /* boosted_expr: modified_term CARET threshold  */
-#line 139 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 163 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyvsp[-2].filter)->SetBoost((yyvsp[0].fnum)); (yyval.filter) = (yyvsp[-2].filter); }
-#line 1458 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1460 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 23: /* boosted_expr: modified_term CARET threshold FUZZY  */
-#line 143 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 167 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyvsp[-3].filter)->SetBoost((yyvsp[-1].fnum));
                                       (yyval.filter) = &ctx.ApplyFuzzy((yyvsp[-3].filter), (yyvsp[0].fuzzy).has_value,
                                                            (yyvsp[0].fuzzy).value); }
-#line 1466 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1468 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 24: /* modified_term: base_term  */
-#line 149 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 173 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1472 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1474 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 25: /* modified_term: TERM FUZZY  */
-#line 153 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 177 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].fuzzy).has_value
                                           ? &ctx.AddFuzzySimilarity((yyvsp[-1].sv), (yyvsp[0].fuzzy).value)
                                           : &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
-#line 1480 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1482 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 26: /* modified_term: phrase FUZZY  */
-#line 156 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 180 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { if ((yyvsp[0].fuzzy).has_value) {
                                         ctx.SetSlop((yyvsp[-1].filter), static_cast<int>((yyvsp[0].fuzzy).value));
                                       }
                                       (yyval.filter) = (yyvsp[-1].filter); }
-#line 1489 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1491 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 27: /* base_term: TERM  */
-#line 163 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 187 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddTerm((yyvsp[0].sv)); }
-#line 1495 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1497 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 28: /* base_term: NUMBER  */
-#line 164 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 188 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddTerm((yyvsp[0].num).text); }
-#line 1501 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1503 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 29: /* base_term: FLOAT  */
-#line 165 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 189 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddTerm((yyvsp[0].flt).text); }
-#line 1507 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1509 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 30: /* base_term: phrase  */
-#line 166 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 190 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1513 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1515 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 31: /* base_term: REGEX  */
-#line 167 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 191 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRegex((yyvsp[0].sv)); }
-#line 1519 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1521 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 32: /* base_term: PREFIX  */
-#line 168 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 192 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddPrefix((yyvsp[0].sv)); }
-#line 1525 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1527 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 33: /* base_term: WILDCARD  */
-#line 169 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 193 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1531 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1533 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 34: /* base_term: range_expr  */
-#line 170 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 194 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1537 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1539 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 35: /* base_term: ngram_expr  */
-#line 171 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 195 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1543 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1545 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 36: /* base_term: group  */
-#line 172 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 196 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1549 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1551 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 37: /* base_term: group AT NUMBER  */
-#line 173 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 197 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.SetMinMatch((yyvsp[-2].filter), (yyvsp[0].num).value); (yyval.filter) = (yyvsp[-2].filter); }
-#line 1555 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1557 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 38: /* base_term: STAR  */
-#line 174 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 198 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddFieldExists(); }
-#line 1561 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1563 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 39: /* @1: %empty  */
-#line 178 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 202 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.filter) = ctx.current_root;
                                       ctx.current_root = &ctx.BeginGroup();
                                     }
-#line 1570 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1572 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 40: /* group: LPAREN @1 clause_list RPAREN  */
-#line 182 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 206 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndGroup((yyvsp[-2].filter)); }
-#line 1576 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1578 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 41: /* $@2: %empty  */
-#line 188 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 212 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginPhrase(); }
-#line 1582 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1584 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 42: /* phrase: QUOTE $@2 phrase_body QUOTE  */
-#line 189 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 213 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndPhrase(); }
-#line 1588 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1590 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 45: /* $@3: %empty  */
-#line 195 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 219 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.SetGap((yyvsp[0].gap).min, (yyvsp[0].gap).max); }
-#line 1594 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1596 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 47: /* phrase_part: TERM  */
-#line 200 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 224 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddPhraseTerm((yyvsp[0].sv)); }
-#line 1600 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1602 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 48: /* phrase_part: PREFIX  */
-#line 201 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 225 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddPhrasePrefix((yyvsp[0].sv)); }
-#line 1606 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1608 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 49: /* phrase_part: WILDCARD  */
-#line 202 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 226 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddPhraseWildcard((yyvsp[0].sv)); }
-#line 1612 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1614 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 50: /* phrase_part: TERM FUZZY  */
-#line 203 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 227 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddPhraseFuzzy(
                                         (yyvsp[-1].sv), (yyvsp[0].fuzzy).has_value
                                               ? static_cast<int>((yyvsp[0].fuzzy).value)
                                               : 2); }
-#line 1621 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1623 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 51: /* $@4: %empty  */
-#line 213 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 237 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginNGram((yyvsp[0].fnum)); }
-#line 1627 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1629 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 52: /* ngram_expr: FN_NGRAM LPAREN threshold $@4 ngram_terms RPAREN  */
-#line 214 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 238 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndNGram(); }
-#line 1633 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1635 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 53: /* $@5: %empty  */
-#line 215 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 239 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginPhrase(); }
-#line 1639 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1641 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 54: /* ngram_expr: FN_PHRASE LPAREN $@5 phrase_body RPAREN  */
-#line 216 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 240 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndPhrase(); }
-#line 1645 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1647 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 55: /* ngram_expr: FN_WILDCARD LPAREN WILDCARD RPAREN  */
-#line 217 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 241 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                           { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
-#line 1651 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1653 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 56: /* ngram_expr: FN_WILDCARD LPAREN PREFIX RPAREN  */
-#line 218 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 242 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                           { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
-#line 1657 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1659 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 57: /* ngram_expr: FN_WILDCARD LPAREN TERM RPAREN  */
-#line 219 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 243 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                           { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
-#line 1663 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1665 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 58: /* ngram_expr: FN_FUZZY LPAREN TERM RPAREN  */
-#line 220 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 244 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                           { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
-#line 1669 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1671 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 59: /* ngram_expr: FN_FUZZY LPAREN TERM NUMBER RPAREN  */
-#line 221 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 245 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                           { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-2].sv), (yyvsp[-1].num).value); }
-#line 1675 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1677 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 60: /* $@6: %empty  */
-#line 225 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 249 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginFn(); }
-#line 1681 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1683 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 61: /* ngram_expr: FN_OR LPAREN $@6 fn_terms RPAREN  */
-#line 226 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 250 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnAny(); }
-#line 1687 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1689 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 62: /* $@7: %empty  */
-#line 227 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 251 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginFn(); }
-#line 1693 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1695 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 63: /* ngram_expr: FN_UNORDERED LPAREN $@7 fn_terms RPAREN  */
-#line 228 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 252 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnAll(); }
-#line 1699 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1701 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 64: /* $@8: %empty  */
-#line 229 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 253 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginFn(); }
-#line 1705 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1707 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 65: /* ngram_expr: FN_ATLEAST LPAREN NUMBER $@8 fn_terms RPAREN  */
-#line 230 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 254 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnAtLeast((yyvsp[-3].num).value); }
-#line 1711 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1713 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 66: /* $@9: %empty  */
-#line 231 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 255 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.BeginFn(); }
-#line 1717 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1719 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 67: /* ngram_expr: FN_ORDERED LPAREN $@9 fn_terms RPAREN  */
-#line 232 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 256 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnOrdered(); }
-#line 1723 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1725 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 68: /* $@10: %empty  */
-#line 236 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 260 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                                  { ctx.BeginFn(); }
-#line 1729 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1731 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 69: /* ngram_expr: FN_MAXGAPS LPAREN NUMBER FN_ORDERED LPAREN $@10 fn_terms RPAREN RPAREN  */
-#line 237 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 261 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnMaxGaps((yyvsp[-6].num).value); }
-#line 1735 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1737 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 70: /* $@11: %empty  */
-#line 238 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 262 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                                   { ctx.BeginFn(); }
-#line 1741 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1743 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 71: /* ngram_expr: FN_MAXWIDTH LPAREN NUMBER FN_ORDERED LPAREN $@11 fn_terms RPAREN RPAREN  */
-#line 239 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 263 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.EndFnMaxWidth((yyvsp[-6].num).value); }
-#line 1747 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1749 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 72: /* ngram_expr: FN_OTHER LPAREN fn_args RPAREN  */
-#line 240 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 264 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                       { ctx.Unsupported((yyvsp[-3].sv)); (yyval.filter) = nullptr; }
-#line 1753 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1755 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 75: /* fn_source: TERM  */
-#line 255 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 279 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnTerm((yyvsp[0].sv)); }
-#line 1759 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1761 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 76: /* fn_source: PREFIX  */
-#line 256 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 280 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnOther("a prefix"); }
-#line 1765 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1767 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 77: /* fn_source: WILDCARD  */
-#line 257 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 281 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnOther("a wildcard"); }
-#line 1771 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1773 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 78: /* fn_source: REGEX  */
-#line 258 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 282 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnOther("a regular expression"); }
-#line 1777 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1779 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 79: /* fn_source: phrase  */
-#line 259 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 283 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnOther("a phrase"); }
-#line 1783 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1785 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 80: /* fn_source: ngram_expr  */
-#line 260 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 284 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddFnOther("a function"); }
-#line 1789 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1791 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 85: /* threshold: NUMBER  */
-#line 271 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 295 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.fnum) = static_cast<float>((yyvsp[0].num).value); }
-#line 1795 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1797 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 86: /* threshold: FLOAT  */
-#line 272 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 296 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.fnum) = (yyvsp[0].flt).value; }
-#line 1801 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1803 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 87: /* ngram_terms: TERM  */
-#line 276 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 300 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddNGram((yyvsp[0].sv)); }
-#line 1807 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1809 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 88: /* ngram_terms: ngram_terms TERM  */
-#line 277 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 301 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddNGram((yyvsp[0].sv)); }
-#line 1813 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1815 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 89: /* range_expr: LBRACKET range_bound TO range_bound RBRACKET  */
-#line 282 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 306 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, true); }
-#line 1819 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1821 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 90: /* range_expr: LBRACE range_bound TO range_bound RBRACE  */
-#line 284 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 308 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, false); }
-#line 1825 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1827 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 91: /* range_expr: LBRACKET range_bound TO range_bound RBRACE  */
-#line 286 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 310 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, false); }
-#line 1831 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1833 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 92: /* range_expr: LBRACE range_bound TO range_bound RBRACKET  */
-#line 288 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 312 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, true); }
-#line 1837 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1839 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 93: /* range_bound: TERM  */
-#line 292 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 316 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1843 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1845 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 94: /* range_bound: STAR  */
-#line 293 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 317 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1849 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1851 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
 
-#line 1853 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1855 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
       default: break;
     }
@@ -1897,7 +1899,7 @@ yyerrlab:
   if (!yyerrstatus)
     {
       ++yynerrs;
-      yyerror (ctx, YY_("syntax error"));
+      yyerror (ctx, yyscanner, YY_("syntax error"));
     }
 
   if (yyerrstatus == 3)
@@ -1914,7 +1916,7 @@ yyerrlab:
       else
         {
           yydestruct ("Error: discarding",
-                      yytoken, &yylval, ctx);
+                      yytoken, &yylval, ctx, yyscanner);
           yychar = YYEMPTY;
         }
     }
@@ -1970,7 +1972,7 @@ yyerrlab1:
 
 
       yydestruct ("Error: popping",
-                  YY_ACCESSING_SYMBOL (yystate), yyvsp, ctx);
+                  YY_ACCESSING_SYMBOL (yystate), yyvsp, ctx, yyscanner);
       YYPOPSTACK (1);
       yystate = *yyssp;
       YY_STACK_PRINT (yyss, yyssp);
@@ -2008,7 +2010,7 @@ yyabortlab:
 | yyexhaustedlab -- YYNOMEM (memory exhaustion) comes here.  |
 `-----------------------------------------------------------*/
 yyexhaustedlab:
-  yyerror (ctx, YY_("memory exhausted"));
+  yyerror (ctx, yyscanner, YY_("memory exhausted"));
   yyresult = 2;
   goto yyreturnlab;
 
@@ -2023,7 +2025,7 @@ yyreturnlab:
          user semantic actions for why this is necessary.  */
       yytoken = YYTRANSLATE (yychar);
       yydestruct ("Cleanup: discarding lookahead",
-                  yytoken, &yylval, ctx);
+                  yytoken, &yylval, ctx, yyscanner);
     }
   /* Do not reclaim the symbols of the rule whose action triggered
      this YYABORT or YYACCEPT.  */
@@ -2032,7 +2034,7 @@ yyreturnlab:
   while (yyssp != yyss)
     {
       yydestruct ("Cleanup: popping",
-                  YY_ACCESSING_SYMBOL (+*yyssp), yyvsp, ctx);
+                  YY_ACCESSING_SYMBOL (+*yyssp), yyvsp, ctx, yyscanner);
       YYPOPSTACK (1);
     }
 #ifndef yyoverflow
@@ -2043,19 +2045,14 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 296 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 320 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 
-void yyerror(sdb::ParserContext& ctx, const char *s) {
+void yyerror(sdb::ParserContext& ctx, yyscan_t, const char *s) {
     ctx.error_message = s;
 }
 
-extern void LexerSetInput(std::string_view input);
-extern void LexerCleanup(void);
-
 bool sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
-    LexerSetInput(input);
-    int result = yyparse(ctx);
-    LexerCleanup();
-    return result == 0;
+    sdb::Scanner scanner{input};
+    return yyparse(ctx, scanner.yyscanner) == 0;
 }

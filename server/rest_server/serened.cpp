@@ -36,6 +36,7 @@
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "docs/docs_loader.h"
+#include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -196,6 +197,7 @@ int RunServer(int argc, char** argv) {
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
+  docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
 }
 

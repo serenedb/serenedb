@@ -6,7 +6,7 @@ add_compile_warnings_flags()
 
 add_executable(serened rest_server/serened.cpp)
 
-target_link_libraries(serened sereneserver duckdb_shell_static)
+target_link_libraries(serened sereneserver duckdb_shell_static serene_docs_shell)
 
 ################################################################################
 ## installation

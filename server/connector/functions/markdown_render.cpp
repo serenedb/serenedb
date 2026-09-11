@@ -20,12 +20,16 @@
 
 #include "connector/functions/markdown_render.h"
 
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
+#include <absl/strings/str_split.h>
 #include <simdjson.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -47,6 +51,7 @@ namespace {
 
 constexpr int32_t kDefaultWidth = 80;
 constexpr int32_t kMaxTableWidth = 120;
+constexpr size_t kMinTableColumn = 8;
 
 struct Style {
   std::string_view heading;
@@ -143,7 +148,7 @@ void Emit(std::string& out, std::string_view style, std::string_view text,
     out.append(text);
     return;
   }
-  out.append(style).append(text).append(s.reset);
+  absl::StrAppend(&out, style, text, s.reset);
 }
 
 std::vector<std::string_view> SplitWords(std::string_view text) {
@@ -187,6 +192,78 @@ bool EndsWithSpace(std::string_view text) {
   return IsSpace(text, offset, text.size() - offset);
 }
 
+size_t LongestWordWidth(std::string_view text) {
+  size_t longest = 0;
+  for (const auto word : SplitWords(text)) {
+    longest = std::max(longest, Width(word));
+  }
+  return longest;
+}
+
+std::string_view TakeWidth(std::string_view& text, size_t max_width) {
+  size_t used = 0;
+  size_t pos = 0;
+  while (pos < text.size()) {
+    auto length = CodepointLength(text[pos]);
+    if (pos + length > text.size()) {
+      length = 1;
+    }
+    const auto piece_width = Width(text.substr(pos, length));
+    if (used + piece_width > max_width) {
+      break;
+    }
+    used += piece_width;
+    pos += length;
+  }
+  if (pos == 0) {
+    pos = std::min(CodepointLength(text[0]), text.size());
+  }
+  const auto head = text.substr(0, pos);
+  text.remove_prefix(pos);
+  return head;
+}
+
+std::vector<std::string> WrapPlain(std::string_view text, size_t width) {
+  std::vector<std::string> lines;
+  if (width == 0) {
+    lines.emplace_back(text);
+    return lines;
+  }
+  std::string line;
+  size_t used = 0;
+  for (auto word : SplitWords(text)) {
+    if (Width(word) > width) {
+      if (used != 0) {
+        lines.push_back(line);
+        line.clear();
+        used = 0;
+      }
+      while (Width(word) > width) {
+        lines.emplace_back(TakeWidth(word, width));
+      }
+      if (word.empty()) {
+        continue;
+      }
+    }
+    const auto word_width = Width(word);
+    if (used != 0 && used + 1 + word_width > width) {
+      lines.push_back(line);
+      line.clear();
+      used = 0;
+    }
+    if (used != 0) {
+      line.push_back(' ');
+      ++used;
+    }
+    line.append(word);
+    used += word_width;
+  }
+  if (!line.empty() || lines.empty()) {
+    lines.push_back(line);
+  }
+  return lines;
+}
+
 void WrapRuns(std::string& out, const std::vector<Run>& runs, int32_t width,
               std::string_view indent, std::string_view hanging,
               const Style& s) {
@@ -207,7 +284,7 @@ void WrapRuns(std::string& out, const std::vector<Run>& runs, int32_t width,
   bool first_line = true;
   auto flush = [&] {
     if (!line.empty()) {
-      out.append(first_line ? indent : hanging).append(line).push_back('\n');
+      absl::StrAppend(&out, first_line ? indent : hanging, line, "\n");
       first_line = false;
       line.clear();
       used = 0;
@@ -233,7 +310,7 @@ void WrapRuns(std::string& out, const std::vector<Run>& runs, int32_t width,
       if (run.style.empty()) {
         line.append(word);
       } else {
-        line.append(run.style).append(word).append(s.reset);
+        absl::StrAppend(&line, run.style, word, s.reset);
       }
       used += word_width;
       first_word = false;
@@ -312,36 +389,21 @@ std::string ResolveHref(std::string_view base_path, std::string_view href) {
     return {};
   }
   const auto dir = Dirname(base_path);
-  std::string combined;
-  if (!dir.empty() && !target.starts_with('/')) {
-    combined.append(dir).push_back('/');
-  }
-  combined.append(target);
+  const auto combined = dir.empty() || target.starts_with('/')
+                          ? std::string{target}
+                          : absl::StrCat(dir, "/", target);
   std::vector<std::string_view> stack;
-  size_t pos = 0;
-  while (pos <= combined.size()) {
-    auto end = combined.find('/', pos);
-    if (end == std::string::npos) {
-      end = combined.size();
-    }
-    const std::string_view part{combined.data() + pos, end - pos};
+  for (const std::string_view part :
+       absl::StrSplit(combined, '/', absl::SkipEmpty())) {
     if (part == "..") {
       if (!stack.empty()) {
         stack.pop_back();
       }
-    } else if (!part.empty() && part != ".") {
+    } else if (part != ".") {
       stack.push_back(part);
     }
-    pos = end + 1;
   }
-  std::string result;
-  for (const auto part : stack) {
-    if (!result.empty()) {
-      result.push_back('/');
-    }
-    result.append(part);
-  }
-  return result;
+  return absl::StrJoin(stack, "/");
 }
 
 void AppendInlineMarkdown(std::vector<Run>& runs, std::string_view text,
@@ -366,7 +428,7 @@ void AppendInlineMarkdown(std::vector<Run>& runs, std::string_view text,
           runs.push_back({std::string{label}, s.link});
           const auto resolved = ResolveHref(base_path, href);
           if (!resolved.empty()) {
-            runs.push_back({" (" + resolved + ")", s.target});
+            runs.push_back({absl::StrCat(" (", resolved, ")"), s.target});
           }
           pos = paren + 1;
           continue;
@@ -426,28 +488,44 @@ std::string Attribute(const duckdb::markdown_utils::MarkdownBlock& block,
   return it == block.attributes.end() ? std::string{} : it->second;
 }
 
-size_t CollectInlines(const Blocks& blocks, size_t index,
-                      std::vector<Run>& runs, std::string_view base_path,
-                      const Style& s) {
-  size_t next = index + 1;
-  while (next < blocks.size() && blocks[next].kind == "inline") {
+std::string_view InlineStyle(const std::string& block_type, const Style& s) {
+  if (block_type == "code") {
+    return s.inline_code;
+  }
+  if (block_type == "bold") {
+    return s.bold;
+  }
+  if (block_type == "italic") {
+    return s.italic;
+  }
+  if (block_type == "link") {
+    return s.link;
+  }
+  return {};
+}
+
+size_t CollectInlines(const Blocks& blocks, size_t index, int32_t level,
+                      std::string_view inherited, std::vector<Run>& runs,
+                      std::string_view base_path, const Style& s) {
+  size_t next = index;
+  while (next < blocks.size() && blocks[next].kind == "inline" &&
+         blocks[next].level >= level) {
     const auto& child = blocks[next];
-    if (child.block_type == "code") {
-      runs.push_back({child.content, s.inline_code});
-    } else if (child.block_type == "bold") {
-      runs.push_back({child.content, s.bold});
-    } else if (child.block_type == "italic") {
-      runs.push_back({child.content, s.italic});
-    } else if (child.block_type == "link") {
-      runs.push_back({child.content, s.link});
+    ++next;
+    const auto own = InlineStyle(child.block_type, s);
+    const auto style = own.empty() ? inherited : own;
+    if (child.content.empty()) {
+      next =
+        CollectInlines(blocks, next, child.level + 1, style, runs, base_path, s);
+    } else {
+      runs.push_back({child.content, style});
+    }
+    if (child.block_type == "link") {
       const auto resolved = ResolveHref(base_path, Attribute(child, "href"));
       if (!resolved.empty()) {
-        runs.push_back({" (" + resolved + ")", s.target});
+        runs.push_back({absl::StrCat(" (", resolved, ")"), s.target});
       }
-    } else {
-      runs.push_back({child.content, {}});
     }
-    ++next;
   }
   return next;
 }
@@ -470,7 +548,7 @@ void RenderList(std::string& out, const std::string& json, bool ordered,
       continue;
     }
     ++n;
-    const auto marker = ordered ? std::to_string(n) + ". " : std::string{"- "};
+    const auto marker = ordered ? absl::StrCat(n, ". ") : std::string{"- "};
     std::vector<Run> runs;
     AppendInlineMarkdown(runs, text, base_path, s);
     std::string bullet;
@@ -480,18 +558,11 @@ void RenderList(std::string& out, const std::string& json, bool ordered,
     WrapRuns(body, runs,
              width == 0 ? 0 : width - static_cast<int32_t>(marker.size()), {},
              {}, s);
-    size_t line_start = 0;
     bool first = true;
-    while (line_start < body.size()) {
-      auto end = body.find('\n', line_start);
-      if (end == std::string::npos) {
-        end = body.size();
-      }
-      out.append(first ? bullet : hanging);
-      out.append(body, line_start, end - line_start);
-      out.push_back('\n');
+    for (const std::string_view line :
+         absl::StrSplit(body, '\n', absl::SkipEmpty())) {
+      absl::StrAppend(&out, first ? bullet : hanging, line, "\n");
       first = false;
-      line_start = end + 1;
     }
   }
 }
@@ -541,40 +612,73 @@ void RenderTable(std::string& out, const std::string& json, int32_t width,
       widths[i] = std::max(widths[i], Width(row[i]));
     }
   }
+  std::vector<size_t> floors(widths.size(), kMinTableColumn);
+  for (size_t i = 0; i < headers.size() && i < floors.size(); ++i) {
+    floors[i] = std::max(floors[i], LongestWordWidth(headers[i]));
+  }
+  for (const auto& row : rows) {
+    for (size_t i = 0; i < row.size() && i < floors.size(); ++i) {
+      floors[i] = std::max(floors[i], LongestWordWidth(row[i]));
+    }
+  }
   const auto budget = static_cast<size_t>(
     width <= 0 ? kMaxTableWidth : std::min(width, kMaxTableWidth));
   size_t total = 1;
   for (const auto column : widths) {
     total += column + 3;
   }
-  while (total > budget) {
-    const auto widest = std::max_element(widths.begin(), widths.end());
-    if (widest == widths.end() || *widest <= 8) {
-      break;
+  const auto shrink = [&](const std::vector<size_t>& limits) {
+    while (total > budget) {
+      auto widest = widths.size();
+      for (size_t i = 0; i < widths.size(); ++i) {
+        if (widths[i] > limits[i] &&
+            (widest == widths.size() || widths[i] > widths[widest])) {
+          widest = i;
+        }
+      }
+      if (widest == widths.size()) {
+        return;
+      }
+      --widths[widest];
+      --total;
     }
-    --(*widest);
-    --total;
-  }
-  auto cell = [&](const std::string& text, size_t column) {
-    auto value = TruncateToWidth(text, widths[column]);
+  };
+  shrink(floors);
+  shrink(std::vector<size_t>(widths.size(), kMinTableColumn));
+  auto pad_to = [&](std::string value, size_t column) {
     const auto value_width = Width(value);
-    const auto pad =
-      widths[column] > value_width ? widths[column] - value_width : 0;
-    return value + std::string(pad, ' ');
+    if (value_width > widths[column]) {
+      value = TruncateToWidth(value, widths[column]);
+    }
+    const auto padded = Width(value);
+    return value +
+           std::string(widths[column] > padded ? widths[column] - padded : 0,
+                       ' ');
   };
   auto row_line = [&](const std::vector<std::string>& cells,
                       std::string_view style) {
-    Emit(out, s.layout, "|", s);
+    std::vector<std::vector<std::string>> lines(widths.size());
+    size_t height = 1;
     for (size_t i = 0; i < widths.size(); ++i) {
-      Emit(out, s.layout, " ", s);
-      Emit(out, style, cell(i < cells.size() ? cells[i] : std::string{}, i), s);
-      Emit(out, s.layout, " |", s);
+      lines[i] =
+        WrapPlain(i < cells.size() ? cells[i] : std::string{}, widths[i]);
+      height = std::max(height, lines[i].size());
     }
-    out.push_back('\n');
+    for (size_t line = 0; line < height; ++line) {
+      Emit(out, s.layout, "|", s);
+      for (size_t i = 0; i < widths.size(); ++i) {
+        Emit(out, s.layout, " ", s);
+        Emit(out, style,
+             pad_to(line < lines[i].size() ? lines[i][line] : std::string{}, i),
+             s);
+        Emit(out, s.layout, " |", s);
+      }
+      out.push_back('\n');
+    }
   };
   std::string rule;
   for (const auto column : widths) {
-    rule.append("+").append(std::string(column + 2, '-'));
+    absl::StrAppend(&rule, "+", std::string(column + 2, '-'));
   }
   rule.push_back('+');
   auto rule_line = [&] {
@@ -592,10 +696,13 @@ void RenderTable(std::string& out, const std::string& json, int32_t width,
   rule_line();
 }
 
-std::string Render(const std::string& markdown, int32_t width, bool color,
-                   std::string_view base_path) {
+}  // namespace
+
+std::string RenderMarkdown(std::string_view markdown, int32_t width, bool color,
+                           std::string_view base_path) {
   const auto& s = color ? kAnsi : kPlain;
-  const auto blocks = duckdb::markdown_utils::ParseBlocks(markdown, true);
+  const auto blocks =
+    duckdb::markdown_utils::ParseBlocks(std::string{markdown}, true);
   std::string out;
   for (size_t i = 0; i < blocks.size();) {
     const auto& block = blocks[i];
@@ -616,7 +723,9 @@ std::string Render(const std::string& markdown, int32_t width, bool color,
       if (!block.content.empty()) {
         runs.push_back({block.content, s.heading});
       }
-      const auto next = CollectInlines(blocks, i, runs, base_path, s);
+      const auto next =
+        CollectInlines(blocks, i + 1, block.level + 1, s.heading, runs,
+                       base_path, s);
       if (!out.empty()) {
         out.push_back('\n');
       }
@@ -630,7 +739,8 @@ std::string Render(const std::string& markdown, int32_t width, bool color,
       if (!block.content.empty()) {
         AppendInlineMarkdown(runs, block.content, base_path, s);
       }
-      const auto next = CollectInlines(blocks, i, runs, base_path, s);
+      const auto next =
+        CollectInlines(blocks, i + 1, block.level + 1, {}, runs, base_path, s);
       WrapRuns(out, runs, width, {}, {}, s);
       out.push_back('\n');
       i = next;
@@ -640,19 +750,9 @@ std::string Render(const std::string& markdown, int32_t width, bool color,
       const auto language = Attribute(block, "language");
       const auto body =
         language == "sql" ? HighlightSql(block.content, s) : block.content;
-      size_t line_start = 0;
-      while (line_start <= body.size()) {
-        auto end = body.find('\n', line_start);
-        if (end == std::string::npos) {
-          end = body.size();
-        }
+      for (const std::string_view line : absl::StrSplit(body, '\n')) {
         Emit(out, s.layout, "    ", s);
-        out.append(body, line_start, end - line_start);
-        out.push_back('\n');
-        if (end == body.size()) {
-          break;
-        }
-        line_start = end + 1;
+        absl::StrAppend(&out, line, "\n");
       }
       out.push_back('\n');
       ++i;
@@ -663,7 +763,8 @@ std::string Render(const std::string& markdown, int32_t width, bool color,
       if (!block.content.empty()) {
         runs.push_back({block.content, s.quote});
       }
-      const auto next = CollectInlines(blocks, i, runs, base_path, s);
+      const auto next = CollectInlines(blocks, i + 1, block.level + 1,
+                                       s.quote, runs, base_path, s);
       std::string gutter;
       Emit(gutter, s.layout, "> ", s);
       WrapRuns(out, runs, width == 0 ? 0 : width - 2, gutter, gutter, s);
@@ -705,82 +806,64 @@ std::string Render(const std::string& markdown, int32_t width, bool color,
   }
   std::string squeezed;
   squeezed.reserve(out.size());
-  size_t blanks = 0;
-  size_t line_start = 0;
-  while (line_start <= out.size()) {
-    auto end = out.find('\n', line_start);
-    if (end == std::string::npos) {
-      end = out.size();
-    }
-    const std::string_view line{out.data() + line_start, end - line_start};
+  bool blank = false;
+  for (const std::string_view line : absl::StrSplit(out, '\n')) {
     if (line.empty()) {
-      ++blanks;
-    } else {
-      if (blanks > 0 && !squeezed.empty()) {
-        squeezed.push_back('\n');
-      }
-      blanks = 0;
-      squeezed.append(line).push_back('\n');
+      blank = true;
+      continue;
     }
-    if (end == out.size()) {
-      break;
+    if (blank && !squeezed.empty()) {
+      squeezed.push_back('\n');
     }
-    line_start = end + 1;
+    blank = false;
+    absl::StrAppend(&squeezed, line, "\n");
   }
   return squeezed;
+}
+
+namespace {
+
+template<typename T>
+duckdb::Vector Defaulted(duckdb::Vector& input, duckdb::idx_t count,
+                         T fallback) {
+  duckdb::UnifiedVectorFormat source;
+  input.ToUnifiedFormat(count, source);
+  const auto* values = duckdb::UnifiedVectorFormat::GetData<T>(source);
+  duckdb::Vector out{input.GetType()};
+  auto* target = duckdb::FlatVector::GetDataMutable<T>(out);
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto index = source.sel->get_index(row);
+    target[row] =
+      source.validity.RowIsValid(index) ? values[index] : fallback;
+  }
+  duckdb::FlatVector::SetSize(out, count);
+  return out;
 }
 
 void MarkdownToAnsiFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
   const auto count = args.size();
-  duckdb::UnifiedVectorFormat markdown;
-  duckdb::UnifiedVectorFormat width;
-  duckdb::UnifiedVectorFormat color;
-  duckdb::UnifiedVectorFormat base_path;
-  args.data[0].ToUnifiedFormat(count, markdown);
-  args.data[1].ToUnifiedFormat(count, width);
-  args.data[2].ToUnifiedFormat(count, color);
-  args.data[3].ToUnifiedFormat(count, base_path);
-
-  const auto* markdown_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(markdown);
-  const auto* width_data = duckdb::UnifiedVectorFormat::GetData<int32_t>(width);
-  const auto* color_data = duckdb::UnifiedVectorFormat::GetData<bool>(color);
-  const auto* base_path_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(base_path);
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
-
-  for (duckdb::idx_t row = 0; row < count; ++row) {
-    const auto markdown_row = markdown.sel->get_index(row);
-    if (!markdown.validity.RowIsValid(markdown_row)) {
-      validity.SetInvalid(row);
-      continue;
-    }
-    const auto width_row = width.sel->get_index(row);
-    auto requested = kDefaultWidth;
-    if (width.validity.RowIsValid(width_row)) {
-      requested = width_data[width_row];
+  const auto width = Defaulted<int32_t>(args.data[1], count, kDefaultWidth);
+  const auto color = Defaulted<bool>(args.data[2], count, true);
+  const auto base_path =
+    Defaulted<duckdb::string_t>(args.data[3], count, duckdb::string_t{});
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, duckdb::string_t, int32_t,
+                                    bool, duckdb::string_t>(
+    {std::cref(args.data[0]), std::cref(width), std::cref(color),
+     std::cref(base_path)},
+    result,
+    [&](duckdb::string_t markdown, int32_t requested, bool colored,
+        duckdb::string_t base) -> duckdb::string_t {
       if (requested < 0) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("sdb_md_to_ansi: width must not be negative, got ",
                   requested));
       }
-    }
-    const auto color_row = color.sel->get_index(row);
-    const auto colored =
-      !color.validity.RowIsValid(color_row) || color_data[color_row];
-    const auto base_path_row = base_path.sel->get_index(row);
-    const auto base = base_path.validity.RowIsValid(base_path_row)
-                        ? base_path_data[base_path_row].GetString()
-                        : std::string{};
-    out[row] = duckdb::StringVector::AddString(
-      result, Render(markdown_data[markdown_row].GetString(), requested,
-                     colored, base));
-  }
+      return duckdb::StringVector::AddString(
+        result, RenderMarkdown(markdown.GetString(), requested, colored,
+                               base.GetString()));
+    });
 }
 
 }  // namespace

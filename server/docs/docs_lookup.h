@@ -20,16 +20,30 @@
 
 #pragma once
 
-#include <cstdint>
-#include <duckdb/main/database.hpp>
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
-namespace sdb::connector {
+#include "docs/docs_data.h"
 
-std::string RenderMarkdown(std::string_view markdown, int32_t width, bool color,
-                           std::string_view base_path);
+namespace sdb::docs {
 
-void RegisterMarkdownRenderFunctions(duckdb::DatabaseInstance& db);
+const Doc* FindByPath(std::string_view path);
 
-}  // namespace sdb::connector
+std::vector<const Doc*> Lookup(std::string_view name);
+
+std::vector<const Doc*> Similar(std::string_view name, size_t limit);
+
+std::vector<const Doc*> ListPrefix(std::string_view prefix, bool pages_only);
+
+std::vector<const Doc*> Children(std::string_view path);
+
+std::vector<std::string> CompletePath(std::string_view prefix,
+                                      size_t limit);
+
+std::string ResolveDocLink(std::string_view base_path, std::string_view href);
+
+std::size_t HeadingDepth(std::string_view path);
+
+}  // namespace sdb::docs

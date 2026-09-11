@@ -45,6 +45,10 @@ endif()
 
 target_include_directories(serene_docs PUBLIC ${CMAKE_SOURCE_DIR}/server)
 
-target_sources(sereneserver PRIVATE docs_loader.cpp)
+target_sources(sereneserver PRIVATE docs_loader.cpp docs_lookup.cpp)
+
+add_library(serene_docs_shell STATIC docs_shell_backend.cpp)
+
+target_link_libraries(serene_docs_shell PUBLIC sereneserver duckdb_shell_static)
 
 target_link_libraries(sereneserver PUBLIC serene_docs)

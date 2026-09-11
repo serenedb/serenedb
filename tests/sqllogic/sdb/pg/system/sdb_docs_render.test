@@ -82,6 +82,14 @@ SELECT rtrim(sdb_md_to_ansi('[precision](../../sql/functions/datepart.md)', 80, 
 ?column?
 t
 
+# A label carrying inline formatting still renders before its resolved target.
+connection docs database=postgres
+query
+SELECT rtrim(sdb_md_to_ansi('see [`serened shell`](./serened-shell.md) now', 80, false, 'clients/serened-psql.md'), chr(10));
+----
+rtrim
+see serened shell (clients/serened-shell.md) now
+
 # External links keep their label and drop the target, which is not a doc path.
 connection docs database=postgres
 query

@@ -117,6 +117,84 @@ WHERE a > 1
 ORDER BY b
 ```
 
+## Browsing the documentation
+
+The `.docs` dot-command renders this documentation set inside the shell. The pages are
+compiled into the `serened` binary, so `.docs` needs no server connection, works
+offline, and always matches the version you are running.
+
+With no argument it lists the top-level sections:
+
+```sh
+serened shell -c ".docs"
+```
+
+```text
+SereneDB documentation
+
+  benchmarks (2)
+  clients (184)
+  compatibility (103)
+  ...
+  security (21)
+  sql (1934)
+
+Use .docs <section> to browse, .docs <name> to look up an object, or .docs --search <query>.
+```
+
+The number after each section is how many pages and headings it holds, so it moves with
+the release.
+
+The argument decides what happens:
+
+| Argument           | Example                        | Result                                                     |
+| :----------------- | :----------------------------- | :--------------------------------------------------------- |
+| none               | `.docs`                        | List the top-level sections                                |
+| a section          | `.docs cookbook`               | List the pages under it                                    |
+| an object name     | `.docs BM25`                   | Render every entry with that name                          |
+| a page path        | `.docs sql/indexes/index.md`   | Render the page                                            |
+| a heading path     | `.docs sql/indexes/index.md#Indexes#Index_Types` | Render that section                       |
+| `--search QUERY`   | `.docs --search phrase search` | Rank matches across the whole corpus                       |
+| `--list PREFIX`    | `.docs --list sql/functions/`  | Print matching paths, one per line                         |
+
+Names are matched case-insensitively, and a name carried by several entries renders all
+of them in one pass rather than asking you to choose. A name that matches nothing prints
+the closest candidates and exits non-zero, so `-c '.docs nope'` is scriptable.
+
+Rendering a page ends with a `Sections` footer listing its immediate subsections as
+pasteable commands:
+
+```sh
+serened shell -c ".docs sql/indexes/index.md"
+```
+
+```text
+path: sql/indexes/index.md#Indexes
+in: Indexes
+
+# Indexes
+...
+
+Sections
+  CREATE INDEX and DROP INDEX
+     .docs sql/indexes/index.md#Indexes#CREATE_INDEX_and_DROP_INDEX
+  Index Types
+     .docs sql/indexes/index.md#Indexes#Index_Types
+  Persistence
+     .docs sql/indexes/index.md#Indexes#Persistence
+```
+
+Press `Tab` after `.docs` to complete section names and page paths.
+
+Output is wrapped to the terminal width, colored only when standard output is a
+terminal, and paged the same way query results are. `NO_COLOR=1` or `TERM=dumb` turns
+the colors off.
+
+The same command is available in [`serened psql`](./serened-psql.md) and produces
+identical output, because both read the documentation embedded in the binary rather than
+asking the server. The server has its own copy as the
+[`sdb_docs` schema](../sql/functions/docs.md), which is what any other client should use.
+
 ## Options
 
 ### General options

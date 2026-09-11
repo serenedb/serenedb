@@ -44,6 +44,23 @@ TEST(ngram_token_stream_test, consts) {
   static_assert("ngram" == irs::Type<irs::analysis::NGramTokenizer>::name());
 }
 
+TEST(ngram_token_stream_test, mode_names) {
+  using Mode = irs::analysis::NGramTokenizer::NGramMode;
+  static_assert(magic_enum::enum_count<Mode>() == 4);
+  static_assert(magic_enum::enum_name(Mode::All) == "all");
+  static_assert(magic_enum::enum_name(Mode::Prefix) == "only_prefix");
+  static_assert(magic_enum::enum_name(Mode::Suffix) == "only_suffix");
+  static_assert(magic_enum::enum_name(Mode::PrefixAndSuffix) ==
+                "only_prefix_and_suffix");
+  EXPECT_EQ(Mode::PrefixAndSuffix,
+            magic_enum::enum_cast<Mode>("only_prefix_and_suffix",
+                                        magic_enum::case_insensitive));
+  volatile auto raw =
+    static_cast<std::underlying_type_t<Mode>>(Mode::PrefixAndSuffix);
+  EXPECT_EQ("only_prefix_and_suffix",
+            magic_enum::enum_name(static_cast<Mode>(raw)));
+}
+
 TEST(ngram_token_stream_test, construct) {
   // 1..3, preserve_original=true
   {

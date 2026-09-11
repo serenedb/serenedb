@@ -58,5 +58,12 @@ target_include_directories(
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
 )
 
+target_include_directories(
+    serene_connector
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_markdown/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include"
+)
+
 add_subdirectory(functions)
 add_subdirectory(optimizer)

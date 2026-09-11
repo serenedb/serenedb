@@ -8,6 +8,7 @@ target_sources(
         es.cpp
         inout.cpp
         json.cpp
+        markdown_render.cpp
         math.cpp
         string.cpp
         system.cpp

@@ -76,3 +76,20 @@ SELECT path, title, breadcrumb FROM sdb_docs.reference('date_trunc');
 connection docs database=postgres
 statement ok
 SELECT sdb_docs.summary(content) FROM sdb_docs.docs WHERE path = 'sql/indexes/index.md#Indexes';
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT sdb_docs.render('sql/indexes/index.md#Indexes#Index_Types', 100, false);
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT sdb_md_to_ansi('See [precision](../../sql/functions/datepart.md).', 72, false,
+                      'sql/functions/timestamp.md');

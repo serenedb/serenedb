@@ -112,6 +112,40 @@ arguments. It matches on title text alone and has no notion of object kind; pref
 
 <SqlLogicTest id="sql/functions/docs/example_008" />
 
+#### `sdb_docs.render(path, width, color)`
+
+Renders a page or section for a terminal: Markdown structure becomes layout rather
+than syntax, prose is wrapped to `width`, SQL examples are highlighted, and tables are
+drawn with their columns aligned. Returns `NULL` when the path does not exist.
+
+All three arguments are required, because the server has no way to know how wide the
+consumer is or whether it understands escape sequences.
+
+<SqlLogicTest id="sql/functions/docs/example_010" />
+
+| Argument | Description |
+| :--- | :--- |
+| `path` | A documentation path, as returned by `sdb_docs.objects()` or `sdb_docs.search()`. |
+| `width` | Column budget for wrapping. `0` means do not wrap, which is what a client that wraps for itself should pass. |
+| `color` | `true` emits ANSI escape sequences; `false` emits plain text. |
+
+Code blocks are indented rather than wrapped, so a long SQL line stays intact and the
+terminal soft-wraps it. Links keep their label, and a link to another documentation
+page is followed by the resolved path so it can be passed straight back to `render()`;
+links to anywhere else show their label alone.
+
+#### `sdb_md_to_ansi(markdown, width, color, base_path)`
+
+The renderer behind `sdb_docs.render()`, taking Markdown directly rather than a
+documentation path. Useful for rendering Markdown held in your own tables.
+
+`base_path` is the documentation path the Markdown came from, used to resolve relative
+links; pass `NULL` when there is nothing to resolve against. `width`, `color` and
+`base_path` accept `NULL` and fall back to 80, colored, and no resolution. A negative
+`width` is an error.
+
+<SqlLogicTest id="sql/functions/docs/example_011" />
+
 #### `sdb_docs.summary(content)`
 
 Reduces a documentation body to a single-line description: the lead paragraph with
@@ -123,12 +157,23 @@ such as a heading that only groups other headings.
 
 ## Reading documentation in `psql`
 
-`sdb_docs.read()` returns Markdown containing newlines, which `psql` boxes into its
-aligned output by default. Switch to unaligned, untabulated output to read it:
+`sdb_docs.read()` and `sdb_docs.render()` return text containing newlines, which `psql`
+boxes into its aligned output by default. Switch to unaligned, untabulated output to
+read it:
 
 ```sql
 \pset format unaligned
 \pset tuples_only on
 \pset pager always
-SELECT sdb_docs.read('sql/indexes/index.md#Indexes');
+SELECT sdb_docs.render('sql/indexes/index.md#Indexes', 100, true);
 ```
+
+Pipe the result through a pager that understands escape sequences, such as `less -R`,
+when `color` is `true`.
+
+## Plain output for other clients
+
+DBeaver, Grafana and the HTTP API do not interpret ANSI escape sequences, so pass
+`color => false` there. What those clients gain from `render()` is the layout: wrapped
+prose, aligned tables and no Markdown syntax. Pass `width => 0` when the client wraps
+for itself.

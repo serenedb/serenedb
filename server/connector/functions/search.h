@@ -24,10 +24,10 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/tokenizer.h"
 namespace sdb::connector {
 
-inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
+inline constexpr std::string_view kTSQueryTypeName = "tsquery";
 inline constexpr std::string_view kTokenizerTypeName = "tokenize";
 inline constexpr std::string_view kBoostTypeName = "boost";
 inline constexpr std::string_view kModifierTSQueryTypeName = "TSQUERY_MODIFIER";

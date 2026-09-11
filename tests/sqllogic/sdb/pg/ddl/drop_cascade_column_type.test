@@ -234,10 +234,10 @@ SELECT indexname FROM pg_indexes
   WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
 ----
 indexname
-PRIMARY_vedernikoff_manifests_id
 ix_body
 ix_state
 ix_state_body
+vedernikoff_manifests_pkey
 
 
 statement ok
@@ -249,10 +249,10 @@ SELECT indexname FROM pg_indexes
   WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
 ----
 indexname
-PRIMARY_vedernikoff_manifests_id
 ix_body
 ix_state
 ix_state_body
+vedernikoff_manifests_pkey
 
 
 query

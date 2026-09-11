@@ -86,13 +86,10 @@ statement ok
 CREATE VIEW v_babsky AS SELECT babsky(n) AS c FROM vedernikoff_nums;
 
 
-# A replace is a drop plus a create, so a dependent view refuses it.
-statement error
+# A replace substitutes the definition under the same name, so a dependent view
+# keeps working and reads the new body.
+statement ok
 CREATE OR REPLACE FUNCTION babsky(x INT) AS x + 100;
-----
-db error: ERROR: Cannot drop entry "babsky" because there are entries that depend on it.
-view "v_babsky" depends on macro function "babsky".
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -107,9 +104,9 @@ query
 SELECT c FROM v_babsky ORDER BY c;
 ----
 c
-2
-3
-4
+101
+102
+103
 
 
 statement error
@@ -308,7 +305,8 @@ statement ok
 CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
 
 
-# A dependent inverted index does not refuse the replace -- it is dropped.
+# A replace substitutes the definition under the same name, so a dependent
+# inverted index stays where it is; what it holds is what the index build read.
 statement ok
 CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
 
@@ -317,7 +315,11 @@ query
 SELECT count(*) FROM pg_indexes WHERE indexname = 'clickclack_or_idx';
 ----
 count
-0
+1
+
+
+statement ok
+DROP INDEX clickclack_or_idx;
 
 
 query

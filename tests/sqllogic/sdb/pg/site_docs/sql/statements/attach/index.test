@@ -67,10 +67,10 @@ DETACH db17;
 # the old attachment object is still alive: any in-flight statement on another
 # connection that listed all catalogs (Catalog::GetAllSchemas) pins every
 # attachment for that statement's duration, and the pinned READ_WRITE object
-# keeps the file open, so the engine correctly hands it back and refuses the
-# mode change ("already attached in READ_WRITE mode"). On a shared server the
-# doc example's claim is "can be attached read-only", not "instantly", so retry
-# until the concurrent readers drain.
+# keeps the file open, so the engine hands it back and refuses the mode change
+# ("already attached in READ_WRITE mode"). On a shared server the doc example's
+# claim is "can be attached read-only", not "instantly", so retry until the
+# concurrent readers drain.
 statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db17.db' AS db16 (READ_ONLY);
 

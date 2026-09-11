@@ -298,10 +298,10 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     context, database, [&](const duckdb::SequenceCatalogEntry& sequence) {
       // The synthetic primary-key sequence of a table declaring none is
       // serenedb's own machinery, like the column it feeds: postgres has no
-      // such relation and neither does pg_class. A SERIAL's sequence is a real
-      // one and is listed, as PG lists it.
+      // such relation and neither does pg_class. Every other sequence is
+      // listed, internal or not, as PG lists it.
       const auto& perm = sequence.permissions;
-      if (sequence.internal || generated_pk_sequences.contains(sequence.oid)) {
+      if (generated_pk_sequences.contains(sequence.oid)) {
         return;
       }
       auto row = MakeBaseRow(sequence.ParentSchema().oid, sequence.oid,

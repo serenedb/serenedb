@@ -500,8 +500,12 @@ statement ok
 DROP TABLE public.docs;
 
 
-statement ok
+# The dictionary is dropped last: the indexes in s1 and s2 tokenize through it,
+# and that dependency refuses the drop while they exist.
+statement error
 DROP TEXT SEARCH DICTIONARY public.en;
+----
+db error: ERROR: Cannot drop entry "en" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -510,3 +514,7 @@ DROP SCHEMA s1 CASCADE;
 
 statement ok
 DROP SCHEMA s2 CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY public.en;

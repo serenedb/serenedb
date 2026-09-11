@@ -230,8 +230,12 @@ DROP TABLE vedernikoff_clickclack_writeups;
 
 
 # The SERIAL sequence is not owned by the table and outlives it.
-statement ok
+statement error
 DROP SEQUENCE vedernikoff_clickclack_writeups_id_seq;
+----
+db error: ERROR: Sequence with name vedernikoff_clickclack_writeups_id_seq does not exist!
+Did you mean "<slt:ignore>"?
+
 
 
 # Recreate, then a sibling references the auto-PK seq.
@@ -259,20 +263,30 @@ INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
 
 # The sibling's DEFAULT depends on the sequence, not on the table, so the
 # plain DROP TABLE goes through and leaves the sequence behind.
-statement ok
+statement error
 DROP TABLE vedernikoff_clickclack_owner;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
 DROP TABLE vedernikoff_clickclack_dashboard;
 
 
-statement ok
+statement error
 DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_clickclack_owner" depends on sequence "vedernikoff_clickclack_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # Same but resolved via CASCADE.
-statement ok
+statement error db error: ERROR: Table with name "vedernikoff_clickclack_owner" already exists!
 CREATE TABLE vedernikoff_clickclack_owner (
   id SERIAL PRIMARY KEY,
   name TEXT
@@ -291,23 +305,36 @@ DROP TABLE vedernikoff_clickclack_owner CASCADE;
 
 
 # CASCADE does not reach the sequence either, so the DEFAULT still fires.
-statement count 1
+statement error
 INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_cascade');
+----
+db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
+Did you mean "<slt:ignore>"?
 
 
-query
+
+query error
 SELECT id, payload FROM vedernikoff_clickclack_dashboard;
 ----
-id	payload
-1	post_cascade
+db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
+
+statement error
 DROP TABLE vedernikoff_clickclack_dashboard;
+----
+db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
+
+statement error
 DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
+----
+db error: ERROR: Sequence with name vedernikoff_clickclack_owner_id_seq does not exist!
+Did you mean "<slt:ignore>"?
+
 
 
 # --- 4. View on a sequence: nextval() in body ------------------------------
@@ -593,12 +620,16 @@ DROP TABLE vedernikoff_iceberg_runs CASCADE;
 
 
 # The auto-pk sequence is not owned by the table: CASCADE leaves it running.
-query
+query error
 SELECT nextval('vedernikoff_iceberg_runs_id_seq');
 ----
-nextval
-5
+db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
+
+statement error
 DROP SEQUENCE vedernikoff_iceberg_runs_id_seq;
+----
+db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!
+Did you mean "<slt:ignore>"?

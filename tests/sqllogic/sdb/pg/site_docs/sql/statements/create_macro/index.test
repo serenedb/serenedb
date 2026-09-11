@@ -294,34 +294,32 @@ x
 
 # DOCS_TEST: example_031
 
-# Reduce the expression-depth limit so the recursive expansion fails fast instead
-# of expanding to the default 1000 (which takes seconds).
-statement ok
-SET max_expression_depth TO 50;
-
 # DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE FUNCTION fibo(n) AS (SELECT 1);
 
-statement ok
+# A replace drops the definition and creates it again, so the new body cannot
+# read the name it is replacing: a function cannot call itself.
+statement error
 CREATE OR REPLACE FUNCTION fibo(n) AS (
     CASE
         WHEN n <= 1 THEN 1
         ELSE fibo(n - 1)
     END
 );
-
-query error
-SELECT fibo(3);
 ----
-db error: ERROR: Max expression depth limit of 50 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself<slt:ignore>
+
+
+query
+SELECT fibo(3) AS x;
+----
+x
+1
 
 
 # DOCS_TEST: example_032
-
-statement ok
-RESET max_expression_depth;
 
 # DOCS_TEST_BODY
 

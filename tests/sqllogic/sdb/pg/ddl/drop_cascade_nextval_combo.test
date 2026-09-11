@@ -208,8 +208,13 @@ a	b	payload
 
 # The SERIAL sequence is not owned by solid_module, so DROP TABLE leaves it --
 # and solid_violations_ironically -- alone.
-statement ok
+statement error
 DROP TABLE solid_module;
+----
+db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.
+table "solid_violations_ironically" depends on sequence "solid_module_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 query
@@ -218,6 +223,7 @@ SELECT relname FROM pg_class
   ORDER BY relname;
 ----
 relname
+solid_module
 solid_module_id_seq
 
 
@@ -225,6 +231,7 @@ statement error
 DROP SEQUENCE solid_module_id_seq;
 ----
 db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.
+table "solid_module" depends on sequence "solid_module_id_seq".
 table "solid_violations_ironically" depends on sequence "solid_module_id_seq".
 Use DROP...CASCADE to drop all dependents.
 

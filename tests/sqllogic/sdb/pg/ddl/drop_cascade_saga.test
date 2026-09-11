@@ -569,11 +569,15 @@ SELECT count(*) AS n FROM pg_class WHERE relname IN (
   'vedernikoff_solid_module_writeups_id_seq');
 ----
 n
-1
+0
 
 
-statement ok
+statement error
 DROP SEQUENCE vedernikoff_solid_module_writeups_id_seq;
+----
+db error: ERROR: Sequence with name vedernikoff_solid_module_writeups_id_seq does not exist!
+Did you mean "<slt:ignore>"?
+
 
 
 # --- 9. SERIAL sequence cross-referenced from sibling table ----------------
@@ -604,16 +608,26 @@ INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
 
 # Plain DROP works on owner: the dashboard's DEFAULT points at the sequence,
 # which the table does not own.
-statement ok
+statement error
 DROP TABLE vedernikoff_clickclack_owner;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
 DROP TABLE vedernikoff_clickclack_dashboard;
 
 
-statement ok
+statement error
 DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_clickclack_owner" depends on sequence "vedernikoff_clickclack_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # --- 10. Mixed cross-schema graph: type, function, sequence, view -----------
@@ -897,8 +911,13 @@ statement count 1
 INSERT INTO vedernikoff_mop_offer_check_user VALUES (1, 1000000);
 
 
-statement ok
+statement error
 DROP TABLE vedernikoff_mop_offer_owner;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_mop_offer_check_user" depends on sequence "vedernikoff_mop_offer_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # The CHECK still calls the surviving sequence, so a small budget still fails.
@@ -913,8 +932,13 @@ statement ok
 DROP TABLE vedernikoff_mop_offer_check_user;
 
 
-statement ok
+statement error
 DROP SEQUENCE vedernikoff_mop_offer_owner_id_seq;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_mop_offer_owner" depends on sequence "vedernikoff_mop_offer_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # --- 16. CASCADE through a multi-schema function chain ---------------------

@@ -46,8 +46,8 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/log.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
@@ -78,31 +78,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::vector<search::SearchDbWal::PendingChunk> bulk_chunks;
 
   bool ctas_mode = false;
-  bool ctas_finalized = false;
-  duckdb::optional_ptr<duckdb::ClientContext> ctas_context;
-  duckdb::optional_ptr<duckdb::Catalog> ctas_catalog;
-  duckdb::Identifier ctas_schema_name;
-  duckdb::Identifier ctas_table_name;
-
-  ~SearchInsertGlobalState() override {
-    if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
-      try {
-        duckdb::DropInfo drop;
-        drop.type = duckdb::CatalogType::TABLE_ENTRY;
-        drop.SetQualifiedName(ctas_catalog->GetName(), ctas_schema_name,
-                              ctas_table_name);
-        drop.cascade = true;
-        drop.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-        ctas_catalog->DropEntry(*ctas_context, drop);
-      } catch (const std::exception& e) {
-        SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
-                 ctas_table_name.GetIdentifierName(), "': ", e.what());
-      } catch (...) {
-        SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
-                 ctas_table_name.GetIdentifierName(), "' (unknown exception)");
-      }
-    }
-  }
 };
 
 struct SearchInsertSourceState : duckdb::GlobalSourceState {
@@ -137,25 +112,14 @@ const catalog::SearchTableEntry* CreateCtasTable(
              catalog::TableEngine::Search);
 
   state.ctas_mode = true;
-  state.ctas_context = &context;
-  state.ctas_catalog = &catalog;
-  state.ctas_schema_name = schema.name;
-  state.ctas_table_name = table_info.GetTableName();
   return basics::downCast<catalog::SearchTableEntry>(entry.get());
 }
 
-void FinalizeCtasIfNeeded(SearchInsertGlobalState& state) {
+void FinalizeCtasIfNeeded(const SearchInsertGlobalState& state) {
   if (!state.ctas_mode) {
     return;
   }
-  SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
-  state.ctas_finalized = true;
-
-  // The load is done; start the table's background maintenance. CTAS skips
-  // SchemaEntry::CreateTable (which does this for a plain CREATE), so otherwise
-  // a CTAS search table would get no background maintenance until the next
-  // boot. The shard is the one bound at create -- every version shares it.
-  state.search_table->StartTasks();
+  SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
 }
 
 }  // namespace

@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_default_acl.h"
 
+#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
@@ -53,28 +54,29 @@ MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
   auto& context = _context;
-  const auto add = [&](Oid schema, const duckdb::DefaultAcl& entry) {
-    values.push_back(PgDefaultAcl{
-      .oid = oid++,
-      .defaclrole = entry.role,
-      .defaclnamespace = schema,
-      .defaclobjtype = ObjType(entry.objtype),
-      .defaclacl = {entry.acl},
-    });
-  };
+  std::vector<duckdb::idx_t> schemas;
+  VisitSchemas(context, GetDatabase(), [&](duckdb::SchemaCatalogEntry& schema) {
+    schemas.push_back(schema.oid);
+  });
   auto& cluster = catalog::ClusterOf(context);
-  if (auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                        .GetEntry(cluster.GetCatalogTransaction(context),
-                                  GetDatabase().GetName())) {
+  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                    .GetEntry(cluster.GetCatalogTransaction(context),
+                              GetDatabase().GetName());
+  if (database) {
     for (const auto& entry : database->permissions.defaults) {
-      add(kInvalidOid, entry);
+      if (entry.scope != kInvalidOid &&
+          !std::ranges::contains(schemas, entry.scope)) {
+        continue;
+      }
+      values.push_back(PgDefaultAcl{
+        .oid = oid++,
+        .defaclrole = entry.role,
+        .defaclnamespace = entry.scope,
+        .defaclobjtype = ObjType(entry.objtype),
+        .defaclacl = {entry.acl},
+      });
     }
   }
-  VisitSchemas(context, GetDatabase(), [&](duckdb::SchemaCatalogEntry& schema) {
-    for (const auto& entry : schema.permissions.defaults) {
-      add(schema.oid, entry);
-    }
-  });
 
   auto result = CreateColumns<PgDefaultAcl>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

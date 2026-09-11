@@ -1,0 +1,73 @@
+# read_duckdb of a file whose database was just detached, while the old
+# attachment object is still alive.
+#
+# A statement on another connection pins every attachment for its duration, so
+# a DETACH does not always destroy the database: the file stays open under the
+# old object, and the path claim with it. Opening the file a second time is
+# what that claim forbids, so the reader takes the database as it stands --
+# without attaching it under a name of its own, which would rename a database
+# other statements may be reading. This file holds the pin open explicitly
+# instead of racing for it.
+
+control substitution on
+
+statement ok
+DETACH IF EXISTS rdf_db;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdf_db.db' AS rdf_db;
+
+
+statement ok
+CREATE OR REPLACE TABLE rdf_db.main.docs(id INTEGER, body TEXT);
+
+
+statement ok
+INSERT INTO rdf_db.main.docs VALUES (1, 'alpha'), (2, 'beta');
+
+
+# The pin: an open transaction on another connection that read the attachment.
+connection pin
+statement ok
+BEGIN;
+
+
+connection pin
+query
+SELECT count(*) AS n FROM rdf_db.main.docs;
+----
+n
+2
+
+
+statement ok
+DETACH rdf_db;
+
+
+query
+SELECT id, body FROM read_duckdb('${__TEST_DIR__}/rdf_db.db', table_name='docs') ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+
+# Nothing was attached for the read, so the listings are unchanged and readable.
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'rdf_db';
+----
+n
+0
+
+
+query
+SELECT count(*) >= 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection pin
+statement ok
+COMMIT;

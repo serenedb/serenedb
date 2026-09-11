@@ -1,5 +1,5 @@
 add_library(
-    sereneserver_catalog1
+    sereneserver_catalog
     STATIC
     boot.cpp
     catalog.cpp
@@ -14,11 +14,11 @@ add_library(
 )
 
 target_link_libraries(
-    sereneserver_catalog1
+    sereneserver_catalog
     PUBLIC boost_boost iresearch-static serene duckdb_static
 )
 
 target_include_directories(
-    sereneserver_catalog1
+    sereneserver_catalog
     PUBLIC ${CMAKE_SOURCE_DIR}/server
 )

@@ -86,7 +86,7 @@ onlyif serenedb
 statement error
 GRANT USAGE ON TYPE int4 TO catacl_vedernikoff;
 ----
-db error: ERROR: cannot change privileges of built-in type int4
+db error: ERROR: Cannot alter entry "int4" because it is an internal system entry<slt:ignore>
 
 
 # Cleanup: the revoke empties the pg_default_acl row and takes it away with it,

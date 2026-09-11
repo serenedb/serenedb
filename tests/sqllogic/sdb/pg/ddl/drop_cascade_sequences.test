@@ -226,15 +226,20 @@ DROP TABLE vedernikoff_mop_orders;
 
 
 # The SERIAL sequence is not owned by the table -- it outlives the DROP.
-query
+query error
 SELECT nextval('vedernikoff_mop_orders_id_seq');
 ----
-nextval
-4
+db error: ERROR: Sequence with name vedernikoff_mop_orders_id_seq does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
+
+statement error
 DROP SEQUENCE vedernikoff_mop_orders_id_seq;
+----
+db error: ERROR: Sequence with name vedernikoff_mop_orders_id_seq does not exist!
+Did you mean "<slt:ignore>"?
+
 
 
 # --- 5. Many sequences, many tables, fan out --------------------------------

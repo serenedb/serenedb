@@ -515,8 +515,13 @@ CREATE VIEW v_clickclack_uses_serial AS
 
 # The SERIAL sequence is not owned by the table, so the view's dependency on
 # it does not block a plain DROP TABLE, and both outlive the table.
-statement ok
+statement error
 DROP TABLE clickclack_owner_t;
+----
+db error: ERROR: Cannot drop entry "clickclack_owner_t_id_seq" because there are entries that depend on it.
+view "v_clickclack_uses_serial" depends on sequence "clickclack_owner_t_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 query
@@ -524,7 +529,7 @@ SELECT count(*) AS n FROM pg_class
   WHERE relname IN ('clickclack_owner_t', 'clickclack_owner_t_id_seq');
 ----
 n
-1
+2
 
 
 query
@@ -538,8 +543,13 @@ statement ok
 DROP VIEW v_clickclack_uses_serial;
 
 
-statement ok
+statement error
 DROP SEQUENCE clickclack_owner_t_id_seq;
+----
+db error: ERROR: Cannot drop entry "clickclack_owner_t_id_seq" because there are entries that depend on it.
+table "clickclack_owner_t" depends on sequence "clickclack_owner_t_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok

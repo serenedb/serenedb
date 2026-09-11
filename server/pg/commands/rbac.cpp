@@ -38,8 +38,8 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
@@ -337,18 +337,19 @@ void DropRolePragma(duckdb::ClientContext& client,
                       ERR_MSG("current user cannot be dropped"));
     }
 
-    std::string dependent;
+    size_t dependencies = 0;
     VisitRoleDependencies(client, [&](const RoleDependency& dependency) {
-      if (dependency.role == role.oid && dependent.empty()) {
-        dependent = absl::StrCat(dependency.kind, " ", dependency.name);
+      if (dependency.role == role.oid) {
+        ++dependencies;
       }
     });
-    if (!dependent.empty()) {
+    if (dependencies != 0) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
         ERR_MSG("role \"", name,
                 "\" cannot be dropped because some objects depend on it"),
-        ERR_DETAIL("depends on ", dependent));
+        ERR_DETAIL(dependencies, " object(s) in database depend on role \"",
+                   name, "\""));
     }
 
     std::vector<duckdb::Identifier> members;

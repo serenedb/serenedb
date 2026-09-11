@@ -70,14 +70,27 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
   if (!constraint.constraint_name.empty()) {
     return constraint.constraint_name;
   }
-  if (constraint.type == duckdb::ConstraintType::UNIQUE) {
-    return constraint.Cast<duckdb::UniqueConstraint>()
-      .GetName(table.name)
-      .GetIdentifierName();
-  }
   duckdb::vector<std::string> columns;
   std::string_view suffix;
   switch (constraint.type) {
+    case duckdb::ConstraintType::UNIQUE: {
+      const auto& unique = constraint.Cast<duckdb::UniqueConstraint>();
+      if (unique.IsPrimaryKey()) {
+        return table.name.GetIdentifierName() + "_pkey";
+      }
+      suffix = "_key";
+      if (unique.HasIndex()) {
+        columns.push_back(table.GetColumns()
+                            .GetColumn(unique.GetIndex())
+                            .Name()
+                            .GetIdentifierName());
+        break;
+      }
+      for (const auto& column : unique.GetColumnNames()) {
+        columns.push_back(column.GetIdentifierName());
+      }
+      break;
+    }
     case duckdb::ConstraintType::NOT_NULL:
       suffix = "_not_null";
       columns.push_back(

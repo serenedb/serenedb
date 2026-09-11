@@ -122,11 +122,11 @@ statement ok
 ALTER INDEX deadinside_renamed RENAME TO deadinside;
 
 
-statement ok
+# ALTER INDEX names an index, and pudge is a table.
+statement error
 ALTER INDEX pudge RENAME TO pudge_tmp;
-
-statement ok
-ALTER INDEX pudge_tmp RENAME TO pudge;
+----
+db error: ERROR: Index with name pudge does not exist!<slt:ignore>
 
 
 statement ok
@@ -161,7 +161,7 @@ ALTER VIEW pudge RENAME TO something;
 statement error
 ALTER VIEW deadinside RENAME TO something;
 ----
-db error: ERROR: "deadinside" is not a view
+db error: ERROR: View with name deadinside does not exist!<slt:ignore>
 
 
 statement error
@@ -181,56 +181,54 @@ db error: ERROR: View with name nonexistent does not exist!
 statement error
 ALTER INDEX nonexistent RENAME TO something;
 ----
-db error: ERROR: Table with name nonexistent does not exist!
-<slt:ignore>
+db error: ERROR: Index with name nonexistent does not exist!<slt:ignore>
 
 
 statement error
 ALTER FUNCTION nonexistent RENAME TO something;
 ----
-db error: ERROR: could not find a function named "nonexistent"
+db error: ERROR: Macro Function with name nonexistent does not exist!<slt:ignore>
 
 
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: relation "invoker" already exists
+db error: ERROR: Could not rename "pudge" to <slt:ignore>
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge;
 ----
-db error: ERROR: relation "pudge" already exists
+db error: ERROR: Could not rename "pudge_view" to "pudge"<slt:ignore>
 
 
-statement error
+# Indexes live in a namespace of their own, so an index may take a table's name.
+statement ok
 ALTER INDEX deadinside RENAME TO pudge;
-----
-db error: ERROR: relation "pudge" already exists
+
+
+statement ok
+ALTER INDEX pudge RENAME TO deadinside;
 
 
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: relation "pudge" already exists
+db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.<slt:ignore>
 
 
-statement error
+statement ok
 ALTER VIEW pudge_view RENAME TO pudge_view;
-----
-db error: ERROR: relation "pudge_view" already exists
 
 
-statement error
+statement ok
 ALTER FUNCTION clickclack RENAME TO clickclack;
-----
-db error: ERROR: relation "clickclack" already exists
 
 
 statement error
 ALTER FUNCTION pudge RENAME TO something;
 ----
-db error: ERROR: could not find a function named "pudge"
+db error: ERROR: Macro Function with name pudge does not exist!<slt:ignore>
 
 
 statement ok
@@ -292,7 +290,7 @@ ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_positiv
 statement error
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
 ----
-db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not exist
+db error: ERROR: constraint "constr_test_pos" of table "constr_test" does not exist<slt:ignore>
 
 
 statement ok
@@ -322,13 +320,13 @@ ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 statement error
 ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
 ----
-db error: ERROR: cannot rename columns of a non-table relation
+db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
 
 
 statement error
 ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
 ----
-db error: ERROR: constraint "foo" for table "pudge_view" does not exist
+db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
 
 
 statement ok

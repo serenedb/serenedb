@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "pg/commands/create_tsdictionary.h"
+
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
@@ -64,8 +66,8 @@
 
 #include "auth/role_closure.h"
 #include "basics/assert.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"

@@ -467,7 +467,6 @@ target_include_directories(
     PUBLIC
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
-    PRIVATE ${SNOWBALL_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include

@@ -369,13 +369,8 @@ target_compile_options(
 ## snowball stemmer
 ################################################################################
 
-if(NOT PERL_FOUND)
-    set(PERL_FOUND TRUE) # suppress error for Perl not-found
-endif()
-
-set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
-find_package(SNOWBALL REQUIRED)
-add_library(stemmer::stemmer ALIAS stemmer-static)
+sdb_update_module(${GIT_EXECUTABLE} "libstemmer_c" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
+add_subdirectory(libstemmer_c-cmake)
 
 ################################################################################
 ## LZ4

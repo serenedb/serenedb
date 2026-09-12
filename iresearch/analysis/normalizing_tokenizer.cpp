@@ -218,6 +218,6 @@ bool NormalizingTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
 }
 
 template class TypedTokenizer<NormalizingTokenizer>;
-template class TypedTokenStage<NormalizingTokenizer>;
+template struct TypedTokenStage<NormalizingTokenizer>;
 
 }  // namespace irs::analysis

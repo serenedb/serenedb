@@ -41,7 +41,7 @@
 
 namespace {
 
-using namespace sdb::geo;
+using namespace irs::geo;
 using namespace irs;
 using namespace irs::tests;
 

@@ -324,7 +324,7 @@ class BlockScoringTestCase : public IndexTestBase {
   //
   // Each whitespace-separated token may carry an optional `+` (required) or
   // `-` (negated) modifier, followed by an optional `<field>:` prefix that
-  // names the target column, then the term value. Unlike `sdb::ParseQuery`,
+  // names the target column, then the term value. Unlike `irs::ParseQuery`,
   // the `<field>:` prefix is honored -- we resolve it to a `field_id` via
   // `ColumnIdFor`. The grammar parser ignores the prefix and always pins
   // queries to the default field, which is unsuitable for these tests.

@@ -92,7 +92,7 @@ bool IsNull(uint64_t g, bool nullable) { return nullable && (g % 10 == 0); }
 // The process-wide DuckDBEngine instance (brought up in main()) supplies the
 // DatabaseInstance the columnstore codecs read their compression registry from.
 duckdb::DatabaseInstance& CsDb() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 struct Seg {
@@ -390,10 +390,10 @@ IRS_CASES(IrsWriteSeal);
 IRS_CASES(DuckFullScan);
 
 int main(int argc, char** argv) {
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

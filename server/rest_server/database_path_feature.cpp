@@ -52,11 +52,11 @@ DatabasePathFeature::DatabasePathFeature()
   // Resolve the HBA config path against the (now absolute) data directory.
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
     _hba_config_file =
-      irs::file_utils::BuildFilename(_directory, "pg_hba.conf");
+      basics::file_utils::BuildFilename(_directory, "pg_hba.conf");
   } else if (std::filesystem::path{hba}.is_absolute()) {
     _hba_config_file = hba;
   } else {
-    _hba_config_file = irs::file_utils::BuildFilename(_directory, hba);
+    _hba_config_file = basics::file_utils::BuildFilename(_directory, hba);
   }
 
   if (!std::filesystem::is_directory(_directory, ec)) {
@@ -76,11 +76,11 @@ DatabasePathFeature::DatabasePathFeature()
   // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
   // remains is handled by VerifyLockFile on the next start.
   std::string lock_filename =
-    irs::file_utils::BuildFilename(_directory, "LOCK");
+    basics::file_utils::BuildFilename(_directory, "LOCK");
   if (!VerifyLockFile(lock_filename.c_str())) {
     std::string other_pid;
     try {
-      other_pid = irs::file_utils::Slurp(lock_filename);
+      other_pid = basics::file_utils::Slurp(lock_filename);
     } catch (...) {
     }
     if (other_pid.empty()) {

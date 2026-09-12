@@ -233,6 +233,9 @@ target_link_libraries(
     iresearch-load-tests
     # See iresearch-tests note above re: iresearch-static dependency.
     iresearch-static
+    # load_test.cpp reads the corpus through sdb::SlurpFile / Sha256Functor,
+    # which live in server/utils.
+    serene
     search-benchmark-common
     gtest
     simdjson

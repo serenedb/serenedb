@@ -38,7 +38,7 @@
 
 using namespace irs;
 using namespace analysis;
-using namespace sdb::geo;
+using namespace irs::geo;
 
 namespace irs::tests {
 

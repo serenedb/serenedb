@@ -171,7 +171,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
 
   irs::IndexReaderOptions MakeReaderOpts(irs::Scorer* scorer) {
     return irs::IndexReaderOptions{
-      .scorer = scorer, .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .scorer = scorer, .db = &::irs::DuckDBEngine::Instance().instance()};
   }
 
   // doc with one NormField "body" of `count` tokens + a unique id.

@@ -141,7 +141,7 @@ template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= sdb::StaticStrings::kSearchRoot;
+  path /= irs::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }
@@ -153,7 +153,7 @@ SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
     // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
     // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
     auto& fs = duckdb::FileSystem::GetFileSystem(
-      sdb::DuckDBEngine::Instance().instance());
+      irs::DuckDBEngine::Instance().instance());
     auto wal_dir = GetPersistedPath(database_id) / "wal";
     it = _db_wals
            .emplace(database_id,

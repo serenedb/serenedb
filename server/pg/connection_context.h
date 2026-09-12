@@ -43,7 +43,7 @@ class CopyInBridge;
 struct LoginCheck {
   ObjectId role;
   bool superuser = false;
-  pg::SqlErrorData error;
+  irs::pg::SqlErrorData error;
 };
 
 // The connect-time login gate shared by the pg-wire and http sessions:
@@ -128,7 +128,7 @@ class ConnectionContext final : public query::Transaction {
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
   // the stack is empty -- no mutex, no allocation.
-  void AddNotice(pg::SqlErrorData notice) {
+  void AddNotice(irs::pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
     node->next = _notices.load(std::memory_order_relaxed);
     while (!_notices.compare_exchange_weak(
@@ -156,7 +156,7 @@ class ConnectionContext final : public query::Transaction {
 
  private:
   struct NoticeNode {
-    pg::SqlErrorData data;
+    irs::pg::SqlErrorData data;
     NoticeNode* next;
   };
 

@@ -197,7 +197,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::create_directories(_dir_path);
   _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
@@ -435,7 +435,7 @@ DEFINE_FILTER_VARIANTS(Not, irs::BooleanFilter, SetUpNot);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -444,6 +444,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

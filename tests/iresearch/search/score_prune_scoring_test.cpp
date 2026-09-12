@@ -112,7 +112,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
       duckdb::Value::FLOAT(reject_score)));
   duckdb::ExpressionFilter score_filter{std::move(cmp)};
 
-  duckdb::Connection con{sdb::DuckDBEngine::Instance().instance()};
+  duckdb::Connection con{irs::DuckDBEngine::Instance().instance()};
   duckdb::ClientContext& ctx = *con.context;
 
   auto& allocator = duckdb::Allocator::DefaultAllocator();
@@ -126,7 +126,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   }
   prepare_collector.Finish();
 
-  sdb::connector::ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states;
   auto& score_state = filter_states.State(ctx, score_filter);
 
   irs::score_t score_threshold = std::numeric_limits<irs::score_t>::lowest();
@@ -154,7 +154,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
       if (n == 0) {
         break;
       }
-      const auto passing = sdb::connector::ColFilterChain::FilterDocsScores(
+      const auto passing = irs::ColFilterChain::FilterDocsScores(
         score_filter, score_state, docs.data(), scores.data(), n);
       collector.AddDocs(docs.data(), passing, scores.data());
     }
@@ -297,7 +297,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
   //
   // Each whitespace-separated token may carry an optional `+` (required) or
   // `-` (negated) modifier, followed by an optional `<field>:` prefix that
-  // names the target column, then the term value. Unlike `sdb::ParseQuery`,
+  // names the target column, then the term value. Unlike `irs::ParseQuery`,
   // the `<field>:` prefix is honored -- we resolve it to a `field_id` via
   // `ColumnIdFor`. The grammar parser ignores the prefix and always pins
   // queries to the default field, which is unsuitable for these tests.

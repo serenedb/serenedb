@@ -341,7 +341,7 @@ void SearchTable::OpenWriter() {
   // TODO(Dronplane): for now we rely on rocksdb (still present) lock
   // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;
-  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
+  writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   if (_topk_scorer) {
     writer_options.reader_options.scorer = _topk_scorer.get();

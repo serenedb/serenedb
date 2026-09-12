@@ -528,7 +528,7 @@ TEST(segment_reader_test, open_invalid_segment) {
     auto rdr = irs::SegmentReaderImpl::Open(
       dir, meta,
       irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()});
+                                &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_NE(nullptr, rdr);
     ASSERT_EQ(0, rdr->docs_count());
   }

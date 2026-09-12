@@ -39,7 +39,7 @@ using irs::analysis::TokenizerPool;
 
 duckdb::ClientContext& Context() {
   static thread_local auto* conn =
-    new duckdb::Connection{sdb::DuckDBEngine::Instance().instance()};
+    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
   return *conn->context;
 }
 

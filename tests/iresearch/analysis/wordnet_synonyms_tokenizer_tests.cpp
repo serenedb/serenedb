@@ -300,8 +300,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_short_line) {
   for (std::string data0 : {std::string("a"), std::string("go")}) {
     try {
       WordnetSynonymsTokenizer::Parse(data0);
-      FAIL() << "expected sdb::SqlException";
-    } catch (const sdb::SqlException& e) {
+      FAIL() << "expected irs::SqlException";
+    } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "wordnet_synonyms: failed to parse synonyms: Failed parse "
                 "line 1");
@@ -319,8 +319,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_synonym) {
                             std::string("s(100000002,1,a,v,1,0).")}) {
     try {
       WordnetSynonymsTokenizer::Parse(data0);
-      FAIL() << "expected sdb::SqlException";
-    } catch (const sdb::SqlException& e) {
+      FAIL() << "expected irs::SqlException";
+    } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "wordnet_synonyms: failed to parse synonyms: Failed parse "
                 "line 1");
@@ -332,8 +332,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_second_line) {
   std::string data0("s(100000002,1,'come',v,1,0).\nasd");
   try {
     WordnetSynonymsTokenizer::Parse(data0);
-    FAIL() << "expected sdb::SqlException";
-  } catch (const sdb::SqlException& e) {
+    FAIL() << "expected irs::SqlException";
+  } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
               "wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 2");
@@ -344,8 +344,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_more_param) {
   std::string data0("s(100000002,1,'come',v,1,0,2).\n");
   try {
     WordnetSynonymsTokenizer::Parse(data0);
-    FAIL() << "expected sdb::SqlException";
-  } catch (const sdb::SqlException& e) {
+    FAIL() << "expected irs::SqlException";
+  } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
               "wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 1");
@@ -356,8 +356,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
   std::string data0("s(100000002,1,'come').\n");
   try {
     WordnetSynonymsTokenizer::Parse(data0);
-    FAIL() << "expected sdb::SqlException";
-  } catch (const sdb::SqlException& e) {
+    FAIL() << "expected irs::SqlException";
+  } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
               "wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 1");
@@ -392,8 +392,8 @@ TEST(wordnet_synonyms_tests, make_state_owning_storage) {
 TEST(wordnet_synonyms_tests, make_state_invalid_input) {
   try {
     WordnetSynonymsTokenizer::MakeState("not a wordnet record");
-    FAIL() << "expected sdb::SqlException";
-  } catch (const sdb::SqlException& e) {
+    FAIL() << "expected irs::SqlException";
+  } catch (const irs::SqlException& e) {
   }
 }
 

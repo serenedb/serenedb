@@ -57,6 +57,6 @@ bool StopwordsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
 }
 
 template class TypedTokenizer<StopwordsTokenizer>;
-template class TypedTokenStage<StopwordsTokenizer>;
+template struct TypedTokenStage<StopwordsTokenizer>;
 
 }  // namespace irs::analysis

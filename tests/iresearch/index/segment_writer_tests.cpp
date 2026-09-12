@@ -55,7 +55,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   FieldT field;
 
   const irs::SegmentWriterOptions options{
-    .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::irs::DuckDBEngine::Instance().instance()};
 
   {
     irs::SegmentMeta segment;
@@ -145,7 +145,7 @@ struct StoredField {
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   const irs::SegmentWriterOptions options{
-    .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::irs::DuckDBEngine::Instance().instance()};
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
@@ -206,7 +206,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
   const irs::SegmentWriterOptions options{
-    .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::irs::DuckDBEngine::Instance().instance()};
 
   struct IndexedField {
     irs::IndexFeatures GetIndexFeatures() const {

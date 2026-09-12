@@ -606,7 +606,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         if (_connection_ctx) {
           // No NoticeResponse equivalent on this protocol (and the
           // ConnectionContext dtor asserts the queue is empty).
-          _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
+          _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
         }
       } else {
         writer.Error(http::HttpStatus::NotFound, "not_found");

@@ -416,7 +416,7 @@ Corpus BuildIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -480,7 +480,7 @@ Corpus BuildSyntheticIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -548,7 +548,7 @@ Corpus BuildDense3Index() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -609,7 +609,7 @@ Corpus BuildAllSameIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -674,7 +674,7 @@ Corpus BuildFarApartIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -1539,7 +1539,7 @@ int main(int argc, char** argv) {
   // cached Corpus statics (reader + directory) outlive main and touch the
   // db in their destructors, so the instance must survive into the
   // static-destruction phase.
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();

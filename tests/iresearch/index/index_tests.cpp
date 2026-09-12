@@ -254,8 +254,8 @@ irs::IndexWriterOptions CsDefaultWriterOptions() {
 
 irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts) {
   if (opts.db == nullptr) {
-    opts.db = &::sdb::DuckDBEngine::Instance().instance();
-    opts.reader_options.db = &::sdb::DuckDBEngine::Instance().instance();
+    opts.db = &::irs::DuckDBEngine::Instance().instance();
+    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
   }
   // With a cs writer present, a Norm-featured field requires a
   // norm_column_id callback (FieldsData::emplace asserts it). Provide

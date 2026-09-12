@@ -33,8 +33,8 @@ namespace {
 // TransactionContext (the connection is destroyed at scope end, rolling back
 // anything still open).
 struct Conn {
-  decltype(sdb::DuckDBEngine::Instance().CreateConnection()) handle =
-    sdb::DuckDBEngine::Instance().CreateConnection();
+  decltype(irs::DuckDBEngine::Instance().CreateConnection()) handle =
+    irs::DuckDBEngine::Instance().CreateConnection();
   duckdb::TransactionContext& txn() { return handle->context->transaction; }
 };
 

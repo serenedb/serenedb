@@ -615,7 +615,7 @@ void InitCatalog() {
   {
     const auto attach_begin = std::chrono::steady_clock::now();
     const auto missing_policy = ParseMissingDatabasePolicy();
-    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    auto conn = irs::DuckDBEngine::Instance().CreateConnection();
     std::vector<const catalog::SereneDBDatabaseEntry*> databases;
     catalog::VisitDatabases(nullptr,
                             [&](const catalog::SereneDBDatabaseEntry& db) {
@@ -679,7 +679,7 @@ void InitCatalog() {
           servers.push_back(server.GetInfo());
         });
     }
-    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    auto conn = irs::DuckDBEngine::Instance().CreateConnection();
     for (const auto& info : servers) {
       const auto& server =
         irs::utils::downCast<const catalog::CreateForeignServerInfo>(*info);

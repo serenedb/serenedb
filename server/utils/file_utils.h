@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 
-namespace irs::utils::file_utils {
+namespace sdb::basics::file_utils {
 
 // creates a filename
 std::string BuildFilename(std::string_view path, std::string_view name);
@@ -58,4 +58,4 @@ inline void Spit(const std::string& filename, std::string_view content,
 
 // checks if path is a directory
 
-}  // namespace irs::utils::file_utils
+}  // namespace sdb::basics::file_utils

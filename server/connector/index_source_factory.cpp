@@ -37,7 +37,7 @@
 
 namespace sdb::connector {
 
-std::unique_ptr<IndexSource> MakeIndexSource(
+std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,

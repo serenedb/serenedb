@@ -23,8 +23,6 @@
 
 #include <iresearch/utils/assert.hpp>
 
-using namespace sdb;
-
 TEST(Assertions, sdb_assert) {
   EXPECT_EXIT(SDB_ASSERT(false, "BOOM"), testing::KilledBySignal(SIGABRT),
               "BOOM");

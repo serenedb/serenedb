@@ -55,9 +55,9 @@
 
 // Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
-// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
+// process-wide irs::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 // Stored-value column ids. Field-name -> field_id mapping is the caller's
@@ -150,8 +150,8 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
                             irs::analysis::Tokenizer& tokenizer,
                             bool scored = false) {
   auto root = std::make_unique<irs::BooleanFilter>();
-  sdb::ParserContext context{*root, default_field, tokenizer};
-  if (!sdb::ParseQuery(context, query_str)) {
+  irs::ParserContext context{*root, default_field, tokenizer};
+  if (!irs::ParseQuery(context, query_str)) {
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }
@@ -415,7 +415,7 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
 
 int main() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
-  auto& engine = sdb::DuckDBEngine::Instance();
+  auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
   // Initialize subsystems (required once per process).

@@ -1289,10 +1289,10 @@ TEST(IcuTextTokenizerTest, repeated_fills_match_fresh_instances) {
 }
 
 TEST(IcuTextTokenizerTest, locale_required) {
-  ASSERT_THROW(IcuTextTokenizer::Make({}), sdb::SqlException);
+  ASSERT_THROW(IcuTextTokenizer::Make({}), irs::SqlException);
   ASSERT_THROW(IcuTextTokenizer::Make(IcuTextTokenizer::Options{
                  .separate = IcuTextTokenizer::Options::Separate::Sentence}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_NE(nullptr, IcuTextTokenizer::Make(IcuTextTokenizer::Options{
                        .locale = icu::Locale::createFromName("de_DE")}));
 }

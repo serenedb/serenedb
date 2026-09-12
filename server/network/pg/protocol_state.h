@@ -405,7 +405,7 @@ class ImplicitTxnState {
   // (the SereneDB commit hook + autocommit restore). Returns the converted
   // error rather than writing it, so the caller's single write site handles it
   // and this stays socket-free / unit-testable.
-  std::optional<sdb::pg::SqlErrorData> Commit() {
+  std::optional<irs::pg::SqlErrorData> Commit() {
     _open = false;
     SDB_IF_FAILURE("implicit_block_commit") {
       // Simulate a commit-time failure (deferred-constraint / write-conflict
@@ -413,7 +413,7 @@ class ImplicitTxnState {
       // transaction down (ClearTransaction runs before the engine commit), so
       // roll back here too and report the error.
       _txn.Rollback(nullptr);
-      return sdb::pg::SqlErrorData{
+      return irs::pg::SqlErrorData{
         .errcode = ERRCODE_T_R_SERIALIZATION_FAILURE,
         .errmsg = "injected implicit-block commit failure",
       };

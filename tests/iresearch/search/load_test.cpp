@@ -477,12 +477,12 @@ void HashResults(std::vector<QueryResult>& results) {
 }
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
-  // Drive the templated reflection-based writer through `irs::utils::JsonSink`
+  // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
   // (simdjson::builder), emitting JSON text directly without an intermediate
   // builder + slice round-trip.
   simdjson::builder::string_builder sb(1024);
   {
-    irs::utils::JsonSink sink{sb};
+    sdb::basics::JsonSink sink{sb};
     irs::utils::WriteObject(sink, results);
   }
   std::string_view body;
@@ -494,7 +494,7 @@ std::string SerializeResults(const std::vector<QueryResult>& results) {
 
 std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
   // Mirror SerializeResults' simdjson path on the read side: parse JSON via
-  // simdjson::ondemand and feed it through `irs::utils::JsonSource` + the
+  // simdjson::ondemand and feed it through `sdb::basics::JsonSource` + the
   // reflection reader.
   simdjson::padded_string padded{json_str};
   simdjson::ondemand::parser parser;
@@ -504,7 +504,7 @@ std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
     return {};
   }
   std::vector<QueryResult> results;
-  irs::utils::JsonSource source{doc};
+  sdb::basics::JsonSource source{doc};
   irs::utils::ReadObject(source, results);
   return results;
 }

@@ -474,7 +474,7 @@ template<typename Dist, typename Sync = HnswNoSync>
 void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
                      uint32_t node, uint32_t level, HnswBuildScratch& s,
                      Sync&& sync = {}) {
-  auto guard = sync.Lock(peer);
+  [[maybe_unused]] auto guard = sync.Lock(peer);
   auto links = graph.Neighbors(peer, level);
   auto& ids = s.link_ids;
   ids.clear();
@@ -576,7 +576,7 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
     HnswSelectNeighbors(dist, found, width, s);
 
     {
-      auto guard = sync.Lock(node);
+      [[maybe_unused]] auto guard = sync.Lock(node);
       auto links = graph.Neighbors(node, level);
       for (size_t i = 0; i < links.size(); ++i) {
         HnswStoreLink(links[i],

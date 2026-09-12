@@ -29,7 +29,7 @@
 
 namespace irs {
 
-class SubReader;
+struct SubReader;
 
 class ColReader;
 class ColWriter;

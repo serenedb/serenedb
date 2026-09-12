@@ -129,7 +129,7 @@ TEST(token_stopwords_stream_tests, load_from_path) {
   opts.stopwords_path = (dir / "missing.txt").string();
   EXPECT_THROW(
     irs::analysis::StopwordsTokenizer::Make(std::move(opts), tests::Cache()),
-    sdb::SqlException);
+    irs::SqlException);
 }
 
 TEST(token_stopwords_stream_tests, test_load) {

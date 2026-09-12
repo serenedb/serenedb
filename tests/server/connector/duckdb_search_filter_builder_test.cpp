@@ -75,7 +75,7 @@ using sdb::connector::SearchColumnInfo;
 // so a static Connection destructor would outlive it.
 duckdb::ClientContext& TestContext() {
   static auto* conn =
-    new duckdb::Connection{::sdb::DuckDBEngine::Instance().instance()};
+    new duckdb::Connection{::irs::DuckDBEngine::Instance().instance()};
   return *conn->context;
 }
 

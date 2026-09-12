@@ -319,7 +319,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(reader.begin(), reader.end());
 
@@ -329,7 +329,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     auto segment = irs::SegmentReaderImpl::Open(
       dir, index_segment,
       irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()});
+                                &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(33, segment->docs_count());
     ASSERT_EQ(33, segment->field(kNameId)->docs_count());
     ASSERT_EQ(33, segment->field(kSeqId)->docs_count());
@@ -378,7 +378,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -393,7 +393,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     auto segment = irs::SegmentReaderImpl::Open(
       dir, index_segment,
       irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()});
+                                &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -403,7 +403,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -430,7 +430,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return true;
     };
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -445,7 +445,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     auto segment = irs::SegmentReaderImpl::Open(
       dir, index_segment,
       irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()});
+                                &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -462,7 +462,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return --call_count;
     };
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -544,7 +544,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
 
@@ -562,7 +562,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
+      .db = &::irs::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
 
@@ -1276,7 +1276,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   const irs::FunctionFieldOptions field_options{
     nullptr, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
   const irs::SegmentWriterOptions options{
-    .db = &::sdb::DuckDBEngine::Instance().instance(),
+    .db = &::irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
   irs::MergeWriter writer(dir, options);

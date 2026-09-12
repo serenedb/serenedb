@@ -226,7 +226,7 @@ std::vector<Rejected> RejectedConfigs() {
 
 duckdb::ClientContext& Context() {
   static auto* conn =
-    new duckdb::Connection{sdb::DuckDBEngine::Instance().instance()};
+    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
   return *conn->context;
 }
 

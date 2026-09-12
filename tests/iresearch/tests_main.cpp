@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
   // thread_local cache that libc destroys *before* static dtors, so any
   // duckdb::DuckDB whose lifetime extends to the static-dtor phase trips
   // heap-use-after-free.
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   const int code = TestEnv::initialize(argc, argv);
 
@@ -281,6 +281,6 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return code;
 }

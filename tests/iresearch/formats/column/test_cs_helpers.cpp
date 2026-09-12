@@ -35,7 +35,7 @@ namespace irs::tests {
 std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
                                         std::string_view segment_name) {
   return std::make_unique<ColWriter>(
-    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
+    dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
 }
 
 std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
@@ -53,7 +53,7 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
     return nullptr;
   }
   return std::make_unique<ColReader>(
-    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
+    dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

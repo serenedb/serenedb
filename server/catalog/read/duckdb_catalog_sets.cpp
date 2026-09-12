@@ -587,7 +587,7 @@ GlobalSet OpenGlobalSet(duckdb::ClientContext* context,
     // reachable without a context, which boot and shutdown paths carry none.
     return {nullptr, nullptr,
             duckdb::CatalogTransaction::GetSystemTransaction(
-              sdb::DuckDBEngine::Instance().instance())};
+              irs::DuckDBEngine::Instance().instance())};
   }
   auto set = global->TryGetCatalogSet(type);
   SDB_ASSERT(set);

@@ -214,7 +214,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
+  writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own

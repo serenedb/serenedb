@@ -154,6 +154,6 @@ bool SolrSynonymsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
 }
 
 template class TypedTokenizer<SolrSynonymsTokenizer>;
-template class TypedTokenExpander<SolrSynonymsTokenizer>;
+template struct TypedTokenExpander<SolrSynonymsTokenizer>;
 
 }  // namespace irs::analysis

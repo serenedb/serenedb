@@ -282,7 +282,7 @@ void ScorePruneTestCase::AssertTermFilter(const irs::Scorer& scorer,
   auto reader = irs::DirectoryReader{
     dir(), codec(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
@@ -309,7 +309,7 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
   auto reader = irs::DirectoryReader{
     dir(), codec(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
@@ -343,7 +343,7 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
   auto reader = irs::DirectoryReader{
     dir(), codec(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {

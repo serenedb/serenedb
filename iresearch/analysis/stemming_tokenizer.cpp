@@ -74,6 +74,6 @@ bool StemmingTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
 }
 
 template class TypedTokenizer<StemmingTokenizer>;
-template class TypedTokenStage<StemmingTokenizer>;
+template struct TypedTokenStage<StemmingTokenizer>;
 
 }  // namespace irs::analysis

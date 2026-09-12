@@ -735,7 +735,7 @@ void PgWireSession<Kind>::DrainNotices() {
   if (!_connection_ctx->HasNotices()) {
     return;
   }
-  _connection_ctx->ConsumeNotices([this](const sdb::pg::SqlErrorData& notice) {
+  _connection_ctx->ConsumeNotices([this](const irs::pg::SqlErrorData& notice) {
     WriteNoticeResponse(this->_send, notice);
   });
 }
@@ -776,7 +776,7 @@ void PgWireSession<Kind>::ReportChangedParameters() {
 // fails like PG's 34000. Returns the commit error, if any, so the caller orders
 // it against the CommandComplete.
 template<SocketKind Kind>
-std::optional<sdb::pg::SqlErrorData>
+std::optional<irs::pg::SqlErrorData>
 PgWireSession<Kind>::CommitImplicitBlock() {
   if (!_txn_state->ShouldCommitAtSync()) {
     return std::nullopt;
@@ -1354,7 +1354,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (is_last && implicit_block &&
         type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       if (auto err = CommitImplicitBlock()) {
-        throw sdb::SqlException{std::move(*err),
+        throw irs::SqlException{std::move(*err),
                                 std::source_location::current()};
       }
     }
@@ -1739,7 +1739,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     this->_task->RequestRun();
   };
   const auto fail = [&](int code, auto&&... msg) {
-    bridge.Fail(std::make_exception_ptr(sdb::SqlException{
+    bridge.Fail(std::make_exception_ptr(irs::SqlException{
       SQL_ERROR_DATA(ERR_CODE(code),
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
@@ -2858,7 +2858,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // ~ConnectionContext asserts an empty queue.
   _proto.Clear();
   if (_connection_ctx) {
-    _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
+    _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
   // mid-write would truncate them, so drain first, then stop -- SendWriter (io)

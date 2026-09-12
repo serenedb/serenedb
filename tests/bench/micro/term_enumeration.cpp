@@ -122,7 +122,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     cached.terms.push_back(TermAt(i));
   }
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   auto codec = irs::formats::Get("1_5simd");
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
@@ -836,7 +836,7 @@ BENCHMARK(OrRegexpsFusedWalk)
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -845,6 +845,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

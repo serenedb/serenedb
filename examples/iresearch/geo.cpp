@@ -56,9 +56,9 @@ namespace {
 
 // Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
-// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
+// process-wide irs::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 // Stored-geometry column id. The geo filter reads this column back to
@@ -265,7 +265,7 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
 
 int main() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
-  auto& engine = sdb::DuckDBEngine::Instance();
+  auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
   irs::formats::Init();

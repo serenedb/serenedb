@@ -71,7 +71,7 @@ int main(int argc, const char* argv[]) {
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the
   // BlockAllocator/thread_local UAF rationale).
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
     irs::formats::Init();
@@ -114,6 +114,6 @@ int main(int argc, const char* argv[]) {
     absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;
   }
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }

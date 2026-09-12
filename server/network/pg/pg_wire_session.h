@@ -271,7 +271,7 @@ class PgWireSession final
   // resolved and txn-scoped portals are dropped, so the logic cannot smear.
   // Commit the implicit block if we own it (drops its portals); returns the
   // commit error, if any, for the caller to order against the CommandComplete.
-  std::optional<sdb::pg::SqlErrorData> CommitImplicitBlock();
+  std::optional<irs::pg::SqlErrorData> CommitImplicitBlock();
   // Roll the implicit block back if we own it (drops its portals); returns
   // whether it rolled back (so the caller can fall through to the explicit
   // case).

@@ -102,6 +102,6 @@ bool CollationTokenizer::DoFill(duckdb::string_t raw, Sink& sink) {
 }
 
 template class TypedTokenizer<CollationTokenizer>;
-template class TypedTokenStage<CollationTokenizer>;
+template struct TypedTokenStage<CollationTokenizer>;
 
 }  // namespace irs::analysis

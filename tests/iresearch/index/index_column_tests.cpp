@@ -60,7 +60,7 @@ namespace {
 class IndexColumnTestCase : public ::testing::TestWithParam<bool> {
  protected:
   duckdb::DatabaseInstance& Db() {
-    return ::sdb::DuckDBEngine::Instance().instance();
+    return ::irs::DuckDBEngine::Instance().instance();
   }
 };
 

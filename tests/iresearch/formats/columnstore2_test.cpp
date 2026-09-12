@@ -72,7 +72,7 @@ class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
  protected:
   irs::MemoryDirectory _dir;
   duckdb::DatabaseInstance& Db() {
-    return ::sdb::DuckDBEngine::Instance().instance();
+    return ::irs::DuckDBEngine::Instance().instance();
   }
 
   // Open a BLOB column and write every doc in [lo, hi] as an empty BLOB

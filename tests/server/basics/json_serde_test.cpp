@@ -38,7 +38,7 @@ template<typename T>
 std::string ToJson(const T& value) {
   simdjson::builder::string_builder sb(256);
   {
-    irs::utils::JsonSink sink{sb};
+    sdb::basics::JsonSink sink{sb};
     irs::utils::WriteObject(sink, value);
   }
   std::string_view body;
@@ -53,7 +53,7 @@ T FromJson(std::string_view json) {
   simdjson::ondemand::document doc;
   EXPECT_EQ(parser.iterate(padded).get(doc), simdjson::SUCCESS);
   T out{};
-  irs::utils::JsonSource source{doc};
+  sdb::basics::JsonSource source{doc};
   irs::utils::ReadObject(source, out);
   return out;
 }

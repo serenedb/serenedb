@@ -2259,7 +2259,7 @@ TEST_F(ColumnReaderTest, TwoColumnSparsePrefixRepro) {
 // compression config may differ from the fixture's vanilla duckdb::DuckDB and
 // select a codec the read path mishandles.
 TEST_F(ColumnReaderTest, SparsePrefixEngineDbRepro) {
-  auto& edb = ::sdb::DuckDBEngine::Instance().instance();
+  auto& edb = ::irs::DuckDBEngine::Instance().instance();
   constexpr irs::field_id kPrefix = 1;
   irs::MemoryDirectory dir{};
   {

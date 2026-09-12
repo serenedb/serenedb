@@ -56,9 +56,9 @@ namespace {
 
 // Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
-// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
+// process-wide irs::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 // Stored-value field id for the body column.
@@ -210,7 +210,7 @@ irs::bytes_view Bytes(std::string_view s) noexcept {
 
 int main() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
-  auto& engine = sdb::DuckDBEngine::Instance();
+  auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
   irs::formats::Init();

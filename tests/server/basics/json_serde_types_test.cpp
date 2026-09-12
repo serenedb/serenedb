@@ -57,10 +57,10 @@
 
 namespace {
 
-using irs::utils::JsonSink;
-using irs::utils::JsonSource;
 using irs::utils::ReadObject;
 using irs::utils::WriteObject;
+using sdb::basics::JsonSink;
+using sdb::basics::JsonSource;
 
 template<typename T>
 std::string ToJson(const T& value) {

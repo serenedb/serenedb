@@ -465,7 +465,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
 }
 
 void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
-                     const sdb::pg::SqlErrorData& data) {
+                     const irs::pg::SqlErrorData& data) {
   message::Writer w{out};
   char sql_state[sdb::pg::kSqlStateSize];
   sdb::pg::UnpackSqlState(sql_state, data.errcode);
@@ -495,27 +495,27 @@ void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
 }
 
 void WriteErrorResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error) {
+                        const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "ERROR", error);
 }
 
 void WriteFatalResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error) {
+                        const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "FATAL", error);
 }
 
 void WriteNoticeResponse(message::Buffer& out,
-                         const sdb::pg::SqlErrorData& notice) {
+                         const irs::pg::SqlErrorData& notice) {
   WriteDiagnostic(out, PQ_MSG_NOTICE_RESPONSE, "WARNING", notice);
 }
 
-sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
+irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   // DuckDB reports running a statement in an aborted explicit transaction as a
   // generic TransactionException (40001 by type); postgres flags it 25P02. The
   // message is the stable ErrorManager::INVALIDATED_TRANSACTION text.
   if (error.Type() == duckdb::ExceptionType::TRANSACTION &&
       error.RawMessage().starts_with("current transaction is aborted")) {
-    return sdb::pg::SqlErrorData{
+    return irs::pg::SqlErrorData{
       .errcode = ERRCODE_IN_FAILED_SQL_TRANSACTION,
       .errmsg = error.RawMessage(),
     };
@@ -526,21 +526,21 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     const std::string_view subtype =
       subtype_it != extra.end() ? subtype_it->second : std::string_view{};
     if (subtype == "CROSS_DATABASE_WRITE") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
                                    .errmsg = error.RawMessage()};
     }
     if (subtype == "READ_ONLY") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
                                    .errmsg = error.RawMessage()};
     }
     if (subtype == "TRANSACTION_LOCAL_CHANGES") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
                                    .errmsg = error.RawMessage()};
     }
   }
   // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
-  sdb::pg::SqlErrorData std::data{
+  irs::pg::SqlErrorData data{
     .errcode = DuckExceptionToErrcode(error),
     .errmsg = interrupted ? "canceling statement due to user request"
                           : error.RawMessage(),
@@ -553,20 +553,20 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
       it != error.ExtraInfo().end()) {
     int pos = 0;
     if (absl::SimpleAtoi(it->second, &pos)) {
-      std::data.cursorpos = pos + 1;
+      data.cursorpos = pos + 1;
     }
   }
   return data;
 }
 
-sdb::pg::SqlErrorData ToSqlError(const std::exception& exception) {
-  if (const auto* sql = dynamic_cast<const sdb::SqlException*>(&exception)) {
+irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
+  if (const auto* sql = dynamic_cast<const irs::SqlException*>(&exception)) {
     return sql->error();
   }
   if (const auto* duck = dynamic_cast<const duckdb::Exception*>(&exception)) {
     return DuckErrorToSqlData(duckdb::ErrorData{*duck});
   }
-  return sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
+  return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};
 }
 

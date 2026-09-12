@@ -2,14 +2,14 @@
 """Pre-commit hook: forbid raw `throw` in server/ -- use the throw macros.
 
 A raw exception loses its PG sqlstate on the way to the client: only a typed
-sdb::SqlException (built by THROW_SQL_ERROR / SDB_THROW) carries the
+irs::SqlException (built by THROW_SQL_ERROR / SDB_THROW) carries the
 errcode/detail/hint through ErrorData::Throw() to the wire, while anything
 else is flattened through a lossy per-type mapping. Server code must not
 `throw` directly.
 
 Sanctioned exceptions:
   - `throw;`                            -- a bare rethrow keeps the original
-  - `throw sdb::SqlException{...}`      -- the typed wire exception itself
+  - `throw irs::SqlException{...}`      -- the typed wire exception itself
   - `throw duckdb::TransactionException`-- the commit/rollback seam speaks to
     DuckDB's own transaction machinery and the wire layer special-cases
     ExceptionType::TRANSACTION
@@ -42,7 +42,7 @@ THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
 # expects that exception type there -- it never surfaces to a client as a pg
 # error, so a sqlstate would be meaningless.
 ALLOWED_EXPRS = (
-    "sdb::SqlException",
+    "irs::SqlException",
     "duckdb::TransactionException",
     "duckdb::NotImplementedException",
 )
@@ -95,7 +95,7 @@ def main() -> int:
             "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) (or "
             "SDB_THROW) so the PG sqlstate survives to the client "
             "(pg/sql_exception_macro.h). Sanctioned: bare `throw;`, "
-            "`throw sdb::SqlException{...}`, "
+            "`throw irs::SqlException{...}`, "
             "`throw duckdb::TransactionException`, "
             "`throw duckdb::NotImplementedException`, and the allowlisted "
             "subsystems in scripts/check_no_raw_throw.py.",

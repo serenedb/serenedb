@@ -56,7 +56,7 @@ inline NormColumnIdProvider MakeNormColumnIdProvider() {
 }
 
 // Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
-// DuckDB DatabaseInstance held by sdb::DuckDBEngine. tests_main brings
+// DuckDB DatabaseInstance held by irs::DuckDBEngine. tests_main brings
 // the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
 // tests that just called `IndexWriter::Make(dir, codec, mode)` would skip
 // opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
@@ -64,7 +64,7 @@ inline NormColumnIdProvider MakeNormColumnIdProvider() {
 // behaviour; using these defaults plumbs the engine instance in without
 // every call site re-typing it.
 inline IndexWriterOptions DefaultWriterOptions() {
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
@@ -73,7 +73,7 @@ inline IndexWriterOptions DefaultWriterOptions() {
 }
 inline IndexReaderOptions DefaultReaderOptions() {
   IndexReaderOptions opts;
-  opts.db = &::sdb::DuckDBEngine::Instance().instance();
+  opts.db = &::irs::DuckDBEngine::Instance().instance();
   return opts;
 }
 

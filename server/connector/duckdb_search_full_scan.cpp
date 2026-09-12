@@ -910,22 +910,22 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     // search tables and view-backed indexes alike (term_dict::kPKFieldId
     // IS kGeneratedPKId by definition).
     state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId});
+      irs::ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
+                                 .column_id = catalog::term_dict::kPKFieldId});
   }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.row_number_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
-                            .extract_path = {"row_number"},
-                            .extract_scan_type = duckdb::LogicalType::BIGINT});
+    state.cs_projections.emplace_back(irs::ColumnstoreProjection{
+      .output_slot = state.row_number_output_idx,
+      .column_id = catalog::term_dict::kPKFieldId,
+      .extract_path = {"row_number"},
+      .extract_scan_type = duckdb::LogicalType::BIGINT});
   }
   if (state.file_index_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.file_index_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
-                            .extract_path = {"file_index"},
-                            .extract_scan_type = duckdb::LogicalType::UBIGINT});
+    state.cs_projections.emplace_back(irs::ColumnstoreProjection{
+      .output_slot = state.file_index_output_idx,
+      .column_id = catalog::term_dict::kPKFieldId,
+      .extract_path = {"file_index"},
+      .extract_scan_type = duckdb::LogicalType::UBIGINT});
   }
   const auto in_output = [&](duckdb::idx_t proj) {
     return state.output_projection_ids.empty() ||

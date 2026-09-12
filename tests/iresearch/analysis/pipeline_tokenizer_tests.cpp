@@ -293,7 +293,7 @@ TEST(pipeline_token_stream_test, incompatible_types_rejected) {
 
   ASSERT_THROW(
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options)),
-    sdb::SqlException);
+    irs::SqlException);
 }
 
 TEST(pipeline_token_stream_test, many_tokenizers) {
@@ -1680,5 +1680,5 @@ TEST(pipeline_token_stream_test, store_producing_member_rejected) {
   subs.push_back(MakeCommaDelim());
   subs.push_back(std::make_unique<StoreProducingAnalyzer>());
   ASSERT_THROW(irs::analysis::PipelineTokenizer pipe(std::move(subs)),
-               sdb::SqlException);
+               irs::SqlException);
 }

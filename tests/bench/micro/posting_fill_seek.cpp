@@ -248,7 +248,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   index.dir = std::make_unique<irs::MMapDirectory>(index.path);
   index.codec = irs::formats::Get("1_5simd");
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
@@ -357,7 +357,7 @@ size_t Window(const irs::fill::Node::ptr& docs) {
   }
 }
 
-void BmAdvance(benchmark::State& state, std::string_view term) {
+void BmNext(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
   const Prepared prepared{index.reader[0], *filter};
@@ -535,11 +535,11 @@ BENCHMARK(BmText40x400)->Apply(Sizes);
 BENCHMARK(BmText200x2000)->Apply(Sizes);
 BENCHMARK(BmText1500x4000)->Apply(Sizes);
 
-BENCHMARK(BmAdvanceRun)->Apply(Sizes);
-BENCHMARK(BmAdvanceAlmost)->Apply(Sizes);
-BENCHMARK(BmAdvanceDense)->Apply(Sizes);
-BENCHMARK(BmAdvancePeriod)->Apply(Sizes);
-BENCHMARK(BmAdvanceGen)->Apply(Sizes);
+BENCHMARK(BmNextRun)->Apply(Sizes);
+BENCHMARK(BmNextAlmost)->Apply(Sizes);
+BENCHMARK(BmNextDense)->Apply(Sizes);
+BENCHMARK(BmNextPeriod)->Apply(Sizes);
+BENCHMARK(BmNextGen)->Apply(Sizes);
 
 BENCHMARK(BmEmitRun)->Apply(Sizes);
 BENCHMARK(BmEmitAlmost)->Apply(Sizes);
@@ -578,7 +578,7 @@ BENCHMARK(BmConjGenDense)->Apply(Sizes);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -587,6 +587,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

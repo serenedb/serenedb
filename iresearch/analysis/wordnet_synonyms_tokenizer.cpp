@@ -167,6 +167,6 @@ bool WordnetSynonymsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
 }
 
 template class TypedTokenizer<WordnetSynonymsTokenizer>;
-template class TypedTokenExpander<WordnetSynonymsTokenizer>;
+template struct TypedTokenExpander<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

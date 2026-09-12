@@ -106,11 +106,11 @@ irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
 // at call sites that pass column ids to sink writers / `segment.field()`.
 constexpr irs::field_id kPKFieldId = catalog::kGeneratedPKId.id();
 
-// Process-wide DuckDB instance, owned by sdb::DuckDBEngine. tests_main
+// Process-wide DuckDB instance, owned by irs::DuckDBEngine. tests_main
 // brings it up before RUN_ALL_TESTS and tears it down before main returns,
 // so the lifetime envelope strictly covers every test body.
 duckdb::DatabaseInstance& TestDb() {
-  return ::sdb::DuckDBEngine::Instance().instance();
+  return ::irs::DuckDBEngine::Instance().instance();
 }
 
 // Leaked on purpose: tests_main shuts the engine down before main returns,

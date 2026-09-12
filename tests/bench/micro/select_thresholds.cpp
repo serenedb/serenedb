@@ -64,7 +64,7 @@ constexpr irs::field_id kField = 0;
 constexpr std::string_view kSegName = "bench_seg";
 
 duckdb::DatabaseInstance& CsDb() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 struct Shape {
@@ -361,11 +361,11 @@ void RegisterAll() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

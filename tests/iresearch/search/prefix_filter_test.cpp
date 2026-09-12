@@ -152,7 +152,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
-    opts.reader_options.db = &::sdb::DuckDBEngine::Instance().instance();
+    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
     if (codec()->type()().name().starts_with("1_5simd") && score_prune) {
       opts.reader_options.scorer = score;
     }

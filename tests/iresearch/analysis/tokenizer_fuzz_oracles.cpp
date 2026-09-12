@@ -32,7 +32,7 @@
 namespace tests::fuzz {
 
 struct SqlOracle::Impl {
-  Impl() : con{sdb::DuckDBEngine::Instance().instance()} {
+  Impl() : con{irs::DuckDBEngine::Instance().instance()} {
     auto result = con.Query(
       "SET disabled_optimizers = "
       "'expression_rewriter,statistics_propagation,in_clause,regex_range'");

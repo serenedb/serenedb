@@ -56,7 +56,7 @@ namespace {
 template<typename T>
 size_t HashBatch(size_t hash, const T* data, size_t size) {
   for (size_t i = 0; i != size; ++i) {
-    hash = irs::utils::WyHash(data + i, sizeof(T), hash);
+    hash = sdb::basics::WyHash(data + i, sizeof(T), hash);
   }
   return hash;
 }
@@ -64,8 +64,8 @@ size_t HashBatch(size_t hash, const T* data, size_t size) {
 template<typename T, typename U>
 size_t HashPairs(size_t hash, const T* docs, const U* scores, size_t size) {
   for (size_t i = 0; i != size; ++i) {
-    hash = irs::utils::WyHash(docs + i, sizeof(T), hash);
-    hash = irs::utils::WyHash(scores + i, sizeof(U), hash);
+    hash = sdb::basics::WyHash(docs + i, sizeof(T), hash);
+    hash = sdb::basics::WyHash(scores + i, sizeof(U), hash);
   }
   return hash;
 }
@@ -134,7 +134,7 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
     _reader{irs::DirectoryReader(
       _dir, _format,
       {.scorer = _scorer_ptr,
-       .db = &::sdb::DuckDBEngine::Instance().instance()})} {}
+       .db = &::irs::DuckDBEngine::Instance().instance()})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);
@@ -323,8 +323,8 @@ void Executor::PrintResults() const {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str, bool scored) {
   auto root = std::make_unique<irs::BooleanFilter>();
-  sdb::ParserContext fmt::context{*root, kTextFieldId, *_tokenizer};
-  if (!sdb::ParseQuery(context, str)) {
+  irs::ParserContext context{*root, kTextFieldId, *_tokenizer};
+  if (!irs::ParseQuery(context, str)) {
     absl::FPrintF(stderr, "parse error: %s: %s\n", context.error_message, str);
     return {};
   }

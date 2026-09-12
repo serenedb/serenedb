@@ -33,7 +33,7 @@ using irs::analysis::SqlTokenizer;
 
 duckdb::ClientContext& TestContext() {
   static auto* conn =
-    new duckdb::Connection{sdb::DuckDBEngine::Instance().instance()};
+    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
   return *conn->context;
 }
 
@@ -186,28 +186,28 @@ TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
 
 TEST(SqlTokenizerTest, parseErrors) {
   ASSERT_THROW(SqlTokenizer::Make({.expression = "lower(("}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "input, input"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "(SELECT 'x')"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "upper($1)"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "memory.main.upper(input)"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_lexize('d', input)"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_tokenize(input, 'd')"}),
-               sdb::SqlException);
+               irs::SqlException);
   ASSERT_THROW(
     SqlTokenizer::Make({.expression = "lower(ts_lexize('d', input)[1])"}),
-    sdb::SqlException);
+    irs::SqlException);
 }
 
 TEST(SqlTokenizerTest, bindErrors) {
   const auto expect_bind_error = [&](std::string expression) {
     auto a = SqlTokenizer::Make({.expression = std::move(expression)});
-    ASSERT_THROW(a->Bind(TestContext()), sdb::SqlException);
+    ASSERT_THROW(a->Bind(TestContext()), irs::SqlException);
   };
   expect_bind_error("no_such_function_xyz(input)");
   expect_bind_error("upper(no_such_column)");
@@ -217,7 +217,7 @@ TEST(SqlTokenizerTest, bindErrors) {
 }
 
 TEST(SqlTokenizerTest, userMacroRejected) {
-  duckdb::Connection conn{sdb::DuckDBEngine::Instance().instance()};
+  duckdb::Connection conn{irs::DuckDBEngine::Instance().instance()};
   auto res = conn.Query("ATTACH ':memory:' AS sql_tok_userdb");
   ASSERT_FALSE(res->HasError()) << res->GetError();
   res = conn.Query(
@@ -228,10 +228,10 @@ TEST(SqlTokenizerTest, userMacroRejected) {
   ASSERT_THROW(
     SqlTokenizer::Make({.expression = "sql_tok_userdb.main.sql_tok_test_up("
                                       "input)"}),
-    sdb::SqlException);
+    irs::SqlException);
 
   auto a = SqlTokenizer::Make({.expression = "sql_tok_test_up(input)"});
-  ASSERT_THROW(a->Bind(*conn.context), sdb::SqlException);
+  ASSERT_THROW(a->Bind(*conn.context), irs::SqlException);
 }
 
 TEST(SqlTokenizerTest, traits) {

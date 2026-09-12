@@ -52,7 +52,7 @@ void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
 
 void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
                    std::string_view index) {
-  sdb::pg::SqlErrorData std::data;
+  irs::pg::SqlErrorData data;
   try {
     error.Throw();
   } catch (const irs::SqlException& e) {
@@ -60,7 +60,7 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
   } catch (...) {
     data = pg::DuckErrorToSqlData(error);
   }
-  switch (std::data.errcode) {
+  switch (data.errcode) {
     case ERRCODE_UNDEFINED_TABLE:
       if (!index.empty()) {
         WriteIndexNotFound(writer, index);

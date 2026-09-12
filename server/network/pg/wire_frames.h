@@ -133,24 +133,24 @@ void WriteParameterDescription(message::Buffer& out,
                                std::span<const int32_t> oids);
 
 void WriteFatalResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error);
+                        const irs::pg::SqlErrorData& error);
 
 void WriteErrorResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error);
+                        const irs::pg::SqlErrorData& error);
 
 void WriteNoticeResponse(message::Buffer& out,
-                         const sdb::pg::SqlErrorData& notice);
+                         const irs::pg::SqlErrorData& notice);
 
 // Maps a DuckDB error to a pg SqlErrorData with a real SQLSTATE (the DuckDB
 // ExceptionType -> errcode mapping), instead of flattening every error to
 // XX000.
-sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
+irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
 
 // Funnels any exception caught at the command-loop boundary into pg
 // SqlErrorData: a serenedb SqlException keeps its sqlstate/detail/hint, a
 // DuckDB exception maps via DuckErrorToSqlData, anything else is XX000
 // internal.
-sdb::pg::SqlErrorData ToSqlError(const std::exception& exception);
+irs::pg::SqlErrorData ToSqlError(const std::exception& exception);
 
 void WriteReadyForQuery(message::Buffer& out, char txn_status);
 

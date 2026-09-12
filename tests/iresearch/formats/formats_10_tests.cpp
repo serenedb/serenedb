@@ -748,7 +748,7 @@ TEST_P(Format10TestCase, ires336) {
       trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
       (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
     irs::IdxWriter idx{*dir, segment_name,
-                       ::sdb::DuckDBEngine::Instance().instance()};
+                       ::irs::DuckDBEngine::Instance().instance()};
     irs::burst_trie::FieldWriter fw{
       get_codec()->get_postings_writer(/*compaction=*/true,
                                        irs::IResourceManager::gNoop),

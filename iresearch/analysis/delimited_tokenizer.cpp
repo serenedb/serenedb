@@ -245,4 +245,21 @@ void DelimitedTokenizer::QuotedFillValue(TokenSink& sink,
 
 template class TypedTokenizer<DelimitedTokenizer>;
 
+#define SDB_INSTANTIATE_DO_FILL(Layout)                                 \
+  template bool                                                         \
+  DelimitedTokenizer::DoFill<Layout, DelimitedTokenizer::Mode::Chars>(  \
+    duckdb::string_t, TokenSink&);                                      \
+  template bool                                                         \
+  DelimitedTokenizer::DoFill<Layout, DelimitedTokenizer::Mode::Single>( \
+    duckdb::string_t, TokenSink&);                                      \
+  template bool                                                         \
+  DelimitedTokenizer::DoFill<Layout, DelimitedTokenizer::Mode::Multi>(  \
+    duckdb::string_t, TokenSink&)
+
+SDB_INSTANTIATE_DO_FILL(TokenLayout::Terms);
+SDB_INSTANTIATE_DO_FILL(TokenLayout::TermsPos);
+SDB_INSTANTIATE_DO_FILL(TokenLayout::TermsPosOffs);
+
+#undef SDB_INSTANTIATE_DO_FILL
+
 }  // namespace irs::analysis

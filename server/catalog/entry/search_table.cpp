@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 
 #include <absl/strings/numbers.h>
 
@@ -35,7 +35,7 @@
 #include <utility>
 
 #include "basics/serializer.h"
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/primary_key.h"
@@ -49,7 +49,6 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kEngineSearch = "search";
-constexpr std::string_view kPayloadOption = "sdb_payload";
 
 using WithOptions =
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>;
@@ -171,6 +170,13 @@ void SearchTableEntry::OnDrop() {
   }
 }
 
+void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
+  if (prev_entry.type == duckdb::CatalogType::INVALID && _storage) {
+    _storage->MarkDropped();
+  }
+  duckdb::TableCatalogEntry::Rollback(prev_entry);
+}
+
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,
@@ -215,8 +221,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   auto info = GetInfo();
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(info));
-  return duckdb::make_uniq<SearchTableEntry>(
+  auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage);
+  return result;
 }
 
 }  // namespace sdb::catalog

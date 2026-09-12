@@ -215,31 +215,30 @@ CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
 
 
-# Search tables have a fixed iresearch schema: structural ALTERs are rejected.
-# The guard runs before column/constraint resolution, so even a missing
-# constraint name reports the search-table rejection.
+# Search tables have a fixed iresearch schema: only renames are implemented,
+# every other structural ALTER falls through to duckdb's generic rejection.
 statement error
 ALTER TABLE search_dml ADD COLUMN c INTEGER;
 ----
-db error: ERROR: ALTER TABLE ADD_COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml DROP COLUMN b;
 ----
-db error: ERROR: ALTER TABLE REMOVE_COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
 ----
-db error: ERROR: ALTER TABLE ALTER_COLUMN_TYPE on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: ALTER TABLE DROP_CONSTRAINT on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 # Renames are catalog-only metadata -- iresearch and the scan are keyed by

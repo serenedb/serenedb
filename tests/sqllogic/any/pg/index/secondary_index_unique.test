@@ -1972,7 +1972,7 @@ QUERY PLAN
 │ Projections: pid, code, name              │
 │ ~2 rows                                   │
 ╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
+╭─ INDEX_SCAN ────────┴─────────────────────╮
 │ Table: vedernikoff_uniq_idx_scan_code_idx │
 │ Type: Sequential Scan                     │
 │ Projections: code, pid, name              │

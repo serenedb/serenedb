@@ -90,6 +90,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   void OnDrop() override;
 
+  void Rollback(duckdb::CatalogEntry& prev_entry) override;
+
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,

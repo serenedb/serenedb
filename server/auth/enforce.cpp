@@ -182,20 +182,7 @@ std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
 }
 
 bool IsRename(const duckdb::AlterInfo& info) {
-  switch (info.type) {
-    case duckdb::AlterType::ALTER_TABLE:
-      return info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
-             duckdb::AlterTableType::RENAME_TABLE;
-    case duckdb::AlterType::ALTER_VIEW:
-      return info.Cast<duckdb::AlterViewInfo>().alter_view_type ==
-             duckdb::AlterViewType::RENAME_VIEW;
-    case duckdb::AlterType::ALTER_SCALAR_FUNCTION:
-      return info.Cast<duckdb::AlterScalarFunctionInfo>()
-               .alter_scalar_function_type ==
-             duckdb::AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
-    default:
-      return false;
-  }
+  return info.type == duckdb::AlterType::RENAME;
 }
 
 class Enforcer {

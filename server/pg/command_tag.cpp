@@ -90,6 +90,25 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
   }
 }
 
+std::string_view AlterObjectTag(duckdb::CatalogType type) {
+  using duckdb::CatalogType;
+  switch (type) {
+    case CatalogType::TABLE_ENTRY:
+      return "ALTER TABLE";
+    case CatalogType::VIEW_ENTRY:
+      return "ALTER VIEW";
+    case CatalogType::INDEX_ENTRY:
+      return "ALTER INDEX";
+    case CatalogType::SEQUENCE_ENTRY:
+      return "ALTER SEQUENCE";
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+      return "ALTER FUNCTION";
+    default:
+      return "ALTER";
+  }
+}
+
 // `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
 // SELECT-backed prepared statement yields "SELECT N"). Look the referenced
 // statement up in DuckDB's client-local prepared-statement catalog.
@@ -214,6 +233,8 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               return make("ALTER TABLE");
             case duckdb::AlterType::ALTER_VIEW:
               return make("ALTER VIEW");
+            case duckdb::AlterType::RENAME:
+              return make(AlterObjectTag(alter_stmt.info->GetCatalogType()));
             case duckdb::AlterType::ALTER_SEQUENCE:
               return make("ALTER SEQUENCE");
             case duckdb::AlterType::ALTER_DATABASE:

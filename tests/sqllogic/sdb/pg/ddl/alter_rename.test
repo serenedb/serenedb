@@ -102,10 +102,10 @@ statement ok
 ALTER TABLE pudge_view_tmp RENAME TO pudge_view;
 
 statement ok
-ALTER TABLE deadinside RENAME TO deadinside_tmp;
+ALTER INDEX deadinside RENAME TO deadinside_tmp;
 
 statement ok
-ALTER TABLE deadinside_tmp RENAME TO deadinside;
+ALTER INDEX deadinside_tmp RENAME TO deadinside;
 
 
 statement ok
@@ -231,41 +231,52 @@ ALTER FUNCTION pudge RENAME TO something;
 db error: ERROR: Macro Function with name pudge does not exist!<slt:ignore>
 
 
-statement ok
+# pudge_view and clickclack read pudge by column name, so duckdb refuses to
+# rename its columns while they exist.
+statement error
 ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
+----
+db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+CREATE TABLE techies(a integer, b text);
+
+statement ok
+ALTER TABLE techies RENAME COLUMN a TO a_renamed;
 
 query
-SELECT a_renamed FROM pudge;
+SELECT a_renamed FROM techies;
 ----
 a_renamed
 
 
 statement error
-SELECT a FROM pudge;
+SELECT a FROM techies;
 ----
 db error: ERROR: Referenced column "a" not found in FROM clause!
 <slt:ignore>
 
 
 statement ok
-ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
+ALTER TABLE techies RENAME COLUMN a_renamed TO a;
 
 query
-SELECT a FROM pudge;
+SELECT a FROM techies;
 ----
 a
 
 
 statement error
-ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
+ALTER TABLE techies RENAME COLUMN nonexistent TO something;
 ----
-db error: ERROR: Table "pudge" does not have a column with name "nonexistent"
+db error: ERROR: Table "techies" does not have a column with name "nonexistent"
 
 Did you mean: "a"
 
 
 statement error
-ALTER TABLE pudge RENAME COLUMN a TO b;
+ALTER TABLE techies RENAME COLUMN a TO b;
 ----
 db error: ERROR: Column with name b already exists!
 
@@ -278,7 +289,7 @@ db error: ERROR: Table with name nonexistent does not exist!
 
 
 statement ok
-ALTER TABLE pudge RENAME COLUMN a TO a;
+ALTER TABLE techies RENAME COLUMN a TO a;
 
 
 statement ok
@@ -346,6 +357,9 @@ DROP TABLE kostya.babsky;
 
 statement ok
 DROP TABLE invoker;
+
+statement ok
+DROP TABLE techies;
 
 statement ok
 DROP TABLE pudge;

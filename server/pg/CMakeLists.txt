@@ -43,7 +43,6 @@ target_sources(
         system_catalog.cpp
         progress_registry.cpp
         role_dependencies.cpp
-        serial.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp

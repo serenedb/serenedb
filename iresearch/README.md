@@ -72,7 +72,7 @@ IResearch has been in continuous production use since 2018, first as the search 
 
 ## License
 
-Apache 2.0. See [LICENSE.md](LICENSE.md).
+Apache 2.0. See [LICENSE](LICENSE).
 
 Copyright (c) 2024-2026 SereneDB<br>
 Copyright (c) 2017-2023 ArangoDB GmbH<br>

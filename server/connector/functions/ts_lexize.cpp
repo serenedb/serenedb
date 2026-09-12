@@ -25,6 +25,8 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
@@ -123,133 +125,115 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
     ->Cast<TsLexizeBindData>();
 }
 
+// The elements of a LIST argument, read once so a per-row lambda can walk them.
+class ListElements {
+ public:
+  explicit ListElements(duckdb::Vector& list) {
+    auto& child = duckdb::ListVector::GetEntry(list);
+    child.ToUnifiedFormat(duckdb::ListVector::GetListSize(list), _format);
+    _data = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format);
+  }
+
+  void TokenizeInto(ListTokenSink& sink, duckdb::list_entry_t entry) const {
+    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
+      const auto idx = _format.sel->get_index(entry.offset + k);
+      if (_format.validity.RowIsValid(idx)) {
+        sink.Tokenize(_data[idx]);
+      }
+    }
+  }
+
+ private:
+  duckdb::UnifiedVectorFormat _format;
+  const duckdb::string_t* _data = nullptr;
+};
+
+// A row's tokens occupy the span of the child vector the sink filled for it.
+template<typename Tokenize>
+duckdb::list_entry_t SinkRow(ListTokenSink& sink, Tokenize&& tokenize) {
+  const auto offset = sink.Offset();
+  tokenize();
+  return {offset, sink.Offset() - offset};
+}
+
+auto AcquireDynamicTokenizer(duckdb::ExpressionState& state,
+                             duckdb::string_t dict_column) {
+  const auto dict_name = AsView(dict_column);
+  auto dict = LookupTokenizerDict(state.GetContext(), dict_name);
+  return AcquireTextTokenizer(state.GetContext(), *dict, dict_name);
+}
+
 template<duckdb::idx_t ValueArg>
 void TsLexizeFunctionConstant(duckdb::DataChunk& args,
                               duckdb::ExpressionState& state,
                               duckdb::Vector& result) {
-  const auto count = args.size();
   auto& tokenizer = *duckdb::ExecuteFunctionState::GetFunctionState(state)
                        ->Cast<TsLexizeLocalState>()
                        .wrapper;
-  auto texts = args.data[ValueArg].Values<duckdb::string_t>();
 
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
   ListTokenSink sink{result};
   sink.Bind(tokenizer);
 
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto text = texts[i];
-    if (!text.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
-      continue;
-    }
-    const auto row_offset = sink.Offset();
-    sink.Tokenize(text.GetValue());
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
-  }
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::list_entry_t>(
+    args.data[ValueArg], result, args.size(), [&](duckdb::string_t text) {
+      return SinkRow(sink, [&] { sink.Tokenize(text); });
+    });
 }
 
 template<duckdb::idx_t ValueArg>
 void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
                                    duckdb::ExpressionState& state,
                                    duckdb::Vector& result) {
-  const auto count = args.size();
   auto& tokenizer = *duckdb::ExecuteFunctionState::GetFunctionState(state)
                        ->Cast<TsLexizeLocalState>()
                        .wrapper;
-  auto lists =
-    args.data[ValueArg].Values<duckdb::VectorListType<duckdb::string_t>>();
+  const ListElements elements{args.data[ValueArg]};
 
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
   ListTokenSink sink{result};
   sink.Bind(tokenizer);
 
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto list = lists[i];
-    if (!list.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
-      continue;
-    }
-    const auto row_offset = sink.Offset();
-    for (auto element : list.GetChildValues()) {
-      if (!element.IsValid()) {
-        continue;
-      }
-      sink.Tokenize(element.GetValue());
-    }
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
-  }
+  duckdb::UnaryExecutor::Execute<duckdb::list_entry_t, duckdb::list_entry_t>(
+    args.data[ValueArg], result, args.size(), [&](duckdb::list_entry_t entry) {
+      return SinkRow(sink, [&] { elements.TokenizeInto(sink, entry); });
+    });
 }
 
 void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
-  const auto count = args.size();
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  auto dicts = args.data[0].Values<duckdb::string_t>();
-  auto texts = args.data[1].Values<duckdb::string_t>();
 
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
   ListTokenSink sink{result};
 
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto dict_value = dicts[i];
-    auto text = texts[i];
-    if (!dict_value.IsValid() || !text.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
-      continue;
-    }
-    const auto dict_name = AsView(dict_value.GetValue());
-    auto dict = LookupTokenizerDict(state.GetContext(), dict_name);
-    auto tokenizer = AcquireTextTokenizer(state.GetContext(), *dict, dict_name);
-    const auto row_offset = sink.Offset();
-    sink.Tokenize(*tokenizer, text.GetValue());
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
-  }
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
+                                  duckdb::list_entry_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t dict_name, duckdb::string_t text) {
+      auto tokenizer = AcquireDynamicTokenizer(state, dict_name);
+      return SinkRow(sink, [&] { sink.Tokenize(*tokenizer, text); });
+    });
 }
 
 void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
-  const auto count = args.size();
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  auto dicts = args.data[0].Values<duckdb::string_t>();
-  auto lists = args.data[1].Values<duckdb::VectorListType<duckdb::string_t>>();
+  const ListElements elements{args.data[1]};
 
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
   ListTokenSink sink{result};
 
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto dict_value = dicts[i];
-    auto list = lists[i];
-    if (!dict_value.IsValid() || !list.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
-      continue;
-    }
-    const auto dict_name = AsView(dict_value.GetValue());
-    auto dict = LookupTokenizerDict(state.GetContext(), dict_name);
-    auto tokenizer = AcquireTextTokenizer(state.GetContext(), *dict, dict_name);
-    const auto row_offset = sink.Offset();
-    for (auto element : list.GetChildValues()) {
-      if (!element.IsValid()) {
-        continue;
-      }
-      sink.Tokenize(*tokenizer, element.GetValue());
-    }
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
-  }
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::list_entry_t,
+                                  duckdb::list_entry_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t dict_name, duckdb::list_entry_t entry) {
+      auto tokenizer = AcquireDynamicTokenizer(state, dict_name);
+      sink.Bind(*tokenizer);
+      return SinkRow(sink, [&] { elements.TokenizeInto(sink, entry); });
+    });
 }
 
 using ScalarFnPtr = void (*)(duckdb::DataChunk&, duckdb::ExpressionState&,

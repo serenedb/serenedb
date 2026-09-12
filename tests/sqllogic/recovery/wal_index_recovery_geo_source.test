@@ -12,10 +12,8 @@ control substitution on
 # projections `geo (i)` / `pk (l)`.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wal_geo_src_dict(
-    template = 'geojson',
-    coding = 'source'
-);
+CREATE TEXT SEARCH DICTIONARY wal_geo_src_dict AS
+    encode_geojson(coding := 'source');
 
 statement ok
 CREATE TABLE wal_geo_src_t(pk INTEGER PRIMARY KEY, geo JSON);

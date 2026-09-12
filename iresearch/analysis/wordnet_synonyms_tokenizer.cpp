@@ -55,17 +55,17 @@ std::vector<std::string_view> ParseParams(const std::string_view line,
   std::string_view params;
 
   if (!RegexWordnet(line, &params)) {
-    THROW_SQL_ERROR(
-      ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse line ",
-              line_number));
+    THROW_SQL_ERROR(ERR_MSG(
+      "expand_wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+      line_number));
   }
 
   std::vector<std::string_view> outputs = absl::StrSplit(params, ',');
   if (outputs.size() < kWordnetMinCountParams ||
       outputs.size() > kWordnetMaxCountParams) {
-    THROW_SQL_ERROR(
-      ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse line ",
-              line_number));
+    THROW_SQL_ERROR(ERR_MSG(
+      "expand_wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+      line_number));
   }
   return outputs;
 }
@@ -94,10 +94,10 @@ WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
 
     if (raw_synonym.size() < 3 || raw_synonym.front() != '\'' ||
         raw_synonym.back() != '\'') {
-      THROW_SQL_ERROR(
-        ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse "
-                "line ",
-                line_number));
+      THROW_SQL_ERROR(ERR_MSG(
+        "expand_wordnet_synonyms: failed to parse synonyms: Failed parse "
+        "line ",
+        line_number));
     }
 
     std::string_view synonym = raw_synonym.substr(1, raw_synonym.size() - 2);

@@ -1,25 +1,28 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY kw_dict AS keyword();
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
-    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY ng_dict AS
+    generate_ngrams(2, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
-    coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict AS
+    encode_geojson(coding := 's2point');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
-    coding = 'source');
+CREATE TEXT SEARCH DICTIONARY geo_src_dict AS
+    encode_geojson(coding := 'source');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY any_text_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+CREATE TEXT SEARCH DICTIONARY geopoint_dict AS encode_geopoint('lat', 'lng');
 
 
 # ============================================================================
@@ -34,7 +37,7 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'l
 #     opclasses on one index.
 # ============================================================================
 
-# --- (a) text(kw_dict) + geo_s2 + implicit numeric --------------------------
+# --- (a) split_text(kw_dict) + geo_s2 + implicit numeric --------------------------
 
 statement ok
 CREATE TABLE g10_a(pk INTEGER PRIMARY KEY,

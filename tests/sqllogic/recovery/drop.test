@@ -18,14 +18,9 @@ CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s1.d(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    mingram = 2,
-    case = 'lower',
-    norm = true,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY s1.d AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8') | generate_ngrams(2, 3, mode := 'only_prefix')
+    WITH (frequency, norm)
 
 
 query

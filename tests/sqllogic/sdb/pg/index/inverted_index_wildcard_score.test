@@ -3,7 +3,7 @@ control substitution on
 
 # Wildcard ngram filter scoring contract.
 #
-# `template = 'wildcard'` analyzers emit n-gram tokens for ts_like queries,
+# Wildcard analyzers emit n-gram tokens for ts_like queries,
 # which route through ByWildcardNGram → WildcardQuery → WildcardIterator.
 # WildcardQuery declares Boost() = kNoBoost and visit() as no-op, so the
 # query never contributes field stats. Before this test landed, the
@@ -18,12 +18,8 @@ control substitution on
 # rejected.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wc_score_dict(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wc_score_dict AS
+    generate_wildcard_ngrams(split_csv(' '), 3)
 
 statement ok
 CREATE TABLE wc_score_t (id BIGINT PRIMARY KEY, body VARCHAR)

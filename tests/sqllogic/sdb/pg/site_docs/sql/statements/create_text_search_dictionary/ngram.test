@@ -3,33 +3,24 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_dict (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3
-);
+CREATE TEXT SEARCH DICTIONARY ngram_dict AS
+    generate_ngrams(2, 3);
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY unigram_dict (
-    template = 'ngram',
-    mingram = 1,
-    maxgram = 2
-);
+CREATE TEXT SEARCH DICTIONARY unigram_dict AS
+    generate_ngrams(1, 2);
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_ngram (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3
-);
+CREATE TEXT SEARCH DICTIONARY tok_ngram AS
+    generate_ngrams(2, 3);
 
 query
 SELECT ts_lexize('tok_ngram', 'search');
@@ -42,12 +33,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_ngram_orig (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3,
-    preserveoriginal = true
-);
+CREATE TEXT SEARCH DICTIONARY tok_ngram_orig AS
+    generate_ngrams(2, 3, preserveoriginal := true);
 
 query
 SELECT ts_lexize('tok_ngram_orig', 'search');
@@ -60,13 +47,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_ngram_mark (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3,
-    startmarker = '^',
-    endmarker = '$'
-);
+CREATE TEXT SEARCH DICTIONARY tok_ngram_mark AS
+    generate_ngrams(2, 3, startmarker := '^', endmarker := '$');
 
 query
 SELECT ts_lexize('tok_ngram_mark', 'cat');

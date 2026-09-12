@@ -41,7 +41,7 @@ std::string ModelLocation() {
 }  // namespace
 
 TEST(classification_tokenizer_test, consts) {
-  static_assert("classification" ==
+  static_assert("classify_text" ==
                 irs::Type<irs::analysis::ClassificationTokenizer>::name());
 }
 

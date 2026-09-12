@@ -3,85 +3,51 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_dict (
-    template = 'pipeline',
-    STEP1_TEMPLATE = 'delimiter',
-    STEP1_DELIMITER = ',',
-    STEP2_TEMPLATE = 'text',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower',
-    STEP2_STEMMING = true
-);
+CREATE TEXT SEARCH DICTIONARY pipe_dict AS
+    split_csv(',')
+    | split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY advanced_pipe (
-    template = 'pipeline',
-    STEP1_TEMPLATE = 'delimiter',
-    STEP1_DELIMITER = 'A',
-    STEP2_TEMPLATE = 'text',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower',
-    STEP2_ACCENT = false,
-    STEP2_STEMMING = true,
-    STEP2_STOPWORDS = '"fox"',
-    STEP3_TEMPLATE = 'norm',
-    STEP3_LOCALE = 'en_US.UTF-8',
-    STEP3_CASE = 'upper'
-);
+CREATE TEXT SEARCH DICTIONARY advanced_pipe AS
+    split_csv('A')
+    | split_text(case := 'lower')
+    | normalize_tokens('en_US.UTF-8', accent := false)
+    | remove_stopwords(['fox'])
+    | stem_words('en_US.UTF-8')
+    | normalize_tokens('en_US.UTF-8', case := 'upper');
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_norm (
-    template = 'pipeline',
-    STEP1_TEMPLATE = 'ngram',
-    STEP1_MINGRAM = 2,
-    STEP1_MAXGRAM = 3,
-    STEP2_TEMPLATE = 'norm',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower'
-);
+CREATE TEXT SEARCH DICTIONARY ngram_norm AS
+    generate_ngrams(2, 3) | normalize_tokens('en_US.UTF-8', case := 'lower');
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY nested_pipe (
-    template = 'pipeline',
-    STEP1_TEMPLATE = 'norm',
-    STEP1_LOCALE = 'en_US.UTF-8',
-    STEP1_CASE = 'lower',
-    STEP2_TEMPLATE = 'pipeline',
-    STEP2_STEP1_TEMPLATE = 'delimiter',
-    STEP2_STEP1_DELIMITER = '|',
-    STEP2_STEP2_TEMPLATE = 'norm',
-    STEP2_STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_STEP2_CASE = 'upper',
-    STEP3_TEMPLATE = 'stopwords',
-    STEP3_STOPWORDS = '"A"'
-);
+CREATE TEXT SEARCH DICTIONARY nested_pipe AS
+    normalize_tokens('en_US.UTF-8', case := 'lower')
+    | split_csv('|')
+    | normalize_tokens('en_US.UTF-8', case := 'upper')
+    | remove_stopwords(['A']);
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_delim_norm (
-    template = 'pipeline',
-    -- step 1 splits on commas, step 2 lowercases each piece
-    STEP1_TEMPLATE = 'delimiter',
-    STEP1_DELIMITER = ',',
-    STEP2_TEMPLATE = 'norm',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower'
-);
+-- step 1 splits on commas, step 2 lowercases each piece
+CREATE TEXT SEARCH DICTIONARY pipe_delim_norm AS
+    split_csv(',')
+    | normalize_tokens('en_US.UTF-8', case := 'lower');
 
 query
 SELECT ts_lexize('pipe_delim_norm', 'RED,Green,BLUE');
@@ -94,19 +60,40 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_delim_stem (
-    template = 'pipeline',
-    -- step 1 splits on commas, step 2 lowercases and stems each piece
-    STEP1_TEMPLATE = 'delimiter',
-    STEP1_DELIMITER = ',',
-    STEP2_TEMPLATE = 'text',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower',
-    STEP2_STEMMING = true
-);
+-- step 1 splits on commas, step 2 lowercases and stems each piece
+CREATE TEXT SEARCH DICTIONARY pipe_delim_stem AS
+    split_csv(',')
+    | split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 query
 SELECT ts_lexize('pipe_delim_stem', 'Cats,RUNNING');
 ----
 ts_lexize
 {cat,run}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_expr AS split_csv(',') | normalize_tokens(case := 'lower');
+
+query
+SELECT ts_lexize('pipe_expr', 'RED,Green,BLUE');
+----
+ts_lexize
+{red,green,blue}
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_expr_long AS
+    normalize_tokens(case := 'lower') | split_csv('|') | normalize_tokens(case := 'upper') | remove_stopwords(['A']);
+
+query
+SELECT ts_lexize('pipe_expr_long', 'a|B|c');
+----
+ts_lexize
+{B,C}

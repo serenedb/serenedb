@@ -31,7 +31,7 @@
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
@@ -165,8 +165,8 @@ template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12346}, {},
-    irs::analysis::TokenizerConfig{
-      .config = irs::analysis::SegmentationTokenizer::Options{}});
+    irs::analysis::TokenizerConfig{.config =
+                                     irs::analysis::TextTokenizer::Options{}});
   auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
@@ -2150,7 +2150,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapFractionalRejected) {
 // `@@ ts_like(...)`, `@@ ts_any([...])`) on analyzed columns.
 // ===========================================================================
 
-TEST_F(SearchFilterBuilderTest, test_TermEq_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermEq_Text) {
   // `b @@ 'fOo'` on a segmenting analyzer tokenises 'fOo' to 'foo'
   // and emits one term clause (single-token tokenisation collapses into
   // a term; multi-token would emit a term set counted to one).
@@ -2179,7 +2179,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_Identity) {
   AssertFilter(expected, "SELECT * FROM foo WHERE b < 'Foo'", columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermLess_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermLess_Text) {
   // LESS / LESS_EQUAL / GREATER / GREATER_EQUAL on the TSQUERY surface
   // tokenise their VARCHAR argument via the ambient analyzer
   // (segmenting -> 'Foo' becomes 'foo') and use the resulting single
@@ -2193,7 +2193,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_Segmentation) {
                true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermGreater_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermGreater_Text) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
@@ -2203,7 +2203,7 @@ TEST_F(SearchFilterBuilderTest, test_TermGreater_Segmentation) {
                true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermLessEq_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermLessEq_Text) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
@@ -2213,7 +2213,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLessEq_Segmentation) {
                true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_Text) {
   // 'fOo' tokenises to 'foo' under segmenting; the token is used as
   // the inclusive lower bound.
   std::vector<ColumnSpec> columns{
@@ -2312,7 +2312,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_NullBoundRejected) {
                IdentityAnalyzerProvider, "bound must be non-null");
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermLike_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermLike_Text) {
   // LIKE on the TSQUERY surface does NOT tokenise the pattern --
   // it's a raw wildcard match against indexed terms.
   std::vector<ColumnSpec> columns{
@@ -2401,7 +2401,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_WithNot) {
                true, WildcardTokenizerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
+TEST_F(SearchFilterBuilderTest, test_TermIn_Text) {
   // ANY_OF on a segmenting analyzer tokenises each list element; for
   // single-token elements that's just a term set with one clause per
   // tokenised input.

@@ -3,13 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY fuzzy_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
 CREATE TABLE products (
@@ -104,13 +99,9 @@ id	name
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bigram_dict (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 2,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY bigram_dict AS
+    generate_ngrams(2, 2)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE articles (

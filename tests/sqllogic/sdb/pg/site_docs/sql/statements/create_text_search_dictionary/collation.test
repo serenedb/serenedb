@@ -3,10 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY collation_dict (
-    template = 'collation',
-    locale = 'en_US.UTF-8'
-);
+CREATE TEXT SEARCH DICTIONARY collation_dict AS
+    collate_tokens('en_US.UTF-8');
 
 # A collation dictionary emits one opaque binary collation key per value.
 # The bytes are not human-readable, but comparing the keys reproduces the

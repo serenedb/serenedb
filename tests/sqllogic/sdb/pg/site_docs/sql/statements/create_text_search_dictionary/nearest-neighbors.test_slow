@@ -3,17 +3,11 @@ control substitution on
 # DOCS_TEST: example_001
 
 # DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY nn_dict (
-#|     template = 'nearest_neighbors',
-#|     MODELLOCATION = '/models/cooking.bin',
-#|     TOPK = 2
-#| );
+#| CREATE TEXT SEARCH DICTIONARY nn_dict AS
+#|     nearest_neighbors(modellocation := '/models/cooking.bin', topk := 2);
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY nn_dict (
-    template = 'nearest_neighbors',
-    MODELLOCATION = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    TOPK = 2
-);
+CREATE TEXT SEARCH DICTIONARY nn_dict AS
+    nearest_neighbors(modellocation := '${RESOURCES}/tests/iresearch/model_cooking.bin', topk := 2);

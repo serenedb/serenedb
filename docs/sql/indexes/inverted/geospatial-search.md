@@ -11,15 +11,15 @@ The [inverted index](./index.md) indexes geographic shapes for fast spatial pred
 
 ## Creating a geospatial index
 
-Use the `geojson` dictionary template on a `JSON` column holding GeoJSON. The column type must be `JSON` or `GEOMETRY` — a plain `VARCHAR` is rejected for geo analyzers:
+Use the `encode_geojson` dictionary template on a `JSON` column holding GeoJSON. The column type must be `JSON` or `GEOMETRY` — a plain `VARCHAR` is rejected for geo analyzers:
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_001" />
 
-The `geojson` template indexes `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString` and `MultiPolygon` geometries; `GeometryCollection` is rejected. GeoJSON coordinates are `[longitude, latitude]`. Each geometry is reduced to [S2](http://s2geometry.io/) cell-ID terms — a cell covering for a shape, one ancestor cell per level for a point. A query shape is covered the same way, so rows match when their cells overlap. A `geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `geojson` template accepts `coding = 's2point'` to store a compact S2 encoding of each geometry instead of the source value.
+The `encode_geojson` template indexes `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString` and `MultiPolygon` geometries; `GeometryCollection` is rejected. GeoJSON coordinates are `[longitude, latitude]`. Each geometry is reduced to [S2](http://s2geometry.io/) cell-ID terms — a cell covering for a shape, one ancestor cell per level for a point. A query shape is covered the same way, so rows match when their cells overlap. An `encode_geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `encode_geojson` template accepts `coding = 's2point'` to store a compact S2 encoding of each geometry instead of the source value.
 
 ### Indexing a `GEOMETRY` column
 
-The native [`GEOMETRY`](../../data_types/geometry.md) type is indexed the same way — point it at the `geojson` template (typically with `coding = 's2point'`). `GEOMETRY` values carry WKB internally and are written from WKT with a coordinate reference system; WKT uses the same `longitude latitude` axis order as GeoJSON:
+The native [`GEOMETRY`](../../data_types/geometry.md) type is indexed the same way — point it at the `encode_geojson` template (typically with `coding = 's2point'`). `GEOMETRY` values carry WKB internally and are written from WKT with a coordinate reference system; WKT uses the same `longitude latitude` axis order as GeoJSON:
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_005" />
 
@@ -27,9 +27,9 @@ Query shapes may be supplied as GeoJSON text (as above) **or** as `GEOMETRY` lit
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_006" />
 
-### Indexing latitude/longitude with `geopoint`
+### Indexing latitude/longitude with `encode_geopoint`
 
-When your data already stores coordinates as separate latitude and longitude fields of a JSON object, the `geopoint` template builds a point from them directly — no GeoJSON assembly needed. Name the two fields with the `latitude` and `longitude` options:
+When your data already stores coordinates as separate latitude and longitude fields of a JSON object, the `encode_geopoint` template builds a point from them directly — no GeoJSON assembly needed. Name the two fields with the `latitude` and `longitude` options:
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_007" />
 

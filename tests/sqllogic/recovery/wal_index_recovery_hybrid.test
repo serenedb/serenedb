@@ -12,15 +12,9 @@ control substitution on
 # restart both text search and vector kNN must resolve every row.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hy_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY hy_dict AS
+    split_text(case := 'lower')
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE TABLE wal_hy_t(

@@ -51,17 +51,9 @@ TO 's3://${MINIO_BUCKET}/read_text/${__DATABASE__}/charlie.txt'
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s3_text_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY s3_text_en AS
+    text(case := 'lower') | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
 
 
 # ============================================================================

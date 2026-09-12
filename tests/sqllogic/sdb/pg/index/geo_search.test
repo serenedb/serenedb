@@ -28,9 +28,8 @@ CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo JSON)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_shape(
-    template = 'geojson'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_shape AS
+    encode_geojson()
 
 
 statement ok
@@ -350,10 +349,8 @@ statement ok
 CREATE TABLE geo_plain (id INTEGER PRIMARY KEY, geo VARCHAR)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY plain_text(
-    template = 'text',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY plain_text AS
+    split_text() | stem_words('en_US.UTF-8')
 
 statement ok
 CREATE INDEX geo_plain_idx ON geo_plain USING inverted(id, geo plain_text)
@@ -386,10 +383,8 @@ CREATE TABLE geo_data_g (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_s2point(
-    template = 'geojson',
-    coding = 's2point'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_s2point AS
+    encode_geojson(coding := 's2point')
 
 
 statement ok
@@ -696,10 +691,8 @@ id
 # A geojson dictionary with a LatLng coding cannot index a GEOMETRY column --
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_latlng(
-    template = 'geojson',
-    coding = 's2latlngf64'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_latlng AS
+    encode_geojson(coding := 's2latlngf64')
 
 statement ok
 CREATE TABLE geo_data_g_bad (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
@@ -716,11 +709,8 @@ db error: ERROR: Column 'geo' is GEOMETRY but the geo analyzer uses a LatLng cod
 # ignores them. Force users to a geojson analyzer for GEOMETRY columns.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_dict(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_dict AS
+    encode_geopoint('lat', 'lng')
 
 statement error
 CREATE INDEX geo_data_g_pt_idx ON geo_data_g_bad USING inverted(id, geo geopoint_dict)
@@ -779,16 +769,9 @@ CREATE TABLE places (id INTEGER PRIMARY KEY, geo JSON, body VARCHAR)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY places_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-)
+CREATE TEXT SEARCH DICTIONARY places_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm)
 
 
 statement ok
@@ -1212,10 +1195,8 @@ CREATE TABLE geo_data_g_src (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_source(
-    template = 'geojson',
-    coding = 'source'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_source AS
+    encode_geojson(coding := 'source')
 
 
 statement ok
@@ -1310,11 +1291,8 @@ CREATE TABLE geo_pt (id INTEGER PRIMARY KEY, geo JSON)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_path(
-    template = 'geopoint',
-    latitude = 'loc/lat',
-    longitude = 'loc/lng'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_path AS
+    encode_geopoint('loc/lat', 'loc/lng')
 
 
 statement ok
@@ -1430,9 +1408,8 @@ CREATE TABLE geo_pt_arr (id INTEGER PRIMARY KEY, geo JSON)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_arr(
-    template = 'geopoint'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_arr AS
+    encode_geopoint()
 
 
 statement ok

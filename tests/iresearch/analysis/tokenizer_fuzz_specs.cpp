@@ -31,6 +31,7 @@
 
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
+#include "text_chain.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
 
 namespace tests::fuzz {
@@ -62,17 +63,21 @@ Ptr MakeChild(Cfg cfg) {
 
 icu::Locale Loc(const char* name) { return icu::Locale::createFromName(name); }
 
-TextTokenizer::Options TextOpts(const char* locale, irs::Case convert,
-                                bool stemming,
-                                std::vector<std::string> stopwords = {}) {
-  TextTokenizer::Options opts;
-  opts.locale = Loc(locale);
-  opts.case_convert = convert;
-  opts.stemming = stemming;
-  opts.accent = true;
-  opts.explicit_stopwords = std::move(stopwords);
-  opts.explicit_stopwords_set = true;
-  return opts;
+Cfg TextChainCfg(const char* locale, irs::Case convert, bool stemming,
+                 std::vector<std::string> stopwords = {}) {
+  return ::tests::TextChainConfig({.locale = locale,
+                                   .convert = convert,
+                                   .stemming = stemming,
+                                   .stopwords = std::move(stopwords)});
+}
+
+std::vector<Ptr> ChainModel(Cfg cfg) {
+  std::vector<Ptr> subs;
+  for (auto& child :
+       std::get<PipelineTokenizer::Options>(cfg.config).children) {
+    subs.push_back(MakeChild(std::move(*child)));
+  }
+  return subs;
 }
 
 std::string ModelLocation() {
@@ -111,10 +116,6 @@ const std::filesystem::path& FixtureDir() {
 
 std::string StopwordsFile() {
   return (FixtureDir() / "stopwords.txt").string();
-}
-
-std::string TextStopwordsDir() {
-  return (FixtureDir() / "text_stopwords").string();
 }
 
 constexpr std::string_view kSolrSynonyms =
@@ -619,69 +620,75 @@ void AddStopwords(std::vector<Spec>& out) {
             .native = WordValues()});
 }
 
-void AddText(std::vector<Spec>& out) {
-  Add(out,
-      {.name = "text[en,lower,stem]",
-       .config =
-         [] { return Cfg{TextOpts("en_US.UTF-8", irs::Case::Lower, true)}; },
-       .dict = Merge({WordDict(), BreakDict()}),
-       .native = WordValues(),
-       .cost = 2});
-  Add(out,
-      {.name = "text[en,none,nostem]",
-       .config =
-         [] { return Cfg{TextOpts("en_US.UTF-8", irs::Case::None, false)}; },
-       .dict = Merge({WordDict(), BreakDict()})});
-  Add(out, {.name = "text[en,upper,stopwords]",
-            .config =
-              [] {
-                return Cfg{TextOpts("en_US.UTF-8", irs::Case::Upper, false,
-                                    {"the", "a", "of"})};
-              },
-            .dict = Merge({WordDict(), StopwordDict()})});
-  Add(out,
-      {.name = "text[ru,lower,stem]",
-       .config =
-         [] { return Cfg{TextOpts("ru_RU.UTF-8", irs::Case::Lower, true)}; },
-       .dict = BreakDict()});
-  Add(out,
-      {.name = "text[de,lower,stem]",
-       .config =
-         [] { return Cfg{TextOpts("de_DE.UTF-8", irs::Case::Lower, true)}; },
-       .dict = BreakDict()});
-  Add(out, {.name = "text[en,stopwords_path]",
-            .config =
-              [] {
-                auto opts = TextOpts("en_US.UTF-8", irs::Case::Lower, false);
-                opts.explicit_stopwords_set = false;
-                opts.stopwords_path = TextStopwordsDir();
-                return Cfg{std::move(opts)};
-              },
-            .dict = Merge({WordDict(), StopwordDict()}),
-            .native = WordValues(),
-            .cost = 2});
-  Add(out, {.name = "text[en,ngram2_4]",
-            .config =
-              [] {
-                auto opts = TextOpts("en_US.UTF-8", irs::Case::Lower, false);
-                opts.min_gram = 2;
-                opts.min_gram_set = true;
-                opts.max_gram = 4;
-                opts.max_gram_set = true;
-                opts.preserve_original = true;
-                opts.preserve_original_set = true;
-                return Cfg{std::move(opts)};
-              },
-            .dict = WordDict(),
-            .cost = 8});
+Cfg TextStopwordsPathCfg() {
+  PipelineTokenizer::Options opts;
+  opts.children.push_back(
+    Child(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+  opts.children.push_back(Child(Cfg{StopwordsTokenizer::Options{
+    .stopwords_path = (FixtureDir() / "text_stopwords" / "en").string()}}));
+  return Cfg{std::move(opts)};
 }
 
-void AddSegmentation(std::vector<Spec>& out) {
-  using Options = SegmentationTokenizer::Options;
+Cfg TextEdgeNGramCfg() {
+  PipelineTokenizer::Options opts;
+  opts.children.push_back(
+    Child(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+  opts.children.push_back(Child(Cfg{NGramTokenizer::Options{
+    .min_gram = 2,
+    .max_gram = 4,
+    .preserve_original = true,
+    .stream_bytes_type = NGramTokenizer::InputType::UTF8,
+    .ngram_mode = NGramTokenizer::NGramMode::Prefix}}));
+  return Cfg{std::move(opts)};
+}
+
+void AddTextChain(std::vector<Spec>& out, std::string name,
+                  std::function<Cfg()> config, std::vector<std::string> dict,
+                  std::vector<std::string> native, uint32_t cost) {
+  Add(out, {.name = std::move(name),
+            .config = config,
+            .dict = std::move(dict),
+            .native = std::move(native),
+            .model = Model::Chain,
+            .model_children = [config] { return ChainModel(config()); },
+            .cost = cost});
+}
+
+void AddTextChains(std::vector<Spec>& out) {
+  AddTextChain(
+    out, "text[en,lower,stem]",
+    [] { return TextChainCfg("en_US.UTF-8", irs::Case::Lower, true); },
+    Merge({WordDict(), BreakDict()}), WordValues(), 2);
+  AddTextChain(
+    out, "text[en,none,nostem]",
+    [] { return TextChainCfg("en_US.UTF-8", irs::Case::None, false); },
+    Merge({WordDict(), BreakDict()}), {}, 1);
+  AddTextChain(
+    out, "text[en,upper,stopwords]",
+    [] {
+      return TextChainCfg("en_US.UTF-8", irs::Case::Upper, false,
+                          {"the", "a", "of"});
+    },
+    Merge({WordDict(), StopwordDict()}), {}, 1);
+  AddTextChain(
+    out, "text[ru,lower,stem]",
+    [] { return TextChainCfg("ru_RU.UTF-8", irs::Case::Lower, true); },
+    BreakDict(), {}, 1);
+  AddTextChain(
+    out, "text[de,lower,stem]",
+    [] { return TextChainCfg("de_DE.UTF-8", irs::Case::Lower, true); },
+    BreakDict(), {}, 1);
+  AddTextChain(out, "text[en,stopwords_path]", TextStopwordsPathCfg,
+               Merge({WordDict(), StopwordDict()}), WordValues(), 2);
+  AddTextChain(out, "text[en,ngram2_4]", TextEdgeNGramCfg, WordDict(), {}, 8);
+}
+
+void AddText(std::vector<Spec>& out) {
+  using Options = TextTokenizer::Options;
   const auto add = [&out](Options::Separate separate, Options::Accept accept,
                           irs::Case convert) {
     Add(out,
-        {.name = std::string{"segmentation[sep="} +
+        {.name = std::string{"text[sep="} +
                  std::to_string(static_cast<int>(separate)) +
                  ",accept=" + std::to_string(static_cast<int>(accept)) +
                  ",convert=" + std::to_string(static_cast<int>(convert)) + "]",
@@ -936,44 +943,42 @@ void AddWildcard(std::vector<Spec>& out) {
 }
 
 void AddShingle(std::vector<Spec>& out) {
-  Add(out,
-      {.name = "shingle[2,2]",
-       .config =
-         [] {
-           return Cfg{ShingleTokenizer::Options{
-             .base_analyzer = Child(Cfg{SegmentationTokenizer::Options{}}),
-             .min_shingle_size = 2,
-             .max_shingle_size = 2}};
-         },
-       .dict = Merge({WordDict(), BreakDict()}),
-       .native = WordValues(),
-       .model_children =
-         [] {
-           std::vector<Ptr> subs;
-           subs.push_back(MakeChild(Cfg{SegmentationTokenizer::Options{}}));
-           return subs;
-         },
-       .cost = 2});
-  Add(out,
-      {.name = "shingle[2,3,no_unigrams]",
-       .config =
-         [] {
-           return Cfg{ShingleTokenizer::Options{
-             .base_analyzer = Child(Cfg{SegmentationTokenizer::Options{}}),
-             .min_shingle_size = 2,
-             .max_shingle_size = 3,
-             .output_unigrams = false,
-             .output_unigrams_if_no_shingles = true}};
-         },
-       .dict = WordDict(),
-       .native = WordValues(),
-       .model_children =
-         [] {
-           std::vector<Ptr> subs;
-           subs.push_back(MakeChild(Cfg{SegmentationTokenizer::Options{}}));
-           return subs;
-         },
-       .cost = 2});
+  Add(out, {.name = "shingle[2,2]",
+            .config =
+              [] {
+                return Cfg{ShingleTokenizer::Options{
+                  .base_analyzer = Child(Cfg{TextTokenizer::Options{}}),
+                  .min_shingle_size = 2,
+                  .max_shingle_size = 2}};
+              },
+            .dict = Merge({WordDict(), BreakDict()}),
+            .native = WordValues(),
+            .model_children =
+              [] {
+                std::vector<Ptr> subs;
+                subs.push_back(MakeChild(Cfg{TextTokenizer::Options{}}));
+                return subs;
+              },
+            .cost = 2});
+  Add(out, {.name = "shingle[2,3,no_unigrams]",
+            .config =
+              [] {
+                return Cfg{ShingleTokenizer::Options{
+                  .base_analyzer = Child(Cfg{TextTokenizer::Options{}}),
+                  .min_shingle_size = 2,
+                  .max_shingle_size = 3,
+                  .output_unigrams = false,
+                  .output_unigrams_if_no_shingles = true}};
+              },
+            .dict = WordDict(),
+            .native = WordValues(),
+            .model_children =
+              [] {
+                std::vector<Ptr> subs;
+                subs.push_back(MakeChild(Cfg{TextTokenizer::Options{}}));
+                return subs;
+              },
+            .cost = 2});
   Add(out, {.name = "shingle[1,4,separator]",
             .config =
               [] {
@@ -997,53 +1002,50 @@ void AddShingle(std::vector<Spec>& out) {
                 return subs;
               },
             .cost = 4});
-  Add(out,
-      {.name = "shingle[2,2,frequent]",
-       .config =
-         [] {
-           return Cfg{ShingleTokenizer::Options{
-             .base_analyzer = Child(Cfg{SegmentationTokenizer::Options{}}),
-             .min_shingle_size = 2,
-             .max_shingle_size = 2,
-             .output_unigrams = false,
-             .frequent_words = {Bytes("the"), Bytes("a"), Bytes("of")},
-             .store_tokens = false}};
-         },
-       .dict = Merge({WordDict(), StopwordDict()}),
-       .native = WordValues(),
-       .model_children =
-         [] {
-           std::vector<Ptr> subs;
-           subs.push_back(MakeChild(Cfg{SegmentationTokenizer::Options{}}));
-           return subs;
-         },
-       .cost = 2});
+  Add(out, {.name = "shingle[2,2,frequent]",
+            .config =
+              [] {
+                return Cfg{ShingleTokenizer::Options{
+                  .base_analyzer = Child(Cfg{TextTokenizer::Options{}}),
+                  .min_shingle_size = 2,
+                  .max_shingle_size = 2,
+                  .output_unigrams = false,
+                  .frequent_words = {Bytes("the"), Bytes("a"), Bytes("of")},
+                  .store_tokens = false}};
+              },
+            .dict = Merge({WordDict(), StopwordDict()}),
+            .native = WordValues(),
+            .model_children =
+              [] {
+                std::vector<Ptr> subs;
+                subs.push_back(MakeChild(Cfg{TextTokenizer::Options{}}));
+                return subs;
+              },
+            .cost = 2});
 }
 
 void AddPipeline(std::vector<Spec>& out) {
-  Add(
-    out,
-    {.name = "pipeline[segmentation,stopwords]",
-     .config =
-       [] {
-         PipelineTokenizer::Options opts;
-         opts.children.push_back(Child(Cfg{SegmentationTokenizer::Options{}}));
-         opts.children.push_back(Child(Cfg{StopwordsTokenizer::Options{
-           .mask = {"the", "a", "an", "of", "and"}}}));
-         return Cfg{std::move(opts)};
-       },
-     .dict = Merge({WordDict(), StopwordDict()}),
-     .native = WordValues(),
-     .model = Model::Chain,
-     .model_children =
-       [] {
-         std::vector<Ptr> subs;
-         subs.push_back(MakeChild(Cfg{SegmentationTokenizer::Options{}}));
-         subs.push_back(MakeChild(Cfg{StopwordsTokenizer::Options{
-           .mask = {"the", "a", "an", "of", "and"}}}));
-         return subs;
-       },
-     .cost = 2});
+  Add(out, {.name = "pipeline[segmentation,stopwords]",
+            .config =
+              [] {
+                PipelineTokenizer::Options opts;
+                opts.children.push_back(Child(Cfg{TextTokenizer::Options{}}));
+                opts.children.push_back(Child(Cfg{StopwordsTokenizer::Options{
+                  .mask = {"the", "a", "an", "of", "and"}}}));
+                return Cfg{std::move(opts)};
+              },
+            .dict = Merge({WordDict(), StopwordDict()}),
+            .native = WordValues(),
+            .model = Model::Chain,
+            .model_children =
+              [] {
+                std::vector<Ptr> subs;
+                subs.push_back(MakeChild(Cfg{TextTokenizer::Options{}}));
+                subs.push_back(MakeChild(Cfg{StopwordsTokenizer::Options{
+                  .mask = {"the", "a", "an", "of", "and"}}}));
+                return subs;
+              },
+            .cost = 2});
   Add(out, {.name = "pipeline[delimiter,norm]",
             .config =
               [] {
@@ -1090,48 +1092,48 @@ void AddPipeline(std::vector<Spec>& out) {
                 return subs;
               },
             .cost = 8});
-  Add(out, {.name = "pipeline[text,stem,collation]",
-            .config =
-              [] {
-                PipelineTokenizer::Options opts;
-                opts.children.push_back(
-                  Child(Cfg{TextOpts("en_US.UTF-8", irs::Case::Lower, false)}));
-                opts.children.push_back(Child(Cfg{
-                  StemmingTokenizer::Options{.locale = Loc("en_US.UTF-8")}}));
-                opts.children.push_back(Child(Cfg{
-                  CollationTokenizer::Options{.locale = Loc("en_US.UTF-8")}}));
-                return Cfg{std::move(opts)};
-              },
-            .dict = Merge({WordDict(), BreakDict()}),
-            .native = WordValues(),
-            .cost = 4});
-  Add(
-    out,
-    {.name = "pipeline[segmentation,synonyms,stopwords]",
-     .config =
-       [] {
-         PipelineTokenizer::Options opts;
-         opts.children.push_back(Child(Cfg{SegmentationTokenizer::Options{}}));
-         opts.children.push_back(Child(Cfg{SolrSynonymsTokenizer::Options{
-           .synonyms_text = std::string{kSolrSynonyms}}}));
-         opts.children.push_back(
-           Child(Cfg{StopwordsTokenizer::Options{.mask = {"the", "a"}}}));
-         return Cfg{std::move(opts)};
-       },
-     .dict = Merge({WordDict(), StopwordDict()}),
-     .native = WordValues(),
-     .model = Model::Chain,
-     .model_children =
-       [] {
-         std::vector<Ptr> subs;
-         subs.push_back(MakeChild(Cfg{SegmentationTokenizer::Options{}}));
-         subs.push_back(MakeChild(Cfg{SolrSynonymsTokenizer::Options{
-           .synonyms_text = std::string{kSolrSynonyms}}}));
-         subs.push_back(
-           MakeChild(Cfg{StopwordsTokenizer::Options{.mask = {"the", "a"}}}));
-         return subs;
-       },
-     .cost = 4});
+  Add(out,
+      {.name = "pipeline[text,stem,collation]",
+       .config =
+         [] {
+           PipelineTokenizer::Options opts;
+           opts.children.push_back(
+             Child(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+           opts.children.push_back(Child(
+             Cfg{StemmingTokenizer::Options{.locale = Loc("en_US.UTF-8")}}));
+           opts.children.push_back(Child(
+             Cfg{CollationTokenizer::Options{.locale = Loc("en_US.UTF-8")}}));
+           return Cfg{std::move(opts)};
+         },
+       .dict = Merge({WordDict(), BreakDict()}),
+       .native = WordValues(),
+       .cost = 4});
+  Add(out,
+      {.name = "pipeline[segmentation,synonyms,stopwords]",
+       .config =
+         [] {
+           PipelineTokenizer::Options opts;
+           opts.children.push_back(Child(Cfg{TextTokenizer::Options{}}));
+           opts.children.push_back(Child(Cfg{SolrSynonymsTokenizer::Options{
+             .synonyms_text = std::string{kSolrSynonyms}}}));
+           opts.children.push_back(
+             Child(Cfg{StopwordsTokenizer::Options{.mask = {"the", "a"}}}));
+           return Cfg{std::move(opts)};
+         },
+       .dict = Merge({WordDict(), StopwordDict()}),
+       .native = WordValues(),
+       .model = Model::Chain,
+       .model_children =
+         [] {
+           std::vector<Ptr> subs;
+           subs.push_back(MakeChild(Cfg{TextTokenizer::Options{}}));
+           subs.push_back(MakeChild(Cfg{SolrSynonymsTokenizer::Options{
+             .synonyms_text = std::string{kSolrSynonyms}}}));
+           subs.push_back(
+             MakeChild(Cfg{StopwordsTokenizer::Options{.mask = {"the", "a"}}}));
+           return subs;
+         },
+       .cost = 4});
   Add(out, {.name = "pipeline[single]", .config = [] {
               PipelineTokenizer::Options opts;
               opts.children.push_back(
@@ -1145,8 +1147,8 @@ void AddUnion(std::vector<Spec>& out) {
             .config =
               [] {
                 UnionTokenizer::Options opts;
-                opts.children.push_back(
-                  Child(Cfg{TextOpts("en_US.UTF-8", irs::Case::Lower, false)}));
+                opts.children.push_back(Child(
+                  Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
                 opts.children.push_back(Child(Cfg{NGramTokenizer::Options{
                   .min_gram = 3, .max_gram = 3, .preserve_original = false}}));
                 return Cfg{std::move(opts)};
@@ -1158,8 +1160,7 @@ void AddUnion(std::vector<Spec>& out) {
             .config =
               [] {
                 UnionTokenizer::Options opts;
-                opts.children.push_back(
-                  Child(Cfg{SegmentationTokenizer::Options{}}));
+                opts.children.push_back(Child(Cfg{TextTokenizer::Options{}}));
                 opts.children.push_back(Child(Cfg{
                   CollationTokenizer::Options{.locale = Loc("en_US.UTF-8")}}));
                 return Cfg{std::move(opts)};
@@ -1232,8 +1233,8 @@ const std::vector<Spec>& AllSpecs() {
     AddStemming(out);
     AddCollation(out);
     AddStopwords(out);
+    AddTextChains(out);
     AddText(out);
-    AddSegmentation(out);
     AddIcuText(out);
     AddSynonyms(out);
     AddModels(out);

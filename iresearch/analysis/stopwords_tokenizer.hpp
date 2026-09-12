@@ -50,7 +50,9 @@ class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr std::string_view type_name() noexcept { return "stopwords"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "remove_stopwords";
+  }
 
   explicit StopwordsTokenizer(
     duckdb::shared_ptr<const StopwordSet> stopwords) noexcept;

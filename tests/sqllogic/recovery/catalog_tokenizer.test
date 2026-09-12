@@ -2,13 +2,8 @@ control substitution on
 
 onlyif serenedb
 statement ok
-CREATE TEXT SEARCH DICTIONARY vedernikoff(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY vedernikoff AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 onlyif serenedb
 statement ok

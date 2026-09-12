@@ -3,12 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_dict (
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY norm_dict AS
+    normalize_tokens('en_US.UTF-8', case := 'lower', accent := false);
 
 query
 SELECT ts_lexize('norm_dict', 'CAFÉ');
@@ -21,12 +17,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_upper (
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    accent = true
-);
+CREATE TEXT SEARCH DICTIONARY norm_upper AS
+    normalize_tokens('en_US.UTF-8', case := 'upper', accent := true);
 
 query
 SELECT ts_lexize('norm_upper', 'café');

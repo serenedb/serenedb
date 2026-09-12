@@ -7,9 +7,9 @@ split: headings
 
 The `split_by_non_alpha` template cuts the value into maximal runs of ASCII alphanumeric bytes — `[0-9A-Za-z]` — and emits each run as one token. Every other byte is a separator and is dropped. There is nothing to configure but case conversion: no delimiter list, no pattern, no locale.
 
-That makes it the tokenizer for mixed machine-readable text whose separators are not known in advance — log lines, identifiers, version strings, URLs, serial numbers — where anything that is not a letter or a digit should split. Underscore is a separator here, so `123_abc` yields `123` and `abc`. It is strictly ASCII: every byte from `0x80` up is a separator, so it is not a general-purpose text tokenizer. For Unicode-aware word boundaries use [`segmentation`](./segmentation.md) or [`text`](./text.md); for a known separator use [`delimiter`](./delimiter.md), and for a separator too complex for a fixed string use [`pattern`](./pattern.md).
+That makes it the tokenizer for mixed machine-readable text whose separators are not known in advance — log lines, identifiers, version strings, URLs, serial numbers — where anything that is not a letter or a digit should split. Underscore is a separator here, so `123_abc` yields `123` and `abc`. It is strictly ASCII: every byte from `0x80` up is a separator, so it is not a general-purpose text tokenizer. For Unicode-aware word boundaries use [`split_text`](./text.md); for a known separator use [`split_csv`](./csv.md), and for a separator too complex for a fixed string use [`split_by_pattern`](./pattern.md).
 
-The same splitting is also available as a standalone function, [`ts_split_by_non_alpha`](../../functions/search/full-text.md#ts_split_by_non_alpha), which needs no dictionary in the catalog.
+The same splitting is also available as the scalar function [`split_by_non_alpha(value, case := 'none')`](../../functions/search/tokenizers.md#split_by_non_alpha), which needs no dictionary in the catalog.
 
 ## Options
 
@@ -17,7 +17,7 @@ The same splitting is also available as a standalone function, [`ts_split_by_non
 |---|---|---|---|
 | `CASE` | string | `'none'` | Case conversion applied to each token: `'none'`, `'lower'`, `'upper'` |
 
-`CASE` is the only option this template takes. Its value is matched case-insensitively, so `'Lower'` also works; anything outside the three names fails with `invalid value in "case" parameter`. Any other option — `DELIMITER`, `MINGRAM` — fails with `option "<name>" is not applicable in this context`. The conversion is ASCII-only, which is exhaustive here, because a token holds nothing but ASCII letters and digits by construction.
+`CASE` is the only option this template takes. Its value is matched case-insensitively, so `'Lower'` also works; anything outside the three names fails with `invalid value in "case" parameter`. Any other option — `DELIMITER`, `MINGRAM` — fails with `split_by_non_alpha(): unknown option "<name>"`. The conversion is ASCII-only, which is exhaustive here, because a token holds nothing but ASCII letters and digits by construction.
 
 ## Tokenization
 
@@ -43,9 +43,8 @@ Offsets always point at the run in the original value, whatever `CASE` does to t
 The template needs nothing but its name, so the shortest useful dictionary is one option long:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY alnum_parts (
-    template = 'split_by_non_alpha'
-);
+CREATE TEXT SEARCH DICTIONARY alnum_parts AS
+    split_by_non_alpha();
 
 SELECT ts_lexize('alnum_parts', 'Hello, World! 123_abc');
 ```
@@ -58,23 +57,19 @@ CREATE TABLE logs (
     line VARCHAR
 );
 
-CREATE TEXT SEARCH DICTIONARY alnum_lower (
-    template = 'split_by_non_alpha',
-    case = 'lower',
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY alnum_lower AS
+    split_by_non_alpha(case := 'lower')
+    WITH (frequency, position);
 
 CREATE INDEX idx_logs ON logs USING inverted (id, line alnum_lower);
 ```
 
-The template also nests: a [`pipeline`](./pipeline/index.md) step spells its options with a prefix (`STEP1_TEMPLATE = 'split_by_non_alpha'`, `STEP1_CASE = 'lower'`), a [`union`](./union.md) branch uses `TOKENIZER⟨N⟩_`, and [`copy_from`](./copy-from.md) inherits `CASE` from the source dictionary and lets it be overridden.
+The template also composes: it can be a stage of a [`pipeline`](./pipeline/index.md) (`split_by_non_alpha(case := 'lower') | stem_words('en_US.UTF-8')`) or a branch of a [`union`](./union.md).
 
 ## See also
 
-- [delimiter](./delimiter.md) / [multi_delimiter](./multi-delimiter.md) — split on one or several known separators instead of on every non-alphanumeric byte
+- [csv](./csv.md) / [multi_delimiter](./multi-delimiter.md) — split on one or several known separators instead of on every non-alphanumeric byte
 - [pattern](./pattern.md) — split on, or extract with, an RE2 regular expression
-- [segmentation](./segmentation.md) — Unicode word-boundary splitting, for text that is not ASCII
-- [text](./text.md) — full text analysis with a locale, stemming and stop words
-- [ts_split_by_non_alpha](../../functions/search/full-text.md#ts_split_by_non_alpha) — the same splitting as a scalar function
+- [text](./text.md) — Unicode word-boundary splitting, for text that is not ASCII
+- [`split_by_non_alpha()`](../../functions/search/tokenizers.md#split_by_non_alpha) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

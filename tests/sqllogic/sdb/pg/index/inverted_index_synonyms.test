@@ -3,11 +3,9 @@ hash-threshold 100
 # --- Standalone solr_synonyms dictionary -----------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY syn_solr_basic(
-    template = 'solr_synonyms',
-    synonyms = 'foo, bar
-baz => qux'
-)
+CREATE TEXT SEARCH DICTIONARY syn_solr_basic AS
+    expand_solr_synonyms('foo, bar
+baz => qux')
 
 # Bidirectional line: 'foo' expands to its full equivalence class.
 query
@@ -38,26 +36,21 @@ ts_lexize
 {unknown}
 
 # Required `synonyms` field cannot be omitted.
-statement error required parameter "synonyms" was not found
-CREATE TEXT SEARCH DICTIONARY syn_solr_missing(
-    template = 'solr_synonyms'
-)
+statement error db error: ERROR: expand_solr_synonyms\(\): required option "synonyms" not given
+CREATE TEXT SEARCH DICTIONARY syn_solr_missing AS
+    expand_solr_synonyms()
 
 # Malformed input is rejected at DDL time.
-statement error solr_synonyms: failed to parse synonyms
-CREATE TEXT SEARCH DICTIONARY syn_solr_malformed(
-    template = 'solr_synonyms',
-    synonyms = 'foo => => bar'
-)
+statement error db error: ERROR: expand_solr_synonyms: failed to parse synonyms: More than one explicit mapping specified on the line 1
+CREATE TEXT SEARCH DICTIONARY syn_solr_malformed AS
+    expand_solr_synonyms('foo => => bar')
 
 # --- Standalone wordnet_synonyms dictionary --------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY syn_wordnet_basic(
-    template = 'wordnet_synonyms',
-    synonyms = 's(100000002,1,''come'',v,1,0).
-s(100000002,2,''advance'',v,1,0).'
-)
+CREATE TEXT SEARCH DICTIONARY syn_wordnet_basic AS
+    expand_wordnet_synonyms('s(100000002,1,''come'',v,1,0).
+s(100000002,2,''advance'',v,1,0).')
 
 query
 SELECT ts_lexize('syn_wordnet_basic', 'come');
@@ -78,27 +71,18 @@ SELECT ts_lexize('syn_wordnet_basic', 'missing');
 ts_lexize
 {}
 
-statement error wordnet_synonyms: failed to parse synonyms
-CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed(
-    template = 'wordnet_synonyms',
-    synonyms = 'not a wordnet record'
-)
+statement error db error: ERROR: expand_wordnet_synonyms: failed to parse synonyms: Failed parse line 1
+CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed AS
+    expand_wordnet_synonyms('not a wordnet record')
 
 # --- Pipeline: text (lowercase) -> solr_synonyms ---------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY syn_pipeline(
-    template = 'pipeline',
-    step1_template = 'text',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower',
-    step1_stemming = false,
-    step2_template = 'solr_synonyms',
-    step2_synonyms = 'foo, bar
-baz => qux',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY syn_pipeline AS
+    split_text(case := 'lower')
+    | expand_solr_synonyms('foo, bar
+baz => qux')
+    WITH (frequency, position)
 
 # Mixed-case input is lowercased then synonym-expanded per token.
 query

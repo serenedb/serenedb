@@ -766,7 +766,6 @@ Match rows by the nullness of an indexed column.
 | Function | Description |
 | :--- | :--- |
 | [`ts_lexize(dictionary, text)`](#ts_lexize) | Return the tokens a dictionary produces for `text`. |
-| [`ts_split_by_non_alpha(text [, to_lower])`](#ts_split_by_non_alpha) | Split `text` on runs of non-alphanumeric characters. |
 | [`minhash(tokens, num_hashes)`](#minhash) | Reduce a token list to a MinHash signature of at most `num_hashes` components. |
 
 #### `ts_lexize(dictionary, text)` {#ts_lexize}
@@ -790,24 +789,6 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 Lexize against an n-gram dictionary to see how a term is split for [`ts_ngram`](#ts_ngram) matching:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_lexize_ngram" />
-
-#### `ts_split_by_non_alpha(text [, to_lower])` {#ts_split_by_non_alpha}
-
-Split `text` on runs of non-alphanumeric characters and return the alphanumeric runs as a `LIST(VARCHAR)`. Unlike [`ts_lexize`](#ts_lexize), it needs no dictionary — it is a self-contained scalar function.
-
-| Parameter | Type | Default | Meaning |
-| :--- | :--- | :--- | :--- |
-| `text` | `VARCHAR` | — | The string to split. `NULL` yields `NULL`. |
-| `to_lower` | `BOOLEAN` | `false` | ASCII-lowercase each emitted token. |
-
-A token is a maximal run of `[A-Za-z0-9]`; every other character — punctuation, whitespace, underscores, and any non-ASCII byte — is a separator, and empty tokens are never emitted. This is the fast, dictionary-free equivalent of `regexp_split_to_array(text, '[^A-Za-z0-9]+')` (or `regexp_split_to_array(lower(text), '[^a-z0-9]+')` with `to_lower => true`), without the regex engine.
-
-| Input | `to_lower` | Result |
-| :--- | :--- | :--- |
-| `ts_split_by_non_alpha('Hello, World! 123_abc')` | `false` | `{Hello,World,123,abc}` |
-| `ts_split_by_non_alpha('The Quick-Brown FOX 2024', true)` | `true` | `{the,quick,brown,fox,2024}` |
-
-<SqlLogicTest id="sql/functions/full_text_search/ts_split_by_non_alpha" />
 
 #### `minhash(tokens, num_hashes)` {#minhash}
 

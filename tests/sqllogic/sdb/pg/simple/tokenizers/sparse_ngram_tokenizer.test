@@ -6,10 +6,8 @@ control substitution on
 # --- maxngramlength below minimum ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sng_err1(
-    template = 'sparse_ngram',
-    maxngramlength = 2
-)
+CREATE TEXT SEARCH DICTIONARY sng_err1 AS
+    generate_sparse_ngrams(2)
 ----
 db error: ERROR: "maxngramlength" must be at least 3
 HINT: Maximum emitted n-gram length (minimum 3)
@@ -18,25 +16,19 @@ HINT: Maximum emitted n-gram length (minimum 3)
 # --- covering option not applicable to other tokenizers ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sng_err2(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    covering = true
-)
+CREATE TEXT SEARCH DICTIONARY sng_err2 AS
+    split_text(covering := true)
 ----
-db error: ERROR: option "covering" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "covering"
+HINT: known names: case, break
 
 
 # --- offset feature is not supported ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sng_err3(
-    template = 'sparse_ngram',
-    frequency = true,
-    position = true,
-    offset = true
-)
+CREATE TEXT SEARCH DICTIONARY sng_err3 AS
+    generate_sparse_ngrams()
+    WITH (frequency, position, offset)
 ----
 db error: ERROR: Unsupported index features are specified: 7
 
@@ -44,11 +36,9 @@ db error: ERROR: Unsupported index features are specified: 7
 # --- position feature is not supported (grams have no meaningful positions) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sng_err4(
-    template = 'sparse_ngram',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY sng_err4 AS
+    generate_sparse_ngrams()
+    WITH (frequency, position)
 ----
 db error: ERROR: Unsupported index features are specified: 3
 
@@ -58,9 +48,8 @@ db error: ERROR: Unsupported index features are specified: 3
 # --- Index side: all sparse ngrams ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams(
-    template = 'sparse_ngram'
-)
+CREATE TEXT SEARCH DICTIONARY code_grams AS
+    generate_sparse_ngrams()
 
 
 query
@@ -96,10 +85,8 @@ ts_lexize
 # --- Query side: minimal covering chain ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_covering(
-    template = 'sparse_ngram',
-    covering = true
-)
+CREATE TEXT SEARCH DICTIONARY code_grams_covering AS
+    generate_sparse_ngrams(covering := true)
 
 
 query
@@ -116,14 +103,11 @@ ts_lexize
 {for(i,"(int i=4",=42}
 
 
-# --- copy_from inherits and overrides ---
+# --- the querying dictionary repeats the gram settings with covering on ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_copy(
-    template = 'copy_from',
-    from = 'code_grams',
-    covering = true
-)
+CREATE TEXT SEARCH DICTIONARY code_grams_copy AS
+    generate_sparse_ngrams(covering := true)
 
 
 query
@@ -189,11 +173,9 @@ id
 # on the order; the unrelated document must not match at all.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_ranked(
-    template = 'sparse_ngram',
-    frequency = true,
-    norm = true
-)
+CREATE TEXT SEARCH DICTIONARY code_grams_ranked AS
+    generate_sparse_ngrams()
+    WITH (frequency, norm)
 
 
 statement ok
@@ -252,18 +234,9 @@ ts_offsets
 # offsets at all, so highlight must raise a clean error instead of crashing.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_dict(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    tokenizer1_case = 'lower',
-    tokenizer1_stemming = false,
-    tokenizer2_template = 'ngram',
-    tokenizer2_mingram = 3,
-    tokenizer2_maxgram = 3,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_dict AS
+    [split_text(case := 'lower'), generate_ngrams(3, 3)]
+    WITH (frequency, position)
 
 
 statement ok

@@ -25,18 +25,14 @@
 # re-parses the force-included cs[user_id]).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY g_dict(template = 'geojson', coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY g_dict AS encode_geojson(coding := 's2point');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY g_src_dict(template = 'geojson', coding = 'source');
+CREATE TEXT SEARCH DICTIONARY g_src_dict AS encode_geojson(coding := 'source');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY w_dict(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY w_dict AS
+    generate_wildcard_ngrams(split_csv(' '), 3);
 
 # -------- Case 1: geo + INCLUDE --------
 

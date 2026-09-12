@@ -18,15 +18,9 @@ COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS u
 TO '${__TEST_DIR__}/view_prune.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY prune_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY prune_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # Case 1: wide view, narrow index. Pruning drops unused1/unused2/unused3.
@@ -353,7 +347,7 @@ count
 # view column. Each split token is indexed.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY prune_kw(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY prune_kw AS keyword();
 
 statement ok
 CREATE VIEW prune_v10 AS

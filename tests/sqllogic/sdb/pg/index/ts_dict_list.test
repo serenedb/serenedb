@@ -10,7 +10,7 @@ hash-threshold 100
 # by VACUUM (REFRESH_TABLE).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ldl_kw(template = 'keyword', frequency = true)
+CREATE TEXT SEARCH DICTIONARY ldl_kw AS keyword() WITH (frequency)
 
 
 statement ok

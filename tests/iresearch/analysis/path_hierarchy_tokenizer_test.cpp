@@ -53,7 +53,7 @@ void AssertTokenStreamContents(
 }
 
 TEST(PathHierarchyTokenizerTests, consts) {
-  static_assert("path_hierarchy" == irs::Type<PathHierarchyTokenizer>::name());
+  static_assert("expand_path" == irs::Type<PathHierarchyTokenizer>::name());
 }
 
 using Options = PathHierarchyTokenizer::Options;

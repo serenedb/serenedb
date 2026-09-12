@@ -74,9 +74,6 @@ CREATE FUNCTION :"schema".double_it(integer) RETURNS integer
 \if :on_serenedb
   -- Text search dictionary backed by serened's `text` tokenizer template.
   -- Surfaces in pg_ts_dict and `\dFd`.
-  CREATE TEXT SEARCH DICTIONARY :"schema".simple_dict (
-    template = 'text',
-    locale   = 'en_US.UTF-8',
-    case     = 'none'
-  );
+  CREATE TEXT SEARCH DICTIONARY :"schema".simple_dict AS
+      split_text() | stem_words('en_US.UTF-8');
 \endif

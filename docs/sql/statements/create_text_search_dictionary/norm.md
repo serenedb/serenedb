@@ -1,15 +1,15 @@
 ---
-title: "norm"
+title: "normalize_tokens"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# norm
+# normalize_tokens
 
-The `norm` template normalizes the whole input and returns it as a single token without splitting it into words. Normalization to the Unicode form named by `FORM` always happens; on top of it `CASE` folds case and `ACCENT = false` strips accent marks; the defaults do neither. Because the entire value becomes one token, it behaves like a normalized keyword: two strings match only if they are equal after normalization.
+The `normalize_tokens` template normalizes the whole input and returns it as a single token without splitting it into words. Normalization to the Unicode form named by `FORM` always happens; on top of it `CASE` folds case and `ACCENT = false` strips accent marks; the defaults do neither. Because the entire value becomes one token, it behaves like a normalized keyword: two strings match only if they are equal after normalization.
 
-Use it for exact-match or keyword columns — tags, codes, names, enum-like values — that should still compare case-insensitively or accent-insensitively, rather than for free-text search. For per-word tokenization with comparable case and accent options, use [`text`](./text.md).
+Use it for exact-match or keyword columns — tags, codes, names, enum-like values — that should still compare case-insensitively or accent-insensitively, rather than for free-text search. For per-word tokenization with comparable case and accent options, use [`split_text`](./text.md).
 
 The template name is unrelated to the `NORM` [feature flag](./index.md#feature-flags), which stores per-document length factors. A `norm` dictionary accepts all four flags — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` — as long as their dependencies hold: `OFFSET` requires `POSITION`, and `POSITION` and `NORM` require `FREQUENCY`.
 
@@ -26,7 +26,7 @@ The template name is unrelated to the `NORM` [feature flag](./index.md#feature-f
 
 ## Tokenization
 
-`norm` always emits exactly one token per value: the input normalized per the options. Spaces and punctuation are kept verbatim — the value is never split — and nothing is added: no marker, no prefix, no suffix, and no copy of the original text. The token type is `VARCHAR`, so `ts_lexize` returns a one-element array, and the token's offsets always cover the whole value, from `0` to the value's length in bytes. An empty value yields one empty token; a `NULL` value yields no token.
+`normalize_tokens` always emits exactly one token per value: the input normalized per the options. Spaces and punctuation are kept verbatim — the value is never split — and nothing is added: no marker, no prefix, no suffix, and no copy of the original text. The token type is `VARCHAR`, so `ts_lexize` returns a one-element array, and the token's offsets always cover the whole value, from `0` to the value's length in bytes. An empty value yields one empty token; a `NULL` value yields no token.
 
 Normalization to `FORM` always applies; `CASE` conversion and, when `ACCENT = false`, accent folding run on top of it. Accent folding removes Unicode nonspacing marks, so `é` becomes `e` and Cyrillic `Ё` becomes `Е`, while letters whose diacritic is not a separate combining mark — `ø`, `ł`, `đ` — pass through unchanged. Normalization itself is unconditional: even with every default (`CASE = 'none'`, `ACCENT = true`, `FORM = 'nfc'`) a decomposed input is recomposed, so `Cafe` followed by U+0301 indexes as `Café`. The table below shows how the same input transforms under different option combinations.
 
@@ -41,7 +41,7 @@ Normalization to `FORM` always applies; `CASE` conversion and, when `ACCENT = fa
 | `ＦＵＬＬ` | `FORM = 'nfkc'`, `CASE = 'lower'` | `full` |
 | `café 2²` | `FORM = 'nfkc'`, `CASE = 'lower'` | `café 22` |
 
-Because two values collide only when their normalized forms are identical, a `norm` dictionary with `CASE = 'lower'` and `ACCENT = false` makes `CAFÉ`, `Café` and `cafe` all match.
+Because two values collide only when their normalized forms are identical, a `normalize_tokens` dictionary with `CASE = 'lower'` and `ACCENT = false` makes `CAFÉ`, `Café` and `cafe` all match.
 
 ### Compatibility normalization
 
@@ -68,4 +68,5 @@ Folding to upper case while keeping accent marks turns `café` into `CAFÉ`:
 - [text](./text.md) — per-word tokenization, with full ICU case mapping instead of the simple mappings
 - [keyword](./keyword.md) — keeps the value as one token without normalizing it
 - [collation](./collation.md) — one opaque sort-key token per value, for locale-aware ordering
+- [`normalize_tokens()`](../../functions/search/tokenizers.md#normalize_tokens) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

@@ -1,15 +1,15 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
-    coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict AS
+    encode_geojson(coding := 's2point');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
-    coding = 'source');
+CREATE TEXT SEARCH DICTIONARY geo_src_dict AS
+    encode_geojson(coding := 'source');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+CREATE TEXT SEARCH DICTIONARY geopoint_dict AS encode_geopoint('lat', 'lng');
 
 
 # ============================================================================

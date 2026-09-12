@@ -24,7 +24,6 @@
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -43,79 +42,59 @@ namespace {
 using namespace irs;
 using namespace irs::analysis;
 
-Tokenizer::ptr MakeTextEn() {
-  TextTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en_US.UTF-8");
-  o.explicit_stopwords = {"the", "and", "of", "a"};
-  o.explicit_stopwords_set = true;
-  return TextTokenizer::Make(std::move(o), tests::Cache());
+const std::vector<std::string> kStopwords = {"the", "and", "of", "a"};
+
+Tokenizer::ptr MakeHead(const icu::Locale& seg_locale) {
+  if (seg_locale.isBogus()) {
+    return TextTokenizer::Make({.convert = irs::Case::Lower});
+  }
+  return IcuTextTokenizer::Make({.locale = seg_locale});
+}
+
+Tokenizer::ptr MakeNorm(bool lower) {
+  NormalizingTokenizer::Options o;
+  o.locale = icu::Locale::createFromName("en");
+  o.case_convert = lower ? Case::Lower : Case::None;
+  o.accent = false;
+  return NormalizingTokenizer::Make(std::move(o));
+}
+
+Tokenizer::ptr MakeStem() {
+  StemmingTokenizer::Options o;
+  o.locale = icu::Locale::createFromName("en");
+  return StemmingTokenizer::Make(std::move(o));
 }
 
 Tokenizer::ptr MakePipelineTextEn(
   const icu::Locale& seg_locale = irs::MakeBogusLocale()) {
   const bool icu = !seg_locale.isBogus();
   std::vector<Tokenizer::ptr> subs;
-  if (icu) {
-    subs.push_back(IcuTextTokenizer::Make({.locale = seg_locale}));
-  } else {
-    subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
-  }
-  {
-    NormalizingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    o.case_convert = icu ? Case::Lower : Case::None;
-    o.accent = false;
-    subs.push_back(NormalizingTokenizer::Make(std::move(o)));
-  }
+  subs.push_back(MakeHead(seg_locale));
+  subs.push_back(MakeNorm(icu));
   {
     StopwordsTokenizer::Options s;
-    s.mask = {"the", "and", "of", "a"};
+    s.mask = kStopwords;
     subs.push_back(StopwordsTokenizer::Make(std::move(s), tests::Cache()));
   }
-  {
-    StemmingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    subs.push_back(StemmingTokenizer::Make(std::move(o)));
-  }
+  subs.push_back(MakeStem());
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 
-Tokenizer::ptr MakeTextEnNGram(size_t min_gram, size_t max_gram,
-                               bool preserve_original) {
-  TextTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en_US.UTF-8");
-  o.explicit_stopwords = {"the", "and", "of", "a"};
-  o.explicit_stopwords_set = true;
-  o.min_gram = min_gram;
-  o.min_gram_set = true;
-  o.max_gram = max_gram;
-  o.max_gram_set = true;
-  o.preserve_original = preserve_original;
-  o.preserve_original_set = true;
-  return TextTokenizer::Make(std::move(o), tests::Cache());
+Tokenizer::ptr MakeIcuTextEn() {
+  return MakePipelineTextEn(icu::Locale::createFromName("en_US.UTF-8"));
 }
 
 Tokenizer::ptr MakePipelineTextEnNGram(size_t min_gram, size_t max_gram,
                                        bool preserve_original) {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
-  {
-    NormalizingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    o.case_convert = Case::None;
-    o.accent = false;
-    subs.push_back(NormalizingTokenizer::Make(std::move(o)));
-  }
+  subs.push_back(MakeHead(irs::MakeBogusLocale()));
+  subs.push_back(MakeNorm(false));
   {
     StopwordsTokenizer::Options s;
-    s.mask = {"the", "and", "of", "a"};
+    s.mask = kStopwords;
     subs.push_back(StopwordsTokenizer::Make(std::move(s), tests::Cache()));
   }
-  {
-    StemmingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    subs.push_back(StemmingTokenizer::Make(std::move(o)));
-  }
+  subs.push_back(MakeStem());
   {
     NGramTokenizer::Options o;
     o.min_gram = min_gram;
@@ -182,7 +161,7 @@ constexpr TokenLayout kLayouts[] = {
 
 void ExpectTokensEq(const std::vector<tests::AnalyzerToken>& expect,
                     const std::vector<tests::AnalyzerToken>& got,
-                    TokenLayout layout, bool allow_wider_offs_end = false) {
+                    TokenLayout layout) {
   ASSERT_EQ(expect.size(), got.size());
   for (size_t i = 0; i < expect.size(); ++i) {
     SCOPED_TRACE(testing::Message() << "token " << i);
@@ -192,24 +171,19 @@ void ExpectTokensEq(const std::vector<tests::AnalyzerToken>& expect,
     }
     if (layout == TokenLayout::TermsPosOffs) {
       EXPECT_EQ(expect[i].offs_start, got[i].offs_start);
-      if (allow_wider_offs_end && got[i].offs_end != expect[i].offs_end) {
-        EXPECT_GT(got[i].offs_end, expect[i].offs_end);
-      } else {
-        EXPECT_EQ(expect[i].offs_end, got[i].offs_end);
-      }
+      EXPECT_EQ(expect[i].offs_end, got[i].offs_end);
     }
   }
 }
 
-TEST(TextPipelineEquivalenceTest, per_value_streams_match) {
-  auto text = MakeTextEn();
-  auto pipe = MakePipelineTextEn();
+void ExpectStreamsMatch(Tokenizer& expect_stream, Tokenizer& got_stream,
+                        const std::vector<std::string>& values) {
   for (const auto layout : kLayouts) {
-    for (const auto& v : Corpus()) {
+    for (const auto& v : values) {
       SCOPED_TRACE(testing::Message()
                    << "layout=" << static_cast<int>(layout) << " value=" << v);
-      const auto expect = tests::Analyze(*text, v, layout);
-      const auto got = tests::Analyze(*pipe, v, layout);
+      const auto expect = tests::Analyze(expect_stream, v, layout);
+      const auto got = tests::Analyze(got_stream, v, layout);
       ASSERT_EQ(expect.has_value(), got.has_value());
       if (!expect.has_value()) {
         continue;
@@ -219,7 +193,57 @@ TEST(TextPipelineEquivalenceTest, per_value_streams_match) {
   }
 }
 
-TEST(TextPipelineEquivalenceTest, ngram_streams_match) {
+size_t Utf8Length(std::string_view s) {
+  size_t n = 0;
+  for (const unsigned char c : s) {
+    n += (c & 0xC0) != 0x80;
+  }
+  return n;
+}
+
+std::string Utf8Prefix(std::string_view s, size_t symbols) {
+  size_t i = 0;
+  for (size_t seen = 0; i < s.size(); ++i) {
+    const bool lead = (static_cast<unsigned char>(s[i]) & 0xC0) != 0x80;
+    if (lead && seen++ == symbols) {
+      break;
+    }
+  }
+  return std::string{s.substr(0, i)};
+}
+
+std::vector<tests::AnalyzerToken> EdgeNGrams(
+  const std::vector<tests::AnalyzerToken>& words, size_t min_gram,
+  size_t max_gram, bool preserve_original, TokenLayout layout) {
+  std::vector<tests::AnalyzerToken> out;
+  const bool offs = layout == TokenLayout::TermsPosOffs;
+  for (const auto& w : words) {
+    const size_t nsym = Utf8Length(w.term);
+    const auto gram = [&](std::string term) {
+      const uint32_t end =
+        term.size() == w.term.size()
+          ? w.offs_end
+          : w.offs_start + static_cast<uint32_t>(term.size());
+      out.push_back(
+        {std::move(term), w.pos, offs ? w.offs_start : 0, offs ? end : 0});
+    };
+    for (size_t len = min_gram; len <= std::min(max_gram, nsym); ++len) {
+      gram(Utf8Prefix(w.term, len));
+    }
+    if (preserve_original && (nsym < min_gram || nsym > max_gram)) {
+      gram(w.term);
+    }
+  }
+  return out;
+}
+
+TEST(TextPipelineEquivalenceTest, icu_head_matches_uax_head) {
+  auto icu = MakeIcuTextEn();
+  auto uax = MakePipelineTextEn();
+  ExpectStreamsMatch(*icu, *uax, Corpus());
+}
+
+TEST(TextPipelineEquivalenceTest, ngram_streams_match_model) {
   struct Config {
     size_t min_gram;
     size_t max_gram;
@@ -231,9 +255,8 @@ TEST(TextPipelineEquivalenceTest, ngram_streams_match) {
     {3, 3, true},
     {1, 8, false},
   };
+  auto words = MakePipelineTextEn();
   for (const auto& cfg : kConfigs) {
-    auto text =
-      MakeTextEnNGram(cfg.min_gram, cfg.max_gram, cfg.preserve_original);
     auto pipe = MakePipelineTextEnNGram(cfg.min_gram, cfg.max_gram,
                                         cfg.preserve_original);
     for (const auto layout : kLayouts) {
@@ -242,19 +265,21 @@ TEST(TextPipelineEquivalenceTest, ngram_streams_match) {
                      << "min=" << cfg.min_gram << " max=" << cfg.max_gram
                      << " orig=" << cfg.preserve_original << " layout="
                      << static_cast<int>(layout) << " value=" << v);
-        const auto expect = tests::Analyze(*text, v, layout);
+        const auto base = tests::Analyze(*words, v, TokenLayout::TermsPosOffs);
         const auto got = tests::Analyze(*pipe, v, layout);
-        ASSERT_EQ(expect.has_value(), got.has_value());
-        if (!expect.has_value()) {
+        ASSERT_EQ(base.has_value(), got.has_value());
+        if (!base.has_value()) {
           continue;
         }
-        ExpectTokensEq(*expect, *got, layout, true);
+        const auto expect = EdgeNGrams(*base, cfg.min_gram, cfg.max_gram,
+                                       cfg.preserve_original, layout);
+        ExpectTokensEq(expect, *got, layout);
       }
     }
   }
 }
 
-TEST(TextPipelineEquivalenceTest, loaded_stopwords_match_text) {
+TEST(TextPipelineEquivalenceTest, loaded_stopwords_match_inline) {
   const auto dir =
     std::filesystem::temp_directory_path() / "sdb_equiv_stopwords" / "en";
   std::filesystem::create_directories(dir);
@@ -262,76 +287,26 @@ TEST(TextPipelineEquivalenceTest, loaded_stopwords_match_text) {
     std::ofstream out{dir / "list"};
     out << "the\nand\nof\na\nover\nunder\n";
   }
-  const std::string root = dir.parent_path().string();
 
-  TextTokenizer::Options to;
-  to.locale = icu::Locale::createFromName("en_US.UTF-8");
-  to.stopwords_path = root;
-  auto text = TextTokenizer::Make(std::move(to), tests::Cache());
-
-  std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
-  {
-    NormalizingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    o.case_convert = Case::None;
-    o.accent = false;
-    subs.push_back(NormalizingTokenizer::Make(std::move(o)));
-  }
-  {
-    StopwordsTokenizer::Options s;
-    s.stopwords_path = dir.string();
-    subs.push_back(StopwordsTokenizer::Make(std::move(s), tests::Cache()));
-  }
-  {
-    StemmingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
-    subs.push_back(StemmingTokenizer::Make(std::move(o)));
-  }
-  auto pipe = std::make_unique<PipelineTokenizer>(std::move(subs));
-
-  for (const auto layout : kLayouts) {
-    for (const auto& v : Corpus()) {
-      SCOPED_TRACE(testing::Message()
-                   << "layout=" << static_cast<int>(layout) << " value=" << v);
-      const auto expect = tests::Analyze(*text, v, layout);
-      const auto got = tests::Analyze(*pipe, v, layout);
-      ASSERT_EQ(expect.has_value(), got.has_value());
-      if (!expect.has_value()) {
-        continue;
-      }
-      ExpectTokensEq(*expect, *got, layout);
-    }
-  }
-}
-
-TEST(TextPipelineEquivalenceTest, locale_segmentation_matches_text) {
-  auto text = MakeTextEn();
-  auto pipe = MakePipelineTextEn(icu::Locale::createFromName("en_US.UTF-8"));
-  auto values = Corpus();
-  const auto& dict = DictScriptCorpus();
-  values.insert(values.end(), dict.begin(), dict.end());
-  for (const auto layout : kLayouts) {
-    for (const auto& v : values) {
-      SCOPED_TRACE(testing::Message()
-                   << "layout=" << static_cast<int>(layout) << " value=" << v);
-      const auto expect = tests::Analyze(*text, v, layout);
-      const auto got = tests::Analyze(*pipe, v, layout);
-      ASSERT_EQ(expect.has_value(), got.has_value());
-      if (!expect.has_value()) {
-        continue;
-      }
-      ExpectTokensEq(*expect, *got, layout);
-    }
-  }
+  const auto make = [&](StopwordsTokenizer::Options stop) {
+    std::vector<Tokenizer::ptr> subs;
+    subs.push_back(MakeHead(irs::MakeBogusLocale()));
+    subs.push_back(MakeNorm(false));
+    subs.push_back(StopwordsTokenizer::Make(std::move(stop), tests::Cache()));
+    subs.push_back(MakeStem());
+    return std::make_unique<PipelineTokenizer>(std::move(subs));
+  };
+  auto inline_mask = make({.mask = {"the", "and", "of", "a", "over", "under"}});
+  auto loaded = make({.stopwords_path = dir.string()});
+  ExpectStreamsMatch(*inline_mask, *loaded, Corpus());
 }
 
 TEST(TextPipelineEquivalenceTest, icu_sentence_segmentation) {
-  using Separate = SegmentationTokenizer::Options::Separate;
-  using Accept = SegmentationTokenizer::Options::Accept;
-  auto def = SegmentationTokenizer::Make({.separate = Separate::Sentence,
-                                          .accept = Accept::Any,
-                                          .convert = irs::Case::None});
+  using Separate = TextTokenizer::Options::Separate;
+  using Accept = TextTokenizer::Options::Accept;
+  auto def = TextTokenizer::Make({.separate = Separate::Sentence,
+                                  .accept = Accept::Any,
+                                  .convert = irs::Case::None});
   auto icu = IcuTextTokenizer::Make(
     {.separate = IcuTextTokenizer::Options::Separate::Sentence,
      .accept = Accept::Any,
@@ -352,20 +327,25 @@ TEST(TextPipelineEquivalenceTest, icu_sentence_segmentation) {
 }
 
 TEST(TextPipelineEquivalenceTest, known_segmentation_divergence) {
-  auto text = MakeTextEn();
-  auto pipe = MakePipelineTextEn();
-  auto divergent = DictScriptCorpus();
-  const auto& invalid = InvalidUtf8Corpus();
-  divergent.insert(divergent.end(), invalid.begin(), invalid.end());
-  for (const auto& v : divergent) {
+  auto icu = MakeIcuTextEn();
+  auto uax = MakePipelineTextEn();
+  for (const auto& v : DictScriptCorpus()) {
     SCOPED_TRACE(testing::Message() << "value=" << v);
-    const auto expect = tests::Analyze(*text, v, TokenLayout::Terms);
-    const auto got = tests::Analyze(*pipe, v, TokenLayout::Terms);
+    const auto expect = tests::Analyze(*icu, v, TokenLayout::Terms);
+    const auto got = tests::Analyze(*uax, v, TokenLayout::Terms);
     ASSERT_TRUE(expect.has_value());
     ASSERT_TRUE(got.has_value());
     EXPECT_FALSE(expect->empty());
     EXPECT_FALSE(got->empty());
     EXPECT_NE(*expect, *got);
+  }
+  for (const auto& v : InvalidUtf8Corpus()) {
+    SCOPED_TRACE(testing::Message() << "value=" << v);
+    const auto expect = tests::Analyze(*icu, v, TokenLayout::Terms);
+    const auto got = tests::Analyze(*uax, v, TokenLayout::Terms);
+    ASSERT_TRUE(got.has_value());
+    EXPECT_FALSE(got->empty());
+    EXPECT_TRUE(!expect.has_value() || *expect != *got);
   }
 }
 
@@ -435,9 +415,9 @@ TEST(TextPipelineEquivalenceTest, pipeline_column_matches_per_value) {
   }
 }
 
-TEST(TextPipelineEquivalenceTest, text_column_matches_pipeline_column) {
-  auto text = MakeTextEn();
-  auto pipe = MakePipelineTextEn();
+TEST(TextPipelineEquivalenceTest, icu_column_matches_uax_column) {
+  auto icu = MakeIcuTextEn();
+  auto uax = MakePipelineTextEn();
   const auto& values = Corpus();
   std::vector<duckdb::string_t> handles;
   handles.reserve(values.size());
@@ -468,8 +448,8 @@ TEST(TextPipelineEquivalenceTest, text_column_matches_pipeline_column) {
       sink.writer.Finish();
       return out;
     };
-    const auto expect = collect(*text);
-    const auto got = collect(*pipe);
+    const auto expect = collect(*icu);
+    const auto got = collect(*uax);
     ASSERT_EQ(expect.size(), got.size());
     for (size_t i = 0; i < expect.size(); ++i) {
       SCOPED_TRACE(testing::Message() << "token " << i);

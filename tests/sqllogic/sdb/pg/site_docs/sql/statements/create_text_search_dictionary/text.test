@@ -3,73 +3,67 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = true,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY words_dict AS
+    split_text(case := 'lower', break := 'alpha');
+
+query
+SELECT ts_lexize('words_dict', 'The Quick fox-trot.');
+----
+ts_lexize
+{the,quick,fox,trot}
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY graphic_dict AS
+    split_text(break := 'graphic');
+
+query
+SELECT ts_lexize('graphic_dict', 'The Quick fox-trot.');
+----
+ts_lexize
+{The,Quick,fox,-,trot,.}
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY autocomplete_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    mingram = 2,
-    maxgram = 5,
-    PRESERVEORIGINAL = true
-);
+CREATE TEXT SEARCH DICTIONARY all_dict AS
+    split_text(case := 'upper', break := 'all');
+
+query
+SELECT ts_lexize('all_dict', 'The Quick fox-trot.');
+----
+ts_lexize
+{THE," ",QUICK," ",FOX,-,TROT,.}
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY filtered_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    stopwords = '"the","a","an","is","at"'
-);
+CREATE TEXT SEARCH DICTIONARY sentence_dict AS
+    split_text(break := 'sentence');
+
+query
+SELECT ts_lexize('sentence_dict', 'Hello world. Second sentence!  Third one?');
+----
+ts_lexize
+{"Hello world.","Second sentence!","Third one?"}
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_text_stem (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = true
-);
+CREATE TEXT SEARCH DICTIONARY english_stem AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 query
-SELECT ts_lexize('tok_text_stem', 'The runners were running quickly');
+SELECT ts_lexize('english_stem', 'The runners were running quickly');
 ----
 ts_lexize
 {the,runner,were,run,quick}
@@ -79,35 +73,27 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_text_exact (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true
-);
+CREATE TEXT SEARCH DICTIONARY exact_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
-SELECT ts_lexize('tok_text_exact', 'The Runners Café');
+SELECT ts_lexize('exact_words', 'The Runners Café');
 ----
 ts_lexize
-{The,Runners,Café}
+{The,Runners,Cafe}
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_text_stop (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    stopwords = '"the","a","an","is"'
-);
+CREATE TEXT SEARCH DICTIONARY english_filtered AS
+    split_text(case := 'lower')
+    | remove_stopwords(['the', 'a', 'an', 'is'])
+    | stem_words('en_US.UTF-8');
 
 query
-SELECT ts_lexize('tok_text_stop', 'The cat is a hunter');
+SELECT ts_lexize('english_filtered', 'The cat is a hunter');
 ----
 ts_lexize
 {cat,hunter}
@@ -117,17 +103,11 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_text_edge (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    mingram = 2,
-    maxgram = 4,
-    preserveoriginal = true
-);
+CREATE TEXT SEARCH DICTIONARY autocomplete AS
+    split_text(case := 'lower') | generate_ngrams(2, 4, preserveoriginal := true, mode := 'only_prefix');
 
 query
-SELECT ts_lexize('tok_text_edge', 'Search');
+SELECT ts_lexize('autocomplete', 'Search');
 ----
 ts_lexize
 {se,sea,sear,search}

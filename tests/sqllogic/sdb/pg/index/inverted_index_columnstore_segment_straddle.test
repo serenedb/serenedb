@@ -24,15 +24,9 @@ statement ok
 INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(1, 3000) i;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY straddle_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY straddle_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX t_idx ON t USING inverted(txt straddle_dict)

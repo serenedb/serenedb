@@ -1,15 +1,15 @@
 ---
-title: "delimiter"
+title: "split_csv"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# delimiter
+# split_csv
 
-The `delimiter` template cuts the input at every occurrence of one delimiter and emits the pieces as tokens, with no further analysis. The delimiter is a byte string, not a regular expression: a single character, a multi-character string such as `'::'` and a multi-byte UTF-8 character all work, and matching is byte-exact. The template also honours `"` quoting, so a delimiter inside a quoted run does not cut — see [Quoted pieces](#quoted-pieces). It is the simplest tokenizer and suits structured values whose parts are separated by a known separator — comma-separated tags, slash-separated paths, dotted identifiers.
+The `split_csv` template cuts the input at every occurrence of one delimiter and emits the pieces as tokens, with no further analysis. The delimiter is a byte string, not a regular expression: a single character, a multi-character string such as `'::'` and a multi-byte UTF-8 character all work, and matching is byte-exact. The template also honours `"` quoting, so a delimiter inside a quoted run does not cut — see [Quoted pieces](#quoted-pieces). It is the simplest tokenizer and suits structured values whose parts are separated by a known separator — comma-separated tags, slash-separated paths, dotted identifiers.
 
-For example, with `DELIMITER = ','` the value `red,green,blue` produces the tokens `red`, `green` and `blue`. To split on more than one separator, use [`multi_delimiter`](./multi-delimiter.md), which drops empty tokens and does no quote handling; to further process each piece — lower-case it, stem it, drop stop words — chain this template into a [`pipeline`](./pipeline/index.md).
+For example, with `DELIMITER = ','` the value `red,green,blue` produces the tokens `red`, `green` and `blue`. To split on more than one separator, use [`split_by_delimiters`](./multi-delimiter.md), which drops empty tokens and does no quote handling; to further process each piece — lower-case it, stem it, drop stop words — chain this template into a [`pipeline`](./pipeline/index.md).
 
 ## Options
 
@@ -17,7 +17,7 @@ For example, with `DELIMITER = ','` the value `red,green,blue` produces the toke
 |---|---|---|---|
 | `DELIMITER` | string | **required** | Byte string the input is cut at. It may be one character, a multi-character string or a multi-byte UTF-8 character; the empty string switches the template to per-byte splitting |
 
-`DELIMITER` is the only option this template takes. Any value is accepted — the only validation is that the option is present. Omitting it fails with `required parameter "delimiter" was not found`, and any other option — `CASE`, `MINGRAM` — fails with `option "<name>" is not applicable in this context`.
+`DELIMITER` is the only option this template takes. Any value is accepted — the only validation is that the option is present. Omitting it fails with `split_csv(): required option "delimiter" not given`, and any other option — `CASE`, `MINGRAM` — fails with `split_csv(): unknown option "<name>"`.
 
 ## Tokenization
 
@@ -34,11 +34,11 @@ The third row shows the leading `/` producing an empty first token. Because the 
 
 Preview the split with `ts_lexize`:
 
-<SqlLogicTest id="sql/statements/create_text_search_dictionary/delimiter/example_003" />
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/csv/example_003" />
 
 Any byte string works as the delimiter — here a dot splits a reverse-DNS identifier into its components:
 
-<SqlLogicTest id="sql/statements/create_text_search_dictionary/delimiter/example_004" />
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/csv/example_004" />
 
 ### Quoted pieces
 
@@ -61,16 +61,17 @@ Offsets cover the raw piece, so the quotes are counted even though they are not 
 
 ## Examples
 
-<SqlLogicTest id="sql/statements/create_text_search_dictionary/delimiter/example_001" />
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/csv/example_001" />
 
-<SqlLogicTest id="sql/statements/create_text_search_dictionary/delimiter/example_002" />
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/csv/example_002" />
 
-A comma is a valid delimiter here, unlike in [`multi_delimiter`](./multi-delimiter.md), whose comma-separated list format cannot express one.
+A comma is a valid delimiter here, unlike in [`split_by_delimiters`](./multi-delimiter.md), whose comma-separated list format cannot express one.
 
-The template also nests: a [`pipeline`](./pipeline/index.md) step spells its options with a prefix (`STEP1_TEMPLATE = 'delimiter'`, `STEP1_DELIMITER = ','`), a [`union`](./union.md) branch uses `TOKENIZER⟨N⟩_`, and [`copy_from`](./copy-from.md) inherits `DELIMITER` from the source dictionary and lets it be overridden.
+The template also composes: it is the usual first stage of a [`pipeline`](./pipeline/index.md) (`split_csv(',') | normalize_tokens(case := 'lower')`) or a branch of a [`union`](./union.md).
 
 ## See also
 
 - [multi_delimiter](./multi-delimiter.md) — split on several delimiters, dropping empty tokens and without quote handling
 - [path_hierarchy](./path-hierarchy.md) — split on a delimiter but emit cumulative prefixes
+- [`split_csv()`](../../functions/search/tokenizers.md#split_csv) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

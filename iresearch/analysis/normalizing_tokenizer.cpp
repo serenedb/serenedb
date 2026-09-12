@@ -23,10 +23,13 @@
 
 #include "normalizing_tokenizer.hpp"
 
+#include <unicode/locid.h>
+#include <unicode/normalizer2.h>
+#include <unicode/translit.h>
+#include <unicode/unistr.h>
 #include <unicode/ustring.h>
 
 #include "iresearch/analysis/text/case/case.hpp"
-#include "iresearch/analysis/text/normalize/icu.hpp"
 #include "iresearch/analysis/text/normalize/normalize.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -49,6 +52,35 @@ void DecomposeInto(std::string_view in, std::string& out) {
                            [&](char* p, size_t) IRS_FORCE_INLINE {
                              return normalize::Decompose<Form>(in, p);
                            });
+}
+
+std::unique_ptr<icu::Transliterator> MakeStripTransliterator(bool nfkc,
+                                                             UErrorCode& err) {
+  const icu::UnicodeString rule(nfkc ? "NFKD; [:Nonspacing Mark:] Remove; NFKC"
+                                     : "NFD; [:Nonspacing Mark:] Remove; NFC");
+  return std::unique_ptr<icu::Transliterator>{
+    icu::Transliterator::createInstance(rule, UTransDirection::UTRANS_FORWARD,
+                                        err)};
+}
+
+template<Case C>
+void NormalizeCaseStrip(const icu::Normalizer2& normalizer,
+                        const icu::Locale& locale, icu::Transliterator* strip,
+                        const icu::UnicodeString& data,
+                        icu::UnicodeString& out) {
+  auto err = UErrorCode::U_ZERO_ERROR;
+  normalizer.normalize(data, out, err);
+  if (!U_SUCCESS(err)) {
+    out = data;
+  }
+  if constexpr (C == Case::Lower) {
+    out.toLower(locale);
+  } else if constexpr (C == Case::Upper) {
+    out.toUpper(locale);
+  }
+  if (strip != nullptr) {
+    strip->transliterate(out);
+  }
 }
 
 }  // namespace
@@ -75,13 +107,14 @@ std::tuple<Case, bool, bool> NormalizingTokenizer::PrepareBatch(
     _normalizer = nfkc ? icu::Normalizer2::getNFKCInstance(err)
                        : icu::Normalizer2::getNFCInstance(err);
     if (!U_SUCCESS(err) || !_normalizer) {
-      THROW_SQL_ERROR(ERR_MSG("norm: failed to create normalizer"));
+      THROW_SQL_ERROR(ERR_MSG("normalize_tokens: failed to create normalizer"));
     }
 
     if (!_options.accent) {
-      _transliterator = normalize::MakeStripTransliterator(nfkc, err);
+      _transliterator = MakeStripTransliterator(nfkc, err);
       if (!U_SUCCESS(err) || !_transliterator) {
-        THROW_SQL_ERROR(ERR_MSG("norm: failed to create transliterator"));
+        THROW_SQL_ERROR(
+          ERR_MSG("normalize_tokens: failed to create transliterator"));
       }
     }
   }
@@ -117,9 +150,9 @@ bool NormalizingTokenizer::UnicodeEmit(const duckdb::string_t& raw,
   } else {
     _udata.remove();
   }
-  normalize::NormalizeCaseStrip<C>(*_normalizer, _options.locale,
-                                   Accent ? nullptr : _transliterator.get(),
-                                   _udata, _token);
+  NormalizeCaseStrip<C>(*_normalizer, _options.locale,
+                        Accent ? nullptr : _transliterator.get(), _udata,
+                        _token);
   const auto cap = 3 * static_cast<size_t>(_token.length());
   if (cap == 0) {
     sink.template Emit<Layout>(duckdb::string_t{});

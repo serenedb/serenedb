@@ -3,15 +3,13 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wordnet_syn (
-    template = 'wordnet_synonyms',
-    -- words sharing a synset id are synonyms; one s(...) record per line
-    synonyms = 's(100000001,1,''fast'',v,1,0).
+-- words sharing a synset id are synonyms; one s(...) record per line
+CREATE TEXT SEARCH DICTIONARY wordnet_syn AS
+    expand_wordnet_synonyms('s(100000001,1,''fast'',v,1,0).
 s(100000001,2,''quick'',v,1,0).
 s(100000001,3,''swift'',v,1,0).
 s(100000002,1,''car'',n,1,0).
-s(100000002,2,''automobile'',n,1,0).'
-);
+s(100000002,2,''automobile'',n,1,0).');
 
 # DOCS_TEST: example_002
 

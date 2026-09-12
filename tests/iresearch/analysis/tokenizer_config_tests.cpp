@@ -123,8 +123,6 @@ std::vector<Rejected> RejectedConfigs() {
           [] { return Cfg{StemmingTokenizer::Options{.locale = Bogus()}}; });
   Collect(out, "collation/bogus_locale",
           [] { return Cfg{CollationTokenizer::Options{.locale = Bogus()}}; });
-  Collect(out, "text/bogus_locale",
-          [] { return Cfg{TextTokenizer::Options{}}; });
 
   Collect(out, "stopwords/missing_path", [] {
     return Cfg{StopwordsTokenizer::Options{.stopwords_path = MissingPath()}};

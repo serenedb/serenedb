@@ -223,8 +223,9 @@ N-gram similarity match, via [`ts_ngram`](../../sql/functions/search/full-text.m
 `threshold` is the minimum similarity, a number in `[0, 1]`. The column must be indexed with an n-gram dictionary carrying `frequency = true` and `position = true`; the client cannot enforce that, so create the dictionary yourself:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY "public"."ngram_dict"
-  (template = 'ngram', mingram = 2, maxgram = 3, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY "public"."ngram_dict" AS
+    generate_ngrams(2, 3)
+    WITH (frequency, position);
 ```
 
 ```python

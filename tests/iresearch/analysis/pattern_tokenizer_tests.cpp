@@ -81,7 +81,7 @@ void AssertTokenStreamContents(
 }  // namespace
 
 TEST_F(PatternTokenizerTests, consts) {
-  static_assert("pattern" ==
+  static_assert("split_by_pattern" ==
                 irs::Type<irs::analysis::PatternTokenizer>::name());
 }
 

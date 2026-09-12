@@ -5,14 +5,9 @@ hash-threshold 100
 # term dictionary holds stems rather than surface words.
 # ----------------------------------------------------------------------------
 statement ok
-CREATE TEXT SEARCH DICTIONARY td_stem(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = false,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY td_stem AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency)
 
 
 statement ok
@@ -54,15 +49,9 @@ DROP TEXT SEARCH DICTIONARY td_stem
 # Single-segment vs multi-segment counts agree.
 # ----------------------------------------------------------------------------
 statement ok
-CREATE TEXT SEARCH DICTIONARY td2(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY td2 AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 
 statement ok

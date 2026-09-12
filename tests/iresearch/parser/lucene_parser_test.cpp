@@ -22,7 +22,7 @@
 
 #include <array>
 #include <cstdint>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
@@ -137,9 +137,8 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
 class LuceneParserTest : public ::testing::Test {
  protected:
   irs::BooleanFilter root;
-  irs::analysis::Tokenizer::ptr tokenizer{
-    irs::analysis::SegmentationTokenizer::Make(
-      irs::analysis::SegmentationTokenizer::Options{})};
+  irs::analysis::Tokenizer::ptr tokenizer{irs::analysis::TextTokenizer::Make(
+    irs::analysis::TextTokenizer::Options{})};
 
   irs::ParserContext ctx{root, kFieldId, *tokenizer};
 
@@ -2157,8 +2156,8 @@ enum class ParseOutcome : uint8_t {
 
 ParseOutcome ParseOnce(std::string_view query) {
   irs::BooleanFilter root;
-  auto tokenizer = irs::analysis::SegmentationTokenizer::Make(
-    irs::analysis::SegmentationTokenizer::Options{});
+  auto tokenizer =
+    irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{});
   irs::ParserContext ctx{root, kFieldId, *tokenizer};
   ctx.default_field_name = "content";
   try {

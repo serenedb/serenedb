@@ -84,13 +84,9 @@ CREATE TABLE its_srv_${__DATABASE__}.${__DATABASE__}.chunks (
 # DOCS_TEST: example_index
 
 # DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY en (
-#|     template = 'text',
-#|     locale = 'en_US.UTF-8',
-#|     stemming = true,
-#|     frequency = true,
-#|     position = true
-#| );
+#| CREATE TEXT SEARCH DICTIONARY en AS
+#|     text() | stem('en_US.UTF-8')
+#|     WITH (frequency, position);
 #|
 #| CREATE VIEW chunks_v AS
 #|     SELECT entity_id, source_name, page_number, uri, body,
@@ -105,13 +101,9 @@ CREATE TABLE its_srv_${__DATABASE__}.${__DATABASE__}.chunks (
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY its_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    stemming = true,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY its_en AS
+    text() | stem('en_US.UTF-8')
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW chunks_v AS

@@ -122,7 +122,9 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "geopoint"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "encode_geopoint";
+  }
 
   explicit GeoPointTokenizer(const Options& options);
 
@@ -181,7 +183,9 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "geojson"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "encode_geojson";
+  }
 
   explicit GeoJsonTokenizer(const Options& options);
 

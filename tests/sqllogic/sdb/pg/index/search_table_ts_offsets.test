@@ -5,11 +5,9 @@
 # only, so rows are observed after VACUUM (REFRESH_TABLE).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY offs_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY offs_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE TABLE d (id BIGINT PRIMARY KEY, body TEXT)
@@ -74,10 +72,9 @@ id	hl
 # matches the claimed term query against it. On a search table that match runs
 # on the index's allocated term field, not the column id.
 statement ok
-CREATE TEXT SEARCH DICTIONARY no_offs_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY no_offs_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE d2 (id BIGINT PRIMARY KEY, body TEXT)

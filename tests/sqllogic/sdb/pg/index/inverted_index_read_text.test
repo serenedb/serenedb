@@ -51,17 +51,9 @@ TO '${__TEST_DIR__}/rt-charlie.txt' (FORMAT csv, HEADER false);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY read_text_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY read_text_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
 
 
 # ============================================================================
@@ -139,13 +131,9 @@ SELECT content FROM read_text('${__TEST_DIR__}/binfix.parquet');
 # ============================================================================
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pat_caps(
-    template = 'pattern',
-    pattern = '[A-Z][A-Za-z0-9]{2,}',
-    group = 0,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY pat_caps AS
+    split_by_pattern('[A-Z][A-Za-z0-9]{2,}', group := 0)
+    WITH (frequency, position);
 
 
 # Materialized BLOB column straight from read_blob -- no decode/cast.
@@ -232,14 +220,9 @@ bravo
 # we add a second pattern-extracted-string-then-3gram setup. Build a small
 # trigram dict and a fresh BLOB table where the body is the file content.
 statement ok
-CREATE TEXT SEARCH DICTIONARY blob_ng (
-    template = 'ngram',
-    mingram = 3,
-    maxgram = 3,
-    preserveoriginal = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY blob_ng AS
+    generate_ngrams(3, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE blob_ng_docs AS
@@ -268,7 +251,7 @@ bravo
 # ============================================================================
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY blob_kw (template = 'keyword', frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY blob_kw AS keyword() WITH (frequency, position);
 
 statement ok
 CREATE TABLE blob_kw_docs (id INTEGER, term BLOB);
@@ -424,9 +407,9 @@ WHERE term @@ ts_between('a', 'c'::BLOB, true, false) ORDER BY id;
 # Multi-piece ts_phrase with BLOB literals on a multi-token column.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY blob_words (
-    template = 'delimiter', delimiter = ' ', frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY blob_words AS
+    split_csv(' ')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE blob_text (id INTEGER, body BLOB);

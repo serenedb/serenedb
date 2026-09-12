@@ -32,10 +32,8 @@
 #include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -61,28 +59,24 @@
 namespace sdb::connector {
 namespace {
 
-// PRAGMA create_text_search_dictionary('name', if_not_exists, key := value,
-// ...) Positional parameters:
-//   [0] name (VARCHAR)  -- optionally schema-qualified as "schema.name"
-//   [1] if_not_exists (BOOLEAN)
-// Named parameters: tokenizer options (template, frequency, etc.)
 void CreateTSDictionaryPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 2) {
+  if (args.size() < 3 || args[2].IsNull()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("create_text_search_dictionary requires at least name and "
-              "if_not_exists"));
+      ERR_MSG("create_text_search_dictionary requires name, if_not_exists "
+              "and an analyzer expression"));
   }
 
   auto dict_name = args[0].GetValue<std::string>();
   auto if_not_exists = args[1].GetValue<bool>();
+  const auto spec = args[2].GetValue<std::string>();
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto name = pg::ParseObjectName(dict_name, irs::StaticStrings::kPublic);
   pg::CreateTokenizer(conn_ctx, name.relation, name.schema, if_not_exists,
-                      params.named_parameters);
+                      params.named_parameters, spec);
 }
 
 // PRAGMA drop_text_search_dictionary('name', missing_ok)
@@ -130,7 +124,8 @@ void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
 
   auto create_pragma = duckdb::PragmaFunction::PragmaCall(
     "create_text_search_dictionary", CreateTSDictionaryPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
+    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN,
+     duckdb::LogicalType::VARCHAR});
   // Tokenizer-specific kwargs are validated by CreateTSDictionaryPragma itself.
   create_pragma.accept_arbitrary_named_parameters = true;
   loader.RegisterFunction(create_pragma);

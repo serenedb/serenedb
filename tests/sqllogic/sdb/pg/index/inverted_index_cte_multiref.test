@@ -23,8 +23,9 @@ INSERT INTO t VALUES
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY d
-  (template = 'delimiter', delimiter = ' ', frequency = true, position = true, norm = true)
+CREATE TEXT SEARCH DICTIONARY d AS
+    split_csv(' ')
+    WITH (frequency, position, norm)
 
 
 statement ok

@@ -21,13 +21,20 @@
 #pragma once
 
 #include <duckdb/common/named_parameter_map.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 
 #include "pg/connection_context.h"
+#include "pg/options_parser.h"
 
 namespace sdb::pg {
 
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
-                     const duckdb::named_parameter_map_t& options);
+                     const duckdb::named_parameter_map_t& features,
+                     std::string_view spec);
+
+irs::analysis::TokenizerConfig BuildTokenizerConfig(
+  duckdb::ClientContext& context, ObjectId db_id,
+  std::string_view current_schema, Options options, std::string_view operation);
 
 }  // namespace sdb::pg

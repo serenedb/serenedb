@@ -1,19 +1,20 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY kw_dict AS keyword();
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
-    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY ng_dict AS
+    generate_ngrams(2, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
-    coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict AS
+    encode_geojson(coding := 's2point');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
-    coding = 'source');
+CREATE TEXT SEARCH DICTIONARY geo_src_dict AS
+    encode_geojson(coding := 'source');
 
 
 # ============================================================================

@@ -58,7 +58,9 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     bool store_tokens = true;
   };
 
-  static constexpr std::string_view type_name() noexcept { return "shingle"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "generate_shingles";
+  }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr uint32_t kMaxTokenSize = (uint32_t{1} << 30) - 1;

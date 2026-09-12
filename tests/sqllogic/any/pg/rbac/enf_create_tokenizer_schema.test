@@ -28,7 +28,7 @@ CREATE ROLE enf_tk_vedernikoff LOGIN PASSWORD 'enf_tk_vedernikoff_pw';
 connection c_ved user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
 onlyif serenedb
 statement error
-CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack AS keyword();
 ----
 db error: ERROR: permission denied for schema public<slt:ignore>
 
@@ -43,7 +43,7 @@ GRANT CREATE ON SCHEMA public TO enf_tk_vedernikoff;
 connection c_ved2 user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
 onlyif serenedb
 statement ok
-CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack AS keyword();
 
 
 onlyif serenedb

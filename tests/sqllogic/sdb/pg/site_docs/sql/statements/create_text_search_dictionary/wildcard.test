@@ -1,12 +1,8 @@
 # DOCS_TEST: example_001
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_dict (
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY wildcard_dict AS
+    generate_wildcard_ngrams(split_csv(' '), 3);
 
 statement ok
 CREATE TABLE terms (id INTEGER PRIMARY KEY, term VARCHAR);
@@ -43,3 +39,33 @@ SELECT id, term FROM terms_idx WHERE term @@ ts_like('sea%') ORDER BY id;
 id	term
 1	search
 3	seabird
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE terms_expr (id INTEGER PRIMARY KEY, term VARCHAR);
+
+statement ok
+INSERT INTO terms_expr VALUES
+    (1, 'search'),
+    (2, 'research'),
+    (3, 'seabird'),
+    (4, 'plain');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_expr AS generate_wildcard_ngrams(split_csv(' '), 3);
+
+statement ok
+CREATE INDEX terms_expr_idx ON terms_expr USING inverted (id, term wildcard_expr);
+
+statement ok
+VACUUM (REFRESH_TABLE) terms_expr;
+
+query
+SELECT id, term FROM terms_expr_idx WHERE term @@ ts_like('%ear%') ORDER BY id;
+----
+id	term
+1	search
+2	research

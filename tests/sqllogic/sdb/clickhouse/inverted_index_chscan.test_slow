@@ -18,15 +18,9 @@ control substitution on
 # materialise-then-index path over a native serenedb table.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ch_names_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY ch_names_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # --- Inverted index directly over the ClickHouse view ---

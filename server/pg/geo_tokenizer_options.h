@@ -44,15 +44,15 @@ inline constexpr OptionInfo kGeoOptimizeForSpace{
 // GeoPoint
 
 inline constexpr OptionInfo kGeoLatitude{
-  "latitude", ""sv,
-  "Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); "
-  "empty (the default) treats the indexed JSON value as a [lat, lng] "
-  "array directly. latitude and longitude must both be set or both left "
-  "empty."};
+  "latitude", OptionInfo::ListTag{},
+  "Path to the latitude field, slash-separated ('lat', 'loc/lat') or a list "
+  "of segments (['loc', 'lat']); empty (the default) treats the indexed JSON "
+  "value as a [lat, lng] array directly. latitude and longitude must both be "
+  "set or both left empty."};
 inline constexpr OptionInfo kGeoLongitude{
-  "longitude", ""sv,
-  "Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); "
-  "see latitude for empty-default semantics."};
+  "longitude", OptionInfo::ListTag{},
+  "Path to the longitude field, slash-separated ('lng', 'loc/lng') or a list "
+  "of segments; see latitude for empty-default semantics."};
 
 // GeoJson
 
@@ -80,11 +80,17 @@ inline constexpr OptionGroup kGeoPointGroup{
   irs::analysis::GeoPointTokenizer::type_name(),
   kGeoPointOptions,
   kGeoPointSubgroups,
+  "encode_geopoint",
+  TemplateKind::Tokenizer,
+  TemplateInput::Json,
 };
 inline constexpr OptionGroup kGeoJsonGroup{
   irs::analysis::GeoJsonTokenizer::type_name(),
   kGeoJsonOptions,
   kGeoJsonSubgroups,
+  "encode_geojson",
+  TemplateKind::Tokenizer,
+  TemplateInput::Json,
 };
 
 }  // namespace sdb::pg::tokenizer_options

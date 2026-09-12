@@ -9,7 +9,7 @@ hash-threshold 100
 #   5. NULL list and NULL element are handled
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict( template = 'keyword' );
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword();
 
 # --- VARCHAR[] (variable-length LIST) -- backfill path ---
 

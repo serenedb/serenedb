@@ -14,7 +14,7 @@ SET refresh_interval = 0
 # visibility driven by VACUUM (REFRESH_TABLE).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jkw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY jkw AS keyword()
 
 statement ok
 CREATE TABLE ja(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)

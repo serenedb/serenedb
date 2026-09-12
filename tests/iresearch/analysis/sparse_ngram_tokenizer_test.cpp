@@ -54,7 +54,7 @@ std::set<std::string> Collect(std::string_view data, bool covering,
 }
 
 TEST(sparse_ngram_tokenizer_test, consts) {
-  static_assert("sparse_ngram" ==
+  static_assert("generate_sparse_ngrams" ==
                 irs::Type<irs::analysis::SparseNGramTokenizer>::name());
 }
 

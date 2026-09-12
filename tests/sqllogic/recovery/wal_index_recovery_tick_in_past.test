@@ -14,15 +14,9 @@ control substitution on
 # committed during backfill is durable; everything after stays in WAL.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY past_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY past_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE past_t(value1 INTEGER PRIMARY KEY, value2 TEXT);

@@ -9,12 +9,8 @@ control substitution on
 # RocksDB which holds the original VARCHAR.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wal_wild_ni_dict(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY wal_wild_ni_dict AS
+    generate_wildcard_ngrams(split_csv(' '), 3);
 
 statement ok
 CREATE TABLE wal_wild_ni_t(pk INTEGER PRIMARY KEY, b VARCHAR);

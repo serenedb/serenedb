@@ -3,14 +3,9 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_dict (
-    template = 'union',
-    -- member 1 keeps the value verbatim, member 2 emits 2-grams
-    TOKENIZER1_TEMPLATE = 'keyword',
-    TOKENIZER2_TEMPLATE = 'ngram',
-    TOKENIZER2_MINGRAM = 2,
-    TOKENIZER2_MAXGRAM = 2
-);
+-- member 1 keeps the value verbatim, member 2 emits 2-grams
+CREATE TEXT SEARCH DICTIONARY union_dict AS
+    [keyword(), generate_ngrams(2, 2)];
 
 query
 SELECT ts_lexize('union_dict', 'abcd');
@@ -23,16 +18,25 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_word_phrase (
-    template = 'union',
-    -- member 1 splits into words, member 2 keeps the whole phrase
-    TOKENIZER1_TEMPLATE = 'delimiter',
-    TOKENIZER1_DELIMITER = ' ',
-    TOKENIZER2_TEMPLATE = 'keyword'
-);
+-- member 1 splits into words, member 2 keeps the whole phrase
+CREATE TEXT SEARCH DICTIONARY union_word_phrase AS
+    [split_csv(' '), keyword()];
 
 query
 SELECT ts_lexize('union_word_phrase', 'hello world');
+----
+ts_lexize
+{hello,"hello world",world}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_expr AS [split_csv(' '), keyword()];
+
+query
+SELECT ts_lexize('union_expr', 'hello world');
 ----
 ts_lexize
 {hello,"hello world",world}

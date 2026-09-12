@@ -2,7 +2,7 @@ control substitution on
 
 # WAL recovery for a wildcard-tokenized column.
 #
-# Wildcard analyzers (template = 'wildcard') run during per-cell WriteImpl
+# Wildcard analyzers (the wildcard template) run during per-cell WriteImpl
 # and emit (a) inverted-index tokens for ts_like queries, and (b) a
 # `store_attr->value` byte blob (packed n-gram tokens).
 #
@@ -17,12 +17,8 @@ control substitution on
 # ts_like filter reads its n-gram bytes from the separate aux cs column.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wal_wild_dict(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY wal_wild_dict AS
+    generate_wildcard_ngrams(split_csv(' '), 3);
 
 statement ok
 CREATE TABLE wal_wild_t(pk INTEGER PRIMARY KEY, b VARCHAR);

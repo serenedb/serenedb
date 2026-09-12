@@ -3,13 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY shingle_bigram (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    mingram = 2,
-    maxgram = 2
-);
+CREATE TEXT SEARCH DICTIONARY shingle_bigram AS
+    generate_shingles(split_csv(' '), 2, 2);
 
 # "quick brown fox" -> quick, quick+brown, brown, brown+fox, fox (5 terms; the
 # shingle separator is a raw 0xFF byte, so assert on structure not the bytes).
@@ -31,14 +26,8 @@ t
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY shingle_escalate (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    mingram = 2,
-    maxgram = 3,
-    frequentwords = '"the","of"'
-);
+CREATE TEXT SEARCH DICTIONARY shingle_escalate AS
+    generate_shingles(split_csv(' '), 2, 3, frequentwords := ['the', 'of']);
 
 # A frequent-containing window escalates to the trigram (6 terms); an all-rare
 # window keeps only the dense bigrams (5 terms).
@@ -94,55 +83,29 @@ pk
 # errors
 
 statement error "maxgram" must be >= "mingram"
-CREATE TEXT SEARCH DICTIONARY shingle_bad_size (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    mingram = 3,
-    maxgram = 2
-);
+CREATE TEXT SEARCH DICTIONARY shingle_bad_size AS
+    generate_shingles(split_csv(' '), 3, 2);
 
 statement error "storetokens" = false cannot be combined with "frequentwords"
-CREATE TEXT SEARCH DICTIONARY shingle_store_freq (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    storetokens = false,
-    frequentwords = '"the"'
-);
+CREATE TEXT SEARCH DICTIONARY shingle_store_freq AS
+    generate_shingles(split_csv(' '), storetokens := false, frequentwords := ['the']);
 
 statement error Unsupported index features are specified
-CREATE TEXT SEARCH DICTIONARY shingle_offset (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY shingle_offset AS
+    generate_shingles(split_csv(' '))
+    WITH (frequency, position, offset);
 
 statement error the 'norm' feature cannot be combined with an analyzer that stores a per-document blob
-CREATE TEXT SEARCH DICTIONARY shingle_norm_store (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY shingle_norm_store AS
+    generate_shingles(split_csv(' '))
+    WITH (frequency, position, norm);
 
 # norm is allowed once token storage is off (norm reuses the synthetic column)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY shingle_norm_ok (
-    template = 'shingle',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' ',
-    frequency = true,
-    position = true,
-    norm = true,
-    storetokens = false
-);
+CREATE TEXT SEARCH DICTIONARY shingle_norm_ok AS
+    generate_shingles(split_csv(' '), storetokens := false)
+    WITH (frequency, position, norm);
 
 query
 SELECT array_length(ts_lexize('shingle_norm_ok', 'quick brown fox'), 1) AS n;
@@ -161,3 +124,22 @@ DROP TEXT SEARCH DICTIONARY shingle_escalate;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_norm_ok;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_expr AS generate_shingles(split_csv(' ') | normalize_tokens(case := 'lower'), 2, 2);
+
+query
+SELECT array_length(ts_lexize('shingle_expr', 'Quick Brown Fox'), 1) AS n;
+----
+n
+5
+
+query
+SELECT 'quick' = ANY(ts_lexize('shingle_expr', 'Quick Brown Fox')) AS has_unigram;
+----
+has_unigram
+t

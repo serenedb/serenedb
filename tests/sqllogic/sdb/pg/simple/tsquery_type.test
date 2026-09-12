@@ -127,28 +127,14 @@ t
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tqt_lower(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY tqt_lower AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tqt_upper(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY tqt_upper AS
+    split_text(case := 'upper') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE TABLE tqt (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);

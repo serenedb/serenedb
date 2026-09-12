@@ -307,27 +307,27 @@ INSERT INTO TEXT_TBL VALUES ('hi de ho neighbor');
 # test conversions between various string types
 # E021-10 implicit casting among the character data types
 query
-SELECT CAST(f1 AS text) AS "text(char)" FROM CHAR_TBL;
+SELECT CAST(f1 AS text) AS "split_text(char)" FROM CHAR_TBL;
 ----
-text(char)
+split_text(char)
 a
 ab
 abcd
 abcd
 
 query
-SELECT CAST(f1 AS text) AS "text(varchar)" FROM VARCHAR_TBL;
+SELECT CAST(f1 AS text) AS "split_text(varchar)" FROM VARCHAR_TBL;
 ----
-text(varchar)
+split_text(varchar)
 a
 ab
 abcd
 abcd
 
 query
-SELECT CAST(name 'namefield' AS text) AS "text(name)";
+SELECT CAST(name 'namefield' AS text) AS "split_text(name)";
 ----
-text(name)
+split_text(name)
 namefield
 
 

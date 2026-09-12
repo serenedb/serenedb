@@ -42,15 +42,9 @@ INSERT INTO pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pgnul_en_${__DATABASE__}(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY pgnul_en_${__DATABASE__} AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # =====================================================================

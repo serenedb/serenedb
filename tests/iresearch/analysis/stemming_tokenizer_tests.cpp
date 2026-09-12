@@ -34,7 +34,8 @@ class StemmingTokenizerTests : public ::testing::Test {};
 }  // namespace
 
 TEST_F(StemmingTokenizerTests, consts) {
-  static_assert("stem" == irs::Type<irs::analysis::StemmingTokenizer>::name());
+  static_assert("stem_words" ==
+                irs::Type<irs::analysis::StemmingTokenizer>::name());
 }
 
 namespace {

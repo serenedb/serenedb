@@ -16,7 +16,7 @@
 #   PERF_QUERY          one of: count_distinct (default) | groupby | topk | filter | count
 #                       The five analytical shapes from run_hits_perf.sh.
 #                       PERF_QUERY=custom + PERF_QUERY_SQL='<sql>' to profile your own.
-#   PERF_DICT_TEMPLATE  delimiter (default) | text -- match the bench you're investigating.
+#   PERF_DICT_TEMPLATE  csv (default) | text -- match the bench you're investigating.
 #   PERF_BUILD_DIR      defaults to ${ROOT}/build_perf
 #   PERF_PROFILE_PORT   defaults to 6363
 #   PERF_FREQ           perf sample rate, defaults to 199
@@ -44,7 +44,7 @@ FREQ="${PERF_FREQ:-199}"
 QUERY_KIND="${PERF_QUERY:-count_distinct}"
 QUERY_THREADS="${PERF_QUERY_THREADS:-1}"
 QUERY_REPEAT="${PERF_QUERY_REPEAT:-5}"
-DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-delimiter}"
+DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-csv}"
 
 if [[ ! -f "${PARQUET_FILE}" ]]; then
 	echo "missing ${PARQUET_FILE}" >&2
@@ -60,14 +60,16 @@ if ! command -v perf >/dev/null 2>&1; then
 fi
 
 case "${DICT_TEMPLATE}" in
-delimiter)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(template = 'delimiter', delimiter = ' ');"
+csv)
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS split_csv(' ');"
 	;;
 text)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);"
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS
+	    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+	    WITH (frequency, position);"
 	;;
 *)
-	echo "PERF_DICT_TEMPLATE must be 'delimiter' or 'text', got '${DICT_TEMPLATE}'" >&2
+	echo "PERF_DICT_TEMPLATE must be 'csv' or 'text', got '${DICT_TEMPLATE}'" >&2
 	exit 1
 	;;
 esac

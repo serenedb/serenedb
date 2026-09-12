@@ -37,13 +37,13 @@ namespace irs::analysis {
 Tokenizer::ptr ClassificationTokenizer::Make(Options opts,
                                              duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("classification: empty model location"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("classification: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: top_k must be positive"));
   }
   if (opts.threshold < 0.0 || opts.threshold > 1.0) {
-    THROW_SQL_ERROR(ERR_MSG("classification: threshold must be in [0, 1]"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: threshold must be in [0, 1]"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::FastText>(
     cache, opts.model_location);

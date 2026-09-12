@@ -41,13 +41,13 @@ constexpr size_t kMaxTokenSize = 1 << 15;
 
 CollationTokenizer::CollationTokenizer(const Options& options) {
   if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("collation: invalid locale"));
+    THROW_SQL_ERROR(ERR_MSG("collate_tokens: invalid locale"));
   }
   auto err = UErrorCode::U_ZERO_ERROR;
   _collator.reset(ucol_open(options.locale.getName(), &err));
   if (!_collator || !U_SUCCESS(err)) {
     THROW_SQL_ERROR(
-      ERR_MSG("collation: failed to create collator for the locale"));
+      ERR_MSG("collate_tokens: failed to create collator for the locale"));
   }
 }
 

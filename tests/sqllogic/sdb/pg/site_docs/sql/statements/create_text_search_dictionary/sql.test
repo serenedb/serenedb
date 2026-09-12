@@ -3,10 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_words (
-    template = 'sql',
-    expression = 'regexp_split_to_array(lower(input), ''\W+'')'
-);
+CREATE TEXT SEARCH DICTIONARY sql_words AS
+    regexp_split_to_array(lower($1), '\W+');
 
 query
 SELECT ts_lexize('sql_words', 'Hello, World! FOO bar');
@@ -19,10 +17,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_norm (
-    template = 'sql',
-    expression = 'upper(trim(input))'
-);
+CREATE TEXT SEARCH DICTIONARY sql_norm AS
+    upper(trim($1));
 
 query
 SELECT ts_lexize('sql_norm', '  hello  ');
@@ -35,13 +31,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_pipe (
-    template = 'pipeline',
-    step1_template = 'sql',
-    step1_expression = 'string_split(lower(input), '' '')',
-    step2_template = 'stopwords',
-    step2_stopwords = '"the"'
-);
+CREATE TEXT SEARCH DICTIONARY sql_pipe AS
+    string_split(lower($1), ' ') | remove_stopwords(['the']);
 
 query
 SELECT ts_lexize('sql_pipe', 'The Quick Fox');
@@ -51,13 +42,11 @@ ts_lexize
 
 # DOCS_TEST_END
 
-# copy_from inherits the expression
+# a stored sql dictionary as a stage keeps its expression
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_copy (
-    template = 'copy_from',
-    from = 'sql_words'
-);
+CREATE TEXT SEARCH DICTIONARY sql_copy AS
+    sql_words;
 
 query
 SELECT ts_lexize('sql_copy', 'A-B c');
@@ -68,10 +57,8 @@ ts_lexize
 # NULL result rejects the value (ts_lexize surfaces rejection as an error)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_nullif (
-    template = 'sql',
-    expression = 'nullif(lower(input), ''skip'')'
-);
+CREATE TEXT SEARCH DICTIONARY sql_nullif AS
+    nullif(lower($1), 'skip');
 
 query
 SELECT ts_lexize('sql_nullif', 'keep');
@@ -86,10 +73,34 @@ SELECT ts_lexize('sql_nullif', 'SKIP');
 # re-enter the tokenizer machinery (unbounded recursion when self-referencing).
 
 statement error is not allowed in a sql tokenizer expression
-CREATE TEXT SEARCH DICTIONARY sql_recurse (
-    template = 'sql',
-    expression = 'ts_lexize(''sql_recurse'', input)'
-);
+CREATE TEXT SEARCH DICTIONARY sql_recurse AS
+    ts_lexize('sql_recurse', $1);
 
 statement ok
 DROP TEXT SEARCH DICTIONARY sql_nullif;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_expr_words AS regexp_split_to_array(lower($1), '\W+');
+
+query
+SELECT ts_lexize('sql_expr_words', 'Hello, World! FOO bar');
+----
+ts_lexize
+{hello,world,foo,bar}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_expr_pipe AS string_split(lower($1), ' ') | remove_stopwords(['the']);
+
+query
+SELECT ts_lexize('sql_expr_pipe', 'The Quick Fox');
+----
+ts_lexize
+{quick,fox}

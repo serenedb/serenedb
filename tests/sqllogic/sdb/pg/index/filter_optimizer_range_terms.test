@@ -261,10 +261,9 @@ statement ok
 CREATE TABLE fo_rng_mt (id INTEGER PRIMARY KEY, s VARCHAR, n INTEGER);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fo_low_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY fo_low_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX fo_rng_mt_idx ON fo_rng_mt USING inverted(id, s fo_low_en, n);

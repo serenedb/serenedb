@@ -81,7 +81,7 @@ void AssertBlockTokens(irs::analysis::Tokenizer& stream, std::string_view data,
 }  // namespace
 
 TEST_F(MultiDelimitedTokenizerTests, consts) {
-  static_assert("multi_delimiter" ==
+  static_assert("split_by_delimiters" ==
                 irs::Type<MultiDelimitedTokenizer>::name());
 }
 

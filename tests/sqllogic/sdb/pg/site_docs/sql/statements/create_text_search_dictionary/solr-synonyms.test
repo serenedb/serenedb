@@ -3,12 +3,10 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY solr_syn (
-    template = 'solr_synonyms',
-    -- comma-separated terms are bidirectional; "=>" maps left to right
-    synonyms = 'car, automobile, auto
-laptop => notebook'
-);
+-- comma-separated terms are bidirectional; "=>" maps left to right
+CREATE TEXT SEARCH DICTIONARY solr_syn AS
+    expand_solr_synonyms('car, automobile, auto
+laptop => notebook');
 
 # DOCS_TEST: example_002
 

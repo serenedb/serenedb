@@ -16,16 +16,9 @@ CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY az_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY az_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 # --- seed data: a source table + COPY TO azure (parquet + csv) ---

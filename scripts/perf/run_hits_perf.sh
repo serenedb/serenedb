@@ -216,7 +216,7 @@ CHECKPOINT native_db;
 # committed dictionary entry and fails with "does not exist".
 #
 # Dictionary template:
-#   PERF_DICT_TEMPLATE=delimiter (default)  - whitespace split, cheapest;
+#   PERF_DICT_TEMPLATE=csv (default)  - whitespace split, cheapest;
 #                                             removes tokenizer variability
 #                                             when comparing to parquet/native.
 #   PERF_DICT_TEMPLATE=text                 - full ICU `text` pipeline with
@@ -224,27 +224,19 @@ CHECKPOINT native_db;
 #                                             stopwords off, position+frequency
 #                                             on. Use to measure the realistic
 #                                             text-indexing cost.
-PERF_DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-delimiter}"
+PERF_DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-csv}"
 case "${PERF_DICT_TEMPLATE}" in
-delimiter)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(
-    template = 'delimiter',
-    delimiter = ' '
-);"
+csv)
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS
+	    split_csv(' ');"
 	;;
 text)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);"
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS
+	    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+	    WITH (frequency, position);"
 	;;
 *)
-	echo "PERF_DICT_TEMPLATE must be 'delimiter' or 'text', got '${PERF_DICT_TEMPLATE}'" >&2
+	echo "PERF_DICT_TEMPLATE must be 'csv' or 'text', got '${PERF_DICT_TEMPLATE}'" >&2
 	exit 1
 	;;
 esac
@@ -283,7 +275,7 @@ run_sql "bench_count_distinct_parquet" "${SCAN_THREADS}" "SELECT COUNT(DISTINCT 
 run_sql "bench_count_distinct_native" "${SCAN_THREADS}" "SELECT COUNT(DISTINCT \"UserID\") FROM hits_native;"
 
 # `has_any_tokens` works with any tokenizer (no positions/frequency needed),
-# so it pairs with the `delimiter` template above. The parquet/native
+# so it pairs with the `csv` template above. The parquet/native
 # baselines use a substring filter as the closest analogue.
 run_sql "bench_filter_indexed" "${SCAN_THREADS}" "SELECT COUNT(*) FROM hits_idx WHERE has_any_tokens(\"Title\", 'news');"
 run_sql "bench_filter_parquet" "${SCAN_THREADS}" "SELECT COUNT(*) FROM hits_view WHERE \"Title\" ILIKE '%news%';"
@@ -359,7 +351,7 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 	# Every file in the data dir falls into exactly one of these buckets:
 	#   iresearch per-segment files (in engine_search/.../<seg>.<ext>):
 	#     .doc  postings doc-id stream
-	#     .pos  positions stream      (0 bytes with delimiter dict; populated with text)
+	#     .pos  positions stream      (0 bytes with csv dict; populated with text)
 	#     .pay  payload stream        (0 bytes without frequency/payload features)
 	#     .tm   terms data            (FST-encoded term suffixes)
 	#     .ti   terms index           (top-level pointers into .tm)

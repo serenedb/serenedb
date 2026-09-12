@@ -28,7 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <duckdb/common/allocator.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
@@ -127,8 +127,8 @@ Command ParseCommand(std::string_view name) {
 
 Executor::Executor(std::string_view path, const BenchConfig& config)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
-    _tokenizer{irs::analysis::SegmentationTokenizer::Make(
-      irs::analysis::SegmentationTokenizer::Options{})},
+    _tokenizer{irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{})},
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{irs::DirectoryReader(

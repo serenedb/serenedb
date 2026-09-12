@@ -1,90 +1,73 @@
-# DOCS_TEST: example_001
-
-# DOCS_TEST_BODY
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY english_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true
-);
-
-# DOCS_TEST: example_002
-
-# DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY english_no_stem (
-#|     template = 'copy_from',
-#|     from = 'english_dict',
-#|     -- inherit locale and case, override only stemming
-#|     stemming = false
-#| );
-
-# DOCS_TEST_BODY
+# A stored dictionary is a stage: a bare name copies its analyzer as it
+# stands when the new dictionary is created.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english_no_stem (
-    template = 'copy_from',
-    from = 'english_dict',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY english_dict AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
-# DOCS_TEST: example_003
-
-# DOCS_TEST_BODY
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_cased AS
+    split_text() | stem_words('en_US.UTF-8');
 
 query
-SELECT ts_lexize('english_dict', 'running flies');
+SELECT ts_lexize('english_dict', 'Running Flies');
 ----
 ts_lexize
 {run,fli}
 
-# DOCS_TEST: example_004
-
-# DOCS_TEST_BODY
-
 query
-SELECT ts_lexize('english_no_stem', 'running flies');
+SELECT ts_lexize('english_cased', 'Running Flies');
 ----
 ts_lexize
-{running,flies}
-
-# DOCS_TEST: example_005
-
-# DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY pipe_variant (
-#|     template = 'copy_from',
-#|     from = 'pipe_dict',
-#|     STEP2_CASE = 'upper'
-#| );
-
-# DOCS_TEST_BODY
+{Run,Fli}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_dict (
-    template = 'pipeline',
-    STEP1_TEMPLATE = 'delimiter',
-    STEP1_DELIMITER = ',',
-    STEP2_TEMPLATE = 'text',
-    STEP2_LOCALE = 'en_US.UTF-8',
-    STEP2_CASE = 'lower'
-);
+CREATE TEXT SEARCH DICTIONARY pipe_dict AS
+    split_csv(',') | split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_variant (
-    template = 'copy_from',
-    from = 'pipe_dict',
-    STEP2_CASE = 'upper'
-);
+CREATE TEXT SEARCH DICTIONARY pipe_variant AS
+    split_csv(',') | split_text(case := 'upper') | stem_words('en_US.UTF-8');
 
-# DOCS_TEST: example_006
-
-# DOCS_TEST_BODY
+query
+SELECT ts_lexize('pipe_variant', 'Running,Flies');
+----
+ts_lexize
+{RUNNING,FLIES}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_extended (
-    template = 'copy_from',
-    from = 'pipe_dict',
-    STEP3_TEMPLATE = 'stopwords',
-    STEP3_STOPWORDS = '"bar","foo"'
-);
+CREATE TEXT SEARCH DICTIONARY pipe_extended AS
+    pipe_dict | remove_stopwords(['bar', 'foo']);
+
+query
+SELECT ts_lexize('pipe_extended', 'foo,Running,bar');
+----
+ts_lexize
+{run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_no_run AS english_dict | remove_stopwords(['run']);
+
+query
+SELECT ts_lexize('english_no_run', 'running flies');
+----
+ts_lexize
+{fli}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_same AS english_dict;
+
+query
+SELECT ts_lexize('english_same', 'Running Flies');
+----
+ts_lexize
+{run,fli}
+
+statement ok
+DROP TEXT SEARCH DICTIONARY english_dict;
+
+query
+SELECT ts_lexize('english_same', 'Running Flies');
+----
+ts_lexize
+{run,fli}

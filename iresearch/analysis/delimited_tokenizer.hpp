@@ -34,7 +34,7 @@ namespace irs::analysis {
 class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
                                  private util::Noncopyable {
  public:
-  static constexpr std::string_view type_name() noexcept { return "delimiter"; }
+  static constexpr std::string_view type_name() noexcept { return "split_csv"; }
 
   // an empty delimiter splits per symbol with quote handling
   enum class Mode : uint8_t {

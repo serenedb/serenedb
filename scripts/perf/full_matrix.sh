@@ -216,7 +216,7 @@ per_type_rel_nat="bench_native"
 hits_setup() {
 	local pq
 	pq="$(printf '%s' "$HITS_PQ" | sed "s/'/''/g")"
-	setup_sql -c "CREATE TEXT SEARCH DICTIONARY fm_english(template='delimiter', delimiter=' ');" 2>/dev/null || true
+	setup_sql -c "CREATE TEXT SEARCH DICTIONARY fm_english AS split_csv(' ');" 2>/dev/null || true
 	setup_sql -c "CREATE OR REPLACE VIEW hits_view AS SELECT * FROM read_parquet('$pq');"
 }
 hits_index() {
@@ -280,9 +280,9 @@ text_gather_setup() {
 	setup_sql -c "CREATE OR REPLACE VIEW tg_view AS SELECT * FROM read_parquet('$pq');"
 }
 text_gather_index() {
-	setup_sql -c "CREATE TEXT SEARCH DICTIONARY tg_dict(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true);"
+	setup_sql -c "CREATE TEXT SEARCH DICTIONARY tg_dict AS
+	    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+	    WITH (frequency, position);"
 	# unquoted identifiers: quoted searchable entries fail on view-backed
 	# indexes (issue #880); unquoted resolve case-insensitively.
 	setup_sql -c "CREATE INDEX tg_idx ON tg_view USING inverted(title tg_dict, resolutionwidth included(), counterid included(), userid included(), url included());"

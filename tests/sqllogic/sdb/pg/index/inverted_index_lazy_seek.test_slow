@@ -11,10 +11,9 @@ control substitution on
 #   - Conjunction lazy-miss when children's blocks don't align
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lzs_en (
-    template='text', locale='en_US.UTF-8', case='lower',
-    stemming=false, frequency=true, position=true, norm=true, offset=true
-);
+CREATE TEXT SEARCH DICTIONARY lzs_en AS
+    text(case := 'lower')
+    WITH (frequency, position, norm, offset);
 
 statement ok
 CREATE TABLE lzs (id INTEGER PRIMARY KEY, body VARCHAR);

@@ -20,16 +20,9 @@
 DROP INDEX IF EXISTS dbpedia_idx;
 DROP TEXT SEARCH DICTIONARY IF EXISTS dbpedia_en;
 
-CREATE TEXT SEARCH DICTIONARY dbpedia_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY dbpedia_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 -- Hybrid index. text gets a BM25/phrase posting list, embedding gets an
 -- HNSW graph under cosine distance. Both share the same rocksdb row

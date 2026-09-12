@@ -218,7 +218,7 @@ TEST(GeoBench, sizes) {
 }
 
 TEST(GeoPointTokenizerTest, constants) {
-  static_assert("geopoint" == GeoPointTokenizer::type_name());
+  static_assert("encode_geopoint" == GeoPointTokenizer::type_name());
 }
 
 TEST(GeoPointTokenizerTest, options) {
@@ -581,7 +581,7 @@ TEST(GeoPointTokenizerTest, createFromOptions) {
 }
 
 TEST(GeoJsonTokenizerTest, constants) {
-  static_assert("geojson" == GeoJsonTokenizer::type_name());
+  static_assert("encode_geojson" == GeoJsonTokenizer::type_name());
 }
 
 TEST(GeoJsonTokenizerSourceTest, options) {

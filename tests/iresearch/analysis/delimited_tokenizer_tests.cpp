@@ -47,7 +47,7 @@ class DelimitedTokenizerTests : public ::testing::Test {
 }  // namespace
 
 TEST_F(DelimitedTokenizerTests, consts) {
-  static_assert("delimiter" ==
+  static_assert("split_csv" ==
                 irs::Type<irs::analysis::DelimitedTokenizer>::name());
 }
 

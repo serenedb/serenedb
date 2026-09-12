@@ -16,15 +16,9 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/reil_plain && ln -sfn ${RESOURCES}/tests/iceberg/part_v1 $__TEST_DIR__/reil_part
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY reil_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY reil_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW reil_plain_v AS SELECT * FROM iceberg_scan(

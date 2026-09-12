@@ -37,15 +37,9 @@ ATTACH '${ICEBERG_WAREHOUSE}' AS mx_${__DATABASE__} (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mx_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY mx_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE SCHEMA mx_${__DATABASE__}.${__DATABASE__};

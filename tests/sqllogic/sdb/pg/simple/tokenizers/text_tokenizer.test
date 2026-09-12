@@ -5,42 +5,33 @@ control substitution on
 
 # --- Missing required parameter: template ---
 
-statement error required parameter "template" was not found
-CREATE TEXT SEARCH DICTIONARY t_err1(
-    locale = 'en_US.UTF-8'
-)
+statement error does not read input
+CREATE TEXT SEARCH DICTIONARY t_err1 AS 'en_US.UTF-8'
 
 
 # --- Invalid template value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err2(
-    template = 'whaaat',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t_err2 AS
+    whaaat(locale := 'en_US.UTF-8')
 ----
-db error: ERROR: Invalid type of text search dictionary
+db error: ERROR: "whaaat" is not a text search template and does not read input
+HINT: an SQL stage must reference the input as $1, e.g. whaaat($1)
 
 
 
 # --- Duplicate option ---
 
-statement error conflicting or redundant options
-CREATE TEXT SEARCH DICTIONARY t_err3(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    locale = 'fr_FR.UTF-8'
-)
+statement error given more than once
+CREATE TEXT SEARCH DICTIONARY t_err3 AS
+    split_text('lower', case := 'upper')
 
 
 # --- Invalid case value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err4(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'invalid'
-)
+CREATE TEXT SEARCH DICTIONARY t_err4 AS
+    split_text(case := 'invalid') | stem_words('en_US.UTF-8')
 ----
 db error: ERROR: invalid value in "case" parameter
 HINT: Text case conversion: none, lower, upper
@@ -50,103 +41,78 @@ HINT: Text case conversion: none, lower, upper
 # --- Option not supported by tokenizer ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err5(
-    template = 'ngram',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t_err5 AS
+    generate_ngrams(locale := 'en_US.UTF-8')
 ----
-db error: ERROR: option "locale" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: generate_ngrams(): unknown option "locale"
+HINT: known names: mingram, maxgram, preserveoriginal, inputtype, startmarker, endmarker, mode
 
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err6(
-    template = 'stem',
-    stopwords = '"a","the"'
-)
+CREATE TEXT SEARCH DICTIONARY t_err6 AS
+    stem_words(stopwords := ['a', 'the'])
 ----
-db error: ERROR: option "stopwords" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: stem_words(): unknown option "stopwords"
+HINT: known names: locale
 
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err7(
-    template = 'segmentation',
-    accent = true
-)
+CREATE TEXT SEARCH DICTIONARY t_err7 AS
+    split_text(accent := true)
 ----
-db error: ERROR: option "accent" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "accent"
+HINT: known names: case, break
 
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err8(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    ngramsize = 5
-)
+CREATE TEXT SEARCH DICTIONARY t_err8 AS
+    split_text(ngramsize := 5)
 ----
-db error: ERROR: option "ngramsize" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "ngramsize"
+HINT: known names: case, break
 
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err9(
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    delimiter = ','
-)
+CREATE TEXT SEARCH DICTIONARY t_err9 AS
+    normalize_tokens('en_US.UTF-8', delimiter := ',')
 ----
-db error: ERROR: option "delimiter" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: normalize_tokens(): unknown option "delimiter"
+HINT: known names: locale, case, accent, form
 
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err10(
-    template = 'collation',
-    locale = 'en_US.UTF-8',
-    mingram = 2
-)
+CREATE TEXT SEARCH DICTIONARY t_err10 AS
+    collate_tokens('en_US.UTF-8', mingram := 2)
 ----
-db error: ERROR: option "mingram" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: collate_tokens(): unknown option "mingram"
+HINT: known names: locale
 
 
 
 # --- Invalid boolean value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err11(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    accent = 'maybe'
-)
+CREATE TEXT SEARCH DICTIONARY t_err11 AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := 'maybe') | stem_words('en_US.UTF-8')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err12(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    stemming = 'yes'
-)
+CREATE TEXT SEARCH DICTIONARY t_err12 AS
+    remove_stopwords(hex := 'yes')
 ----
-db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "hex": "yes"
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err13(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3,
-    preserveoriginal = 'aaa'
-)
+CREATE TEXT SEARCH DICTIONARY t_err13 AS
+    generate_ngrams(2, 3, preserveoriginal := 'aaa')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "aaa"
 
@@ -154,19 +120,13 @@ db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "pres
 # --- Malformed stopwords list (regression: empty / lone-quote tokens) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t_stopwords_empty_tokens(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    stopwords = '"a",,"b"'
-)
+CREATE TEXT SEARCH DICTIONARY t_stopwords_empty_tokens AS
+    split_text() | remove_stopwords(['a', 'b']) | stem_words('en_US.UTF-8')
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_stopwords_lone_quote(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    stopwords = '"a","'
-)
+CREATE TEXT SEARCH DICTIONARY t_stopwords_lone_quote AS
+    split_text() | remove_stopwords('a, "') | stem_words('en_US.UTF-8')
 ----
 db error: ERROR: Invalid format of list of words(should be comma-separated and quoted)
 
@@ -174,21 +134,15 @@ db error: ERROR: Invalid format of list of words(should be comma-separated and q
 # --- Invalid integer value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err14(
-    template = 'ngram',
-    mingram = 'abc',
-    maxgram = 3
-)
+CREATE TEXT SEARCH DICTIONARY t_err14 AS
+    generate_ngrams('abc', 3)
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "mingram": "abc"
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err15(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 'three'
-)
+CREATE TEXT SEARCH DICTIONARY t_err15 AS
+    generate_ngrams(2, 'three')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxgram": "three"
 
@@ -196,20 +150,16 @@ db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxg
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err17(
-    template = 'classification',
-    threshold = 1.5
-)
+CREATE TEXT SEARCH DICTIONARY t_err17 AS
+    classify_text(threshold := 1.5)
 ----
 db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
 HINT: Minimum confidence score [0.0..1.0]
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_err18(
-    template = 'classification',
-    threshold = -0.1
-)
+CREATE TEXT SEARCH DICTIONARY t_err18 AS
+    classify_text(threshold := -0.1)
 ----
 db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
 HINT: Minimum confidence score [0.0..1.0]
@@ -228,9 +178,8 @@ db error: ERROR: text search dictionary "other_tokenizer" does not exist
 # --- Basics: default case (lower), default stemming (true) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t1(
-    template = 'text', Locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t1 AS
+    split_text() | stem_words('en_US.UTF-8')
 
 
 query
@@ -298,11 +247,8 @@ SELECT ts_lexize('does_not_exist', ARRAY['Hello']);
 # --- case = upper ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t2(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper'
-)
+CREATE TEXT SEARCH DICTIONARY t2 AS
+    split_text(case := 'upper') | stem_words('en_US.UTF-8')
 
 
 query
@@ -315,13 +261,8 @@ ts_lexize
 # --- case = none, stemming = false: preserves original case ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_case_none(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true
-)
+CREATE TEXT SEARCH DICTIONARY text_case_none AS
+    split_text()
 
 
 query
@@ -334,12 +275,8 @@ ts_lexize
 # --- stemming = false: words are not reduced to their root ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_no_stem(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY text_no_stem AS
+    split_text(case := 'lower')
 
 
 query
@@ -352,12 +289,8 @@ ts_lexize
 # --- stemming = true (explicit): reduces words to their root ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_with_stem(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true
-)
+CREATE TEXT SEARCH DICTIONARY text_with_stem AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
 
 
 query
@@ -370,13 +303,8 @@ ts_lexize
 # --- accent = false (default): strips diacritics ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_no_accent(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    accent = false,
-    stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY text_no_accent AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
 
 
 query
@@ -389,13 +317,8 @@ ts_lexize
 # --- accent = true: preserves diacritics ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_with_accent(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    accent = true,
-    stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY text_with_accent AS
+    split_text(case := 'lower')
 
 
 query
@@ -408,11 +331,8 @@ ts_lexize
 # --- Russian locale with case = upper ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t3(
-    template = 'text',
-    locale = 'ru_RU.UTF-16',
-    case = 'upper'
-)
+CREATE TEXT SEARCH DICTIONARY t3 AS
+    split_text(case := 'upper') | stem_words('ru_RU.UTF-16')
 
 
 query
@@ -425,12 +345,8 @@ ts_lexize
 # --- Inline stopwords with whitespace trimming ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t4(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    stopwords = '"a","and","of"',
-    case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY t4 AS
+    split_text(case := 'lower') | remove_stopwords(['a', 'and', 'of']) | stem_words('en_US.UTF-8')
 
 
 query
@@ -443,14 +359,8 @@ ts_lexize
 # --- Edge ngrams from text tokenizer (mingram, maxgram) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_edge_ngram(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    mingram = 2,
-    maxgram = 4
-)
+CREATE TEXT SEARCH DICTIONARY text_edge_ngram AS
+    split_text(case := 'lower') | generate_ngrams(2, 4, mode := 'only_prefix')
 
 
 query
@@ -462,13 +372,8 @@ ts_lexize
 # --- Edge ngrams from text tokenizer (mingram, maxgram(default)) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_edge_ngram_no_maxgram(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    mingram = 2
-)
+CREATE TEXT SEARCH DICTIONARY text_edge_ngram_no_maxgram AS
+    split_text(case := 'lower') | generate_ngrams(2, 3, mode := 'only_prefix')
 
 
 query
@@ -481,14 +386,8 @@ ts_lexize
 # --- Edge ngrams interact with stemming: stem first, then ngram ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_stem_ngram(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    mingram = 2,
-    maxgram = 3
-)
+CREATE TEXT SEARCH DICTIONARY text_stem_ngram AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8') | generate_ngrams(2, 3, mode := 'only_prefix')
 
 
 query
@@ -503,11 +402,8 @@ ts_lexize
 # --- Without preserveoriginal (default false) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_no_preserve(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3
-)
+CREATE TEXT SEARCH DICTIONARY ngram_no_preserve AS
+    generate_ngrams(2, 3)
 
 
 query
@@ -520,11 +416,8 @@ ts_lexize
 # --- Unigram + bigram ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_unigram(
-    template = 'ngram',
-    mingram = 1,
-    maxgram = 2
-)
+CREATE TEXT SEARCH DICTIONARY ngram_unigram AS
+    generate_ngrams(1, 2)
 
 
 query
@@ -537,12 +430,8 @@ ts_lexize
 # --- preserveoriginal = false explicit ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_preserve_false(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3,
-    preserveoriginal = false
-)
+CREATE TEXT SEARCH DICTIONARY ngram_preserve_false AS
+    generate_ngrams(2, 3, preserveoriginal := false)
 
 
 query
@@ -555,10 +444,8 @@ ts_lexize
 # STEM TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t6(
-    template = 'stem',
-    locale = 'en'
-)
+CREATE TEXT SEARCH DICTIONARY t6 AS
+    stem_words('en')
 
 
 query
@@ -573,12 +460,8 @@ ts_lexize
 # --- lowercase + strip accents: whole input as single token ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t13(
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    accent = false
-)
+CREATE TEXT SEARCH DICTIONARY t13 AS
+    normalize_tokens('en_US.UTF-8', case := 'lower', accent := false)
 
 
 query
@@ -591,12 +474,8 @@ ts_lexize
 # --- uppercase ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_upper(
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    accent = false
-)
+CREATE TEXT SEARCH DICTIONARY norm_upper AS
+    normalize_tokens('en_US.UTF-8', case := 'upper', accent := false)
 
 
 query
@@ -609,12 +488,8 @@ ts_lexize
 # --- accent = true: keeps diacritics ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_with_accent(
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    accent = true
-)
+CREATE TEXT SEARCH DICTIONARY norm_with_accent AS
+    normalize_tokens('en_US.UTF-8', case := 'upper', accent := true)
 
 
 query
@@ -627,12 +502,8 @@ ts_lexize
 # --- case = none ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_no_case(
-    template = 'norm',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    accent = false
-)
+CREATE TEXT SEARCH DICTIONARY norm_no_case AS
+    normalize_tokens('en_US.UTF-8', case := 'none', accent := false)
 
 
 query
@@ -646,12 +517,8 @@ ts_lexize
 # --- form = nfkc: compatibility folding (ligatures, enclosed, full-width) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_nfkc(
-    template = 'norm',
-    case = 'lower',
-    accent = true,
-    form = 'nfkc'
-)
+CREATE TEXT SEARCH DICTIONARY norm_nfkc AS
+    normalize_tokens(case := 'lower', accent := true, form := 'nfkc')
 
 
 query
@@ -665,10 +532,8 @@ ts_lexize
 # --- (final sigma stays plain sigma) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_no_locale(
-    template = 'norm',
-    case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY norm_no_locale AS
+    normalize_tokens(case := 'lower')
 
 
 query
@@ -681,11 +546,8 @@ ts_lexize
 # --- providing a locale opts into tailored casing (Turkish dotless i) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY norm_tr(
-    template = 'norm',
-    case = 'lower',
-    locale = 'tr_TR'
-)
+CREATE TEXT SEARCH DICTIONARY norm_tr AS
+    normalize_tokens('tr_TR', case := 'lower')
 
 
 query
@@ -696,10 +558,8 @@ ts_lexize
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY norm_bad_form(
-    template = 'norm',
-    form = 'nfd'
-)
+CREATE TEXT SEARCH DICTIONARY norm_bad_form AS
+    normalize_tokens(form := 'nfd')
 ----
 db error: ERROR: invalid value in "form" parameter
 HINT: Unicode normalization form: nfc, nfkc
@@ -708,19 +568,15 @@ HINT: Unicode normalization form: nfc, nfkc
 # COLLATION TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t10(
-    template = 'collation',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t10 AS
+    collate_tokens('en_US.UTF-8')
 
 
 # DELIMITER TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t11(
-    template = 'delimiter',
-    delimiter = '|'
-)
+CREATE TEXT SEARCH DICTIONARY t11 AS
+    split_csv('|')
 
 
 query
@@ -731,10 +587,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY delim_comma(
-    template = 'delimiter',
-    delimiter = ','
-)
+CREATE TEXT SEARCH DICTIONARY delim_comma AS
+    split_csv(',')
 
 
 query
@@ -749,10 +603,8 @@ ts_lexize
 # --- Single character delimiter (test_delimiter) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_single(
-    template = 'multi_delimiter',
-    delimiters = '"a"'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_single AS
+    split_by_delimiters(['a'])
 
 
 query
@@ -765,10 +617,8 @@ ts_lexize
 # --- Empty result when input is only delimiters (test_delimiter_empty_match) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_dot(
-    template = 'multi_delimiter',
-    delimiters = '"."'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_dot AS
+    split_by_delimiters(['.'])
 
 
 query
@@ -781,10 +631,8 @@ ts_lexize
 # --- Three single-character delimiters (test_delimiter_3) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_3(
-    template = 'multi_delimiter',
-    delimiters = '";", "|", "."'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_3 AS
+    split_by_delimiters([';', '|', '.'])
 
 
 query
@@ -797,10 +645,8 @@ ts_lexize
 # --- Five single-character delimiters (test_delimiter_5) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_5(
-    template = 'multi_delimiter',
-    delimiters = '":", ";", " ", ".", "|"'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_5 AS
+    split_by_delimiters([':', ';', ' ', '.', '|'])
 
 
 query
@@ -813,10 +659,8 @@ ts_lexize
 # --- Long string delimiter (test_delimiter_single_long) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_long(
-    template = 'multi_delimiter',
-    delimiters = '"foo"'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_long AS
+    split_by_delimiters(['foo'])
 
 
 query
@@ -829,10 +673,8 @@ ts_lexize
 # --- Multiple word delimiters (multi_words) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_words(
-    template = 'multi_delimiter',
-    delimiters = '"foo", "bar", "baz"'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_words AS
+    split_by_delimiters(['foo', 'bar', 'baz'])
 
 
 query
@@ -854,10 +696,8 @@ ts_lexize
 # --- Overlapping delimiter prefixes (trick_matching_1) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY multi_delim_trick(
-    template = 'multi_delimiter',
-    delimiters = '"foo", "ffa"'
-)
+CREATE TEXT SEARCH DICTIONARY multi_delim_trick AS
+    split_by_delimiters(['foo', 'ffa'])
 
 
 query
@@ -870,11 +710,8 @@ ts_lexize
 # SEGMENTATION TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_graphic_lower(
-    template = 'segmentation',
-    case = 'lower',
-    break = 'alpha'
-)
+CREATE TEXT SEARCH DICTIONARY seg_graphic_lower AS
+    split_text(case := 'lower', break := 'alpha')
 
 
 # --- break = alpha includes alphanumeric tokens (digits pass through) ---
@@ -896,11 +733,8 @@ VARCHAR[]
 # --- break = graphic: keeps all non-whitespace tokens, drops spaces ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_graphic_upper(
-    template = 'segmentation',
-    case = 'upper',
-    break = 'graphic'
-)
+CREATE TEXT SEARCH DICTIONARY seg_graphic_upper AS
+    split_text(case := 'upper', break := 'graphic')
 
 
 query
@@ -920,11 +754,8 @@ ts_lexize
 # --- break = all: emits every word-break segment including spaces ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_all_upper(
-    template = 'segmentation',
-    case = 'upper',
-    break = 'all'
-)
+CREATE TEXT SEARCH DICTIONARY seg_all_upper AS
+    split_text(case := 'upper', break := 'all')
 
 
 query
@@ -935,9 +766,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_graphic_none(
-    template = 'segmentation'
-)
+CREATE TEXT SEARCH DICTIONARY seg_graphic_none AS
+    split_text()
 
 
 query
@@ -968,10 +798,8 @@ ts_lexize
 # --- break = sentence: whitespace-trimmed UAX#29 sentences ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_sentence(
-    template = 'segmentation',
-    break = 'sentence'
-)
+CREATE TEXT SEARCH DICTIONARY seg_sentence AS
+    split_text(break := 'sentence')
 
 
 query
@@ -984,11 +812,8 @@ ts_lexize
 # --- break = sentence composes with case ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_sentence_lower(
-    template = 'segmentation',
-    break = 'sentence',
-    case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY seg_sentence_lower AS
+    split_text(break := 'sentence', case := 'lower')
 
 
 query
@@ -1001,10 +826,8 @@ ts_lexize
 # --- break = line: one token per line, CRLF is a single break ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_line(
-    template = 'segmentation',
-    break = 'line'
-)
+CREATE TEXT SEARCH DICTIONARY seg_line AS
+    split_text(break := 'line')
 
 
 query
@@ -1017,10 +840,8 @@ ts_lexize
 # --- break = paragraph: blank lines split, single newlines glue ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_paragraph(
-    template = 'segmentation',
-    break = 'paragraph'
-)
+CREATE TEXT SEARCH DICTIONARY seg_paragraph AS
+    split_text(break := 'paragraph')
 
 
 query
@@ -1038,10 +859,8 @@ array_length
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY seg_bad_break(
-    template = 'segmentation',
-    break = 'word'
-)
+CREATE TEXT SEARCH DICTIONARY seg_bad_break AS
+    split_text(break := 'word')
 ----
 db error: ERROR: invalid value in "break" parameter
 HINT: Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
@@ -1050,10 +869,8 @@ HINT: Token boundary detection mode: all, graphic, alpha, sentence, line, paragr
 # STOPWORDS TOKENIZER TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY stopwords_filter(
-    template = 'stopwords',
-    stopwords = '"the","a","an"'
-)
+CREATE TEXT SEARCH DICTIONARY stopwords_filter AS
+    remove_stopwords(['the', 'a', 'an'])
 
 
 query
@@ -1085,11 +902,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY stopwords_hex_false(
-    template = 'stopwords',
-    stopwords = '"foo","bar"',
-    hex = false
-)
+CREATE TEXT SEARCH DICTIONARY stopwords_hex_false AS
+    remove_stopwords(['foo', 'bar'], hex := false)
 
 
 query
@@ -1114,9 +928,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY stopwords_empty(
-    template = 'stopwords'
-)
+CREATE TEXT SEARCH DICTIONARY stopwords_empty AS
+    remove_stopwords()
 
 
 query
@@ -1129,11 +942,8 @@ ts_lexize
 # --- hex = true: stopwords are hex-decoded before matching ---
 # 616263 = 'abc', 6D6e6F = 'mno'
 statement ok
-CREATE TEXT SEARCH DICTIONARY stopwords_hex_true(
-    template = 'stopwords',
-    stopwords = '"616263","6D6e6F"',
-    hex = true
-)
+CREATE TEXT SEARCH DICTIONARY stopwords_hex_true AS
+    remove_stopwords(['616263', '6D6e6F'], hex := true)
 
 
 query
@@ -1167,61 +977,41 @@ ts_lexize
 # FEATURES (norm, frequency, position, offset)
 
 statement error
-CREATE TEXT SEARCH DICTIONARY text_norm_feature(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    norm = true
-)
+CREATE TEXT SEARCH DICTIONARY text_norm_feature AS
+    split_text() | stem_words('en_US.UTF-8')
+    WITH (norm)
 ----
 db error: ERROR: missing feature 'frequency' required when 'norm' feature is specified
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_frequency_feature(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    norm = true,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY text_frequency_feature AS
+    split_text() | stem_words('en_US.UTF-8')
+    WITH (frequency, norm)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_all_features(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    norm = true,
-    frequency = true,
-    position = true,
-    offset = true
-)
+CREATE TEXT SEARCH DICTIONARY text_all_features AS
+    split_text() | stem_words('en_US.UTF-8')
+    WITH (frequency, position, norm, offset)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ngram_with_features(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3,
-    norm = true,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY ngram_with_features AS
+    generate_ngrams(2, 3)
+    WITH (frequency, norm)
 
 
 # NEAREST NEIGHBORS TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk2(
-    template = 'nearest_neighbors',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    topk = 2
-)
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk2 AS
+    find_nearest_words(modellocation := '${RESOURCES}/tests/iresearch/model_cooking.bin', topk := 2)
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY nearest_neighbors_no_file(
-    template = 'nearest_neighbors',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cookies.bin',
-    topk = 2
-)
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_no_file AS
+    find_nearest_words(modellocation := '${RESOURCES}/tests/iresearch/model_cookies.bin', topk := 2)
 
 
 query
@@ -1234,10 +1024,8 @@ ts_lexize
 # CLASSIFICATION TEMPLATE
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY classification(
-    template = 'classification',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin'
-)
+CREATE TEXT SEARCH DICTIONARY classification AS
+    classify_text(modellocation := '${RESOURCES}/tests/iresearch/model_cooking.bin')
 
 
 query
@@ -1258,29 +1046,19 @@ ts_lexize
 
 # --- Invalid step template ---
 statement error
-CREATE TEXT SEARCH DICTIONARY pipe_err1(
-    template = 'pipeline',
-    step1_template = 'invalid_tokenizer'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_err1 AS
+    invalid_tokenizer()
 ----
-db error: ERROR: Invalid type of text search dictionary
+db error: ERROR: "invalid_tokenizer" is not a text search template and does not read input
+HINT: an SQL stage must reference the input as $1, e.g. invalid_tokenizer($1)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_pipe(
-    template = 'pipeline',
-    step1_template = 'norm',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower',
-    step2_template = 'pipeline',
-    step2_step1_template = 'delimiter',
-    step2_step1_delimiter = '|',
-    step2_step2_template = 'norm',
-    step2_step2_locale = 'en_US.UTF-8',
-    step2_step2_case = 'upper',
-    step3_template = 'stopwords',
-    step3_stopwords = '"A"'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_pipe AS
+    normalize_tokens('en_US.UTF-8', case := 'lower')
+    | split_csv('|')
+    | normalize_tokens('en_US.UTF-8', case := 'upper')
+    | remove_stopwords(['A'])
 
 
 query
@@ -1292,20 +1070,13 @@ ts_lexize
 
 # --- Three-step: delimiter -> text with correct stopwords -> norm ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = 'A',
-    step2_template = 'text',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower',
-    step2_accent = false,
-    step2_stemming = true,
-    step2_stopwords = '"fox"',
-    step3_template = 'norm',
-    step3_locale = 'en_US.UTF-8',
-    step3_case = 'upper'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords AS
+    split_csv('A')
+    | split_text(case := 'lower')
+    | normalize_tokens('en_US.UTF-8', accent := false)
+    | remove_stopwords(['fox'])
+    | stem_words('en_US.UTF-8')
+    | normalize_tokens('en_US.UTF-8', case := 'upper')
 
 query
 SELECT ts_lexize('pipe_correct_stopwords', 'QuickABrownAFOXAjUmps');
@@ -1316,13 +1087,8 @@ ts_lexize
 
 # --- Single-step pipeline with text tokenizer ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_single_text(
-    template = 'pipeline',
-    step1_template = 'text',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower',
-    step1_stemming = true
-)
+CREATE TEXT SEARCH DICTIONARY pipe_single_text AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
 
 query
 SELECT ts_lexize('pipe_single_text', 'QuIck broWn fox jumps');
@@ -1333,12 +1099,8 @@ ts_lexize
 
 # --- Single-step pipeline with norm (non-tokenizer) ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_single_norm(
-    template = 'pipeline',
-    step1_template = 'norm',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_single_norm AS
+    normalize_tokens('en_US.UTF-8', case := 'lower')
 
 query
 SELECT ts_lexize('pipe_single_norm', 'QuIck');
@@ -1349,15 +1111,9 @@ ts_lexize
 
 # --- Two norm steps (no real tokenizer in pipeline) ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_two_norms(
-    template = 'pipeline',
-    step1_template = 'norm',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'upper',
-    step2_template = 'norm',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_two_norms AS
+    normalize_tokens('en_US.UTF-8', case := 'upper')
+    | normalize_tokens('en_US.UTF-8', case := 'lower')
 
 query
 SELECT ts_lexize('pipe_two_norms', 'QuIck');
@@ -1368,16 +1124,9 @@ ts_lexize
 
 # --- Text then norm (source-modifying tokenizer) ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_text_norm(
-    template = 'pipeline',
-    step1_template = 'text',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'none',
-    step1_stemming = true,
-    step2_template = 'norm',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_text_norm AS
+    split_text() | stem_words('en_US.UTF-8')
+    | normalize_tokens('en_US.UTF-8', case := 'lower')
 
 query
 SELECT ts_lexize('pipe_text_norm', 'QuIck broWn fox jumps');
@@ -1388,15 +1137,8 @@ ts_lexize
 
 # --- NGram then norm (lowercasing ngrams) ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_ngram_norm(
-    template = 'pipeline',
-    step1_template = 'ngram',
-    step1_mingram = 2,
-    step1_maxgram = 3,
-    step2_template = 'norm',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY pipe_ngram_norm AS
+    generate_ngrams(2, 3) | normalize_tokens('en_US.UTF-8', case := 'lower')
 
 query
 SELECT ts_lexize('pipe_ngram_norm', 'QuIck');
@@ -1407,15 +1149,9 @@ ts_lexize
 
 # --- Two-step: delimiter then text ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_delim_text(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = '.',
-    step2_template = 'text',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'upper',
-    step2_stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY pipe_delim_text AS
+    split_csv('.')
+    | split_text(case := 'upper')
 
 query
 SELECT ts_lexize('pipe_delim_text', 'Hello.World.Foo.baR');
@@ -1424,53 +1160,52 @@ ts_lexize
 {HELLO,WORLD,FOO,BAR}
 
 
-# COPY FROM TEMPLATE
+# STORED DICTIONARIES AS STAGES
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY copy_err(
-    template = 'copy_from',
-    from = 't1',
-    case = 'whaaat?'
-)
+CREATE TEXT SEARCH DICTIONARY copy_err AS
+    split_text(case := 'whaaat?') | stem_words('en_US.UTF-8')
 ----
 db error: ERROR: invalid value in "case" parameter
 HINT: Text case conversion: none, lower, upper
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY copy_err(
-    template = 'copy_from',
-    from = 't1',
-    ngramsize = 2
-)
+CREATE TEXT SEARCH DICTIONARY copy_err AS
+    t1(ngramsize := 2)
 ----
-db error: ERROR: option "ngramsize" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: "t1" is not a text search template and does not read input
+HINT: an SQL stage must reference the input as $1, e.g. t1($1)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_t1(
-    template = 'copy_from',
-    from = 't1',
-    case = 'upper'
-)
+CREATE TEXT SEARCH DICTIONARY copy_t1 AS
+    t1
 
 
 query
 SELECT ts_lexize('copy_t1', 'a QUICK Brown FoX');
 ----
 ts_lexize
+{a,QUICK,Brown,FoX}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_t1_upper AS
+    split_text(case := 'upper') | stem_words('en_US.UTF-8')
+
+
+query
+SELECT ts_lexize('copy_t1_upper', 'a QUICK Brown FoX');
+----
+ts_lexize
 {A,QUICK,BROWN,FOX}
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_pipe(
-    template = 'copy_from',
-    from = 'pipe_delim_text',
-    step1_delimiter = '|',
-    step2_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY copy_pipe AS
+    split_csv('|') | split_text(case := 'lower')
 
 
 query
@@ -1481,14 +1216,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_pipe2(
-    template = 'copy_from',
-    from = 'pipe_delim_text',
-    step1_delimiter = '|',
-    step2_case = 'lower',
-    step3_template = 'stopwords',
-    step3_stopwords = '"bar", "foo"'
-)
+CREATE TEXT SEARCH DICTIONARY copy_pipe2 AS
+    copy_pipe | remove_stopwords(['bar', 'foo'])
 
 
 query
@@ -1499,13 +1228,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
-    template = 'copy_from',
-    from = 'copy_pipe2',
-    step4_template = 'copy_from',
-    step4_from = 'stopwords_filter',
-    step4_stopwords = '"quick"'
-)
+CREATE TEXT SEARCH DICTIONARY copy_copy_pipe AS
+    copy_pipe2 | remove_stopwords(['quick'])
 
 query
 SELECT ts_lexize('copy_copy_pipe', 'A|QUICK|Jumping|Brownish|FOX');
@@ -1515,13 +1239,19 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipes(
-    template = 'copy_from',
-    from = 'pipe_pipe',
-    step4_template = 'pipeline',
-    step4_step1_template = 'copy_from',
-    step4_step1_from = 'pipe_pipe'
-)
+CREATE TEXT SEARCH DICTIONARY copy_stored_filter AS
+    copy_pipe2 | stopwords_filter
+
+query
+SELECT ts_lexize('copy_stored_filter', 'A|QUICK|Jumping|Brownish|FOX');
+----
+ts_lexize
+{quick,jumping,brownish,fox}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipes AS
+    pipe_pipe | pipe_pipe
 
 
 query
@@ -1532,13 +1262,8 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY too_many_pipes(
-    template = 'copy_from',
-    from = 'pipes',
-    step5_template = 'pipeline',
-    step5_step1_template = 'copy_from',
-    step5_step1_from = 'pipes'
-)
+CREATE TEXT SEARCH DICTIONARY too_many_pipes AS
+    pipes | pipes
 
 
 query
@@ -1555,17 +1280,9 @@ ts_lexize
 # --- Basic union: text + delimiter ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_text_delim(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    tokenizer1_case = 'lower',
-    tokenizer1_stemming = false,
-    tokenizer2_template = 'delimiter',
-    tokenizer2_delimiter = ' ',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_text_delim AS
+    [split_text(case := 'lower'), split_csv(' ')]
+    WITH (frequency, position)
 
 
 query
@@ -1578,18 +1295,9 @@ ts_lexize
 # --- Basic union: text + fixed-size ngram ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_text_ngram3(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    tokenizer1_case = 'lower',
-    tokenizer1_stemming = true,
-    tokenizer2_template = 'ngram',
-    tokenizer2_mingram = 3,
-    tokenizer2_maxgram = 3,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_text_ngram3 AS
+    [split_text(case := 'lower') | stem_words('en_US.UTF-8'), generate_ngrams(3, 3)]
+    WITH (frequency, position)
 
 
 query
@@ -1602,21 +1310,9 @@ ts_lexize
 # --- Basic union: three children ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_three_children(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    tokenizer1_case = 'lower',
-    tokenizer1_stemming = false,
-    tokenizer2_template = 'text',
-    tokenizer2_locale = 'en_US.UTF-8',
-    tokenizer2_case = 'upper',
-    tokenizer2_stemming = false,
-    tokenizer3_template = 'delimiter',
-    tokenizer3_delimiter = ' ',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_three_children AS
+    [split_text(case := 'lower'), split_text(case := 'upper'), split_csv(' ')]
+    WITH (frequency, position)
 
 
 query
@@ -1629,48 +1325,26 @@ ts_lexize
 # --- OFFSET = true must be rejected for union ---
 
 statement error Unsupported index features are specified
-CREATE TEXT SEARCH DICTIONARY union_offset_err(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    offset = true,
-    position = true,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY union_offset_err AS
+    [split_text() | stem_words('en_US.UTF-8')]
+    WITH (frequency, position, offset)
 
 
 # --- OFFSET = true must be rejected for pipeline containing union ---
 
 statement error Unsupported index features are specified
-CREATE TEXT SEARCH DICTIONARY pipe_union_offset_err(
-    template = 'pipeline',
-    step1_template = 'union',
-    step1_tokenizer1_template = 'text',
-    step1_tokenizer1_locale = 'en_US.UTF-8',
-    step1_tokenizer2_template = 'delimiter',
-    step1_tokenizer2_delimiter = ' ',
-    offset = true,
-    position = true,
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY pipe_union_offset_err AS
+    [split_text() | stem_words('en_US.UTF-8'), split_csv(' ')]
+    WITH (frequency, position, offset)
 
 
 # --- Nested: union containing a pipeline ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_with_pipe(
-    template = 'union',
-    tokenizer1_template = 'pipeline',
-    tokenizer1_step1_template = 'delimiter',
-    tokenizer1_step1_delimiter = '.',
-    tokenizer1_step2_template = 'norm',
-    tokenizer1_step2_locale = 'en_US.UTF-8',
-    tokenizer1_step2_case = 'upper',
-    tokenizer2_template = 'delimiter',
-    tokenizer2_delimiter = '.',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_with_pipe AS
+    [split_csv('.')
+    | normalize_tokens('en_US.UTF-8', case := 'upper'), split_csv('.')]
+    WITH (frequency, position)
 
 
 query
@@ -1683,20 +1357,10 @@ ts_lexize
 # --- Nested: pipeline containing a union ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pipe_with_union(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = '|',
-    step2_template = 'union',
-    step2_tokenizer1_template = 'norm',
-    step2_tokenizer1_locale = 'en_US.UTF-8',
-    step2_tokenizer1_case = 'lower',
-    step2_tokenizer2_template = 'norm',
-    step2_tokenizer2_locale = 'en_US.UTF-8',
-    step2_tokenizer2_case = 'upper',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY pipe_with_union AS
+    split_csv('|')
+    | [normalize_tokens('en_US.UTF-8', case := 'lower'), normalize_tokens('en_US.UTF-8', case := 'upper')]
+    WITH (frequency, position)
 
 
 query
@@ -1706,28 +1370,17 @@ ts_lexize
 {hello,HELLO,world,WORLD}
 
 
-# --- copy_from with union, overriding a sub-tokenizer option ---
+# --- a stored union as a union member ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_base(
-    template = 'union',
-    tokenizer1_template = 'text',
-    tokenizer1_locale = 'en_US.UTF-8',
-    tokenizer1_case = 'lower',
-    tokenizer1_stemming = false,
-    tokenizer2_template = 'delimiter',
-    tokenizer2_delimiter = ' ',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY union_base AS
+    [split_text(case := 'lower'), split_csv(' ')]
+    WITH (frequency, position)
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_copy(
-    template = 'copy_from',
-    from = 'union_base',
-    tokenizer1_case = 'upper'
-)
+CREATE TEXT SEARCH DICTIONARY union_copy AS
+    [split_text(case := 'upper'), split_csv(' ')]
 
 
 query
@@ -1737,45 +1390,46 @@ ts_lexize
 {HELLO,Hello,WORLD,World}
 
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_member AS
+    [union_base, split_text(case := 'upper')]
+
+
+query
+SELECT ts_lexize('union_member', 'Hello World');
+----
+ts_lexize
+{hello,Hello,HELLO,world,World,WORLD}
+
+
 # --- Error: empty union (no tokenizer<N>_ children) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY union_empty_err(
-    template = 'union',
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY union_empty_err AS
+    []
+    WITH (frequency)
 
 
-# --- Error: sparse numbering (tokenizer2_ without tokenizer1_) ---
+# --- Error: empty union ---
 
-statement error
-CREATE TEXT SEARCH DICTIONARY union_sparse(
-    template = 'union',
-    tokenizer2_template = 'text',
-    tokenizer2_locale = 'en_US.UTF-8',
-    frequency = true,
-    position = true
-)
+statement error a list stage must hold analyzers
+CREATE TEXT SEARCH DICTIONARY union_sparse AS [] WITH (frequency, position)
 
 
 # --- Error: invalid child template ---
 
-statement error Invalid type of text search dictionary
-CREATE TEXT SEARCH DICTIONARY union_badchild(
-    template = 'union',
-    tokenizer1_template = 'nonexistent_type',
-    frequency = true
-)
+statement error db error: ERROR: a list stage must hold analyzers: \[text\(\.\.\.\), ngram\(\.\.\.\)\]
+CREATE TEXT SEARCH DICTIONARY union_badchild AS
+    [nonexistent_type()]
+    WITH (frequency)
 
 
 # --- Error: missing required child option (delimiter without delimiter=) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY union_missing_opt(
-    template = 'union',
-    tokenizer1_template = 'delimiter',
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY union_missing_opt AS
+    [split_csv()]
+    WITH (frequency)
 
 
 # WILDCARD TEMPLATE
@@ -1783,57 +1437,36 @@ CREATE TEXT SEARCH DICTIONARY union_missing_opt(
 # --- Valid: defaults (ngramsize defaults to 3), delimiter base analyzer ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_default(
-    template = 'wildcard',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_default AS
+    generate_wildcard_ngrams(split_csv(' '))
 
 
 # --- Valid: explicit ngramsize=2 (minimum allowed) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_ngram2(
-    template = 'wildcard',
-    ngramsize = 2,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram2 AS
+    generate_wildcard_ngrams(split_csv(' '), 2)
 
 
 # --- Valid: explicit ngramsize=5, segmentation base analyzer ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_ngram5_seg(
-    template = 'wildcard',
-    ngramsize = 5,
-    tokenizer_template = 'segmentation',
-    tokenizer_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram5_seg AS
+    generate_wildcard_ngrams(split_text(case := 'lower'), 5)
 
 
 # --- Valid: text base analyzer ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_text_base(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'text',
-    tokenizer_locale = 'en_US.UTF-8',
-    tokenizer_stemming = false,
-    tokenizer_case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_text_base AS
+    generate_wildcard_ngrams(split_text(case := 'lower'), 3)
 
 
 # --- Invalid: ngramsize=1 (below minimum 2) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1(
-    template = 'wildcard',
-    ngramsize = 1,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1 AS
+    generate_wildcard_ngrams(split_csv(' '), 1)
 ----
 db error: ERROR: "ngramsize" must be at least 2
 HINT: N-gram size for wildcard prefix indexing (minimum 2)
@@ -1842,12 +1475,8 @@ HINT: N-gram size for wildcard prefix indexing (minimum 2)
 # --- Invalid: ngramsize=0 ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0(
-    template = 'wildcard',
-    ngramsize = 0,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0 AS
+    generate_wildcard_ngrams(split_csv(' '), 0)
 ----
 db error: ERROR: "ngramsize" must be at least 2
 HINT: N-gram size for wildcard prefix indexing (minimum 2)
@@ -1856,12 +1485,8 @@ HINT: N-gram size for wildcard prefix indexing (minimum 2)
 # --- Invalid: ngramsize not an integer ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str(
-    template = 'wildcard',
-    ngramsize = 'three',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str AS
+    generate_wildcard_ngrams(split_csv(' '), 'three')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "ngramsize": "three"
 
@@ -1869,39 +1494,26 @@ db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "ngra
 # --- Invalid: option not applicable to wildcard ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_bad_option(
-    template = 'wildcard',
-    ngramsize = 3,
-    locale = 'en_US.UTF-8',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_option AS
+    generate_wildcard_ngrams(split_csv(' '), 3, locale := 'en_US.UTF-8')
 ----
-db error: ERROR: option "locale" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: generate_wildcard_ngrams(): unknown option "locale"
+HINT: known names: ngramsize
 
 
 # --- Invalid: missing required tokenizer_template ---
 
-statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_no_analyzer(
-    template = 'wildcard',
-    ngramsize = 3
-)
-----
-db error: ERROR: required parameter "template" was not found
+statement error requires a nested analyzer as its first argument
+CREATE TEXT SEARCH DICTIONARY wildcard_no_analyzer AS generate_wildcard_ngrams(3)
 
 
 # --- Invalid: inner tokenizer missing its required option (delimiter without delimiter param) ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter'
-)
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner AS
+    generate_wildcard_ngrams(split_csv(), 3)
 ----
-db error: ERROR: required parameter "delimiter" was not found
+db error: ERROR: split_csv(): required option "delimiter" not given
 
 
 # --- ts_lexize: wildcard tokens contain 0xFF boundary sentinels.
@@ -1999,30 +1611,22 @@ x\\377
 # array-mode default; half-set is ambiguous and rejected at CREATE time.
 
 statement error 'latitude' and 'longitude' must be both set or both left empty
-CREATE TEXT SEARCH DICTIONARY t_gp_err1(
-    template = 'geopoint',
-    longitude = 'lng'
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err1 AS
+    encode_geopoint(longitude := 'lng')
 
 
 # --- Error: half-set (latitude without longitude) ---
 
 statement error 'latitude' and 'longitude' must be both set or both left empty
-CREATE TEXT SEARCH DICTIONARY t_gp_err2(
-    template = 'geopoint',
-    latitude = 'lat'
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err2 AS
+    encode_geopoint('lat')
 
 
 # --- Error: invalid integer for maxcells ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gp_err3(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng',
-    maxcells = 'many'
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err3 AS
+    encode_geopoint('lat', 'lng', maxcells := 'many')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxcells": "many"
 
@@ -2030,12 +1634,8 @@ db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxc
 # --- Error: invalid boolean for optimizeforspace ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gp_err4(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng',
-    optimizeforspace = 'yes'
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err4 AS
+    encode_geopoint('lat', 'lng', optimizeforspace := 'yes')
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "optimizeforspace": "yes"
 
@@ -2043,59 +1643,40 @@ db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "opti
 # --- Error: option not applicable to geopoint ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gp_err5(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err5 AS
+    encode_geopoint('lat', 'lng', locale := 'en_US.UTF-8')
 ----
-db error: ERROR: option "locale" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: encode_geopoint(): unknown option "locale"
+HINT: known names: latitude, longitude, maxcells, minlevel, maxlevel, levelmod, optimizeforspace
 
 
 # --- Error: geo analyzers do not support index features ---
 
 statement error Unsupported index features are specified
-CREATE TEXT SEARCH DICTIONARY t_gp_err6(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng',
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY t_gp_err6 AS
+    encode_geopoint('lat', 'lng')
+    WITH (frequency)
 
 
 # --- Valid: geopoint with minimal options (default S2 parameters) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_basic(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_basic AS
+    encode_geopoint('lat', 'lng')
 
 
 # --- Valid: geopoint with explicit S2 options ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_custom(
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng',
-    maxcells = 10,
-    minlevel = 2,
-    maxlevel = 15
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_custom AS
+    encode_geopoint('lat', 'lng', maxcells := 10, minlevel := 2, maxlevel := 15)
 
 
 # --- Valid: geopoint with slash-separated nested path ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_nested(
-    template = 'geopoint',
-    latitude = 'location/lat',
-    longitude = 'location/lng'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_nested AS
+    encode_geopoint('location/lat', 'location/lng')
 
 
 # --- ts_lexize: geopoint with defaults produces 20 S2 tokens for a single point ---
@@ -2131,10 +1712,8 @@ count
 # --- Error: invalid type value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gj_err1(
-    template = 'geojson',
-    type = 'invalid'
-)
+CREATE TEXT SEARCH DICTIONARY t_gj_err1 AS
+    encode_geojson(type := 'invalid')
 ----
 db error: ERROR: invalid value in "type" parameter
 HINT: GeoJson shape type: shape, centroid, point
@@ -2143,10 +1722,8 @@ HINT: GeoJson shape type: shape, centroid, point
 # --- Error: invalid coding value ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gj_err2(
-    template = 'geojson',
-    coding = 'binary'
-)
+CREATE TEXT SEARCH DICTIONARY t_gj_err2 AS
+    encode_geojson(coding := 'binary')
 ----
 db error: ERROR: invalid value in "coding" parameter
 HINT: Encoding format: source, s2point, s2latlngf64, s2latlngu32
@@ -2155,10 +1732,8 @@ HINT: Encoding format: source, s2point, s2latlngf64, s2latlngu32
 # --- Error: vpack coding is not exposed via SQL ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gj_err_vpack(
-    template = 'geojson',
-    coding = 'vpack'
-)
+CREATE TEXT SEARCH DICTIONARY t_gj_err_vpack AS
+    encode_geojson(coding := 'vpack')
 ----
 db error: ERROR: invalid value in "coding" parameter
 HINT: Encoding format: source, s2point, s2latlngf64, s2latlngu32
@@ -2167,55 +1742,40 @@ HINT: Encoding format: source, s2point, s2latlngf64, s2latlngu32
 # --- Error: option not applicable to geojson ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY t_gj_err3(
-    template = 'geojson',
-    locale = 'en_US.UTF-8'
-)
+CREATE TEXT SEARCH DICTIONARY t_gj_err3 AS
+    encode_geojson(locale := 'en_US.UTF-8')
 ----
-db error: ERROR: option "locale" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: encode_geojson(): unknown option "locale"
+HINT: known names: type, coding, maxcells, minlevel, maxlevel, levelmod, optimizeforspace
 
 
 # --- Error: geo analyzers do not support index features ---
 
 statement error Unsupported index features are specified
-CREATE TEXT SEARCH DICTIONARY t_gj_err4(
-    template = 'geojson',
-    frequency = true
-)
+CREATE TEXT SEARCH DICTIONARY t_gj_err4 AS
+    encode_geojson()
+    WITH (frequency)
 
 
 # --- Valid: geojson with defaults (type=shape, coding=source) ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_basic(
-    template = 'geojson'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_basic AS
+    encode_geojson()
 
 
 # --- Valid: geojson with point type and lossless S2 coding ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_point(
-    template = 'geojson',
-    type = 'point',
-    coding = 's2point'
-)
+CREATE TEXT SEARCH DICTIONARY geojson_point AS
+    encode_geojson(type := 'point', coding := 's2point')
 
 
 # --- Valid: geojson with centroid, s2latlngf64 coding, custom S2 options ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_centroid(
-    template = 'geojson',
-    type = 'centroid',
-    coding = 's2latlngf64',
-    maxcells = 5,
-    minlevel = 2,
-    maxlevel = 10,
-    levelmod = 2,
-    optimizeforspace = true
-)
+CREATE TEXT SEARCH DICTIONARY geojson_centroid AS
+    encode_geojson(type := 'centroid', coding := 's2latlngf64', maxcells := 5, minlevel := 2, maxlevel := 10, levelmod := 2, optimizeforspace := true)
 
 
 # --- ts_lexize: geojson with defaults produces 20 tokens for a GeoJSON Point ---
@@ -2237,16 +1797,14 @@ count
 5
 
 
-# COPY_FROM for geo dictionaries
+# Stored geo dictionaries as stages
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_geopoint(
-    template = 'copy_from',
-    from = 'geopoint_custom'
-)
+CREATE TEXT SEARCH DICTIONARY copy_geopoint AS
+    geopoint_custom
 
 
-# --- copy_geopoint inherits geopoint_custom settings (minlevel=2, maxlevel=15 -> 14 tokens) ---
+# --- copy_geopoint takes geopoint_custom's settings (minlevel=2, maxlevel=15 -> 14 tokens) ---
 
 query
 SELECT count(*) FROM unnest(ts_lexize('copy_geopoint', '{"lat":0,"lng":0}')) AS t;
@@ -2256,10 +1814,8 @@ count
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_geojson(
-    template = 'copy_from',
-    from = 'geojson_basic'
-)
+CREATE TEXT SEARCH DICTIONARY copy_geojson AS
+    geojson_basic
 
 
 query
@@ -2269,137 +1825,178 @@ count
 20
 
 
-# --- copy_from with override: change latitude path, keep S2 options from source ---
+# --- the source's settings are copied when the new dictionary is created ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_geopoint_override(
-    template = 'copy_from',
-    from = 'geopoint_basic',
-    latitude = 'x',
-    longitude = 'y'
-)
+CREATE TEXT SEARCH DICTIONARY geopoint_source AS
+    encode_geopoint('x', 'y', maxcells := 10, minlevel := 2, maxlevel := 15)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_geopoint_snapshot AS
+    geopoint_source
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geopoint_source
 
 
 query
-SELECT count(*) FROM unnest(ts_lexize('copy_geopoint_override', '{"x":0,"y":0}')) AS t;
+SELECT count(*) FROM unnest(ts_lexize('copy_geopoint_snapshot', '{"x":0,"y":0}')) AS t;
 ----
 count
-20
+14
 
 
 # HELP
 
 statement error
-CREATE TEXT SEARCH DICTIONARY a(help);
+CREATE TEXT SEARCH DICTIONARY a AS keyword() WITH (help);
 ----
 db error: ERROR: 
-Text Search Dictionary:
-  template[required] (string) [default: none] - Tokenizer template type
-  features:
-    norm (boolean) [default: false] - Enables norm feature in index
-    offset (boolean) [default: false] - Enables offset feature in index
-    position (boolean) [default: false] - Enables position feature in index
-    frequency (boolean) [default: false] - Enables frequency feature in index
-  text:
-    locale (string) - ICU locale string (e.g. en_US.UTF-8)
-    accent (boolean) [default: true] - Preserve accent marks
-    stemming (boolean) [default: true] - Apply stemming to tokens
-    stopwords (string) - Comma-separated list of inline stop words
-    stopwordspath (string) - Path to file containing stop words
-    case (string) [default: none] - Text case conversion: none, lower, upper
-    edgengram:
-      mingram (integer) [default: 2] - Minimum n-gram length
-      maxgram (integer) [default: 3] - Maximum n-gram length
-      preserveoriginal (boolean) [default: false] - Emit the original token alongside n-grams
-  ngram:
-    mingram (integer) [default: 2] - Minimum n-gram length
-    maxgram (integer) [default: 3] - Maximum n-gram length
-    preserveoriginal (boolean) [default: false] - Emit the original token alongside n-grams
-    inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
-    startmarker (string) - Prefix marker appended at n-gram boundary
-    endmarker (string) - Suffix marker appended at n-gram boundary
-    mode (string) [default: all] - Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
-  nearest_neighbors:
-    modellocation (string) - Path to the ML model file
-    topk (integer) [default: 1] - Number of top results to return
-  stem:
-    locale (string) - ICU locale string (e.g. en_US.UTF-8)
-  stopwords:
-    stopwords (string) - Comma-separated list of inline stop words
-    hex (boolean) [default: false] - Treat stop words as hex-encoded strings
-  classification:
-    modellocation (string) - Path to the ML model file
-    topk (integer) [default: 1] - Number of top results to return
-    threshold (double) [default: 0] - Minimum confidence score [0.0..1.0]
-  collation:
-    locale (string) - ICU locale string (e.g. en_US.UTF-8)
-  delimiter:
-    delimiter[required] (string) [default: none] - Token delimiter character or string
-  multi_delimiter:
-    delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
-  wildcard:
-    ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
-  norm:
-    locale (string) - ICU locale for case conversion; omit for locale-independent simple case
-    case (string) [default: none] - Text case conversion: none, lower, upper
-    accent (boolean) [default: true] - Preserve accent marks
-    form (string) [default: nfc] - Unicode normalization form: nfc, nfkc
-  segmentation:
-    case (string) [default: none] - Text case conversion: none, lower, upper
-    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
-  icu_text:
-    locale[required] (string) [default: none] - ICU locale string (e.g. en_US.UTF-8)
-    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence
-  split_by_non_alpha:
-    case (string) [default: none] - Text case conversion: none, lower, upper
-  pipeline:
-    (no additional options)
-  pattern:
-    pattern[required] (string) [default: none] - RE2 regular expression pattern for matching or splitting
-    group (integer) [default: -1] - Capture group to extract: -1=split, 0=whole match, N>0=Nth group
-  path_hierarchy:
-    delimiter (string) [default: /] - Path separator character or string (UTF-8)
-    replacement (string) - Replacement for delimiter in tokens
-    reverse (boolean) [default: false] - Use reverse tokenization for domain-like hierarchies
-    skip (integer) [default: 0] - Number of initial tokens to skip
-  union:
-    (no additional options)
-  copy_from:
-    from[required] (string) [default: none] - the source tokenizer name
-  geopoint:
-    latitude (string) - Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); empty (the default) treats the indexed JSON value as a [lat, lng] array directly. latitude and longitude must both be set or both left empty.
-    longitude (string) - Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); see latitude for empty-default semantics.
-    options:
-      maxcells (integer) [default: 20] - Maximum number of S2 cells
-      minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)
-      maxlevel (integer) [default: 23] - Maximum S2 cell level (0-30), ~1m precision at level 23
-      levelmod (integer) [default: 1] - S2 level modifier (1, 2, or 3)
-      optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
-  geojson:
-    type (string) [default: shape] - GeoJson shape type: shape, centroid, point
-    coding (string) [default: source] - Encoding format: source, s2point, s2latlngf64, s2latlngu32
-    options:
-      maxcells (integer) [default: 20] - Maximum number of S2 cells
-      minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)
-      maxlevel (integer) [default: 23] - Maximum S2 cell level (0-30), ~1m precision at level 23
-      levelmod (integer) [default: 1] - S2 level modifier (1, 2, or 3)
-      optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
-  keyword:
-    (no additional options)
-  sql:
-    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR or BLOB (one token per value) or a list of them (token list); built-in functions only, no subqueries, no volatile functions
-  shingle:
-    mingram (integer) [default: 2] - Minimum shingle (word n-gram) size (minimum 2)
-    maxgram (integer) [default: 2] - Maximum shingle (word n-gram) size (>= mingram)
-    outputunigrams (boolean) [default: true] - Index individual tokens alongside the shingles
-    outputunigramsifnoshingles (boolean) [default: false] - Index unigrams only when the input is too short to form a shingle
-    storetokens (boolean) [default: true] - Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
-    frequentwords (string) - Comma-separated words (typically stopwords). When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
-    fillertoken (string) - Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
-  solr_synonyms:
-    synonyms[required] (string) [default: none] - Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
-  wordnet_synonyms:
-    synonyms[required] (string) [default: none] - Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
-  sparse_ngram:
-    maxngramlength (integer) [default: 16] - Maximum emitted n-gram length (minimum 3)
-    covering (boolean) [default: false] - Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+CREATE TEXT SEARCH DICTIONARY <name> AS <analyzer> [WITH (frequency, position, norm, offset)]
+<analyzer> := <template>(<arguments>) | <analyzer> | <analyzer> | [<analyzer>, ...] | <sql expression over $1> | <dictionary name>
+
+split_text(case := 'none', break := 'alpha')
+  as a function: split_text(value, case := 'none', break := 'alpha')
+  case   Text case conversion: none, lower, upper
+  break  Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+
+generate_ngrams(mingram := 2, maxgram := 3, preserveoriginal := false, inputtype := 'utf8', startmarker := '', endmarker := '', mode := 'all')
+  as a function: generate_ngrams(value, mingram := 2, maxgram := 3, preserveoriginal := false, inputtype := 'utf8', startmarker := '', endmarker := '', mode := 'all')
+  mingram           Minimum n-gram length
+  maxgram           Maximum n-gram length
+  preserveoriginal  Emit the original token alongside n-grams
+  inputtype         Input stream encoding: binary, utf8
+  startmarker       Prefix marker appended at n-gram boundary
+  endmarker         Suffix marker appended at n-gram boundary
+  mode              Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
+
+find_nearest_words(modellocation := '', topk := 1)
+  as a function: find_nearest_words(value, modellocation := '', topk := 1)
+  modellocation  Path to the ML model file
+  topk           Number of top results to return
+
+stem_words(locale := '')
+  as a function: stem_words(value, locale := '')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+
+remove_stopwords(stopwords := [], stopwordspath := '', hex := false)
+  as a function: remove_stopwords(value, stopwords := [], stopwordspath := '', hex := false)
+  stopwords      Inline stop words: a list of strings, or a comma-separated string of double-quoted words
+  stopwordspath  Path to a stop-word file, or to a directory whose files are all loaded
+  hex            Treat stop words as hex-encoded strings
+
+classify_text(modellocation := '', topk := 1, threshold := 0)
+  as a function: classify_text(value, modellocation := '', topk := 1, threshold := 0)
+  modellocation  Path to the ML model file
+  topk           Number of top results to return
+  threshold      Minimum confidence score [0.0..1.0]
+
+collate_tokens(locale := '')
+  as a function: collate_tokens(value, locale := '')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+
+split_csv(delimiter)
+  as a function: split_csv(value, delimiter)
+  delimiter  Token delimiter character or string
+
+split_by_delimiters(delimiters)
+  as a function: split_by_delimiters(value, delimiters)
+  delimiters  Delimiters: a list of strings, or a comma-separated string of double-quoted delimiters (e.g. '",", "|", "!"')
+
+generate_wildcard_ngrams(<analyzer>, ngramsize := 3)
+  as a function: generate_wildcard_ngrams(value, ngramsize := 3)
+  ngramsize  N-gram size for wildcard prefix indexing (minimum 2)
+
+normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
+  as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
+  locale  ICU locale for case conversion; omit for locale-independent simple case
+  case    Text case conversion: none, lower, upper
+  accent  Preserve accent marks
+  form    Unicode normalization form: nfc, nfkc
+
+split_text_icu(locale, break := 'alpha')
+  as a function: split_text_icu(value, locale, break := 'alpha')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+  break   Token boundary detection mode: all, graphic, alpha, sentence
+
+split_by_non_alpha(case := 'none')
+  as a function: split_by_non_alpha(value, case := 'none')
+  case  Text case conversion: none, lower, upper
+
+<analyzer> | <analyzer>
+  chain: each stage re-analyzes the tokens of the previous one
+
+split_by_pattern(pattern, group := -1)
+  as a function: split_by_pattern(value, pattern, group := -1)
+  pattern  RE2 regular expression pattern for matching or splitting
+  group    Capture group to extract: -1=split, 0=whole match, N>0=Nth group
+
+expand_path(delimiter := '/', replacement := '', reverse := false, skip := 0)
+  as a function: expand_path(value, delimiter := '/', replacement := '', reverse := false, skip := 0)
+  delimiter    Path separator character or string (UTF-8)
+  replacement  Replacement for delimiter in tokens
+  reverse      Use reverse tokenization for domain-like hierarchies
+  skip         Number of initial tokens to skip
+
+[<analyzer>, <analyzer>, ...]
+  union: every branch analyzes the same input, the tokens are merged
+
+encode_geopoint(latitude := [], longitude := [], maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  as a function: encode_geopoint(value, latitude := [], longitude := [], maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  latitude          Path to the latitude field, slash-separated ('lat', 'loc/lat') or a list of segments (['loc', 'lat']); empty (the default) treats the indexed JSON value as a [lat, lng] array directly. latitude and longitude must both be set or both left empty.
+  longitude         Path to the longitude field, slash-separated ('lng', 'loc/lng') or a list of segments; see latitude for empty-default semantics.
+  maxcells          Maximum number of S2 cells
+  minlevel          Minimum S2 cell level (0-30)
+  maxlevel          Maximum S2 cell level (0-30), ~1m precision at level 23
+  levelmod          S2 level modifier (1, 2, or 3)
+  optimizeforspace  Optimize S2 index for space rather than speed
+
+encode_geojson(type := 'shape', coding := 'source', maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  as a function: encode_geojson(value, type := 'shape', coding := 'source', maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  type              GeoJson shape type: shape, centroid, point
+  coding            Encoding format: source, s2point, s2latlngf64, s2latlngu32
+  maxcells          Maximum number of S2 cells
+  minlevel          Minimum S2 cell level (0-30)
+  maxlevel          Maximum S2 cell level (0-30), ~1m precision at level 23
+  levelmod          S2 level modifier (1, 2, or 3)
+  optimizeforspace  Optimize S2 index for space rather than speed
+
+keyword()
+
+sql(expression)
+  any SQL expression that reads its input as $1 is a sql stage as well
+  expression  DuckDB scalar expression over its input $1 (VARCHAR), returning VARCHAR or BLOB (one token per value) or a list of them (token list); built-in functions only, no subqueries, no volatile functions
+
+generate_shingles(<analyzer>, mingram := 2, maxgram := 2, outputunigrams := true, outputunigramsifnoshingles := false, storetokens := true, frequentwords := [], fillertoken := '')
+  as a function: generate_shingles(value, mingram := 2, maxgram := 2, outputunigrams := true, outputunigramsifnoshingles := false, storetokens := true, frequentwords := [], fillertoken := '')
+  mingram                     Minimum shingle (word n-gram) size (minimum 2)
+  maxgram                     Maximum shingle (word n-gram) size (>= mingram)
+  outputunigrams              Index individual tokens alongside the shingles
+  outputunigramsifnoshingles  Index unigrams only when the input is too short to form a shingle
+  storetokens                 Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
+  frequentwords               Frequent words (typically stopwords): a list of strings, or a comma-separated string of double-quoted words. When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
+  fillertoken                 Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
+
+expand_solr_synonyms(synonyms)
+  as a function: expand_solr_synonyms(value, synonyms)
+  synonyms  Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
+
+expand_wordnet_synonyms(synonyms)
+  as a function: expand_wordnet_synonyms(value, synonyms)
+  synonyms  Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
+
+generate_sparse_ngrams(maxngramlength := 16, covering := false)
+  as a function: generate_sparse_ngrams(value, maxngramlength := 16, covering := false)
+  maxngramlength  Maximum emitted n-gram length (minimum 3)
+  covering        Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+
+<dictionary name>
+  a stored dictionary as a stage: its analyzer is copied as it stands when the new dictionary is created
+
+WITH (frequency, position, norm, offset)
+  norm       Enables norm feature in index
+  offset     Enables offset feature in index
+  position   Enables position feature in index
+  frequency  Enables frequency feature in index

@@ -200,9 +200,8 @@ run_delim() { # bin engine
 		if [[ -n "${V71_REBUILD:-}" || ! -d "$data" ]]; then
 			rm -rf "$data"
 			start_engine "$bin" "$data"
-			sql "CREATE TEXT SEARCH DICTIONARY d${n}(
-			       template = 'multi_delimiter',
-			       delimiters = '$(delim_list "$n")')"
+			sql "CREATE TEXT SEARCH DICTIONARY d${n} AS
+			    split_by_delimiters(['$n'])"
 			sql "CREATE TABLE t(id BIGINT PRIMARY KEY, body VARCHAR)"
 			# Eight '|'-separated tokens per row: the tokenizer sees every byte
 			# and emits a fixed number of terms whatever the set size is.
@@ -238,9 +237,9 @@ run_postings() { # bin engine
 	if [[ -n "${V71_REBUILD:-}" || ! -d "$data" ]]; then
 		rm -rf "$data"
 		start_engine "$bin" "$data"
-		sql "CREATE TEXT SEARCH DICTIONARY ws(
-		       template = 'delimiter', delimiter = ' ',
-		       frequency = true, position = true)"
+		sql "CREATE TEXT SEARCH DICTIONARY ws AS
+		    split_csv(' ')
+		    WITH (frequency, position)"
 		sql "CREATE TABLE p(id BIGINT PRIMARY KEY, body VARCHAR)"
 		# Two terms of each shape, because a single-term `count(*)` is answered
 		# from the term's `docs_count` and decodes nothing at all -- only an

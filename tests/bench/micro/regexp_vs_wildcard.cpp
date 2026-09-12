@@ -33,7 +33,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -53,6 +52,7 @@
 
 #include "insert_field.hpp"
 #include "test_resources.hpp"
+#include "text_chain.hpp"
 #include "utf8proc_wrapper.hpp"
 
 namespace bench_regexp {
@@ -103,14 +103,8 @@ class FieldBase : public IField {
 class TextField final : public FieldBase {
  public:
   TextField(irs::field_id id, irs::IndexFeatures extra_features)
-    : _stream(irs::analysis::TextTokenizer::Make(
-        [] {
-          irs::analysis::TextTokenizer::Options opts;
-          opts.locale = icu::Locale::createFromName("C");
-          opts.explicit_stopwords_set = true;
-          return opts;
-        }(),
-        tests::Cache())) {
+    : _stream(tests::MakeTextChain(
+        {.locale = "C", .convert = irs::Case::Lower, .accent = false})) {
     SetId(id);
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);

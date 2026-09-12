@@ -588,6 +588,19 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kSearchBackfillGroupBytesSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes of existing segments a search-table CREATE INDEX rewrites "
+        "before swapping them in and moving on. Bounds the build's peak disk "
+        "(~2x one group) and the length of each publish; a value above the "
+        "table's size means a single swap. 0 = no limit (one swap for the "
+        "whole table). Default 1073741824 (1GB).",
+        [] { return duckdb::Value::UBIGINT(uint64_t{1} << 30); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kSegmentMemoryMaxSetting,
       {
         LogicalTypeId::UBIGINT,

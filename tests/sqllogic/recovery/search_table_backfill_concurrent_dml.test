@@ -1,0 +1,382 @@
+# Search-table CREATE INDEX over a populated table, racing real DML
+# (search_table_backfill.md §6.2). Requires SDB_FAULT_INJECTION, like the rest
+# of the recovery suite.
+#
+# The build rewrites the segments that predate the index config and swaps them
+# in. A row deleted AFTER the build read it but BEFORE the swap lands is the
+# hard case: the rebuilt segment still carries it, and whether it stays deleted
+# depends on the delete-log being reissued after the swap publishes.
+#
+# pause_search_backfill_before_swap parks the build with the group read and
+# flushed but not yet swapped, so every statement below is guaranteed to be
+# mid-build.
+
+# Fault points are process-global and survive a failed run (the disarm
+# statements never execute on error), so a leaked arm would fail the SET below.
+statement ok
+RESET sdb_faults;
+
+
+## Part 1 -- the delete-log ordering invariant
+#
+# A removal that a refresh has already APPLIED cannot ride the adopt tick into
+# the rebuilt segment (only still-pending ones do), so the log's reissue is the
+# only thing that keeps the row deleted. pause_search_commit_after_irs parks
+# the deleter with its removal queued and visible to the refresh but its commit
+# not yet returned -- proving the log entry is written BEFORE the removal
+# becomes visible. Record the deletes on the far side of that commit instead
+# and the build drains an empty log, so row 2 comes back from the dead.
+#
+# A short refresh interval, not 0: the removal has to reach the published index
+# while the deleter is parked, and the parked session cannot run the VACUUM
+# itself.
+statement ok
+CREATE TABLE bfc (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bfc VALUES (1, 'keep1'), (2, 'gone'), (3, 'keep3');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfc;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder
+statement async ok
+CREATE INDEX bfc_idx ON bfc USING inverted (tag);
+
+
+# tuples_done counts rows fed into the rebuilt segment, so 3 means every
+# pre-existing row -- row 2 included -- is already copied. Waiting on this
+# rather than on the pause itself is what makes the delete land after the read.
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bfc'::regclass;
+----
+tuples_done
+3
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_after_irs';
+
+
+connection deleter
+statement async ok
+DELETE FROM bfc WHERE id = 2;
+
+
+# The refresh loop applies the queued removal while the deleter is still parked
+# mid-commit. Row 2 is now gone from the base segment and lives only in the
+# rebuilt one the build has not swapped in yet.
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM bfc WHERE id = 2;
+----
+count
+0
+
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+# The build must reach its drain-and-reissue before the deleter is released:
+# that ordering is the whole point. The index entry commits with the statement,
+# so its arrival in pg_class means the build is done.
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_class WHERE relname = 'bfc_idx';
+----
+count
+1
+
+
+statement ok
+SET sdb_faults = '-pause_search_commit_after_irs';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfc;
+
+
+# The row must not have come back, in the table or through the index.
+query
+SELECT count(*) FROM bfc WHERE id = 2;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM bfc_idx WHERE tag @@ 'gone';
+----
+count
+0
+
+
+query
+SELECT id, tag FROM bfc ORDER BY id;
+----
+id	tag
+1	keep1
+3	keep3
+
+
+query
+SELECT id FROM bfc_idx WHERE tag @@ 'keep1';
+----
+id
+1
+
+
+statement ok
+DROP TABLE bfc;
+
+
+## Part 2 -- the mid-build DML matrix
+#
+# Only the swap pause this time, so ordinary DML runs at full speed against a
+# parked build: a delete and an update of rows the build has already copied, an
+# insert whose segment lands above the compaction floor, and a delete that
+# rolls back and must therefore change nothing. The UPDATE is the headline
+# case -- under the declared-PK row identity this design replaced, a reissued
+# removal would have destroyed the updated row (§4 of the design doc), so this
+# runs on a table with a declared PRIMARY KEY.
+statement ok
+CREATE TABLE bfd (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bfd VALUES (1, 'keep1'), (2, 'gone'), (3, 'rolled'), (4, 'before');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfd;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder2
+statement async ok
+CREATE INDEX bfd_idx ON bfd USING inverted (tag);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bfd'::regclass;
+----
+tuples_done
+4
+
+
+statement ok
+DELETE FROM bfd WHERE id = 2;
+
+
+statement ok
+UPDATE bfd SET tag = 'after' WHERE id = 4;
+
+
+statement ok
+INSERT INTO bfd VALUES (5, 'fresh');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM bfd WHERE id = 3;
+
+
+statement ok
+ROLLBACK;
+
+
+# Consume the removals while the build is still parked, so they are applied
+# rather than pending when the swap lands -- the case the log covers.
+statement ok
+VACUUM (REFRESH_TABLE) bfd;
+
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfd;
+
+
+query
+SELECT id, tag FROM bfd ORDER BY id;
+----
+id	tag
+1	keep1
+3	rolled
+4	after
+5	fresh
+
+
+# Exactly one row per PK, carrying the new value, with the pre-update value
+# unreachable through the index.
+query
+SELECT id FROM bfd_idx WHERE tag @@ 'after';
+----
+id
+4
+
+
+query
+SELECT count(*) FROM bfd_idx WHERE tag @@ 'before';
+----
+count
+0
+
+
+# Deleted mid-build: gone. Rolled back: still here.
+query
+SELECT count(*) FROM bfd_idx WHERE tag @@ 'gone';
+----
+count
+0
+
+
+query
+SELECT id FROM bfd_idx WHERE tag @@ 'rolled';
+----
+id
+3
+
+
+# Written during the build, so its segment is above the floor and was never
+# rebuilt -- it still has to carry the new term field, and exactly once.
+query
+SELECT id FROM bfd_idx WHERE tag @@ 'fresh';
+----
+id
+5
+
+
+query
+SELECT count(*) FROM bfd_idx;
+----
+count
+4
+
+
+statement ok
+DROP TABLE bfd;
+
+
+## Part 3 -- a tokenized build must not break concurrent writers
+#
+# CreateIndexImpl publishes the new term field into the shard's merged config
+# before the index entry commits, so that writers carry the field from the
+# first moment. A writer therefore has to emit terms for a dictionary that is
+# still invisible to its own session. Resolving dictionaries off the committed
+# index list made every INSERT fail with "Dictionary for inverted index does
+# not exists" for the whole build -- 78% of them in a 10M-row load test.
+# They resolve off the merged config instead, which is the same thing the
+# write path emits from.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bfe_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+)
+
+
+statement ok
+CREATE TABLE bfe (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bfe VALUES (1, 'alpha beta'), (2, 'gamma delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfe;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder3
+statement async ok
+CREATE INDEX bfe_idx ON bfe USING inverted (body bfe_dict);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bfe'::regclass;
+----
+tuples_done
+2
+
+
+# The build is parked with its config published and its index entry
+# uncommitted: exactly the window that used to reject every write.
+statement ok
+INSERT INTO bfe VALUES (3, 'epsilon zeta');
+
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfe;
+
+
+query
+SELECT id, body FROM bfe ORDER BY id;
+----
+id	body
+1	alpha beta
+2	gamma delta
+3	epsilon zeta
+
+
+# Rebuilt rows and the mid-build row are both reachable by token.
+query
+SELECT id FROM bfe_idx WHERE body @@ 'beta';
+----
+id
+1
+
+
+query
+SELECT id FROM bfe_idx WHERE body @@ 'epsilon';
+----
+id
+3
+
+
+statement ok
+DROP TABLE bfe;
+
+
+statement ok
+RESET sdb_faults;

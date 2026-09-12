@@ -45,6 +45,7 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
+  search_txn.RegisterWriter(_data);
   if (!_clears_shard) {
     search_txn
       .EnsureSerialSearchTransaction(_data,

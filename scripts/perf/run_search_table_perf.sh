@@ -32,7 +32,7 @@
 #   3. CTAS the view into a default (transactional) table  -- insert.
 #   4. CTAS the view into a storage='search' table         -- insert + commit.
 #   5. ATTACH a fresh .duckdb file, CTAS the view into it   -- insert + commit.
-#   6. Sanity COUNT("WatchID") over each table (one thread; see the scan note).
+#   6. Sanity COUNT("watchid") over each table (one thread; see the scan note).
 #   7. Report on-disk size: parquet input vs the transactional table's
 #      engine_duckdb delta vs the search table's engine_search subtree (with the
 #      iresearch per-extension breakdown) vs the native .duckdb file.
@@ -97,10 +97,15 @@ PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 # compared against the search table's single engine_search store. Off with 0.
 PERF_INDEXED_RUN="${PERF_INDEXED_RUN:-1}"
 # The columns indexed in the second run. Defaults are hits-dataset columns: a
-# BIGINT (WatchID) and a text column (URL, keyword-indexed -- whole value as one
-# term, no dictionary needed). Override for other datasets.
-PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL:-WatchID}"
-PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-URL}"
+# BIGINT (watchid) and a text column (url, keyword-indexed -- whole value as one
+# term, no dictionary needed). Override for other datasets -- the name is folded
+# to lower case, because the server runs with preserve_identifier_case = false,
+# so a CTAS stores the parquet's "WatchID" as "watchid" and a quoted mixed-case
+# reference does not bind.
+PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL:-watchid}"
+PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-url}"
+PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL,,}"
+PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL,,}"
 
 # After the indexed run, a third cold load -- TRANSACTIONAL ONLY -- that builds
 # the same inverted index AFTER the rows are loaded (the "backfill" path). The
@@ -300,18 +305,20 @@ du_search_committed() {
 	echo $((total - wal))
 }
 
-# Committed byte size of the transactional store (__sdb_store == engine_duckdb/
-# store.db), read from the store's own block accounting rather than a du of the
-# directory. A du is unreliable here: an INSERT's committed rows can sit in the
-# store WAL / buffer and not enlarge store.db on disk until a checkpoint, so du
-# reads ~0 for a fully-loaded table on slower storage (observed on the test
-# box). CHECKPOINT folds the WAL into blocks first, then used_blocks*block_size
-# is the true committed size. Runs off the benchmark clock (measurement only).
+# Committed byte size of the connected database's transactional store (its file
+# under engine_duckdb), read from the store's own block accounting rather than a
+# du of the directory. A du is unreliable here: an INSERT's committed rows can
+# sit in the store WAL / buffer and not enlarge the file on disk until a
+# checkpoint, so du reads ~0 for a fully-loaded table on slower storage
+# (observed on the test box). CHECKPOINT folds the WAL into blocks first, then
+# used_blocks*block_size is the true committed size. pragma_database_size() also
+# lists __sdb_global (the catalog) and any ATTACHed database, hence the
+# current_database() filter. Runs off the benchmark clock (measurement only).
 store_used_bytes() {
 	psql "${PSQL_CONN}" -tAc 'CHECKPOINT;' >/dev/null 2>&1 || true
 	local v
 	v=$(psql "${PSQL_CONN}" -tAc \
-		"SELECT COALESCE(SUM(block_size * used_blocks), 0)::BIGINT FROM pragma_database_size() WHERE database_name = '__sdb_store';" \
+		"SELECT COALESCE(SUM(block_size * used_blocks), 0)::BIGINT FROM pragma_database_size() WHERE database_name = current_database();" \
 		2>/dev/null | tr -d '[:space:]')
 	echo "${v:-0}"
 }
@@ -415,15 +422,15 @@ CHECKPOINT native_db;
 NATIVE_BYTES=$(($(du_bytes "${NATIVE_DB}") + $(du_bytes "${NATIVE_DB}.wal")))
 
 # --- 5. Sanity scan -----------------------------------------------------------
-# COUNT(<col>), pinned to one thread. It's COUNT("WatchID"), not COUNT(*),
+# COUNT(<col>), pinned to one thread. It's COUNT("watchid"), not COUNT(*),
 # because COUNT(*) takes the search table's count-only fast path (answered from
 # segment metadata, no column read) -- counting a real, non-null column instead
 # forces an actual column scan, which is the comparison we want and also
 # verifies every row is accounted for. The search side still reads far less than
 # the transactional/native column stores' full scan.
-run_sql "count_transactional" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_transactional;"
-run_sql "count_search" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_search;"
-run_sql "count_native" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM native_db.main.hits_native;"
+run_sql "count_transactional" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM hits_transactional;"
+run_sql "count_search" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM hits_search;"
+run_sql "count_native" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM native_db.main.hits_native;"
 
 # --- 6. Storage size ----------------------------------------------------------
 human() {

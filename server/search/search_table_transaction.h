@@ -44,12 +44,33 @@ class SearchTable;
 struct SearchShardWrites {
   std::shared_ptr<SearchTable> shard;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
+  // The writer-generation slot this transaction registered in on `shard`,
+  // released when the transaction settles. -1 until it registers.
+  int writer_slot = -1;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
 // commit logic.
 class SearchTableTransaction {
  public:
+  ~SearchTableTransaction();
+
+  // Registers this transaction as a writer of `shard`, once, before anything
+  // reads the shard's index config -- so a rebuild that publishes a config can
+  // tell whether this transaction predates it. Called from the DML operators'
+  // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
+  // the Combine that hands over its iresearch transaction, so registering any
+  // later would let it straddle a swap unnoticed.
+  void RegisterWriter(const std::shared_ptr<SearchTable>& shard);
+
+  // Whether this transaction has already written to `shard`. CREATE INDEX
+  // refuses to run in such a transaction: the rebuild would wait for writers
+  // that predate its config swap, and this one cannot finish until the
+  // statement it is running does.
+  bool HasWritesFor(ObjectId shard_id) const noexcept {
+    return _writes.contains(shard_id);
+  }
+
   void AddParallelSearchTransaction(
     const std::shared_ptr<SearchTable>& shard,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
@@ -66,8 +87,7 @@ class SearchTableTransaction {
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
-                            duckdb::DataChunk& chunk, bool uses_generated_pk,
-                            uint64_t pk_base);
+                            duckdb::DataChunk& chunk, uint64_t pk_base);
 
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
                         std::span<const std::string> pks);
@@ -103,6 +123,10 @@ class SearchTableTransaction {
   // of sum-over-trxs(GetQueries()+1)), appends the record, and returns the
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
+
+  // Releases every writer registration this transaction holds. Idempotent, so
+  // Commit / Abort / the destructor can all call it.
+  void ReleaseWriters() noexcept;
 
   containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
   containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>

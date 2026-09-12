@@ -28,10 +28,13 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -128,7 +131,8 @@ void RejectIfSearchTable(catalog::TableEngine engine,
   }
 }
 
-void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
+void ValidateSearchTableCreateIndex(duckdb::ClientContext& context,
+                                    const catalog::SereneDBTableEntry& entry,
                                     std::string_view index_type) {
   if (!entry.IsSearchTable()) {
     return;
@@ -138,14 +142,13 @@ void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("only inverted indexes are supported on a search-backed table"));
   }
-  const auto& shard = entry.GetSearchData();
-  SDB_ASSERT(shard);
-  shard->VacuumRefresh();  // publish committed WAL rows so live_docs is exact
-  if (shard->GetDirectoryReader().live_docs_count() != 0) {
+  if (GetSereneDBContext(context).SearchTxn().HasWritesFor(
+        catalog::IdOf(entry))) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("CREATE INDEX on a non-empty search-backed table is not yet "
-              "supported (indexing existing rows)"));
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "
+              "transaction that has already written to \"",
+              entry.name.GetIdentifierName(), "\""));
   }
 }
 
@@ -161,31 +164,9 @@ SearchWriteTarget ResolveSearchWriteTarget(
     target.column_ids.emplace_back(column.CatalogOid());
     target.chunk_types.push_back(column.Type());
   }
-  const auto pk_indexes = entry.GetPKColumnIndexes();
-  target.pk_columns.reserve(pk_indexes.size());
-  for (const auto index : pk_indexes) {
-    target.pk_columns.push_back(
-      {.input_col_idx = index.index, .type = columns.GetColumn(index).Type()});
-  }
-  if (pk_indexes.empty()) {
-    target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
-    SDB_ASSERT(target.generated_pk_seq);
-  }
+  target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
+  SDB_ASSERT(target.generated_pk_seq);
   return target;
-}
-
-std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
-  const SearchWriteTarget& target,
-  std::span<const duckdb::idx_t> chunk_positions) {
-  std::vector<catalog::duckdb_primary_key::PKColumn> out;
-  out.reserve(chunk_positions.size());
-  for (size_t i = 0; i != chunk_positions.size(); ++i) {
-    out.push_back({.input_col_idx = chunk_positions[i],
-                   .type = i < target.pk_columns.size()
-                             ? target.pk_columns[i].type
-                             : duckdb::LogicalType::BIGINT});
-  }
-  return out;
 }
 
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,

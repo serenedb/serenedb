@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
@@ -33,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <span>
 #include <vector>
 
 #include "basics/assert.h"
@@ -44,6 +46,7 @@
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 #include "search/store_stats.h"
+#include "search/writer_generations.h"
 
 namespace duckdb {
 
@@ -134,6 +137,103 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   auto& GetTableLock() noexcept { return _table_lock; }
 
+  // --- Writer accounting ---
+  // A write transaction registers against this shard before it writes and
+  // deregisters when it commits or aborts. Nothing is ever *excluded* -- no
+  // writer waits on this, and no reader either.
+  //
+  // It exists for the one thing a rebuild cannot otherwise observe. A segment
+  // self-reports its fields, and iresearch never lets a single segment mix two
+  // configs (UpdateSegment cuts a fresh segment when the options differ), so
+  // "which live segments lack this field" is already an exact question. But a
+  // transaction that straddles the config swap holds its pre-swap docs in an
+  // uncommitted iresearch transaction, invisible to both the reader and those
+  // field lists -- so without this a rebuild could see a clean index and have
+  // such a writer commit stale segments behind it.
+  //
+  // Two counters and a generation, rather than a set of live writers: only one
+  // build runs per shard (BuildClaim), so at most one generation flip can
+  // happen while a writer is registered, and a two-slot count is enough to
+  // separate "registered before the swap" from "after". Registration is per
+  // (transaction, shard) and cold -- the per-chunk write path never touches it.
+  //
+  // A writer must register BEFORE its sink reads the config, or it could land
+  // in the new generation while still holding the old config.
+  [[nodiscard]] unsigned RegisterWriter();
+  void DeregisterWriter(unsigned slot) noexcept;
+
+  // Opens a new writer generation and waits for every writer of the previous
+  // one to finish. Call *after* publishing the config: a writer that registers
+  // past the flip must be one that reads the new config, and ordering it the
+  // other way round would leave a window where it reads the old one and goes
+  // unwaited. Requires a held BuildClaim.
+  //
+  // Waits indefinitely. A deadline would only turn "someone left a transaction
+  // open" into a failed CREATE INDEX that fails again on retry -- no more
+  // correct, and less useful; postgres waits out old transactions the same way.
+  // `cancelled` is polled between waits instead, so a cancelled statement stops
+  // waiting. That, not a constant, is the escape hatch.
+  void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
+
+  // One index build per shard, across all connections: what makes the
+  // two-generation accounting safe to reuse, and what keeps two builds from
+  // each rewriting the table at once. Fail-fast; a losing claimant reports
+  // that a build is already running. Mirrors
+  // InvertedIndexStorage::ReindexClaim.
+  class [[nodiscard]] BuildClaim {
+   public:
+    explicit BuildClaim(SearchTable& table) noexcept
+      : _table{&table},
+        _claimed{
+          !table._build_in_flight.exchange(true, std::memory_order_acq_rel)} {}
+    ~BuildClaim() {
+      if (_claimed) {
+        _table->_build_in_flight.store(false, std::memory_order_release);
+      }
+    }
+    BuildClaim(const BuildClaim&) = delete;
+    BuildClaim& operator=(const BuildClaim&) = delete;
+
+    bool Claimed() const noexcept { return _claimed; }
+
+   private:
+    SearchTable* _table;
+    bool _claimed;
+  };
+
+  // Whether a build holds the claim. Only DrainPriorWriters' assert reads this:
+  // compaction is deliberately NOT gated on it. A build arms an
+  // IndexWriter::CompactionFloorGuard over the segments it is going to rewrite
+  // and leaves everything above it alone, so merges of the segments concurrent
+  // inserts produce go ahead as usual -- and a flag could not have done that
+  // job anyway, being check-then-act.
+  bool BuildInFlight() const noexcept {
+    return _build_in_flight.load(std::memory_order_acquire);
+  }
+
+  // --- Delete log ---
+  // Open for the length of an index build. Records the synthetic rowids
+  // deleted since the build published its config: the segments it rebuilds
+  // come from a snapshot that predates those deletes, so each group swap
+  // reissues them after adoption to keep a deleted row from coming back.
+  //
+  // Unlike the transactional build's log ([inverted_index_storage.h]) this one
+  // does not *divert* deletes -- the live removal still happens, because the
+  // base segments are still serving. It only records, and drains per swap
+  // rather than latching closed after a single publish.
+  //
+  // Reissuing is idempotent: under Pillar A a rowid is never reused, so a
+  // removal for a row already gone matches nothing. That is what lets every
+  // swap replay the whole log so far without tracking which group saw what.
+  bool IsDeleteLogOpen() const noexcept {
+    return _delete_log_open.load(std::memory_order_acquire);
+  }
+  void OpenDeleteLog();
+  void AppendDeleteLog(std::span<const int64_t> rows);
+  // Drains what has accumulated; leaves the log open for the next group.
+  std::vector<int64_t> TakeDeleteLog();
+  void CloseDeleteLog();
+
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
@@ -167,6 +267,26 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // did not adopt (the writer was opened with cleanup suppressed). Promptness
   // only: the refresh loop's periodic cleanup would get there a tick later.
   void FinishRecovery() { CleanupUnsafe(); }
+
+  // --- Index build primitives (see search_table_backfill.md) ---
+  // The floor a build holds over the segments it rewrites; compaction leaves
+  // everything at or below it alone and keeps merging what is above.
+  irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
+    SDB_ASSERT(_writer);
+    return _writer->ArmCompactionFloor();
+  }
+  const irs::Format::ptr& Codec() const noexcept {
+    SDB_ASSERT(_writer);
+    return _writer->Codec();
+  }
+  // One index-meta generation that retires `replaced` and adopts the
+  // already-flushed segments named by `adopted_metas`.
+  bool ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<const std::string_view> adopted_metas,
+                       const irs::Format::ptr& codec, uint64_t tick) {
+    SDB_ASSERT(_writer);
+    return _writer->ReplaceSegments(replaced, adopted_metas, codec, tick);
+  }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     SDB_ASSERT(_writer);
@@ -251,6 +371,20 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
  private:
   void OpenWriter();
 
+  void CloseWriterGate();
+  void OpenWriterGate() noexcept;
+
+  // Gate state, in one word: bit 0 says a rebuild holds it closed, the rest is
+  // the registered writer count.
+  static constexpr uint64_t kGateClosed = 1;
+  static constexpr uint64_t kWriterUnit = 2;
+  static uint64_t WriterCount(uint64_t state) noexcept {
+    return state / kWriterUnit;
+  }
+  // How long either side waits before giving up: a writer for the gate to
+  // reopen, a rebuild for the registered writers to finish. Both are bounded
+  // by how long a user transaction stays open, so neither can be a hard wait.
+
   ObjectId _table_id;
   ObjectId _db_id;
   ObjectId _schema_id;
@@ -279,6 +413,20 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // refresh/compaction interval disables the loops.
   TasksSettings _maint_settings;
   absl::Mutex _refresh_mutex;
+
+  WriterGenerations _writers;
+  std::atomic<bool> _build_in_flight{false};
+
+  // Delete log. The open flag is atomic so the commit path can skip the mutex
+  // entirely when no build is running, which is the normal case.
+  std::atomic<bool> _delete_log_open{false};
+  absl::Mutex _delete_log_mutex;
+  std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
+  // How often a waiting rebuild surfaces to check for cancellation. The
+  // CondVar does the blocking; this only bounds how long a cancelled statement
+  // keeps waiting.
+  static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
+
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
   MaintenanceCounters _maintenance;

@@ -118,7 +118,7 @@ void Features::Validate(std::string_view type) const {
 }
 
 bool IsGeoTokenizer(std::string_view type) noexcept {
-  static const containers::FlatHashSet<std::string_view> kGeoTokenizers = {
+  static const irs::containers::FlatHashSet<std::string_view> kGeoTokenizers = {
     irs::analysis::GeoJsonTokenizer::type_name(),
     irs::analysis::GeoPointTokenizer::type_name(),
   };

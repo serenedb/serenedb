@@ -64,7 +64,7 @@ struct RecordSerializers {
 };
 
 using TypesSerializationCache =
-  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
+  irs::containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
 
 struct SerializationContext {
   message::Writer* writer = nullptr;

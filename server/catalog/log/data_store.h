@@ -182,14 +182,14 @@ class DataStore {
   // its index builds run on, and an inverted-index injection asking for a bind
   // context -- and those do not share a lock, so the map needs its own.
   absl::Mutex _bind_mutex;
-  containers::FlatHashMap<ObjectId, BindContext> _bind_contexts
+  irs::containers::FlatHashMap<ObjectId, BindContext> _bind_contexts
     ABSL_GUARDED_BY(_bind_mutex);
   // The routing of _conn onto the statement's transaction, while a statement's
   // batch runs. Null on the boot / background path.
   StatementTransaction* _statement = nullptr;
   // The columns the running batch drops, for IsColumnDropInFlight. Filled for
   // the length of ExecuteStoreOps; empty outside one.
-  containers::FlatHashSet<ObjectId> _dropping_columns;
+  irs::containers::FlatHashSet<ObjectId> _dropping_columns;
   std::atomic<bool> _ready = false;
 };
 

@@ -259,7 +259,7 @@ class CatalogStore {
   // Guarded by the cluster catalog log's lock (LockClusterCatalogWal): the map
   // mirrors the log's sequence records, staged beside the file they replay
   // from.
-  containers::FlatHashMap<uint64_t, uint64_t> _sequences;
+  irs::containers::FlatHashMap<uint64_t, uint64_t> _sequences;
 };
 
 CatalogStore& GetCatalogStore();

@@ -173,7 +173,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   // Store physical positions follow the facade column order; map catalog
   // column ids through that order.
   const auto& scan_columns = scan_entry.GetColumns();
-  containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
+  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
   id_to_pos.reserve(scan_columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : scan_columns.Logical()) {

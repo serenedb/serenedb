@@ -223,7 +223,7 @@ std::vector<asio_ns::ip::tcp::endpoint> ResolveTcp(
     SDB_FATAL(GENERAL, "cannot resolve host '", host, "' in endpoint '", url,
               "': ", ec.message());
   }
-  containers::FlatHashSet<std::string> seen;
+  irs::containers::FlatHashSet<std::string> seen;
   for (const auto& entry : results) {
     auto ep = entry.endpoint();
     if (seen.emplace(ep.address().to_string()).second) {

@@ -80,7 +80,8 @@ struct Referenced {
 std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
                                    ObjectId db_id) {
   std::vector<PgDepend> edges;
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+    tables;
   catalog::Visit<catalog::SereneDBTableEntry>(
     context, db_id, [&](const catalog::SereneDBTableEntry& table) {
       tables.emplace(catalog::IdOf(table), &table);

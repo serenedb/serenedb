@@ -95,7 +95,7 @@ std::atomic_uint64_t gRoleGeneration{1};
 struct RoleCache {
   uint64_t generation = 0;
   std::shared_ptr<const RoleGraph> graph;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<const RoleClosure>>
+  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<const RoleClosure>>
     closures;
 };
 

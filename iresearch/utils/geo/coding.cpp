@@ -29,9 +29,9 @@
 
 #include <ranges>
 
-#include "geo_json.h"
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/geo/geo_json.hpp"
 #include "iresearch/utils/geo/shape_container.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

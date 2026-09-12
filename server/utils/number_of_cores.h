@@ -49,9 +49,9 @@ int64_t CountPhysicalCores();
 /// Pure: distinct physical cores (physical_id, core_id) among `allowed` logical
 /// cpus (all of `cpu_to_core` when `allowed` is empty), capped by
 /// cfs_quota_cores (0 = none), clamped to >= 1. Testable.
-int64_t CountPhysicalCores(const containers::FlatHashMap<
+int64_t CountPhysicalCores(const irs::containers::FlatHashMap<
                              int64_t, std::pair<int64_t, int64_t>>& cpu_to_core,
-                           const containers::FlatHashSet<int64_t>& allowed,
+                           const irs::containers::FlatHashSet<int64_t>& allowed,
                            int64_t cfs_quota_cores) noexcept;
 
 }  // namespace sdb

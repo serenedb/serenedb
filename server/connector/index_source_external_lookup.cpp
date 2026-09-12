@@ -194,7 +194,7 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                       ERR_MSG("external lookup key type resolution failed: ",
                               result->GetError()));
     }
-    containers::FlatHashMap<std::string, std::string> by_name;
+    irs::containers::FlatHashMap<std::string, std::string> by_name;
     while (auto chunk = result->Fetch()) {
       for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
         by_name.emplace(chunk->GetValue(0, row).ToString(),

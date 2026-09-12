@@ -123,8 +123,8 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
 struct SearchGetters {
   const connector::ColumnGetter& getter;
   const connector::ExpressionGetter& expr_getter;
-  containers::FlatHashSet<irs::field_id>& analyzed_fields;
-  containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
 };
 
 bool WithSearchGetters(duckdb::LogicalGet& get,

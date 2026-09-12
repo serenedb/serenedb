@@ -174,7 +174,7 @@ std::optional<irs::AnnInfo> AnnInfoForEntry(
 // definitions are catalog entries now, so a per-field lookup on a flush path
 // would be a catalog read per column per chunk; the tokenize paths take this
 // instead, built where a transaction is still in scope.
-using TokenizerMap = containers::FlatHashMap<ObjectId, TokenizerRef>;
+using TokenizerMap = irs::containers::FlatHashMap<ObjectId, TokenizerRef>;
 
 // Read through `context`'s own transaction, out of the catalog of the database
 // it is connected to -- the one holding both the index and them. Never through
@@ -216,7 +216,7 @@ ColumnTokenizer TokenizerForEntry(duckdb::ClientContext& ctx,
 class InvertedIndex final : public Index, public irs::IndexFieldOptions {
  public:
   using Entries =
-    containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
+    irs::containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
   // `columns` are the de-duped plain-column keys; `expression_keys` carry each
   // expression's payload + allocated field_id; `entries` is the per-field
@@ -227,12 +227,13 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // Search-table one, so several indexes on one column get distinct term fields
   // in the shared store; it is restored from the table's tag, not this index's
   // payload.
-  InvertedIndex(
-    ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    std::string_view name, std::string comment, std::vector<ColumnId> columns,
-    std::vector<ExpressionKey> expression_keys, Entries entries,
-    InvertedIndexOptions options, ExpressionData predicate,
-    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {})
+  InvertedIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+                std::string_view name, std::string comment,
+                std::vector<ColumnId> columns,
+                std::vector<ExpressionKey> expression_keys, Entries entries,
+                InvertedIndexOptions options, ExpressionData predicate,
+                irs::containers::FlatHashMap<ColumnId, irs::field_id>
+                  col_to_term_field = {})
     : Index{schema_id,
             id,
             relation_id,
@@ -266,8 +267,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   // The allocations themselves, for a rebuild that must carry them across (see
   // RebuiltWith): the payload's narrow layout has no room for them.
-  const containers::FlatHashMap<ColumnId, irs::field_id>& TermFieldsByColumn()
-    const noexcept {
+  const irs::containers::FlatHashMap<ColumnId, irs::field_id>&
+  TermFieldsByColumn() const noexcept {
     return _col_to_term_field;
   }
 
@@ -290,7 +291,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static duckdb::unique_ptr<InvertedIndex> FromData(
     ObjectId schema_id, ObjectId id, ObjectId relation_id,
     persistence::InvertedIndexData data,
-    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {});
+    irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field =
+      {});
 
   // The allocated term field_id for a plain column.
   irs::field_id TermFieldForColumn(ColumnId column) const noexcept {
@@ -388,7 +390,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     return _options.topk_scorer;
   }
 
-  containers::FlatHashSet<ObjectId> GetTokenizers() const final;
+  irs::containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
   void BuildDerivedIndexes();
@@ -400,15 +402,15 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
   // Per-column allocated term field_id (Search-table indexes only).
-  containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).
-  containers::FlatHashMap<irs::field_id, const ExpressionData*>
+  irs::containers::FlatHashMap<irs::field_id, const ExpressionData*>
     _expr_by_field_id;
   // Reverse map: serialized expression -> field_id. Views point into the
   // durable storage in _expression_keys.
-  containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
-  containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
+  irs::containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
+  irs::containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   ExpressionData _predicate;
 };

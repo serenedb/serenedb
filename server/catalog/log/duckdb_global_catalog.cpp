@@ -265,8 +265,8 @@ void SereneDBGlobalCatalog::WriteCatalogChange(
 namespace {
 
 // Staged beside the log they came out of, so the log's own lock guards them.
-containers::NodeHashMap<uint64_t,
-                        std::vector<duckdb::unique_ptr<duckdb::AlterInfo>>>
+irs::containers::NodeHashMap<uint64_t,
+                             std::vector<duckdb::unique_ptr<duckdb::AlterInfo>>>
   gRowRecipes;
 
 void StashRowRecipe(ObjectId table_id,

@@ -97,7 +97,7 @@ struct InvertedIndexDataT {
   std::vector<ColumnEntry> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
-  containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
+  irs::containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
   InvertedIndexOptions options;
   // Partial-index predicate (CREATE INDEX ... WHERE): rows are indexed and
   // maintained only when it evaluates to true. An empty serialized_expr

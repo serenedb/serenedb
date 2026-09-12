@@ -449,7 +449,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
                     ERR_MSG("no such index [", data.index, "]"));
   }
 
-  containers::FlatHashSet<catalog::ColumnId> inverted_columns;
+  irs::containers::FlatHashSet<catalog::ColumnId> inverted_columns;
   for (const auto& index : catalog::RelationInvertedIndexes(
          &context, catalog::ParentIdOf(*table), catalog::IdOf(*table))) {
     for (const auto id : index->GetColumns()) {
@@ -593,7 +593,7 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string id;
   std::string body;
-  containers::FlatHashMap<std::string, size_t> field_columns;
+  irs::containers::FlatHashMap<std::string, size_t> field_columns;
   size_t id_column = 0;
   size_t source_column = 0;
 };

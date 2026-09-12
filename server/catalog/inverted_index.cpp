@@ -138,7 +138,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
   // field_id); the transactional layout is bare column ids (empty map).
   constexpr bool kSearch = std::is_same_v<ColumnEntry, persistence::ColumnKey>;
   std::vector<ColumnId> columns;
-  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
   columns.reserve(data.columns.size());
   if constexpr (kSearch) {
     for (const auto& ck : data.columns) {
@@ -162,7 +162,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
 duckdb::unique_ptr<InvertedIndex> InvertedIndex::FromData(
   ObjectId schema_id, ObjectId id, ObjectId relation_id,
   persistence::InvertedIndexData data,
-  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field) {
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field) {
   auto index = UnpackEntries(schema_id, id, relation_id, std::move(data));
   index->_col_to_term_field = std::move(col_to_term_field);
   return index;
@@ -581,8 +581,8 @@ TokenizerMap ResolveTokenizers(duckdb::ClientContext* context,
   return dicts;
 }
 
-containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
-  containers::FlatHashSet<ObjectId> res;
+irs::containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
+  irs::containers::FlatHashSet<ObjectId> res;
   for (const auto& [_, entry] : _entries) {
     if (entry.text_dictionary.isSet()) {
       res.insert(entry.text_dictionary);

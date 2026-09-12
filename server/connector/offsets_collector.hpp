@@ -57,7 +57,7 @@ struct FilterEntry {
 struct FieldState {
   const irs::TermReader* reader = nullptr;
   std::vector<FilterEntry> entries;
-  containers::FlatHashSet<const irs::PostingMeta*> seen_cookies;
+  irs::containers::FlatHashSet<const irs::PostingMeta*> seen_cookies;
   std::vector<irs::offsets::Range> scratch;
 
   void Clear() noexcept {

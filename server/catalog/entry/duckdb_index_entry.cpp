@@ -73,7 +73,7 @@ namespace {
 // struct field, and the column the index reads is `s`.
 std::vector<size_t> IndexedPositions(const duckdb::CreateTableInfo& table,
                                      const catalog::CreateIndexInfo& index) {
-  containers::FlatHashSet<size_t> positions;
+  irs::containers::FlatHashSet<size_t> positions;
   for (auto col_id : index.GetReferencedColumns()) {
     if (const auto* column = catalog::ColumnById(table, col_id)) {
       positions.insert(column->Logical().index);

@@ -105,7 +105,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                             database_ids.push_back(catalog::IdOf(db));
                           });
   for (const ObjectId db_id : database_ids) {
-    containers::NodeHashMap<ObjectId, ShardInfo> shards;
+    irs::containers::NodeHashMap<ObjectId, ShardInfo> shards;
     catalog::Visit<catalog::SereneDBTableEntry>(
       nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
         if (!entry.IsSearchTable()) {
@@ -128,7 +128,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     }
 
     auto& wal = engine.GetDbWal(db_id);
-    containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
+    irs::containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
     auto exists_of = [&](ObjectId table_id) {
       return shards.find(table_id) != shards.end();
     };

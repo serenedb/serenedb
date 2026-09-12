@@ -104,8 +104,8 @@ class SearchTableTransaction {
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
 
-  containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+  irs::containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
+  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;
 };

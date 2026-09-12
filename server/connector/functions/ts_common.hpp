@@ -56,7 +56,7 @@ struct FilterContext {
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
   irs::analysis::Tokenizer& identity;
   irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;

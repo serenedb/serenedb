@@ -98,7 +98,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
     // this CLI usage error straight to stderr, like absl's own flag errors.
     std::fputs("serened: expected at most one positional data-dir arg\n",
                stderr);
-    FatalErrorExit();
+    irs::FatalErrorExit();
   }
 }
 

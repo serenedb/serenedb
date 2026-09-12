@@ -74,7 +74,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   // id the constraint carries and not by the qualified name it also carries:
   // the name is only what it was when the definition was written, and a rename
   // since has moved it.
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
     tables_by_id;
   catalog::VisitTableEntries(context, GetDatabaseId(),
                              [&](const catalog::SereneDBSchemaEntry&,

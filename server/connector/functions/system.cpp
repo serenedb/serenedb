@@ -93,7 +93,7 @@ RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
   }
   auto& storage = *rows;
   duckdb::QueryContext query_context(context);
-  containers::FlatHashSet<duckdb::block_id_t> blocks;
+  irs::containers::FlatHashSet<duckdb::block_id_t> blocks;
   int64_t transient_bytes = 0;
   for (const auto& info : storage.GetColumnSegmentInfo(query_context)) {
     if (info.persistent) {

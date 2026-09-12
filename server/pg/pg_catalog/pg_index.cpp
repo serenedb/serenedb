@@ -69,7 +69,8 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // Every base table of the database, by id: an index row needs the attnums of
   // the relation it hangs off, and the synthetic rows below are that relation's
   // own key constraints.
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+    tables;
   catalog::VisitTableEntries(context, GetDatabaseId(),
                              [&](const catalog::SereneDBSchemaEntry&,
                                  const catalog::SereneDBTableEntry& table) {

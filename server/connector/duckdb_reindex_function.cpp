@@ -303,8 +303,8 @@ struct EqGroup {
 // Deterministic enumeration order makes the pointer sequence a stable key.
 std::vector<EqGroup> GroupCoveredFiles(const IcebergObserve& observe) {
   std::vector<EqGroup> groups;
-  containers::FlatHashMap<std::vector<const duckdb::IcebergEqualityDeleteFile*>,
-                          size_t>
+  irs::containers::FlatHashMap<
+    std::vector<const duckdb::IcebergEqualityDeleteFile*>, size_t>
     group_of;
   for (const auto& covered : observe.eq_covered) {
     const auto entry =
@@ -371,7 +371,7 @@ std::vector<EqRow> ParseEqRows(
     return pos;
   };
   std::vector<EqRow> rows;
-  containers::FlatHashSet<std::string> seen_null_rows;
+  irs::containers::FlatHashSet<std::string> seen_null_rows;
   std::string row_key;
   for (const auto& delete_file : delete_files) {
     for (const auto& row : delete_file.get().rows) {
@@ -618,7 +618,7 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
   observe.eq_covered.clear();
   // Restore listing order: the pass relies on scan order == assigned-id
   // order.
-  containers::FlatHashMap<std::string_view, size_t> listing_pos;
+  irs::containers::FlatHashMap<std::string_view, size_t> listing_pos;
   listing_pos.reserve(src.files.size());
   for (size_t i = 0; i < src.files.size(); ++i) {
     listing_pos.emplace(src.files[i].path, i);
@@ -719,8 +719,8 @@ std::shared_ptr<search::FileManifest> BuildNextManifest(
   const search::FileManifest& manifest, FileDiff& files, uint64_t& file_base) {
   auto manifest_next = std::make_shared<search::FileManifest>();
   manifest_next->entries.reserve(manifest.entries.size() + files.scan.size());
-  containers::FlatHashSet<uint64_t> dead_ids{files.del_files.begin(),
-                                             files.del_files.end()};
+  irs::containers::FlatHashSet<uint64_t> dead_ids{files.del_files.begin(),
+                                                  files.del_files.end()};
   file_base = 0;
   for (const auto& [id, entry] : manifest.entries) {
     if (dead_ids.contains(id)) {
@@ -1169,7 +1169,7 @@ void NarrowScanToDelta(duckdb::LogicalGet& leaf,
                        uint64_t leaf_orig_size) {
   SDB_ASSERT(leaf.bind_data);
   auto& mfbd = leaf.bind_data->Cast<duckdb::MultiFileBindData>();
-  containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
+  irs::containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
   id_by_path.reserve(info.manifest->entries.size());
   for (const auto& [id, entry] : info.manifest->entries) {
     id_by_path.emplace(entry.path, id);

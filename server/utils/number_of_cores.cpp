@@ -214,12 +214,12 @@ int64_t CountLogicalCores() {
   return kCached;
 }
 
-int64_t CountPhysicalCores(const containers::FlatHashMap<
+int64_t CountPhysicalCores(const irs::containers::FlatHashMap<
                              int64_t, std::pair<int64_t, int64_t>>& cpu_to_core,
-                           const containers::FlatHashSet<int64_t>& allowed,
+                           const irs::containers::FlatHashSet<int64_t>& allowed,
                            int64_t cfs_quota_cores) noexcept {
   const int64_t host_logical = static_cast<int64_t>(cpu_to_core.size());
-  containers::FlatHashSet<std::pair<int64_t, int64_t>> host;
+  irs::containers::FlatHashSet<std::pair<int64_t, int64_t>> host;
   for (const auto& [cpu, core] : cpu_to_core) {
     host.insert(core);
   }
@@ -230,7 +230,7 @@ int64_t CountPhysicalCores(const containers::FlatHashMap<
   // count.
   int64_t physical = host_physical;
   if (!allowed.empty()) {
-    containers::FlatHashSet<std::pair<int64_t, int64_t>> in_set;
+    irs::containers::FlatHashSet<std::pair<int64_t, int64_t>> in_set;
     for (const int64_t cpu : allowed) {
       if (const auto it = cpu_to_core.find(cpu); it != cpu_to_core.end()) {
         in_set.insert(it->second);

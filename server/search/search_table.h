@@ -104,7 +104,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // at the column id, so several indexes on one column keep independent
   // analyzers.
   using TermsByColumn =
-    containers::FlatHashMap<catalog::ColumnId, std::vector<irs::field_id>>;
+    irs::containers::FlatHashMap<catalog::ColumnId, std::vector<irs::field_id>>;
   std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
 
   // The per-field iresearch encoding config (norms/compression/row-group) the

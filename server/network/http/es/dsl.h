@@ -33,7 +33,7 @@ namespace sdb::network::http::es {
 // text fields query through the inverted index, everything else through
 // plain predicates, unmapped fields match nothing (like ES). "_id" is
 // implicitly a keyword.
-using FieldTypes = containers::FlatHashMap<std::string, std::string>;
+using FieldTypes = irs::containers::FlatHashMap<std::string, std::string>;
 
 // Parses es_mapping() output ({"properties":{"f":{"type":"text"},...}}).
 bool ParseFieldTypes(std::string_view mappings_json, FieldTypes& out);

@@ -6,55 +6,21 @@ endif()
 
 add_definitions(-DUNICODE -D_UNICODE)
 
-# set version components
-if(NOT IResearch_version_major)
-    set(IResearch_version_major "1")
-endif()
-if(NOT IResearch_version_minor)
-    set(IResearch_version_minor "3")
-endif()
-if(NOT IResearch_version_revision)
-    set(IResearch_version_revision "0")
-endif()
-if(NOT IResearch_version_patch)
-    set(IResearch_version_patch "0")
-endif()
-
+# iresearch ships with the database, so it carries the same version
+set(IResearch_version
+    "${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}.${SERENEDB_VERSION_PATCH}"
+)
 set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
-# calculate version
-math(
-    EXPR
-    IResearch_int_version
-    "(${IResearch_version_major} * 1000000) + (${IResearch_version_minor} * 10000) + (${IResearch_version_revision} * 100) + (${IResearch_version_patch} * 1)"
-)
-set(IResearch_version
-    "${IResearch_version_major}.${IResearch_version_minor}.${IResearch_version_revision}.${IResearch_version_patch}"
-)
-
-if(MSVC)
-    # disable "checked iterators" feature
-    add_definitions(-D_SCL_SECURE_NO_WARNINGS)
-
-    # set OS specific sources
-    set(IResearch_core_os_specific_sources ./utils/mman_win32.cpp)
-
-    # set OS specific headers
-    set(IResearch_core_os_specific_headers ./utils/mman_win32.hpp)
-else()
-    if(
-        NOT APPLE
-        AND NOT (
-            CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
-            OR CMAKE_BUILD_TYPE STREQUAL "Debug"
-        )
+if(
+    NOT APPLE
+    AND NOT (
+        CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
+        OR CMAKE_BUILD_TYPE STREQUAL "Debug"
     )
-        add_link_options(-s)
-    endif()
-
-    # set OS specific headers
-    set(IResearch_core_os_specific_headers ./utils/mman_posix.hpp)
+)
+    add_link_options(-s)
 endif()
 
 set(IResearch_core_sources
@@ -429,11 +395,9 @@ set(IResearch_core_sources
     ./utils/log.cpp
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
-    ./utils/random/uniform_character.cpp
     ./utils/static_strings.cpp
     ./utils/string_utils.cpp
     ./utils/zstd_context.cpp
-    ${IResearch_core_os_specific_sources}
     ${IResearch_core_optimized_sources}
 )
 
@@ -527,15 +491,6 @@ if(ARCH_AMD64)
     )
 elseif(ARCH_AARCH64)
     target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
-endif()
-
-# setup MSVC specific compiler flags
-if(MSVC)
-    target_compile_options(
-        iresearch-static
-        PRIVATE "$<$<CONFIG:Debug>:/bigobj>"
-        PRIVATE "/EHa"
-    )
 endif()
 
 target_link_libraries(

@@ -984,7 +984,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-const containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
+const irs::containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
     {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
     {kNGramMatches, BuildPassthrough<kTSQNGram>},
@@ -1074,7 +1074,7 @@ bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
          t == irs::Type<irs::analysis::WildcardTokenizer>::id();
 }
 
-const containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
+const irs::containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
   kBuiltinBuilder = {
     {"contains", &BuildTSContainsLike},
     {"^@", &BuildTSStartsWith},
@@ -2282,7 +2282,7 @@ absl::Status MakeSearchFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
   duckdb::Value v;
   uint32_t levenshtein_max_terms = 50;

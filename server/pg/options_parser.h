@@ -41,7 +41,7 @@ namespace sdb::pg {
 
 using OptionEntry = std::unique_ptr<duckdb::Value>;
 
-using Options = containers::NodeHashMap<std::string, OptionEntry>;
+using Options = irs::containers::NodeHashMap<std::string, OptionEntry>;
 
 struct OptionsContext {
   std::string_view operation;

@@ -50,7 +50,7 @@ bool AclNames(catalog::AclView acl, ObjectId role) {
 // A column grant makes the table name its grantee, and only the table's own
 // definition knows about it.
 using ColumnAclsByTable =
-  containers::FlatHashMap<ObjectId, const catalog::ColumnAcls*>;
+  irs::containers::FlatHashMap<ObjectId, const catalog::ColumnAcls*>;
 
 ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     ObjectId database) {

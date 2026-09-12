@@ -395,7 +395,7 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const auto pk_columns = TableEntryPKColumns(table);
 
   // PK positions in key order, then indexed positions the key does not cover.
-  containers::FlatHashSet<size_t> pk_positions;
+  irs::containers::FlatHashSet<size_t> pk_positions;
   pk_positions.reserve(pk_columns.size());
   for (const auto key : pk_columns) {
     if (pk_positions.insert(key.index).second) {

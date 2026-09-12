@@ -655,7 +655,7 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
         table_ids.push_back(catalog::IdOf(table));
       }
     });
-  containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
+  irs::containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
   catalog::Visit<catalog::SereneDBIndexEntry>(
     nullptr, database_id, [&](const catalog::SereneDBIndexEntry& index) {
       index_ids[index.GetRelationId()].push_back(catalog::IdOf(index));

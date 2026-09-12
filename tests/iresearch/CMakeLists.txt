@@ -183,15 +183,6 @@ set(iresearch-tests_headers
     ${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp # auto generated
 )
 
-if(MSVC)
-    # disable "checked iterators" feature
-    add_definitions(-D_SCL_SECURE_NO_WARNINGS)
-
-    # when compiling or linking against GTEST on MSVC2017 the following
-    # definition is required: /D _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING
-    add_definitions(-D_SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING)
-endif()
-
 add_executable(
     iresearch-tests
     ${iresearch-tests_sources}
@@ -203,27 +194,17 @@ add_executable(
     ./formats/formats_15_tests.cpp
 )
 
-if(MSVC)
-    target_compile_options(iresearch-tests PRIVATE "/bigobj")
-endif()
-
 target_link_libraries(
     iresearch-tests
     # iresearch-static brings irs::DuckDBEngine so tests_main can Initialize /
     # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
     # PUBLICly.
     iresearch-static
-    iresearch-static
     search-benchmark-common
     gtest
     simdjson
     simdutf
 )
-
-# setup CRT
-if(MSVC)
-    target_compile_options(iresearch-tests PRIVATE "$<$<CONFIG:Debug>:/bigobj>")
-endif()
 
 target_include_directories(
     iresearch-tests
@@ -253,7 +234,6 @@ add_executable(
 target_link_libraries(
     iresearch-load-tests
     # See iresearch-tests note above re: iresearch-static dependency.
-    iresearch-static
     iresearch-static
     search-benchmark-common
     gtest

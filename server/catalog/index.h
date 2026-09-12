@@ -136,7 +136,7 @@ class Index {
     return _referenced_columns_set.contains(id);
   }
 
-  virtual containers::FlatHashSet<ObjectId> GetTokenizers() const = 0;
+  virtual irs::containers::FlatHashSet<ObjectId> GetTokenizers() const = 0;
 
   std::string_view Comment() const noexcept { return _comment; }
 
@@ -149,13 +149,14 @@ class Index {
   struct DerivedColumnIds {
     std::vector<ColumnId> columns;
     std::vector<ColumnId> referenced_columns;
-    containers::FlatHashSet<ColumnId> referenced_columns_set;
+    irs::containers::FlatHashSet<ColumnId> referenced_columns_set;
   };
 
   Index(ObjectId schema_id, ObjectId id, ObjectId relation_id,
         std::string_view name, std::string comment, DerivedColumnIds derived);
 
-  static std::pair<std::vector<ColumnId>, containers::FlatHashSet<ColumnId>>
+  static std::pair<std::vector<ColumnId>,
+                   irs::containers::FlatHashSet<ColumnId>>
   DedupColumns(std::span<const ColumnId> columns);
 
   // `extra_deps` are columns referenced by the index beyond its keys and
@@ -185,7 +186,7 @@ class Index {
 
   std::vector<ColumnId> _columns;
   std::vector<ColumnId> _referenced_columns;
-  containers::FlatHashSet<ColumnId> _referenced_columns_set;
+  irs::containers::FlatHashSet<ColumnId> _referenced_columns_set;
   std::string _name;
   std::string _comment;
   ObjectId _id;

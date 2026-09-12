@@ -1744,7 +1744,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
                                                  visitor);
     };
 
-  containers::FlatHashSet<std::string_view> taken;
+  irs::containers::FlatHashSet<std::string_view> taken;
   visit_types([&](const duckdb::TypeCatalogEntry& type) {
     taken.insert(type.name.GetIdentifierName());
   });

@@ -602,7 +602,7 @@ struct EnumFieldRefs {
 
 void CollectEnumFieldRefs(
   const duckdb::Expression& expr,
-  const containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
+  const irs::containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get, EnumFieldRefs& refs) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
@@ -1406,7 +1406,8 @@ bool KeywordAggsConvertible(
   }
   const auto& bind_data =
     target.bind_data->Cast<connector::SereneDBScanBindData>();
-  const containers::FlatHashMap<irs::field_id, size_t> key_by_field{{field, 0}};
+  const irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field{
+    {field, 0}};
   for (auto& expr : filter->expressions) {
     EnumFieldRefs refs;
     CollectEnumFieldRefs(*expr, key_by_field, bind_data, target, refs);
@@ -1633,8 +1634,8 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  containers::FlatHashSet<irs::field_id>& analyzed_fields,
-  containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
   duckdb::ClientContext& context) {
   auto root = std::make_unique<irs::BooleanFilter>();
   if (!TryClaimIResearchConjunct(*root, conjunct, getter, expr_getter,
@@ -1677,7 +1678,7 @@ bool TsDictFacetPushdown::WhereOk() {
     return true;
   }
   bool term_conjunct = false;
-  containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+  irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
   key_by_field.reserve(_keys.size());
   for (size_t k = 0; k < _keys.size(); ++k) {
     key_by_field[_keys[k].field_id] = k;
@@ -1988,7 +1989,7 @@ class TsDictFilterClaim {
   }
 
   void ValidateResiduals() {
-    containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+    irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
     if (EnumeratedFieldCount() == 1) {
       key_by_field.emplace(_ss.ts_dicts.front().field_id, 0);
     }
@@ -2124,7 +2125,7 @@ class TsDictFilterClaim {
   std::vector<bool> _row_origin;
   std::vector<std::unique_ptr<irs::BooleanFilter>> _having_and;
   std::unique_ptr<irs::BooleanFilter> _where_and;
-  containers::FlatHashSet<irs::field_id> _enum_fields;
+  irs::containers::FlatHashSet<irs::field_id> _enum_fields;
 };
 
 }  // namespace

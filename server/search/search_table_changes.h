@@ -126,6 +126,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

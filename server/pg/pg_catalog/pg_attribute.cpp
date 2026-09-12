@@ -108,7 +108,7 @@ void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
 
   // NOT NULL is a constraint on the entry, keyed by logical column index; a
   // primary key implies it for every key column, as in postgres.
-  containers::FlatHashSet<duckdb::idx_t> notnull_cols;
+  irs::containers::FlatHashSet<duckdb::idx_t> notnull_cols;
   for (const auto& constraint : table.GetConstraints()) {
     if (constraint->type == duckdb::ConstraintType::NOT_NULL) {
       notnull_cols.insert(

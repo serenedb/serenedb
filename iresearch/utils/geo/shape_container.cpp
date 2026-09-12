@@ -49,15 +49,15 @@ constexpr uint8_t BinOpCase(ShapeContainer::Type lhs,
 
 template<typename T>
 bool ContainsPoint(const S2Region& region, const S2Region& point) {
-  const auto& lhs = basics::downCast<T>(region);
-  const auto& rhs = basics::downCast<S2PointRegion>(point);
+  const auto& lhs = utils::downCast<T>(region);
+  const auto& rhs = utils::downCast<S2PointRegion>(point);
   return lhs.Contains(rhs.point());
 }
 
 template<typename T>
 bool ContainsPoints(const S2Region& region, const S2Region& points) {
-  const auto& lhs = basics::downCast<T>(region);
-  const auto& rhs = basics::downCast<S2MultiPointRegion>(points);
+  const auto& lhs = utils::downCast<T>(region);
+  const auto& rhs = utils::downCast<S2MultiPointRegion>(points);
   for (const auto& point : rhs.Impl()) {
     if (!lhs.Contains(point)) {
       return false;
@@ -86,15 +86,15 @@ bool ContainsPolyline(const T& lhs, const S2Polyline& rhs) {
 
 template<typename T>
 bool ContainsPolyline(const S2Region& region, const S2Region& polyline) {
-  const auto& lhs = basics::downCast<T>(region);
-  const auto& rhs = basics::downCast<S2Polyline>(polyline);
+  const auto& lhs = utils::downCast<T>(region);
+  const auto& rhs = utils::downCast<S2Polyline>(polyline);
   return ContainsPolyline<T>(lhs, rhs);
 }
 
 template<typename T>
 bool ContainsPolylines(const S2Region& region, const S2Region& polylines) {
-  const auto& lhs = basics::downCast<T>(region);
-  const auto& rhs = basics::downCast<S2MultiPolylineRegion>(polylines);
+  const auto& lhs = utils::downCast<T>(region);
+  const auto& rhs = utils::downCast<S2MultiPolylineRegion>(polylines);
   for (const auto& polyline : rhs.Impl()) {
     if (!ContainsPolyline<T>(lhs, polyline)) {
       return false;
@@ -105,8 +105,8 @@ bool ContainsPolylines(const S2Region& region, const S2Region& polylines) {
 
 template<typename R1, typename R2>
 bool IntersectsHelper(const S2Region& r1, const S2Region& r2) {
-  const auto& lhs = basics::downCast<R1>(r1);
-  const auto& rhs = basics::downCast<R2>(r2);
+  const auto& lhs = utils::downCast<R1>(r1);
+  const auto& rhs = utils::downCast<R2>(r2);
   if constexpr (std::is_same_v<R1, S2PointRegion>) {
     return rhs.Contains(lhs.point());
   } else {
@@ -120,21 +120,21 @@ S2Point ShapeContainer::centroid() const noexcept {
   switch (_type) {
     case Type::S2Point:
       // S2PointRegion should be constructed from unit length Point
-      return basics::downCast<S2PointRegion>(*_data).point();
+      return utils::downCast<S2PointRegion>(*_data).point();
     case Type::S2Polyline:
       // S2Polyline::GetCentroid() result isn't unit length
-      return basics::downCast<S2Polyline>(*_data).GetCentroid().Normalize();
+      return utils::downCast<S2Polyline>(*_data).GetCentroid().Normalize();
     case Type::S2Polygon:
       // S2Polygon::GetCentroid() result isn't unit length
-      return basics::downCast<S2Polygon>(*_data).GetCentroid().Normalize();
+      return utils::downCast<S2Polygon>(*_data).GetCentroid().Normalize();
     case Type::S2Multipoint:
       // S2MultiPointRegion::GetCentroid() result isn't unit length
-      return basics::downCast<S2MultiPointRegion>(*_data)
+      return utils::downCast<S2MultiPointRegion>(*_data)
         .GetCentroid()
         .Normalize();
     case Type::S2Multipolyline:
       // S2MultiPolylineRegion::GetCentroid() result isn't unit length
-      return basics::downCast<S2MultiPolylineRegion>(*_data)
+      return utils::downCast<S2MultiPolylineRegion>(*_data)
         .GetCentroid()
         .Normalize();
     case Type::Empty:
@@ -182,8 +182,8 @@ bool ShapeContainer::contains(const ShapeContainer& other) const {
       return ContainsPolylines<S2MultiPolylineRegion>(*_data, *other._data);
 
     case BinOpCase(Type::S2Polygon, Type::S2Polygon): {
-      const auto& lhs = basics::downCast<S2Polygon>(*_data);
-      const auto& rhs = basics::downCast<S2Polygon>(*other._data);
+      const auto& lhs = utils::downCast<S2Polygon>(*_data);
+      const auto& rhs = utils::downCast<S2Polygon>(*other._data);
       return lhs.Contains(rhs);
     }
 
@@ -268,7 +268,7 @@ void ShapeContainer::reset(std::unique_ptr<S2Region> data, Type type,
                            coding::Options options) noexcept {
   SDB_ASSERT((data == nullptr) == (type == Type::Empty));
   SDB_ASSERT(data == nullptr || type != Type::S2Point ||
-             S2::IsUnitLength(basics::downCast<S2PointRegion>(*data).point()));
+             S2::IsUnitLength(utils::downCast<S2PointRegion>(*data).point()));
   _data = std::move(data);
   _type = type;
   _options = options;
@@ -280,7 +280,7 @@ void ShapeContainer::reset(S2Point point, coding::Options options) {
   SDB_ASSERT(S2::IsUnitLength(point));
   if (_type == Type::S2Point) [[likely]] {
     SDB_ASSERT(_data);
-    auto& region = basics::downCast<S2PointRegion>(*_data);
+    auto& region = utils::downCast<S2PointRegion>(*_data);
     region = S2PointRegion{point};
   } else {
     _data = std::make_unique<S2PointRegion>(point);
@@ -297,23 +297,23 @@ bool ShapeContainer::equals(const ShapeContainer& other) const {
     case Type::Empty:
       return true;
     case Type::S2Point: {
-      const auto& lhs = basics::downCast<S2PointRegion>(*_data);
-      const auto& rhs = basics::downCast<S2PointRegion>(*other._data);
+      const auto& lhs = utils::downCast<S2PointRegion>(*_data);
+      const auto& rhs = utils::downCast<S2PointRegion>(*other._data);
       return lhs.Contains(rhs.point());
     }
     case Type::S2Polyline: {
-      const auto& lhs = basics::downCast<S2Polyline>(*_data);
-      const auto& rhs = basics::downCast<S2Polyline>(*other._data);
+      const auto& lhs = utils::downCast<S2Polyline>(*_data);
+      const auto& rhs = utils::downCast<S2Polyline>(*other._data);
       return lhs.Equals(rhs);
     }
     case Type::S2Polygon: {
-      const auto& lhs = basics::downCast<S2Polygon>(*_data);
-      const auto& rhs = basics::downCast<S2Polygon>(*other._data);
+      const auto& lhs = utils::downCast<S2Polygon>(*_data);
+      const auto& rhs = utils::downCast<S2Polygon>(*other._data);
       return lhs.Equals(rhs);
     }
     case Type::S2Multipoint: {
-      const auto& lhs = basics::downCast<S2MultiPointRegion>(*_data);
-      const auto& rhs = basics::downCast<S2MultiPointRegion>(*other._data);
+      const auto& lhs = utils::downCast<S2MultiPointRegion>(*_data);
+      const auto& rhs = utils::downCast<S2MultiPointRegion>(*other._data);
       const auto& lhs_points = lhs.Impl();
       const auto& rhs_points = rhs.Impl();
       const auto size = lhs_points.size();
@@ -328,8 +328,8 @@ bool ShapeContainer::equals(const ShapeContainer& other) const {
       return true;
     }
     case Type::S2Multipolyline: {
-      const auto& lhs = basics::downCast<S2MultiPolylineRegion>(*_data);
-      const auto& rhs = basics::downCast<S2MultiPolylineRegion>(*other._data);
+      const auto& lhs = utils::downCast<S2MultiPolylineRegion>(*_data);
+      const auto& rhs = utils::downCast<S2MultiPolylineRegion>(*other._data);
       const auto& lhs_lines = lhs.Impl();
       const auto& rhs_lines = rhs.Impl();
       const auto size = lhs_lines.size();
@@ -359,22 +359,22 @@ void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {
     case Type::S2Point: {
       encoder.Ensure(sizeof(uint8_t) + coding::ToSize(options));
       encoder.put8(coding::ToTag(coding::Type::Point, options));
-      EncodePoint(encoder, basics::downCast<S2PointRegion>(*_data).point());
+      EncodePoint(encoder, utils::downCast<S2PointRegion>(*_data).point());
     } break;
     case Type::S2Polyline: {
-      const auto& data = basics::downCast<S2Polyline>(*_data);
+      const auto& data = utils::downCast<S2Polyline>(*_data);
       EncodePolyline(encoder, data, options);
     } break;
     case Type::S2Polygon: {
-      const auto& data = basics::downCast<S2Polygon>(*_data);
+      const auto& data = utils::downCast<S2Polygon>(*_data);
       EncodePolygon(encoder, data, options);
     } break;
     case Type::S2Multipoint: {
-      const auto& data = basics::downCast<S2MultiPointRegion>(*_data);
+      const auto& data = utils::downCast<S2MultiPointRegion>(*_data);
       data.Encode(encoder, options);
     } break;
     case Type::S2Multipolyline: {
-      const auto& data = basics::downCast<S2MultiPolylineRegion>(*_data);
+      const auto& data = utils::downCast<S2MultiPolylineRegion>(*_data);
       data.Encode(encoder, options);
     } break;
     case Type::Empty:
@@ -408,7 +408,7 @@ bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
   switch (coding::ToType(tag)) {
     case coding::ToTag<coding::Type::Point>(): {
       decodeImpl<Type::S2Point, S2PointRegion>(decoder);
-      auto& data = basics::downCast<S2PointRegion>(*_data);
+      auto& data = utils::downCast<S2PointRegion>(*_data);
       if (S2Point point; DecodePoint(decoder, point, tag)) {
         data = S2PointRegion{point};
         _options = static_cast<coding::Options>(coding::ToPoint(tag));
@@ -417,7 +417,7 @@ bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
     } break;
     case coding::ToTag<coding::Type::Polyline>(): {
       decodeImpl<Type::S2Polyline, S2Polyline>(decoder);
-      auto& polyline = basics::downCast<S2Polyline>(*_data);
+      auto& polyline = utils::downCast<S2Polyline>(*_data);
       if (DecodePolyline(decoder, polyline, tag, cache)) {
         _options = static_cast<coding::Options>(coding::ToPoint(tag));
         return true;
@@ -425,7 +425,7 @@ bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
     } break;
     case coding::ToTag<coding::Type::Polygon>(): {
       decodeImpl<Type::S2Polygon, S2Polygon>(decoder);
-      auto& polygon = basics::downCast<S2Polygon>(*_data);
+      auto& polygon = utils::downCast<S2Polygon>(*_data);
       if (DecodePolygon(decoder, polygon, tag, cache)) {
         _options = static_cast<coding::Options>(coding::ToPoint(tag));
         return true;
@@ -433,7 +433,7 @@ bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
     } break;
     case coding::ToTag<coding::Type::MultiPoint>(): {
       decodeImpl<Type::S2Multipoint, S2MultiPointRegion>(decoder);
-      auto& points = basics::downCast<S2MultiPointRegion>(*_data);
+      auto& points = utils::downCast<S2MultiPointRegion>(*_data);
       if (points.Decode(decoder, tag)) {
         _options = static_cast<coding::Options>(coding::ToPoint(tag));
         return true;
@@ -441,7 +441,7 @@ bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
     } break;
     case coding::ToTag<coding::Type::MultiPolyline>(): {
       decodeImpl<Type::S2Multipolyline, S2MultiPolylineRegion>(decoder);
-      auto& polylines = basics::downCast<S2MultiPolylineRegion>(*_data);
+      auto& polylines = utils::downCast<S2MultiPolylineRegion>(*_data);
       if (polylines.Decode(decoder, tag, cache)) {
         _options = static_cast<coding::Options>(coding::ToPoint(tag));
         return true;

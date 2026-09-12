@@ -352,14 +352,14 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   // read back: its own, not the catalog's. Seeded from what the file says and
   // walked forward by every record replayed against it, which is the only way a
   // rename in the middle of that run is accounted for. Empty once loaded.
-  containers::NodeHashMap<uint64_t, duckdb::ColumnList> _replay_shapes;
+  irs::containers::NodeHashMap<uint64_t, duckdb::ColumnList> _replay_shapes;
 
   ObjectId _database_id;
   ObjectId _public_schema_id;
   catalog::Permissions _public_schema_owner;
   mutable absl::Mutex _indexed_columns_mutex;
-  mutable containers::FlatHashMap<
-    uint64_t, containers::FlatHashMap<uint64_t, std::vector<size_t>>>
+  mutable irs::containers::FlatHashMap<
+    uint64_t, irs::containers::FlatHashMap<uint64_t, std::vector<size_t>>>
     _indexed_columns ABSL_GUARDED_BY(_indexed_columns_mutex);
 
   duckdb::CatalogSet _foreign_servers;

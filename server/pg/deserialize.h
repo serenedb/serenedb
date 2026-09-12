@@ -48,7 +48,7 @@ struct DeserializeContext {
   std::unique_ptr<RecordDeserializers> record_cache;
   std::unique_ptr<icu::Calendar> session_calendar;
   duckdb::shared_ptr<const duckdb::ZoneLUT> session_lut;
-  containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
+  irs::containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
     named_calendars;
 
   icu::Calendar* CalendarFor(std::string_view tz_name);
@@ -193,8 +193,8 @@ DeserializationFunction<Sink> GetDeserialization(
 // of serialize's TypesSerializationCache; children only ever decode into
 // vectors, so the value type is fixed to VectorSink.
 struct RecordDeserializers {
-  containers::NodeHashMap<uintptr_t,
-                          std::vector<DeserializationFunction<VectorSink>>>
+  irs::containers::NodeHashMap<uintptr_t,
+                               std::vector<DeserializationFunction<VectorSink>>>
     fields;
 };
 

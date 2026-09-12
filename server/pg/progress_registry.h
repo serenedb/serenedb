@@ -192,8 +192,8 @@ class ProgressRegistry {
 
  private:
   mutable absl::Mutex _mu;
-  containers::FlatHashMap<const ProgressSource*,
-                          std::shared_ptr<ProgressSource>>
+  irs::containers::FlatHashMap<const ProgressSource*,
+                               std::shared_ptr<ProgressSource>>
     _sources;
 };
 

@@ -199,7 +199,7 @@ class CancelRegistry {
 
  private:
   absl::Mutex _mu;
-  containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
+  irs::containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
   bool _terminating = false;
 };
 

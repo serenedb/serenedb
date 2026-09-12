@@ -160,7 +160,7 @@ class Config {
   // native DuckDB setting names forwarded from PhysicalSet), so we cannot
   // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
-  containers::NodeHashMap<std::string, TxnVariable> _transaction;
+  irs::containers::NodeHashMap<std::string, TxnVariable> _transaction;
   duckdb::ClientContext& _client_ctx;
 };
 

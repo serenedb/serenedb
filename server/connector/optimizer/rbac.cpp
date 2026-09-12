@@ -210,7 +210,7 @@ using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
 // it walks every attached catalog's set, hence the dedup per alias.
 void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
                                const AccessRequirements& reqs) {
-  containers::FlatHashSet<std::string_view> checked;
+  irs::containers::FlatHashSet<std::string_view> checked;
   for (const auto& req : reqs) {
     if (!req.table) {
       continue;
@@ -251,9 +251,9 @@ std::vector<Governed> CollectRelations(const AccessRequirements& reqs,
   return objects;
 }
 
-containers::FlatHashSet<uint64_t> CollectWriteTargets(
+irs::containers::FlatHashSet<uint64_t> CollectWriteTargets(
   const AccessRequirements& reqs, const std::vector<Governed>& objects) {
-  containers::FlatHashSet<uint64_t> targets;
+  irs::containers::FlatHashSet<uint64_t> targets;
   for (size_t i = 0; i < reqs.size(); ++i) {
     if (objects[i].type == duckdb::CatalogType::TABLE_ENTRY &&
         Has(reqs[i].verb,

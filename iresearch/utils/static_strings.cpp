@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "static_strings.h"
+#include "iresearch/utils/static_strings.hpp"
 
 namespace irs {
 

@@ -45,7 +45,7 @@ bool SlurpFile(const char* filename, std::string& result) {
 
   auto true_size = result.size();
   while (true) {
-    basics::StrResizeAmortized(result, true_size + kReadBufferSize);
+    irs::utils::StrResizeAmortized(result, true_size + kReadBufferSize);
     auto n = SERENEDB_READ(fd, result.data() + true_size, kReadBufferSize);
     if (n == 0) {
       result.erase(true_size);
@@ -68,7 +68,7 @@ bool SlurpGzipFile(const char* filename, std::string& result) {
 
   auto true_size = result.size();
   while (true) {
-    basics::StrResizeAmortized(result, true_size + kReadBufferSize);
+    irs::utils::StrResizeAmortized(result, true_size + kReadBufferSize);
     const auto n = gzread(gz_fd, result.data() + true_size, kReadBufferSize);
     if (n == 0) {
       result.erase(true_size);

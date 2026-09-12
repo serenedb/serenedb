@@ -1660,9 +1660,10 @@ namespace {
 
 // The keys `table` states against other tables, by the constraint id each is
 // filed under -- which is what tells one key from another across a rewrite.
-containers::FlatHashMap<ObjectId, const duckdb::ForeignKeyConstraint*>
+irs::containers::FlatHashMap<ObjectId, const duckdb::ForeignKeyConstraint*>
 StatedForeignKeys(const duckdb::CreateTableInfo* table) {
-  containers::FlatHashMap<ObjectId, const duckdb::ForeignKeyConstraint*> found;
+  irs::containers::FlatHashMap<ObjectId, const duckdb::ForeignKeyConstraint*>
+    found;
   if (table == nullptr) {
     return found;
   }
@@ -1725,10 +1726,10 @@ std::vector<ReferencedKeyVersion> ReferencedKeyVersions(
   // What each referenced table has to stop stating and start stating, keyed by
   // the table so one of them pointed at twice is rewritten once.
   struct Pending {
-    containers::FlatHashSet<ObjectId> removed;
+    irs::containers::FlatHashSet<ObjectId> removed;
     std::vector<const duckdb::ForeignKeyConstraint*> added;
   };
-  containers::FlatHashMap<ObjectId, Pending> pending;
+  irs::containers::FlatHashMap<ObjectId, Pending> pending;
   for (const auto& [id, fk] : stated_before) {
     if (!stated_after.contains(id)) {
       pending[ObjectId{fk->host_referenced_id}].removed.insert(id);

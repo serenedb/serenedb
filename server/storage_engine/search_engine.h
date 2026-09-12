@@ -121,7 +121,7 @@ class SearchEngine final {
  private:
   DatabasePathFeature& _dir_feature;
   absl::Mutex _db_wals_mu;
-  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
+  irs::containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};

@@ -38,7 +38,7 @@ char* dtoa_fast(Float d, char* buf) {  // NOLINT
     *buf++ = '-';
   }
 
-  if (d < number_utils::Max<uint64_t>()) [[likely]] {
+  if (d < irs::number_utils::Max<uint64_t>()) [[likely]] {
     const auto try_u = static_cast<uint64_t>(d);
     if (d == static_cast<Float>(try_u)) [[likely]] {
       return absl::numbers_internal::FastIntToBuffer(try_u, buf);

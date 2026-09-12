@@ -19,23 +19,27 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "server/utils/uniform_character.h"
 
-#include <cstdlib>
-#include <string>
+#include <absl/algorithm/container.h>
 
-namespace irs::random {
+#include "iresearch/utils/string_utils.hpp"
+#include "server/utils/random_generator.h"
 
-class UniformCharacter {
- public:
-  constexpr explicit UniformCharacter(std::string_view characters)
-    : _characters{characters} {}
+namespace sdb::random {
 
-  std::string random(size_t length) const;
-  char randomChar() const;
+char UniformCharacter::randomChar() const {
+  size_t r = random::Interval(static_cast<uint32_t>(_characters.size() - 1));
+  return _characters[r];
+}
 
- private:
-  const std::string_view _characters;
-};
+std::string UniformCharacter::random(size_t length) const {
+  std::string buffer;
+  irs::utils::StrResize(buffer, length);
+  for (auto& c : buffer) {
+    c = randomChar();
+  }
+  return buffer;
+}
 
-}  // namespace irs::random
+}  // namespace sdb::random

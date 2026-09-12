@@ -60,35 +60,23 @@ set(AMD64_V4
 
 macro(sandybridge)
     message("Optimize for sandybridge")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:AVX)
-    else()
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-    endif()
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
 endmacro()
 
 macro(haswell)
     message("Optimize for haswell")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:AVX2)
-    else()
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
-    endif()
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
 endmacro()
 
 macro(icelake)
     message("Optimize for icelake")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:AVX512)
-    else()
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V4})
-    endif()
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V4})
 endmacro()
 
 # Simplified for servers we need to support only AWS Graviton, Ampere Altra, Apple M1
@@ -97,46 +85,34 @@ endmacro()
 macro(graviton1)
     message("Optimize for graviton1")
     set(AARCH64_MARCH "armv8-a+crc+crypto")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.0)
-    else()
-        # little-endian enabled by default, but only if target is not something like aarch64_be
-        # so force to generate little-endian code, because it's simpler and less error-prone
-        # "fp simd" are included to armv8-a
-        list(
-            APPEND ARCHITECTURE_OPTIMIZATIONS
-            -mlittle-endian
-            -march=${AARCH64_MARCH}
-        )
-    endif()
+    # little-endian enabled by default, but only if target is not something like aarch64_be
+    # so force to generate little-endian code, because it's simpler and less error-prone
+    # "fp simd" are included to armv8-a
+    list(
+        APPEND ARCHITECTURE_OPTIMIZATIONS
+        -mlittle-endian
+        -march=${AARCH64_MARCH}
+    )
 endmacro()
 
 macro(graviton2)
     message("Optimize for graviton2")
     set(AARCH64_MARCH "armv8.2-a+fp16+rcpc+dotprod+crypto")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.2)
-    else()
-        list(
-            APPEND ARCHITECTURE_OPTIMIZATIONS
-            -mlittle-endian
-            -march=${AARCH64_MARCH}
-        )
-    endif()
+    list(
+        APPEND ARCHITECTURE_OPTIMIZATIONS
+        -mlittle-endian
+        -march=${AARCH64_MARCH}
+    )
 endmacro()
 
 macro(graviton3)
     message("Optimize for graviton3")
     set(AARCH64_MARCH "armv8.4-a+sve+rng+bf16+int8+crypto")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.4)
-    else()
-        list(
-            APPEND ARCHITECTURE_OPTIMIZATIONS
-            -mlittle-endian
-            -march=${AARCH64_MARCH}
-        )
-    endif()
+    list(
+        APPEND ARCHITECTURE_OPTIMIZATIONS
+        -mlittle-endian
+        -march=${AARCH64_MARCH}
+    )
 endmacro()
 
 if(NOT TARGET_ARCHITECTURE OR TARGET_ARCHITECTURE STREQUAL "auto")
@@ -155,12 +131,8 @@ elseif(TARGET_ARCHITECTURE STREQUAL "icelake")
     endif()
 elseif(TARGET_ARCHITECTURE STREQUAL "native")
     # Mostly for fun :)
-    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        message("Optimize for native")
-        list(APPEND ARCHITECTURE_OPTIMIZATIONS -march=native)
-    else()
-        message(WARNING "MSVC doesn't support something like -march=native")
-    endif()
+    message("Optimize for native")
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS -march=native)
 else()
     message(WARNING "${TARGET_ARCHITECTURE} is not supported")
 endif()

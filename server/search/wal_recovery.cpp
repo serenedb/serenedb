@@ -112,7 +112,7 @@ void InitInvertedIndexes() {
   // since the last checkpoint. No table rebuild -- recovery cost is O(WAL),
   // not O(table).
   std::vector<std::pair<ObjectId, ObjectId>> tables_to_finish;
-  containers::FlatHashSet<ObjectId> seen_tables;
+  irs::containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 
@@ -200,7 +200,7 @@ void InitInvertedIndexes() {
   // The replay commits each delta into the storage's writer, but the query
   // snapshot only advances on a refresh -- force one per index so recovered
   // rows are searchable the instant the server accepts queries.
-  containers::FlatHashMap<ObjectId, std::shared_ptr<InvertedIndexStorage>>
+  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<InvertedIndexStorage>>
     storage_by_index;
   storage_by_index.reserve(recovering_storages.size());
   for (const auto& storage : recovering_storages) {

@@ -179,18 +179,18 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   // Both come off the same sets the rows do, so the whole projection answers
   // from one place.
   std::vector<const catalog::SereneDBIndexEntry*> indexes;
-  containers::FlatHashSet<ObjectId> indexed_relations;
+  irs::containers::FlatHashSet<ObjectId> indexed_relations;
   catalog::Visit<catalog::SereneDBIndexEntry>(
     &context, database_id, [&](const catalog::SereneDBIndexEntry& entry) {
       indexed_relations.insert(entry.GetRelationId());
       indexes.push_back(&entry);
     });
-  containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
+  irs::containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
   // The tables in set order, for the synthetic key-index rows below, and the
   // sequences that feed a synthetic primary key -- serenedb's own machinery,
   // which postgres has no relation for.
   std::vector<std::pair<ObjectId, const catalog::SereneDBTableEntry*>> tables;
-  containers::FlatHashSet<ObjectId> generated_pk_sequences;
+  irs::containers::FlatHashSet<ObjectId> generated_pk_sequences;
 
   catalog::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,

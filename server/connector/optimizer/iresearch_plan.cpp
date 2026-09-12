@@ -363,9 +363,9 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const bool table_backed =
     bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table;
 
-  containers::FlatHashSet<irs::field_id> analyzed_fields;
-  containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
-  containers::FlatHashMap<catalog::ColumnId, bool> not_null_cache;
+  irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  irs::containers::FlatHashMap<catalog::ColumnId, bool> not_null_cache;
 
   const auto column_not_null = [&](catalog::ColumnId col_id) {
     const auto [it, inserted] = not_null_cache.try_emplace(col_id, false);
@@ -534,7 +534,7 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  static const containers::FlatHashSet<std::string_view> kScorerNames{
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
     S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
     S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),

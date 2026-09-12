@@ -1071,18 +1071,18 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
   // Search-table indexes allocate a distinct term field_id per column (so two
   // indexes on one column don't collide in the shared store); empty for a
   // transactional index (field_id == column id).
-  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
   key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
   irs::field_id next_expr_field_id = expressions_cnt > 0
                                        ? NextNIds(expressions_cnt).id()
                                        : irs::field_limits::invalid();
-  containers::FlatHashSet<std::string_view> tokenized_exprs;
+  irs::containers::FlatHashSet<std::string_view> tokenized_exprs;
   if (expressions_cnt > 1) {
     tokenized_exprs.reserve(expressions_cnt);
   }
-  containers::FlatHashSet<ColumnId> tokenized_cols;
+  irs::containers::FlatHashSet<ColumnId> tokenized_cols;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       const auto& expr_data = c.GetIndexedExpression();
@@ -1193,7 +1193,7 @@ std::shared_ptr<const Index> RebuiltWith(const Index& index, Mutate mutate) {
 std::vector<duckdb::unique_ptr<CreateIndexInfo>> RelationIndexVersions(
   std::span<const duckdb::unique_ptr<CreateIndexInfo>> indexes,
   const duckdb::CreateTableInfo& before, const duckdb::CreateTableInfo& after) {
-  containers::FlatHashMap<std::string, std::string> renames;
+  irs::containers::FlatHashMap<std::string, std::string> renames;
   for (const auto& column : before.columns.Logical()) {
     const auto* now = catalog::ColumnById(after, ObjectId{column.CatalogOid()});
     if (now != nullptr &&
@@ -1313,11 +1313,11 @@ Index::Index(ObjectId schema_id, ObjectId id, ObjectId relation_id,
   RestoreId(_id.id());
 }
 
-std::pair<std::vector<ColumnId>, containers::FlatHashSet<ColumnId>>
+std::pair<std::vector<ColumnId>, irs::containers::FlatHashSet<ColumnId>>
 Index::DedupColumns(std::span<const ColumnId> columns) {
   std::vector<ColumnId> ids;
   ids.reserve(columns.size());
-  containers::FlatHashSet<ColumnId> seen;
+  irs::containers::FlatHashSet<ColumnId> seen;
   seen.reserve(columns.size());
   for (auto column : columns) {
     if (column == kInvalidColumnId) {

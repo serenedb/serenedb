@@ -153,7 +153,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static const containers::FlatHashSet<std::string_view> kHidden = {
+    static const irs::containers::FlatHashSet<std::string_view> kHidden = {
       "sdb_faults", "debug_verification"};
     return !kHidden.contains(name);
   };

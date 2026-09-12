@@ -36,7 +36,7 @@ if(NOT "${SNOWBALL_ROOT}" STREQUAL "")
         ${SNOWBALL_ROOT}/src/libstemmer
         ${SNOWBALL_ROOT}/src/libstemmer/libstemmer
     )
-elseif(NOT MSVC)
+else()
     set(SNOWBALL_SEARCH_HEADER_PATHS
         "/usr/include"
         "/usr/include/libstemmer"

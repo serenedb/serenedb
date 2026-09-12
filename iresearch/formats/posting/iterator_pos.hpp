@@ -24,6 +24,7 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 

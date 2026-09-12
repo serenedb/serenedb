@@ -293,7 +293,7 @@ class SearchSinkInsertBaseImpl {
 
   TokenizerProvider _tokenizer_provider;
   EntryInfoProvider _entry_info_provider;
-  containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
+  irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
   Field _pk_field;
   Field _field;
@@ -301,7 +301,8 @@ class SearchSinkInsertBaseImpl {
   irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
-  containers::FlatHashMap<irs::field_id, irs::ColumnWriter*> _column_writers;
+  irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
+    _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
   PkPolicy _pk_policy;
   std::vector<IndexedExpression> _indexed_expressions;
@@ -398,7 +399,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 
  private:
-  containers::FlatHashSet<catalog::ColumnId> _indexed;
+  irs::containers::FlatHashSet<catalog::ColumnId> _indexed;
 };
 
 class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,

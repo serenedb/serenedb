@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "string_utils.h"
+#include "iresearch/utils/string_utils.hpp"
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>

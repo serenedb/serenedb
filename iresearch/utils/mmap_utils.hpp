@@ -22,27 +22,11 @@
 
 #pragma once
 
+#include <sys/mman.h>
+
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
-
-#if defined(_WIN32)
-
-#include "mman_win32.hpp"
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief constants for madvice
-////////////////////////////////////////////////////////////////////////////////
-#define IR_MADVICE_NORMAL 0
-#define IR_MADVICE_SEQUENTIAL 0
-#define IR_MADVICE_RANDOM 0
-#define IR_MADVICE_WILLNEED 0
-#define IR_MADVICE_DONTNEED 0
-#define IR_MADVICE_DONTDUMP 0
-
-#else
-
-#include <sys/mman.h>
 
 /// a wrapper for MAP_ANONYMOUS / MAP_ANON
 ///
@@ -70,8 +54,6 @@
 #define IR_MADVICE_RANDOM MADV_RANDOM
 #define IR_MADVICE_WILLNEED MADV_WILLNEED
 #define IR_MADVICE_DONTNEED MADV_DONTNEED
-
-#endif
 
 namespace irs::mmap_utils {
 

@@ -1857,7 +1857,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
   }
 
-  containers::FlatHashSet<duckdb::column_t> seen_columns;
+  irs::containers::FlatHashSet<duckdb::column_t> seen_columns;
   auto add_column = [&](std::string_view col_name) {
     for (size_t i = 0; i < rel_columns.size(); ++i) {
       if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {

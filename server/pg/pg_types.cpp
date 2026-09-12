@@ -431,10 +431,10 @@ std::string RegtypeOut(uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-static const containers::FlatHashMap<std::string_view, PgTypeOID>
+static const irs::containers::FlatHashMap<std::string_view, PgTypeOID>
   kTypeNameToOid = [] {
     struct Builder {
-      containers::FlatHashMap<std::string_view, PgTypeOID> map;
+      irs::containers::FlatHashMap<std::string_view, PgTypeOID> map;
       Builder& Case(std::string_view name, PgTypeOID oid) {
         map.emplace(name, oid);
         return *this;

@@ -138,7 +138,7 @@ struct HashEq {
 };
 
 using PgSystemSchema =
-  containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
+  irs::containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
 
 template<typename T>
 const VirtualTable* MakeTable() {
@@ -234,10 +234,10 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
 
 // Node-based: the value is a definition plus a whole permission set, which is
 // past what a flat map wants to move, and these are built once at startup.
-containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
-containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
-containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
-containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
+irs::containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
+irs::containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
+irs::containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
+irs::containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
 }  // namespace
 
@@ -408,11 +408,11 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
 void InitSystemFunctions(duckdb::Parser& parser) {
   // All the overloads of one name share one info, as duckdb's macro entry does,
   // so they are merged while still writable and published once each.
-  containers::FlatHashMap<std::string,
-                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     pg_catalog;
-  containers::FlatHashMap<std::string,
-                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     info_schema_map;
   for (const auto& macro : kExternalMacros) {
     auto info = ParseMacro(parser, macro);

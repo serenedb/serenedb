@@ -529,8 +529,8 @@ class NamedStore {
 
   T& Anon() { return _anon; }
   const T& Anon() const { return _anon; }
-  containers::NodeHashMap<std::string, T>& Named() { return _named; }
-  const containers::NodeHashMap<std::string, T>& Named() const {
+  irs::containers::NodeHashMap<std::string, T>& Named() { return _named; }
+  const irs::containers::NodeHashMap<std::string, T>& Named() const {
     return _named;
   }
 
@@ -540,7 +540,7 @@ class NamedStore {
   }
 
  private:
-  containers::NodeHashMap<std::string, T> _named;
+  irs::containers::NodeHashMap<std::string, T> _named;
   T _anon{};
   int _missing_code;
   int _duplicate_code;

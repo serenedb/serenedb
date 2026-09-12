@@ -90,8 +90,8 @@ PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 
 # After the sole-table comparison, run a SECOND suite on a fresh data dir where
 # BOTH the transactional and the search table carry an inverted index over a
-# numeric + a text column, created BEFORE the load (a search-table index has no
-# other option today). It measures insert + refresh on both. The size catch: a
+# numeric + a text column, created BEFORE the load. It measures insert +
+# refresh on both; PERF_BACKFILL_RUN measures the other order. The size catch: a
 # transactional table's inverted index ALSO lands in engine_search (its own
 # subtree), so "transactional + index" = engine_duckdb columns + that subtree,
 # compared against the search table's single engine_search store. Off with 0.
@@ -107,12 +107,12 @@ PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-url}"
 PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL,,}"
 PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL,,}"
 
-# After the indexed run, a third cold load -- TRANSACTIONAL ONLY -- that builds
-# the same inverted index AFTER the rows are loaded (the "backfill" path). The
-# load runs against an unindexed table, then CREATE INDEX builds over the
-# committed rows in one shot (no refresh -- a backfill commits its own
-# segments). Insert and index build are timed separately, so the cost of a
-# post-hoc build can be set against the "index before load" numbers. Off with 0.
+# After the indexed run, a third cold load -- BOTH engines -- that builds the
+# same inverted index AFTER the rows are loaded (the "backfill" path). The load
+# runs against an unindexed table, then CREATE INDEX builds over the committed
+# rows. The search half refreshes first, because its backfill rewrites
+# published segments. Phases are timed separately, so the cost of a post-hoc
+# build can be set against the "index before load" numbers. Off with 0.
 PERF_BACKFILL_RUN="${PERF_BACKFILL_RUN:-1}"
 
 # Optional segment_memory_max (BYTES) for the search table's shared iresearch
@@ -661,17 +661,21 @@ if [[ "${PERF_INDEXED_RUN}" == "1" ]]; then
 	run_indexed_comparison
 fi
 
-# --- 9. Transactional backfill (guarded by PERF_BACKFILL_RUN, default on) -----
-# TRANSACTIONAL ONLY. Same shape as the indexed run's transactional half, but
-# the index is built AFTER the load: empty table -> INSERT the rows (no index
-# present, so no per-row index maintenance) -> CREATE INDEX, which scans the
-# committed rows and builds the index in one shot. No VACUUM (REFRESH_TABLE) --
-# a backfill build commits its own segments. Insert and index build are timed
+# --- 9. Backfill comparison (guarded by PERF_BACKFILL_RUN, default on) --------
+# Both engines, same shape as the indexed run but with the index built AFTER
+# the load: empty table -> INSERT the rows (no index present, so no per-row
+# index maintenance) -> CREATE INDEX over the populated table. Phases are timed
 # separately so "load then build" can be compared against "index before load".
-run_transactional_backfill() {
+#
+# The search half needs one step the transactional half does not: a
+# VACUUM (REFRESH_TABLE) before the index. A search-table backfill rewrites
+# PUBLISHED segments, so without it the rows are still unpublished, there is
+# nothing at or below the compaction floor to rebuild, and CREATE INDEX would
+# time an empty walk. Reported on its own row and folded into the total.
+run_backfill_comparison() {
 	printf '\n\n' | tee -a "${RUN_LOG}"
 	{
-		echo "###### TRANSACTIONAL BACKFILL (index built AFTER load) ######"
+		echo "###### BACKFILL (index built AFTER load) ######"
 		echo "index columns: \"${PERF_INDEX_NUMERIC_COL}\", \"${PERF_INDEX_TEXT_COL}\" (created after load)"
 	} | tee -a "${RUN_LOG}"
 
@@ -696,37 +700,80 @@ INSERT INTO hits_txn_bf SELECT * FROM hits_view;
 	run_setup "backfill_index" "${BUILD_THREADS}" "
 CREATE INDEX hits_txn_bf_inv ON hits_txn_bf USING inverted (${idx_cols});
 "
-	local txn_cols txn_index
+	run_setup "backfill_txn_cleanup" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_txn_bf;
+"
+	local txn_cols search_after_txn txn_index
 	txn_cols=$(($(store_used_bytes) - base_store))
-	txn_index=$(($(du_search_committed "${SEARCH_DIR}") - base_search))
+	search_after_txn=$(du_search_committed "${SEARCH_DIR}")
+	txn_index=$((search_after_txn - base_search))
 
-	local b_ins b_idx b_total txn_total
+	run_setup "backfill_search_create" "${BUILD_THREADS}" "
+CREATE TABLE hits_search_bf
+  WITH (storage = 'search', compaction_interval = 0${SEARCH_SEG_OPT}) AS
+SELECT * FROM hits_view WHERE false;
+"
+	run_sql "backfill_search_insert" "${BUILD_THREADS}" "
+INSERT INTO hits_search_bf SELECT * FROM hits_view;
+"
+	run_setup "backfill_search_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_bf;
+"
+	run_setup "backfill_search_index" "${BUILD_THREADS}" "
+CREATE INDEX hits_search_bf_inv ON hits_search_bf USING inverted (${idx_cols});
+"
+	# A backfill swaps new segments in but never reclaims: the segments it
+	# replaced stay on disk until maintenance or a VACUUM sweeps them, so the
+	# size right here is the build's peak, not its steady state. Both are
+	# reported.
+	local search_dirty
+	search_dirty=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+	run_setup "backfill_search_cleanup" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_bf;
+"
+	local search_total
+	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+
+	local b_ins b_idx b_total b_clean s_ins s_ref s_idx s_total s_clean txn_total
 	b_ins="${TIMINGS[backfill_insert]:-}"
 	b_idx="${TIMINGS[backfill_index]:-}"
-	b_total=$(awk -v a="${b_ins}" -v b="${b_idx}" 'BEGIN{if(a!=""&&b!="")printf "%s", a+b}')
+	b_clean="${TIMINGS[backfill_txn_cleanup]:-}"
+	s_ins="${TIMINGS[backfill_search_insert]:-}"
+	s_ref="${TIMINGS[backfill_search_refresh]:-}"
+	s_idx="${TIMINGS[backfill_search_index]:-}"
+	s_clean="${TIMINGS[backfill_search_cleanup]:-}"
+	bsum() { [[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" -v c="${3:-0}" 'BEGIN{printf "%s", a+b+c}'; }
+	b_total=$(bsum "${b_ins}" "${b_idx}")
+	s_total=$(bsum "${s_ins}" "${s_idx}" "${s_ref:-0}")
 	txn_total=$((txn_cols + txn_index))
 	{
 		echo
-		echo "==== TRANSACTIONAL BACKFILL SUMMARY (index after load) ===="
+		echo "======== BACKFILL SUMMARY (index after load) ========"
 		echo "index columns: ${idx_cols}"
 		echo
-		printf "%-26s %13s\n" "phase" "txn"
-		printf "%-26s %13s\n" "-------------------------" "-------------"
-		printf "%-26s %13s\n" "insert (no index)" "$(fmt_ms "${b_ins}")"
-		printf "%-26s %13s\n" "create index (backfill)" "$(fmt_ms "${b_idx}")"
-		printf "%-26s %13s\n" "total (insert+index)" "$(fmt_ms "${b_total}")"
+		brow() { printf "%-26s %13s %13s   %7s\n" "$1" "$2" "$3" "$4"; }
+		brow "phase" "txn" "search" "s/txn"
+		brow "-------------------------" "-------------" "-------------" "-------"
+		brow "insert (no index)" "$(fmt_ms "${b_ins}")" "$(fmt_ms "${s_ins}")" "$(ratio "${s_ins}" "${b_ins}")"
+		brow "refresh (publish)" "-" "$(fmt_ms "${s_ref}")" "-"
+		brow "create index (backfill)" "$(fmt_ms "${b_idx}")" "$(fmt_ms "${s_idx}")" "$(ratio "${s_idx}" "${b_idx}")"
+		brow "total" "$(fmt_ms "${b_total}")" "$(fmt_ms "${s_total}")" "$(ratio "${s_total}" "${b_total}")"
+		brow "cleanup (reclaim)" "$(fmt_ms "${b_clean}")" "$(fmt_ms "${s_clean}")" "-"
 		echo
-		printf "%-30s %14s\n" "storage (committed, no WAL)" "bytes"
-		printf "%-30s %14s\n" "------------------------------" "--------------"
+		printf "%-30s %14s   %s\n" "storage (committed, no WAL)" "bytes" "vs txn total"
+		printf "%-30s %14s   %s\n" "------------------------------" "--------------" "------------"
 		printf "%-30s %14d (%s)\n" "transactional columns (duckdb)" "${txn_cols}" "$(human "${txn_cols}")"
 		printf "%-30s %14d (%s)\n" "transactional index (search)" "${txn_index}" "$(human "${txn_index}")"
 		printf "%-30s %14d (%s)\n" "transactional TOTAL" "${txn_total}" "$(human "${txn_total}")"
-		echo "==========================================================="
+		printf "%-30s %14d (%s)\n" "search before cleanup (peak)" "${search_dirty}" "$(human "${search_dirty}")"
+		printf "%-30s %14d (%s)   %s\n" "search table (single store)" "${search_total}" \
+			"$(human "${search_total}")" "$(ratio "${search_total}" "${txn_total}")"
+		echo "====================================================="
 	} | tee -a "${RUN_LOG}"
 }
 
 if [[ "${PERF_BACKFILL_RUN}" == "1" ]]; then
-	run_transactional_backfill
+	run_backfill_comparison
 fi
 
 echo

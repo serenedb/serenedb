@@ -55,6 +55,7 @@ add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
 add_bench(virtual_column_map)
 add_bench(tokenizer_fill)
+add_bench(stemming)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)

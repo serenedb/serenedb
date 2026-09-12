@@ -44,7 +44,7 @@
 
 namespace irs {
 
-class IndexReader;
+struct IndexReader;
 }
 
 #include "search/inverted_index_storage.h"
@@ -278,11 +278,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   template<typename T>
   T& As() & {
-    return basics::downCast<T>(*this);
+    return irs::utils::downCast<T>(*this);
   }
   template<typename T>
   const T& As() const& {
-    return basics::downCast<const T>(*this);
+    return irs::utils::downCast<const T>(*this);
   }
 
   virtual duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(

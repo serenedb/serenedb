@@ -192,7 +192,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // carry them by construction. The bind hook upgrades every create to the
   // subclass, so this never fails.
   const SereneDBCreateIndexInfo& Info() const noexcept {
-    return basics::downCast<const SereneDBCreateIndexInfo>(*_info);
+    return irs::utils::downCast<const SereneDBCreateIndexInfo>(*_info);
   }
   using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
   bool IsReindexPass() const noexcept {

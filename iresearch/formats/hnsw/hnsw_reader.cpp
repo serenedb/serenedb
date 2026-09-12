@@ -129,7 +129,7 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/0, /*inclusive=*/false, ctx.boost);
+    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost);
   built->SetStats(ctx.Record());
   return built;
 }
@@ -155,7 +155,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   const score_t threshold = angular ? radius : -radius;
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
-    opts.metric, _header.d, _header.record_size, /*ef=*/0, threshold,
+    opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
     static_cast<size_t>(_header.rows), inclusive, ctx.boost);
   built->SetStats(ctx.Record());
   return built;

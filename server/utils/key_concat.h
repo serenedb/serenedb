@@ -70,7 +70,7 @@ size_t WriteImpl(char* p, const T& v) noexcept {
 template<typename... Args>
 void Concat(std::string& str, const Args&... args) {
   // TODO(mbkkt) maybe amortized?
-  basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...));
+  irs::utils::StrResize(str, (detail::GetByteSizeImpl(args) + ...));
   auto* p = str.data();
   ((p += detail::WriteImpl(p, args)), ...);
 }
@@ -79,7 +79,7 @@ template<typename... Args>
 void Append(std::string& str, const Args&... args) {
   // TODO(mbkkt) maybe amortized?
   const auto old_size = str.size();
-  basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
+  irs::utils::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
   auto* p = str.data() + old_size;
   ((p += detail::WriteImpl(p, args)), ...);
 }

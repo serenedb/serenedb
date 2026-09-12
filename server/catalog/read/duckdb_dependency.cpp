@@ -169,15 +169,15 @@ duckdb::LogicalDependencyList EntryDependencies(
       break;
   }
   if (info.type == duckdb::CatalogType::TABLE_ENTRY) {
-    AddDefinitionEdges(basics::downCast<const duckdb::CreateTableInfo>(info),
-                       add);
+    AddDefinitionEdges(
+      irs::utils::downCast<const duckdb::CreateTableInfo>(info), add);
   }
   if (info.type == duckdb::CatalogType::INDEX_ENTRY) {
     // Postgres' AUTO dependency: duckdb's cascade takes the index when the
     // relation goes, without CASCADE being asked for. Stated per edge, so what
     // an expression names -- a function, a dictionary -- still blocks.
     const auto relation =
-      basics::downCast<const CreateIndexInfo>(info).GetRelationId();
+      irs::utils::downCast<const CreateIndexInfo>(info).GetRelationId();
     if (relation.isSet()) {
       duckdb::LogicalDependency dep{nullptr, DependencyInfo(relation),
                                     duckdb::Identifier{}};
@@ -188,7 +188,7 @@ duckdb::LogicalDependencyList EntryDependencies(
   if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
       info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
     const auto& macros =
-      basics::downCast<const duckdb::CreateMacroInfo>(info).macros;
+      irs::utils::downCast<const duckdb::CreateMacroInfo>(info).macros;
     for (const auto& dep :
          duckdb::MacroFunction::UnionDependencies(macros).Set()) {
       add(dep);

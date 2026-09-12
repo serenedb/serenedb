@@ -30,11 +30,11 @@
 
 namespace sdb::connector {
 
-FullScanner::FullScanner(const irs::ColReader& reader,
-                         std::span<const ColumnstoreProjection> projections,
-                         std::span<const ColFilterSpec> filters,
-                         duckdb::ClientContext* context,
-                         ColFilterStateCache& states)
+FullScanner::FullScanner(
+  const irs::ColReader& reader,
+  std::span<const irs::ColumnstoreProjection> projections,
+  std::span<const irs::ColFilterSpec> filters, duckdb::ClientContext* context,
+  irs::ColFilterStateCache& states)
   : _ctx{reader} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
@@ -62,7 +62,7 @@ FullScanner::FullScanner(const irs::ColReader& reader,
     b.reader = column_reader;
     b.output_slot = projection.output_slot;
     if (projection.IsExtract()) {
-      b.extract = std::make_unique<ExtractBinding>();
+      b.extract = std::make_unique<irs::ExtractBinding>();
       b.extract->Bind(*column_reader, _ctx, projection.extract_path,
                       projection.extract_scan_type, context);
       continue;

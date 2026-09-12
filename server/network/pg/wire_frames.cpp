@@ -540,7 +540,7 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   }
   // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
-  sdb::pg::SqlErrorData data{
+  sdb::pg::SqlErrorData std::data{
     .errcode = DuckExceptionToErrcode(error),
     .errmsg = interrupted ? "canceling statement due to user request"
                           : error.RawMessage(),
@@ -553,7 +553,7 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
       it != error.ExtraInfo().end()) {
     int pos = 0;
     if (absl::SimpleAtoi(it->second, &pos)) {
-      data.cursorpos = pos + 1;
+      std::data.cursorpos = pos + 1;
     }
   }
   return data;

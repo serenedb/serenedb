@@ -67,7 +67,7 @@ template<typename T>
 std::string Serialize(const T& value) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
-  basics::WriteTuple(serializer, value);
+  irs::utils::WriteTuple(serializer, value);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
 }
@@ -80,7 +80,7 @@ T Deserialize(std::string_view bytes) {
     bytes.size()};
   duckdb::BinaryDeserializer deserializer{stream};
   T out{};
-  basics::ReadTuple(deserializer, out);
+  irs::utils::ReadTuple(deserializer, out);
   return out;
 }
 

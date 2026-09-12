@@ -176,7 +176,7 @@ DataStore::DataStore() {
 DataStore::~DataStore() { gInstance = nullptr; }
 
 void DataStore::Initialize() {
-  _conn = DuckDBEngine::Instance().CreateConnection();
+  _conn = irs::DuckDBEngine::Instance().CreateConnection();
 }
 
 void DataStore::MarkReady() { _ready.store(true, std::memory_order_release); }
@@ -554,15 +554,16 @@ duckdb::Connection* DataStore::BindConnection(duckdb::AttachedDatabase& db) {
     // transaction out from under it.
     const auto open = [&](duckdb::unique_ptr<duckdb::Connection>& conn,
                           std::shared_ptr<ConnectionContext>& ctx) {
-      conn = DuckDBEngine::Instance().CreateConnection();
+      conn = irs::DuckDBEngine::Instance().CreateConnection();
       ctx = std::make_shared<ConnectionContext>(
-        *conn->context, StaticStrings::kDefaultUser, ObjectId{}, name,
+        *conn->context, irs::StaticStrings::kDefaultUser, ObjectId{}, name,
         database_id, nullptr, 0, nullptr);
       ctx->MarkStorageConnection();
       connector::SereneDBClientState::Register(*conn->context, ctx);
       // Same search path a session gets: an indexed expression names its
       // dictionary unqualified, so resolving it needs `public` on the path.
-      conn->context->session_user = std::string{StaticStrings::kDefaultUser};
+      conn->context->session_user =
+        std::string{irs::StaticStrings::kDefaultUser};
       std::vector<duckdb::CatalogSearchEntry> paths{
         duckdb::CatalogSearchEntry{duckdb::Identifier{name},
                                    duckdb::Identifier{"$user"}},

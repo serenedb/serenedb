@@ -74,15 +74,15 @@ yaclib::Future<> HostedBody(network::CpuResumer& task,
 }  // namespace
 
 TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
-  auto connection = DuckDBEngine::Instance().CreateConnection();
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
   auto prepared = connection->Prepare("SELECT 42");
   ASSERT_FALSE(prepared->HasError());
   duckdb::vector<duckdb::Value> params;
   auto pending = prepared->PendingQuery(params, /*allow_stream_result=*/false);
   ASSERT_FALSE(pending->HasError());
 
-  auto& scheduler =
-    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance());
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
   network::IoThreadPool pool{1};
   pool.Start();
   // shared_ptr-managed: CpuResumer enqueues itself via shared_from_this().

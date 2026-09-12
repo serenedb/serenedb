@@ -502,7 +502,7 @@ class StaticRelationGenerator final : public duckdb::DefaultGenerator {
     : duckdb::DefaultGenerator{catalog},
       _schema{schema},
       _info_schema{schema.name.GetIdentifierName() ==
-                   StaticStrings::kInformationSchema} {}
+                   irs::StaticStrings::kInformationSchema} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction /*transaction*/,
@@ -551,7 +551,7 @@ class StaticFunctionGenerator final : public duckdb::DefaultGenerator {
     : duckdb::DefaultGenerator{catalog},
       _schema{schema},
       _info_schema{schema.name.GetIdentifierName() ==
-                   StaticStrings::kInformationSchema} {}
+                   irs::StaticStrings::kInformationSchema} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction /*transaction*/,
@@ -585,8 +585,8 @@ class StaticFunctionGenerator final : public duckdb::DefaultGenerator {
 };
 
 bool IsStaticSchema(std::string_view schema_name) noexcept {
-  return schema_name == StaticStrings::kPgCatalogSchema ||
-         schema_name == StaticStrings::kInformationSchema;
+  return schema_name == irs::StaticStrings::kPgCatalogSchema ||
+         schema_name == irs::StaticStrings::kInformationSchema;
 }
 
 duckdb::unique_ptr<duckdb::DefaultGenerator> MakeStaticRelationGenerator(
@@ -707,11 +707,11 @@ SereneDBSchemaEntry::LookupBuiltinFunction(
   const duckdb::EntryLookupInfo& lookup_info) {
   const auto type = lookup_info.GetCatalogType();
   if (!IsFunctionLookup(type) ||
-      name.GetIdentifierName() == StaticStrings::kPgCatalogSchema) {
+      name.GetIdentifierName() == irs::StaticStrings::kPgCatalogSchema) {
     return nullptr;
   }
   auto pg_catalog = catalog.Cast<SereneDBCatalog>().TryGetSchemaEntry(
-    StaticStrings::kPgCatalogSchema);
+    irs::StaticStrings::kPgCatalogSchema);
   if (!pg_catalog) {
     return nullptr;
   }
@@ -759,7 +759,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     return builtin;
   }
 
-  if (name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
+  if (name.GetIdentifierName() != irs::StaticStrings::kPgCatalogSchema) {
     return nullptr;
   }
 

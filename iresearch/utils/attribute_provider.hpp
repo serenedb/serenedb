@@ -35,19 +35,20 @@ struct AttributeProvider : memory::Managed {
   // Return pointer to attribute of a specified type.
   // External users should prefer using const version.
   // External users should avoid modifying attributes treat that as UB.
-  virtual Attribute* GetMutable(TypeInfo::type_id type) noexcept = 0;
+  virtual Attribute* absl_nullable GetMutable(TypeInfo::type_id
+                                              absl_nonnull type) noexcept = 0;
 };
 
 // Convenient helper for getting mutable attribute of a specific type.
 template<typename T, typename Provider>
-inline T* GetMutable(Provider* absl_nonnull attrs) {
+inline T* absl_nullable GetMutable(Provider* absl_nonnull attrs) {
   static_assert(std::is_base_of_v<Attribute, T>);
   return static_cast<T*>(attrs->GetMutable(Type<T>::id()));
 }
 
 // Convenient helper for getting immutable attribute of a specific type.
 template<typename T, typename Provider>
-inline const T* get(const Provider& attrs) {
+inline const T* absl_nullable get(const Provider& attrs) {
   return GetMutable<T>(const_cast<Provider*>(&attrs));
 }
 

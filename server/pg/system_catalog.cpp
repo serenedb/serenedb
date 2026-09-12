@@ -243,9 +243,9 @@ irs::containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name) {
-  if (schema == StaticStrings::kPgCatalogSchema) {
+  if (schema == irs::StaticStrings::kPgCatalogSchema) {
     return GetTableFromSchema(name, kPgCatalog);
-  } else if (schema == StaticStrings::kInformationSchema) {
+  } else if (schema == irs::StaticStrings::kInformationSchema) {
     return GetTableFromSchema(name, kInformationSchema);
   } else {
     SDB_UNREACHABLE();
@@ -365,7 +365,8 @@ void InitSystemViews(duckdb::Parser& parser) {
     if (!view.superuser_only) {
       acl.push_back(catalog::kSystemPublicSelect);
     }
-    const bool info_schema = view.schema == StaticStrings::kInformationSchema;
+    const bool info_schema =
+      view.schema == irs::StaticStrings::kInformationSchema;
     catalog::SetIdentity(
       *info, id, info_schema ? id::kPgInformationSchema : id::kPgCatalogSchema);
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
@@ -420,7 +421,8 @@ void InitSystemFunctions(duckdb::Parser& parser) {
     // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
     // pg_catalog is always implicitly searched -- functions like current_user,
     // overlay, etc. should be findable without schema qualification.
-    const bool info_schema = macro.schema == StaticStrings::kInformationSchema;
+    const bool info_schema =
+      macro.schema == irs::StaticStrings::kInformationSchema;
     auto& map = info_schema ? info_schema_map : pg_catalog;
 
     auto it = map.find(macro.name);

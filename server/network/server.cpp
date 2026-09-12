@@ -195,7 +195,7 @@ void Server::SetupAuth() {
 
   // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
   // they authenticate as the bootstrap superuser.
-  const std::string token_user{StaticStrings::kDefaultUser};
+  const std::string token_user{irs::StaticStrings::kDefaultUser};
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');
     if (colon == std::string::npos) {

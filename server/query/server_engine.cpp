@@ -254,13 +254,13 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
     lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
   config.SetOptionByName(
     "temp_directory",
-    duckdb::Value{basics::file_utils::BuildFilename(datadir, "tmp")});
+    duckdb::Value{irs::file_utils::BuildFilename(datadir, "tmp")});
   config.SetOptionByName(
     "secret_directory",
-    duckdb::Value{basics::file_utils::BuildFilename(datadir, "secrets")});
+    duckdb::Value{irs::file_utils::BuildFilename(datadir, "secrets")});
   config.SetOptionByName(
     "extension_directory",
-    duckdb::Value{basics::file_utils::BuildFilename(datadir, "extensions")});
+    duckdb::Value{irs::file_utils::BuildFilename(datadir, "extensions")});
   // Dependency edges are built from what the binder resolved
   // (CreateInfo::dependencies), so the collection must be on for every bind.
   config.SetOptionByName("enable_view_dependencies",

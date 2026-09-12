@@ -47,7 +47,7 @@
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
 #include "search_remove_filter.hpp"
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace duckdb {
 

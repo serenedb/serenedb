@@ -81,7 +81,7 @@ template<typename T>
 std::string ToJson(const T& value) {
   simdjson::builder::string_builder sb;
   basics::JsonSink sink{sb};
-  basics::WriteObject(sink, value);
+  irs::utils::WriteObject(sink, value);
   return std::string{sb.view().value()};
 }
 

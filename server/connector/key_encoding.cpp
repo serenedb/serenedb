@@ -50,35 +50,35 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
     case duckdb::LogicalTypeId::TINYINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int8_t));
+      irs::utils::StrAppend(key, sizeof(int8_t));
       key[base] = static_cast<char>(val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::SMALLINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int16_t));
+      irs::utils::StrAppend(key, sizeof(int16_t));
       absl::big_endian::Store16(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::INTEGER: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int32_t));
+      irs::utils::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::BIGINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int64_t));
+      irs::utils::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::UBIGINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(uint64_t));
+      irs::utils::StrAppend(key, sizeof(uint64_t));
       absl::big_endian::Store64(key.data() + base, val);
     } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
@@ -89,7 +89,7 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
         duckdb::UnifiedVectorFormat::GetData<duckdb::timestamp_t>(fmt)[idx]
           .value;
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int64_t));
+      irs::utils::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
@@ -97,7 +97,7 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       auto val =
         duckdb::UnifiedVectorFormat::GetData<duckdb::date_t>(fmt)[idx].days;
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int32_t));
+      irs::utils::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
@@ -123,7 +123,7 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
     case duckdb::LogicalTypeId::FLOAT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(float));
+      irs::utils::StrAppend(key, sizeof(float));
       if (val != 0 && !std::isnan(val)) {
         absl::big_endian::Store32(key.data() + base,
                                   irs::numeric_utils::Ftoi32(val));
@@ -139,7 +139,7 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
     case duckdb::LogicalTypeId::DOUBLE: {
       auto val = duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(double));
+      irs::utils::StrAppend(key, sizeof(double));
       if (val != 0 && !std::isnan(val)) {
         absl::big_endian::Store64(key.data() + base,
                                   irs::numeric_utils::Dtoi64(val));

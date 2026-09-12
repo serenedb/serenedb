@@ -418,7 +418,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 // The inverted info behind an index, for the readers whose facts are this
 // kind's only.
 inline const InvertedIndex& InvertedInfo(const Index& index) noexcept {
-  return basics::downCast<const InvertedIndex>(index);
+  return irs::utils::downCast<const InvertedIndex>(index);
 }
 
 }  // namespace sdb::catalog

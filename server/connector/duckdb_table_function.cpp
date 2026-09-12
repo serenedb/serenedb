@@ -93,7 +93,7 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
     return 0;
   }
   // if (type == irs::Type<irs::ByVectorSimilarity>::id()) {
-  //   auto& f = basics::downCast<irs::ByVectorSimilarity>(filter);
+  //   auto& f = irs::utils::downCast<irs::ByVectorSimilarity>(filter);
   //   if options no radius and no top, we need just return live_docs
   // }
   // DuckDB's RelationStatisticsHelper::DEFAULT_SELECTIVITY

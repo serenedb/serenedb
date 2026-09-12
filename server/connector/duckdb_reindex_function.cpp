@@ -1149,7 +1149,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
 
     RunReindex(*conn.context, index_name, schema_name, database_name);
     return absl::OkStatus();
-  } catch (const SqlException& ex) {
+  } catch (const irs::SqlException& ex) {
     if (ex.error().errcode == ERRCODE_OBJECT_IN_USE ||
         ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
       // A manual REINDEX holds the claim / the index vanished mid-tick.

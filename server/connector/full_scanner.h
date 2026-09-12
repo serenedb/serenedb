@@ -38,9 +38,9 @@ namespace sdb::connector {
 class FullScanner {
  public:
   FullScanner(const irs::ColReader& reader,
-              std::span<const ColumnstoreProjection> projections,
-              std::span<const ColFilterSpec> filters,
-              duckdb::ClientContext* context, ColFilterStateCache& states);
+              std::span<const irs::ColumnstoreProjection> projections,
+              std::span<const irs::ColFilterSpec> filters,
+              duckdb::ClientContext* context, irs::ColFilterStateCache& states);
 
   FullScanner(const FullScanner&) = delete;
   FullScanner& operator=(const FullScanner&) = delete;
@@ -73,12 +73,12 @@ class FullScanner {
     duckdb::idx_t output_slot = 0;
     bool is_list_like = false;
     std::unique_ptr<irs::ColumnReader::ScanState> state;
-    std::unique_ptr<ExtractBinding> extract;
+    std::unique_ptr<irs::ExtractBinding> extract;
   };
 
   irs::ReadContext _ctx;
   std::vector<Binding> _bound;
-  ColFilterChain _filters;
+  irs::ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
   uint64_t _scanned_end = 0;

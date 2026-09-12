@@ -76,8 +76,8 @@ catalog::AclMode AsAclMode(duckdb::AccessVerb verb) {
 
 bool IsSystemSchema(const duckdb::CatalogEntry& entry) {
   const auto schema = entry.ParentSchema().name.GetIdentifierName();
-  return schema == StaticStrings::kPgCatalogSchema ||
-         schema == StaticStrings::kInformationSchema;
+  return schema == irs::StaticStrings::kPgCatalogSchema ||
+         schema == irs::StaticStrings::kInformationSchema;
 }
 
 // What a bound relation entry contributes to an access check: the owner and ACL

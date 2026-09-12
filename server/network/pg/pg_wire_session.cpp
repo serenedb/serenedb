@@ -407,7 +407,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   const auto role = login.role;
   const bool superuser = login.superuser;
 
-  _conn = DuckDBEngine::Instance().CreateConnection();
+  _conn = irs::DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
@@ -2807,7 +2807,8 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
-    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
+    duckdb::TaskScheduler::GetScheduler(
+      irs::DuckDBEngine::Instance().instance()),
     *this->_ioexec);
   // SessionMain (eager) runs to its first Park, setting the resume job; the one
   // bootstrap kick then schedules it onto a duck worker.

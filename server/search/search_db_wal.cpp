@@ -219,7 +219,7 @@ ParsedOp ParseOp(Cursor& c, ParseScratch& scratch) {
       duckdb::BinaryDeserializer deser{ms};
       deser.Begin();
       // Resizes the scratch and reads each element via SerdeRead on SegmentRef.
-      basics::ReadTuple(deser, scratch.segments);
+      irs::utils::ReadTuple(deser, scratch.segments);
       deser.End();
       op.segments = scratch.segments;
       break;
@@ -367,7 +367,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         duckdb::BinarySerializer serializer{tmp,
                                             duckdb::VersionStorageOptions()};
         serializer.Begin();
-        basics::WriteTuple(serializer, op.segments);
+        irs::utils::WriteTuple(serializer, op.segments);
         serializer.End();
         const auto len = static_cast<uint64_t>(tmp.GetPosition());
         payload.Write<uint64_t>(len);

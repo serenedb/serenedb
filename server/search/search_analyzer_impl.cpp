@@ -83,7 +83,7 @@ void Features::Validate(std::string_view type) const {
     if (type == irs::analysis::WildcardTokenizer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
     }
-    if (IsGeoTokenizer(type)) {
+    if (irs::analysis::GeoJsonTokenizer::IsGeoTokenizer(type)) {
       return irs::IndexFeatures::None;
     }
     if (type == irs::analysis::UnionTokenizer::type_name()) {

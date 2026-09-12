@@ -291,7 +291,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
+  auto* lstate =
+    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
 
   const auto num_rows = chunk.size();
   if (num_rows == 0 || lstate->no_op) {
@@ -335,7 +336,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
+  auto* lstate =
+    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
   if (lstate->no_op) {
     return duckdb::SinkCombineResultType::FINISHED;
   }

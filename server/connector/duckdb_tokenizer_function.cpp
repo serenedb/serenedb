@@ -80,7 +80,7 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto if_not_exists = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
+  auto name = pg::ParseObjectName(dict_name, irs::StaticStrings::kPublic);
   pg::CreateTokenizer(conn_ctx, name.relation, name.schema, if_not_exists,
                       params.named_parameters);
 }
@@ -103,7 +103,7 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
 
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
+  auto name = pg::ParseObjectName(dict_name, irs::StaticStrings::kPublic);
 
   catalog::JoinStoreTransaction(&context);
   const auto database_id =

@@ -111,9 +111,9 @@ void InitProcess(const char* argv0) {
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,
                        std::string_view func, std::string_view condition,
                        std::string_view message) noexcept {
-    CrashHandler::assertionFailure(file.data(), static_cast<int>(line),
-                                   func.data(), condition.data(),
-                                   message.data());
+    irs::CrashHandler::assertionFailure(file.data(), static_cast<int>(line),
+                                        func.data(), condition.data(),
+                                        message.data());
   });
 }
 

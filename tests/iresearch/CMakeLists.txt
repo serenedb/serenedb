@@ -179,7 +179,6 @@ set(iresearch-tests_headers
     ./index/index_tests.hpp
     ./search/filter_test_case_base.hpp
     ./formats/formats_test_case_base.hpp
-    ./tests_config.hpp
     ${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp # auto generated
 )
 
@@ -214,7 +213,6 @@ target_include_directories(
     iresearch-tests
     SYSTEM
     PRIVATE
-        ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
@@ -249,7 +247,6 @@ target_include_directories(
     iresearch-load-tests
     SYSTEM
     PRIVATE
-        ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include

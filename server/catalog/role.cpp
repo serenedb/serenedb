@@ -51,7 +51,7 @@ CreateRoleInfo::CreateRoleInfo(ObjectId id, persistence::RoleData data)
     _password{std::move(data.password)} {
   SetId(id);
   SetRoleName(data.name);
-  if (data.name == StaticStrings::kDefaultUser) {
+  if (data.name == irs::StaticStrings::kDefaultUser) {
     _options |= RoleOption::Superuser;
   }
 }
@@ -97,7 +97,7 @@ void CreateRoleInfo::SerializePayload(duckdb::Serializer& sink) const {
   // own types: the basics framework is the only serializer they have, so they
   // ride inside one property.
   sink.OnPropertyBegin(205, "grants");
-  basics::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
+  irs::utils::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
   sink.OnPropertyEnd();
   // The role's own identity, so the record states everything the object is
   // built from: duckdb's base carries the same one on the record around it, but
@@ -117,7 +117,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Deserialize(
   src.ReadPropertyWithDefault(204, "password", role->_password);
   src.OnPropertyBegin(205, "grants");
   auto refs = std::tie(role->_config, role->_member_of, role->_default_acls);
-  basics::ReadTuple(src, refs);
+  irs::utils::ReadTuple(src, refs);
   src.OnPropertyEnd();
   role->SetId(ObjectId{src.ReadPropertyWithDefault<uint64_t>(206, "sdb_id")});
   return role;

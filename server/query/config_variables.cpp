@@ -83,7 +83,7 @@ std::optional<std::string> SetHbaFromTextString(std::string_view text);
 }  // namespace network::pg::hba
 namespace {
 
-template<basics::detail::FixedString Name>
+template<irs::utils::detail::FixedString Name>
 void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
                 duckdb::Value& value) {
   if (value.GetValue<uint64_t>() == 0) {
@@ -94,7 +94,7 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-template<basics::detail::FixedString Name>
+template<irs::utils::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -306,22 +306,23 @@ constexpr std::pair<std::string_view, VariableDescription>
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
+            if (!irs::RemoveFailurePointDebugging(
+                  std::string_view{s}.substr(1))) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
-            if (!AddFailurePointDebugging(s)) {
+            if (!irs::AddFailurePointDebugging(s)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
           }
-          auto points = GetFailurePointsDebugging();
+          auto points = irs::GetFailurePointsDebugging();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
-          ClearFailurePointsDebugging();
+          irs::ClearFailurePointsDebugging();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a
@@ -807,7 +808,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
+        [] {
+          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
+        },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },

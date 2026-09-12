@@ -59,7 +59,7 @@ const catalog::SereneDBSequenceEntry& ResolveSequence(
   catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
   std::string_view schema_name = qname.Schema().empty()
-                                   ? StaticStrings::kPublic
+                                   ? irs::StaticStrings::kPublic
                                    : qname.Schema().GetIdentifierName();
 
   auto& conn_ctx = GetSereneDBContext(context);
@@ -106,7 +106,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindSequenceReference(
   }
   auto qname = duckdb::QualifiedName::Parse(duckdb::StringValue::Get(name));
   const auto schema = qname.Schema().empty()
-                        ? duckdb::Identifier{StaticStrings::kPublic}
+                        ? duckdb::Identifier{irs::StaticStrings::kPublic}
                         : qname.Schema();
   const duckdb::EntryLookupInfo lookup{
     duckdb::CatalogType::SEQUENCE_ENTRY,

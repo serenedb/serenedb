@@ -125,12 +125,12 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
   auto& manager =
-    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
   if (manager.GetDatabase(duckdb::Identifier{name})) {
     // A later version of the same database record -- an owner or ACL change.
     return;
   }
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   duckdb::AttachInfo info;
   info.name = duckdb::Identifier{name};
@@ -152,7 +152,7 @@ void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
 
 void DiscardDatabaseAttachment(std::string_view name) {
   auto& manager =
-    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
   auto attached = manager.DetachInternal(duckdb::Identifier{name});
   if (!attached) {
     return;
@@ -169,7 +169,7 @@ void DiscardDatabaseAttachment(std::string_view name) {
 }
 
 void LoadDatabaseStorage(std::string_view name) {
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   // Inside a transaction, exactly as the ATTACH statement that would otherwise
   // have run this: the load rebuilds the storage of every table it reads back,

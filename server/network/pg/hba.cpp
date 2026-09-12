@@ -826,7 +826,7 @@ namespace {
 // runtime because it embeds the superuser's name; it flows through the same
 // parser as any authored ruleset.
 std::string SafetyRules() {
-  const std::string_view super = StaticStrings::kDefaultUser;
+  const std::string_view super = irs::StaticStrings::kDefaultUser;
   return absl::StrCat("local all ", super, " trust\n", "host all ", super,
                       " 127.0.0.1/32 trust\n", "host all ", super,
                       " ::1/128 trust\n");
@@ -945,7 +945,7 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
   }
   const std::string tmp = target.string() + ".tmp";
   try {
-    basics::file_utils::Spit(tmp, text, /*sync=*/true);
+    irs::file_utils::Spit(tmp, text, /*sync=*/true);
   } catch (const std::exception& e) {
     return absl::StrCat("could not write hba config file '", tmp,
                         "': ", e.what());
@@ -1105,7 +1105,7 @@ void LoadPersistedHba() {
   }
   std::string text;
   try {
-    text = basics::file_utils::Slurp(path);
+    text = irs::file_utils::Slurp(path);
   } catch (const std::exception& e) {
     SDB_ERROR(GENERAL, "hba config file '", path,
               "' could not be read: ", e.what(), " -- keeping default");

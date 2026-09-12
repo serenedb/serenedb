@@ -41,7 +41,7 @@ std::string PercentDecode(std::string_view s) {
 
 bool ParseBoolParam(std::string_view v, std::string_view key,
                     std::string_view url) {
-  if (const auto parsed = basics::ParseBool(v)) {
+  if (const auto parsed = irs::utils::ParseBool(v)) {
     return *parsed;
   }
   SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,

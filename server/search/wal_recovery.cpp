@@ -185,7 +185,7 @@ void InitInvertedIndexes() {
   // One scratch connection resolves the store entries; FinishReplay commits
   // each index's streamed delta into the storage. Entry resolution goes
   // through the connection's transaction, so an explicit one must be active.
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally end_txn = [&] noexcept {
     try {

@@ -61,7 +61,7 @@ bool ParseCopyBool(std::string_view value) {
   if (value.empty()) {
     return true;
   }
-  if (const auto parsed = basics::ParseBool(value)) {
+  if (const auto parsed = irs::utils::ParseBool(value)) {
     return *parsed;
   }
   THROW_SQL_ERROR(

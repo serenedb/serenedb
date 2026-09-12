@@ -31,7 +31,7 @@ struct TermReader;
 class BooleanQuery;
 class ByNestedQuery;
 class MultiTermQuery;
-struct MultiTermState;
+class MultiTermState;
 struct TermState;
 class FixedPhraseQuery;
 struct FixedPhraseState;

@@ -5,11 +5,7 @@ add_executable(iresearch-example-geo geo.cpp)
 target_link_libraries(iresearch-example-geo iresearch-static)
 
 add_executable(iresearch-example-text-filters text_filters.cpp)
-target_link_libraries(
-    iresearch-example-text-filters
-    iresearch-static
-    iresearch-static
-)
+target_link_libraries(iresearch-example-text-filters iresearch-static)
 
 add_custom_target(
     iresearch-examples

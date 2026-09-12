@@ -44,7 +44,7 @@
 
 namespace irs {
 
-class IndexReader;
+struct IndexReader;
 
 }  // namespace irs
 namespace sdb::connector {
@@ -127,7 +127,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // filter (the source applies it natively during materialization); a column
   // needed by neither (left dangling by a statistics-eliminated filter) is
   // read nowhere. ------------------------------------------------------------
-  std::vector<ColumnstoreProjection> cs_projections;
+  std::vector<irs::ColumnstoreProjection> cs_projections;
   std::vector<duckdb::idx_t> lookup_projected_columns;
   bool needs_lookup = false;
 

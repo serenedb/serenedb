@@ -260,7 +260,7 @@ namespace {
                   ERR_MSG("relation \"", rel, "\" does not exist"));
 }
 
-[[noreturn]] void ThrowInvalidPrivilege(const SqlException& e) {
+[[noreturn]] void ThrowInvalidPrivilege(const irs::SqlException& e) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                   ERR_MSG(e.message()));
 }
@@ -774,7 +774,7 @@ const catalog::Permissions* RelationPermissions(
 
 std::optional<ObjectId> ResolveRoleOrPublic(duckdb::ClientContext* context,
                                             std::string_view role_name) {
-  if (absl::EqualsIgnoreCase(role_name, StaticStrings::kPublic)) {
+  if (absl::EqualsIgnoreCase(role_name, irs::StaticStrings::kPublic)) {
     return catalog::kPublicGrantee;
   }
   if (auto role = catalog::FindRole(context, role_name)) {
@@ -787,12 +787,13 @@ std::optional<ObjectId> ResolveRoleOrPublic(duckdb::ClientContext* context,
 // ParseObjectName defaulted to the current schema) falls back to pg_catalog.
 const catalog::VirtualTable* ResolveSystemRelation(ConnectionContext& conn_ctx,
                                                    const pg::ObjectName& name) {
-  if (name.schema == StaticStrings::kPgCatalogSchema ||
-      name.schema == StaticStrings::kInformationSchema) {
+  if (name.schema == irs::StaticStrings::kPgCatalogSchema ||
+      name.schema == irs::StaticStrings::kInformationSchema) {
     return pg::GetSystemTable(name.schema, name.relation);
   }
   if (name.schema == conn_ctx.GetCurrentSchema()) {
-    return pg::GetSystemTable(StaticStrings::kPgCatalogSchema, name.relation);
+    return pg::GetSystemTable(irs::StaticStrings::kPgCatalogSchema,
+                              name.relation);
   }
   return nullptr;
 }
@@ -845,7 +846,7 @@ bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
         duckdb::CatalogType::TABLE_ENTRY, priv_text);
     }
     ThrowRelationNotFound(name.relation);
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -892,7 +893,7 @@ bool HasTablePrivilegeByOidImpl(duckdb::ClientContext& context,
   try {
     return HasAnyPermissionsPrivilegeText(
       context, role_id, *perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -966,7 +967,7 @@ void HasTablePrivilegeOidName3Function(duckdb::DataChunk& args,
         } else {
           ThrowRelationNotFound(name.relation);
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1029,7 +1030,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     try {
       return HasAnyPermissionsPrivilegeText(
         context, role_id, database->permissions, type, priv_text);
-    } catch (const SqlException& e) {
+    } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1042,7 +1043,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
       try {
         return HasAnyPermissionsPrivilegeText(
           context, role_id, schema->permissions, type, priv_text);
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     }
@@ -1060,7 +1061,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
         try {
           return HasAnyPermissionsPrivilegeText(
             context, role_id, sequence->permissions, type, priv_text);
-        } catch (const SqlException& e) {
+        } catch (const irs::SqlException& e) {
           ThrowInvalidPrivilege(e);
         }
       }
@@ -1097,7 +1098,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
         try {
           return HasAnyPermissionsPrivilegeText(context, role_id, *perm, type,
                                                 priv_text);
-        } catch (const SqlException& e) {
+        } catch (const irs::SqlException& e) {
           ThrowInvalidPrivilege(e);
         }
       }
@@ -1120,8 +1121,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
   // schema store. PG grants PUBLIC USAGE on both and restricts CREATE to
   // superusers.
   if (type == duckdb::CatalogType::SCHEMA_ENTRY &&
-      (obj_name == StaticStrings::kPgCatalogSchema ||
-       obj_name == StaticStrings::kInformationSchema)) {
+      (obj_name == irs::StaticStrings::kPgCatalogSchema ||
+       obj_name == irs::StaticStrings::kInformationSchema)) {
     const auto modes =
       ParsePrivCheckText(priv_text, duckdb::CatalogType::SCHEMA_ENTRY);
     if ((modes.privs & catalog::AclMode::Create) !=
@@ -1195,7 +1196,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     try {
       return HasAnyPermissionsPrivilegeText(
         context, role_id, database->permissions, type, priv_text);
-    } catch (const SqlException& e) {
+    } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1208,7 +1209,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     try {
       return HasAnyPermissionsPrivilegeText(
         context, role_id, schema->permissions, type, priv_text);
-    } catch (const SqlException& e) {
+    } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1222,7 +1223,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     try {
       return HasAnyPermissionsPrivilegeText(
         context, role_id, sequence->permissions, type, priv_text);
-    } catch (const SqlException& e) {
+    } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1246,7 +1247,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     try {
       return HasAnyPermissionsPrivilegeText(context, role_id, *perm, type,
                                             priv_text);
-    } catch (const SqlException& e) {
+    } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1586,7 +1587,7 @@ void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
           return SystemRelationColumnPriv(conn_ctx, role->GetId(), name, col,
                                           priv);
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1621,7 +1622,7 @@ void HasColumnPrivilegeName3Function(duckdb::DataChunk& args,
           return SystemRelationColumnPriv(conn_ctx, current->GetId(), name, col,
                                           priv);
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1648,7 +1649,7 @@ void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
         return HasColumnPrivByAttnum(state.GetContext(), current->GetId(),
                                      *table, attnum,
                                      {p.GetData(), p.GetSize()});
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1713,7 +1714,7 @@ void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
         } else {
           return duckdb::nullopt;
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1738,7 +1739,7 @@ void HasColumnPrivilegeOidNameAttnum4Function(duckdb::DataChunk& args,
         } else {
           return duckdb::nullopt;
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1761,7 +1762,7 @@ void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
         return HasColumnPrivByAttnum(
           state.GetContext(), ObjectId{static_cast<uint64_t>(roid)}, *table,
           attnum, {p.GetData(), p.GetSize()});
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1799,7 +1800,7 @@ void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
         } else {
           ThrowRelationNotFound(name.relation);
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1826,7 +1827,7 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
       try {
         return HasAnyTablePrivilegeText(state.GetContext(), current->GetId(),
                                         *perm, {p.GetData(), p.GetSize()});
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });
@@ -1861,7 +1862,7 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
         } else {
           ThrowRelationNotFound(name.relation);
         }
-      } catch (const SqlException& e) {
+      } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
     });

@@ -55,7 +55,7 @@ const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
 int RunServer(int argc, char** argv) {
   try {
-    CrashHandler::installCrashHandler();
+    irs::CrashHandler::installCrashHandler();
 
     AppServer server;
 
@@ -88,7 +88,7 @@ int RunServer(int argc, char** argv) {
          up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
-      CrashHandler::SetState("stopping");
+      irs::CrashHandler::SetState("stopping");
       auto stop = [](const char* what, auto&& fn) noexcept {
         try {
           fn();
@@ -137,13 +137,13 @@ int RunServer(int argc, char** argv) {
       // it unless it can read its definition, so the catalog below must still
       // be up -- and the catalog must be down before that destructor, because
       // its objects hold allocations of the allocator it takes with it.
-      stop("storage", [&] { DuckDBEngine::Instance().CloseDatabases(); });
+      stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
       }
     };
 
-    CrashHandler::SetState("starting");
+    irs::CrashHandler::SetState("starting");
     store.Initialize(db_path.directory());
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
@@ -174,7 +174,7 @@ int RunServer(int argc, char** argv) {
 
     SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 
-    CrashHandler::SetState("running");
+    irs::CrashHandler::SetState("running");
     server.wait();
     return EXIT_SUCCESS;
   } catch (const std::exception& ex) {

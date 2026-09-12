@@ -59,7 +59,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
-      basics::downCast<irs::analysis::WildcardTokenizer>(
+      irs::utils::downCast<irs::analysis::WildcardTokenizer>(
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,

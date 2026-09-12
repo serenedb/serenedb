@@ -149,7 +149,7 @@ TEST(GeoFilterTest, equal) {
   q.mutable_options()->type = GeoFilterType::Intersects;
   q.mutable_options()->shape.reset(
     std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-    ShapeContainer::Type::S2Point);
+    irs::geo::ShapeContainer::Type::S2Point);
   *q.mutable_field_id() = 1;
 
   {
@@ -157,7 +157,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->type = GeoFilterType::Intersects;
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q1.mutable_field_id() = 1;
     ASSERT_EQ(q, q1);
   }
@@ -168,7 +168,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->type = GeoFilterType::Intersects;
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q1.mutable_field_id() = 1;
     ASSERT_EQ(q, q1);
   }
@@ -178,7 +178,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->type = GeoFilterType::Intersects;
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q1.mutable_field_id() = 2;
     ASSERT_NE(q, q1);
   }
@@ -188,7 +188,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->type = GeoFilterType::Contains;
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
@@ -196,8 +196,8 @@ TEST(GeoFilterTest, equal) {
   {
     GeoFilter q1;
     q1.mutable_options()->type = GeoFilterType::Contains;
-    q1.mutable_options()->shape.reset(std::make_unique<S2Polygon>(),
-                                      ShapeContainer::Type::S2Polygon);
+    q1.mutable_options()->shape.reset(
+      std::make_unique<S2Polygon>(), irs::geo::ShapeContainer::Type::S2Polygon);
     *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
@@ -210,7 +210,7 @@ TEST(GeoFilterTest, boost) {
     q.mutable_options()->type = GeoFilterType::Intersects;
     q.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q.mutable_field_id() = 1;
     q.mutable_options()->store_field_id = kGeo;
 
@@ -226,7 +226,7 @@ TEST(GeoFilterTest, boost) {
     q.mutable_options()->type = GeoFilterType::Intersects;
     q.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
-      ShapeContainer::Type::S2Point);
+      irs::geo::ShapeContainer::Type::S2Point);
     *q.mutable_field_id() = 1;
     q.mutable_options()->store_field_id = kGeo;
     q.SetBoost(boost);
@@ -417,7 +417,8 @@ TEST(GeoFilterTest, query) {
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
     json::ParseRegion(json.value(), q.mutable_options()->shape);
-    ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
+    ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point,
+              q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
 
@@ -443,7 +444,7 @@ TEST(GeoFilterTest, query) {
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
     json::ParseRegion(json.value(), q.mutable_options()->shape);
-    ASSERT_EQ(ShapeContainer::Type::S2Polygon,
+    ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
@@ -459,7 +460,7 @@ TEST(GeoFilterTest, query) {
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Intersects;
@@ -476,7 +477,7 @@ TEST(GeoFilterTest, query) {
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Contains;
@@ -493,7 +494,7 @@ TEST(GeoFilterTest, query) {
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::IsContained;
@@ -516,14 +517,14 @@ TEST(GeoFilterTest, query) {
       ]
     })");
 
-    ShapeContainer shape;
-    ShapeContainer point;
+    irs::geo::ShapeContainer shape;
+    irs::geo::ShapeContainer point;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::GeoJson>(
       shape_json.value(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
-      ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+      ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), point, cache,
         coding::Options::Invalid, nullptr));
       if (!shape.contains(point)) {
@@ -535,7 +536,7 @@ TEST(GeoFilterTest, query) {
     GeoFilter q;
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
-    ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::GeoJson>(
       shape_json.value(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Contains;
@@ -558,10 +559,10 @@ TEST(GeoFilterTest, query) {
       ]
     })");
 
-    ShapeContainer shape;
-    ShapeContainer point;
+    irs::geo::ShapeContainer shape;
+    irs::geo::ShapeContainer point;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::GeoJson>(
       shape_json.value(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {

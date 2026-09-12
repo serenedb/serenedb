@@ -575,7 +575,7 @@ irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
   *wf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = wf.mutable_options();
   *opts = {pattern,
-           basics::downCast<irs::analysis::WildcardTokenizer>(
+           irs::utils::downCast<irs::analysis::WildcardTokenizer>(
              *column_analyzer.analyzer.get()),
            has_positions};
   SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));

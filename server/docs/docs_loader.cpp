@@ -52,7 +52,7 @@
 namespace sdb::docs {
 namespace {
 
-constexpr std::string_view kSchema = StaticStrings::kDocsSchema;
+constexpr std::string_view kSchema = irs::StaticStrings::kDocsSchema;
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kIndexRelation = "sdb_docs.docs_fts";
 constexpr std::string_view kMeta = "sdb_docs.meta";
@@ -63,13 +63,14 @@ constexpr size_t kInsertBatch = 32;
 class Loader {
  public:
   Loader(std::string_view database, ObjectId database_id)
-    : _conn{DuckDBEngine::Instance().CreateConnection()},
+    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, StaticStrings::kDefaultUser, id::kRootUser, database,
-        database_id, nullptr, 0, nullptr)} {
+        *_conn->context, irs::StaticStrings::kDefaultUser, id::kRootUser,
+        database, database_id, nullptr, 0, nullptr)} {
     _ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user = std::string{StaticStrings::kDefaultUser};
+    _conn->context->session_user =
+      std::string{irs::StaticStrings::kDefaultUser};
     std::vector<duckdb::CatalogSearchEntry> paths{
       duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
                                  duckdb::Identifier{"$user"}},
@@ -162,8 +163,8 @@ class Loader {
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),
-           absl::StrCat("GRANT USAGE ON SCHEMA ", StaticStrings::kDocsSchema,
-                        " TO PUBLIC"),
+           absl::StrCat("GRANT USAGE ON SCHEMA ",
+                        irs::StaticStrings::kDocsSchema, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kTable, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kMeta, " TO PUBLIC"),
          }) {
@@ -231,7 +232,7 @@ bool LoadInto(std::string_view database, ObjectId database_id) {
   try {
     Loader loader{database, database_id};
     if (!loader.Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ",
-                                 StaticStrings::kDocsSchema))) {
+                                 irs::StaticStrings::kDocsSchema))) {
       return false;
     }
     if (loader.UpToDate()) {
@@ -263,7 +264,7 @@ void LoadEmbeddedDocs() {
     return;
   }
   const auto* database =
-    catalog::FindDatabase(nullptr, StaticStrings::kDefaultDatabase);
+    catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
   if (database == nullptr) {
     SDB_WARN(GENERAL, "embedded docs: default database not found");
     return;

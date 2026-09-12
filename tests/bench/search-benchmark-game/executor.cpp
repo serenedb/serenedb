@@ -323,7 +323,7 @@ void Executor::PrintResults() const {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str, bool scored) {
   auto root = std::make_unique<irs::BooleanFilter>();
-  sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
+  sdb::ParserContext fmt::context{*root, kTextFieldId, *_tokenizer};
   if (!sdb::ParseQuery(context, str)) {
     absl::FPrintF(stderr, "parse error: %s: %s\n", context.error_message, str);
     return {};

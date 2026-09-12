@@ -37,7 +37,7 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
-class Directory;
+struct Directory;
 class IndexOutput;
 
 class IdxWriter final {

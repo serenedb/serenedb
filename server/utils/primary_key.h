@@ -34,7 +34,7 @@ void AppendSigned(std::string& key, T value) {
   SDB_ASSERT(std::is_signed_v<T>,
              "Cannot correctly store unsigned value due to sign bit flipping");
   const auto base_size = key.size();
-  basics::StrAppend(key, sizeof(T));
+  irs::utils::StrAppend(key, sizeof(T));
   absl::big_endian::Store(key.data() + base_size, value);
   key[base_size] = static_cast<uint8_t>(key[base_size]) ^ 0x80;
 }
@@ -43,7 +43,7 @@ template<typename T>
 void AppendUnsigned(std::string& key, T value) {
   SDB_ASSERT(std::is_unsigned_v<T>);
   const auto base_size = key.size();
-  basics::StrAppend(key, sizeof(T));
+  irs::utils::StrAppend(key, sizeof(T));
   absl::big_endian::Store(key.data() + base_size, value);
 }
 

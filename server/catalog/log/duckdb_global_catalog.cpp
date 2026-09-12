@@ -154,8 +154,9 @@ duckdb::optional_ptr<SereneDBGlobalCatalog> TryGlobalCatalog(
 }
 
 duckdb::optional_ptr<SereneDBGlobalCatalog> TryGlobalCatalog() {
-  auto db = duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
+  auto db =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
   return AsGlobalCatalog(db.get());
 }
 
@@ -210,8 +211,9 @@ void ThrowIfCatalogAppendRefused() {
 }
 
 void InitClusterCatalogWal() {
-  auto db = duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
+  auto db =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
   SDB_ENSURE(db && db->HasStorageManager(),
              "the cluster-global attachment has no storage manager to hang the "
              "catalog log off");
@@ -222,7 +224,7 @@ void InitClusterCatalogWal() {
   // write finding no log is what keeps it from re-recording itself.
   auto wal = duckdb::WriteAheadLog::Replay(
     duckdb::QueryContext{}, *gClusterWalStorage,
-    basics::file_utils::BuildFilename(
+    irs::file_utils::BuildFilename(
       std::string{GetCatalogStore().WalDirectory()}, "catalog.wal"));
   const auto lock = LockClusterCatalogWal();
   gClusterWal = std::move(wal);

@@ -1,7 +1,3 @@
-add_library(serene_tests_basics_deps INTERFACE)
-
-target_link_libraries(serene_tests_basics_deps INTERFACE sereneserver)
-
 add_executable(
     serenedb-tests_basics
     # Custom main (NOT gtest_main): brings up DuckDBEngine before any
@@ -39,10 +35,7 @@ add_executable(
     network_pg_frames_test.cpp
 )
 
-target_link_libraries(
-    serenedb-tests_basics
-    PUBLIC serene_tests_connector_deps gtest
-)
+target_link_libraries(serenedb-tests_basics PUBLIC sereneserver gtest)
 
 target_compile_definitions(
     serenedb-tests_basics

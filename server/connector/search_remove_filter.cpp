@@ -24,7 +24,7 @@
 #include <iresearch/utils/memory.hpp>
 #include <limits>
 
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {

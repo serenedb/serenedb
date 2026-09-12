@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "connector/duckdb_sink_writer_base.h"
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 namespace sdb::connector {
 
 // The chunk positions a CREATE INDEX backfill has to read: the indexed columns

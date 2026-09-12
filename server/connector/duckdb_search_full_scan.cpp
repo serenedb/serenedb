@@ -115,8 +115,9 @@ class ColFilterVerify : public irs::detail::TableFilter {
  public:
   // Binds this segment's active specs. Nothing to verify leaves it empty, and
   // the caller then asks its plan for the whole answer.
-  void Begin(const irs::SubReader& seg, std::span<const ColFilterSpec> active,
-             IResearchScanGlobalState& g, ColFilterStateCache& states);
+  void Begin(const irs::SubReader& seg,
+             std::span<const irs::ColFilterSpec> active,
+             IResearchScanGlobalState& g, irs::ColFilterStateCache& states);
 
   bool Empty() const noexcept {
     return _chain.Empty() && _score_filter == nullptr;
@@ -150,7 +151,7 @@ class ColFilterVerify : public irs::detail::TableFilter {
 
  private:
   std::unique_ptr<irs::ReadContext> _ctx;
-  ColFilterChain _chain;
+  irs::ColFilterChain _chain;
   // The filter on the computed score (not a `.col` field): a comparison on
   // scores already in memory, so it runs before the columnstore is read.
   const duckdb::TableFilter* _score_filter = nullptr;
@@ -176,16 +177,16 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
   // scans: computed exactly once per claimed segment (at the claim site) and
   // consumed by StartSegment (HitBatcher binding) and the bulk FullScanner.
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
-  ColFilterClassification seg_cls;
+  irs::ColFilterClassification seg_cls;
   // Per-worker filter-evaluation state (ExpressionExecutor + decode scratch),
   // built once per pushed filter and reused across segments and engines.
-  ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states;
 };
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
   duckdb::Vector* pk_column = nullptr;
-  std::shared_ptr<IndexSource> index_source;
-  std::unique_ptr<HitBatcher> hit_batcher;
+  std::shared_ptr<irs::IndexSource> index_source;
+  std::unique_ptr<irs::HitBatcher> hit_batcher;
   // The scorer prepare phase ran (TopK / scored Stream dispatch).
   bool prepared = false;
 
@@ -197,7 +198,7 @@ struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
 
   void EnsureHitBatcher(const IResearchScanGlobalState& g) {
     if (!hit_batcher) {
-      hit_batcher = std::make_unique<HitBatcher>(
+      hit_batcher = std::make_unique<irs::HitBatcher>(
         g.cs_projections,
         g.needs_lookup ? catalog::term_dict::kPKFieldId
                        : irs::field_limits::invalid(),
@@ -336,8 +337,8 @@ struct TsDictLocalState : public IResearchScanLocalState {
   std::vector<FieldState> fields;
   CountMode count_mode = CountMode::Meta;
   const irs::QueryBuilder* where_query = nullptr;
-  ColFilterClassification seg_cls;
-  ColFilterStateCache filter_states;
+  irs::ColFilterClassification seg_cls;
+  irs::ColFilterStateCache filter_states;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, IResearchScanGlobalState& g);
@@ -946,7 +947,8 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.column_ids[bind_col];
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj,
+                                    .column_id = col_id.id()};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -984,7 +986,8 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       if (!in_output(proj)) {
         continue;
       }
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj,
+                                    .column_id = col_id.id()};
       if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -1286,8 +1289,8 @@ void OrderSegmentScanUnits(IResearchScanGlobalState& g,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg,
                                IResearchScanGlobalState& g,
-                               ColFilterStateCache& states,
-                               ColFilterClassification& out);
+                               irs::ColFilterStateCache& states,
+                               irs::ColFilterClassification& out);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -1375,8 +1378,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->queries.resize(ss.snapshot->reader.size());
 
   if (!state->col_filters.empty() && state->total_segments != 0) {
-    ColFilterStateCache init_states;
-    ColFilterClassification cls;
+    irs::ColFilterStateCache init_states;
+    irs::ColFilterClassification cls;
     state->segment_order.reserve(state->total_segments);
     for (uint32_t si = 0; si < state->total_segments; ++si) {
       ClassifySegmentColFilters((*state->reader)[si], *state, init_states, cls);
@@ -1888,9 +1891,9 @@ void IResearchSetScanOrder(
 }
 
 void ColFilterVerify::Begin(const irs::SubReader& seg,
-                            std::span<const ColFilterSpec> active,
+                            std::span<const irs::ColFilterSpec> active,
                             IResearchScanGlobalState& g,
-                            ColFilterStateCache& states) {
+                            irs::ColFilterStateCache& states) {
   _chain.Clear();
   _score_filter = nullptr;
   _score_state = nullptr;
@@ -1927,8 +1930,8 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   duckdb::idx_t left = n;
   if (_score_filter != nullptr) {
-    left = ColFilterChain::FilterDocsScores(*_score_filter, *_score_state, docs,
-                                            scores, left);
+    left = irs::ColFilterChain::FilterDocsScores(*_score_filter, *_score_state,
+                                                 docs, scores, left);
   }
   return static_cast<uint32_t>(_chain.FilterDocs(docs, scores, left));
 }
@@ -1937,8 +1940,8 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
                                  irs::score_t* scores, uint32_t words) {
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   if (_score_filter != nullptr) {
-    ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
-                                     scores, words);
+    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
+                                          scores, words);
   }
   return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
 }
@@ -1951,8 +1954,8 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg,
                                IResearchScanGlobalState& g,
-                               ColFilterStateCache& states,
-                               ColFilterClassification& out) {
+                               irs::ColFilterStateCache& states,
+                               irs::ColFilterClassification& out) {
   out.segment_dead = false;
   out.active.clear();
   if (g.col_filters.empty()) {
@@ -1960,7 +1963,7 @@ void ClassifySegmentColFilters(const irs::SubReader& seg,
   }
   const auto* col_reader = seg.GetColReader();
   for (const auto& cf : g.col_filters) {
-    ColFilterSpec spec{
+    irs::ColFilterSpec spec{
       .field = cf.field,
       .filter = cf.filter,
       .is_score = cf.is_score,

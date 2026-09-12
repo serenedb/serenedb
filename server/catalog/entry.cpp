@@ -64,7 +64,7 @@ void RegisterForeignCreateInfoDeserializer() {
 }
 
 duckdb::DatabaseManager& IdAllocator() {
-  return duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  return duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
 }
 
 ObjectId NextId() { return ObjectId{IdAllocator().NextOid()}; }

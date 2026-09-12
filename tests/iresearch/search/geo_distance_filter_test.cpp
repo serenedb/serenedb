@@ -635,12 +635,12 @@ TEST(GeoDistanceFilterTest, query) {
   {
     irs::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       irs::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
-      ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+      ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
@@ -668,12 +668,12 @@ TEST(GeoDistanceFilterTest, query) {
   {
     irs::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       irs::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
-      ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+      ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
@@ -787,12 +787,12 @@ TEST(GeoDistanceFilterTest, query) {
   {
     irs::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
-    ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
       irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       irs::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
-      ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+      ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());

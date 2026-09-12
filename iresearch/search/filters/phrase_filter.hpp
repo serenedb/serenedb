@@ -62,17 +62,17 @@ class ByPhraseOptions {
   using FilterType = ByPhrase;
 
   template<typename PhrasePart>
-  PhrasePart& push_back(size_t offs = 0) {
+  PhrasePart& push_back(PosAttr::value_t offs = 0) {
     return insert(PhrasePart{}, offs + 1, offs + 1);
   }
 
   template<typename PhrasePart>
-  PhrasePart& push_back(size_t offs_min, size_t offs_max) {
+  PhrasePart& push_back(PosAttr::value_t offs_min, PosAttr::value_t offs_max) {
     return insert(PhrasePart{}, offs_min, offs_max);
   }
 
   template<typename PhrasePart>
-  PhrasePart& push_back(PhrasePart&& t, size_t offs = 0) {
+  PhrasePart& push_back(PhrasePart&& t, PosAttr::value_t offs = 0) {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
@@ -102,7 +102,8 @@ class ByPhraseOptions {
 
  private:
   template<typename PhrasePart>
-  PhrasePart& insert(PhrasePart&& t, size_t offs_min, size_t offs_max) {
+  PhrasePart& insert(PhrasePart&& t, PosAttr::value_t offs_min,
+                     PosAttr::value_t offs_max) {
     SDB_ASSERT(offs_max >= offs_min);
     if (_phrase.empty()) {
       offs_max = offs_min = 0;

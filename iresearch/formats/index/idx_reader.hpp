@@ -36,7 +36,7 @@
 
 namespace irs {
 
-class Directory;
+struct Directory;
 struct AnnIndex;
 struct IResourceManager;
 

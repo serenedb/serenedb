@@ -192,7 +192,7 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
   }
   try {
     basics::JsonSource source{doc};
-    basics::ReadObject(source, request);
+    irs::utils::ReadObject(source, request);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),

@@ -224,7 +224,7 @@ class McpHandler final : public HttpHandler {
       RpcEnvelope envelope;
       doc.rewind();
       basics::JsonSource source{doc};
-      basics::ReadObject(source, envelope);
+      irs::utils::ReadObject(source, envelope);
       rpc.id = std::move(envelope.id);
       rpc.method = std::move(envelope.method);
     } catch (const std::exception& e) {
@@ -241,7 +241,7 @@ class McpHandler final : public HttpHandler {
       RpcParamsEnvelope params;
       doc.rewind();
       basics::JsonSource source{doc};
-      basics::ReadObject(source, params);
+      irs::utils::ReadObject(source, params);
       rpc.params = std::move(params.params);
     } catch (const std::exception& e) {
       writer.Json(HttpStatus::Ok,

@@ -64,7 +64,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   // A dedicated connection whose ClientContext drives indexed-expression
   // evaluation for replayed rows (the WAL stores raw columns; expressions must
   // be recomputed). Rolled back at the end -- it never writes anything.
-  duckdb::Connection expr_conn(DuckDBEngine::Instance().instance());
+  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
   expr_conn.BeginTransaction();
   absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
   auto& expr_context = *expr_conn.context;

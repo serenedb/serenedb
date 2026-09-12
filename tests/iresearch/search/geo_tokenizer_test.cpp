@@ -157,7 +157,7 @@ std::optional<std::vector<std::string>> FillGeoTermsWKB(
 }  // namespace
 
 TEST(GeoOptionsTest, default_options) {
-  GeoOptions opts;
+  irs::geo::GeoOptions opts;
   ASSERT_EQ(20, opts.max_cells);
   ASSERT_EQ(4, opts.min_level);
   ASSERT_EQ(23, opts.max_level);
@@ -305,9 +305,9 @@ TEST(GeoPointTokenizerTest, ctor) {
 TEST(GeoPointTokenizerTest, tokenizePointFromArray) {
   auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseCoordinates<true>(json.value(), shape, false);
-  ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
 
   {
     GeoPointTokenizer::Options opts;
@@ -364,9 +364,9 @@ TEST(GeoPointTokenizerTest, tokenizePointFromObject) {
   auto json_object =
     tests::FromJson(R"({ "lat": 63.57789956676574, "lon": 53.72314453125 })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseCoordinates<true>(json.value(), shape, false);
-  ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
 
   {
     GeoPointTokenizer::Options opts;
@@ -427,9 +427,9 @@ TEST(GeoPointTokenizerTest, tokenizePointFromObjectComplexPath) {
   auto json_object = tests::FromJson(
     R"({ "subObj": { "lat": 63.57789956676574, "lon": 53.72314453125 } })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseCoordinates<true>(json.value(), shape, false);
-  ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
 
   {
     GeoPointTokenizer::Options opts;
@@ -629,9 +629,9 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeLatLngRect) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
-  ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
     GeoJsonTokenizer::Options opts;
@@ -746,9 +746,9 @@ TEST(GeoJsonTokenizerSourceTest, tokenizePolygon) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
-  ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
     GeoJsonTokenizer::Options opts;
@@ -865,9 +865,9 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeLineString) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
-  ASSERT_EQ(ShapeContainer::Type::S2Polyline, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polyline, shape.type());
 
   {
     GeoJsonTokenizer::Options opts;
@@ -994,9 +994,9 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolygon) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
-  ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
     GeoJsonTokenizer::Options opts;
@@ -1049,9 +1049,9 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPoint) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
-  ASSERT_EQ(ShapeContainer::Type::S2Multipoint, shape.type());
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Multipoint, shape.type());
 
   {
     GeoJsonTokenizer::Options opts;
@@ -1210,7 +1210,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolyLine) {
     ]
   })");
 
-  ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   json::ParseRegion(json.value(), shape);
   ASSERT_EQ(ShapeContainer::Type::S2Multipolyline, shape.type());
 

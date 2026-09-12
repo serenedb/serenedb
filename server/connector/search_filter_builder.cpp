@@ -1340,7 +1340,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
-  const auto& node = basics::downCast<irs::BooleanFilter>(filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
   if (node.GetScorer() != nullptr) {
     return !irs::IsConstScoreSingleton(node.GetScorer());
   }

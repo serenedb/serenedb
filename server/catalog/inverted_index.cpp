@@ -173,11 +173,11 @@ duckdb::unique_ptr<InvertedIndex> InvertedIndex::Deserialize(
   ObjectId relation_id, bool column_term_fields) {
   if (column_term_fields) {
     persistence::SearchInvertedIndexData data;
-    basics::ReadTuple(src, data);
+    irs::utils::ReadTuple(src, data);
     return UnpackEntries(schema_id, id, relation_id, std::move(data));
   }
   persistence::InvertedIndexData data;
-  basics::ReadTuple(src, data);
+  irs::utils::ReadTuple(src, data);
   return UnpackEntries(schema_id, id, relation_id, std::move(data));
 }
 
@@ -201,15 +201,15 @@ persistence::InvertedIndexData InvertedIndex::ToData() const {
 }
 
 void InvertedIndex::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
+  irs::utils::WriteObject(sink, ToData());
 }
 
 void InvertedIndex::SerializePayload(duckdb::Serializer& sink) const {
   if (HasAllocatedTermFields()) {
-    basics::WriteTuple(sink, ToSearchData());
+    irs::utils::WriteTuple(sink, ToSearchData());
     return;
   }
-  basics::WriteTuple(sink, ToData());
+  irs::utils::WriteTuple(sink, ToData());
 }
 
 void InvertedIndex::BuildDerivedIndexes() {

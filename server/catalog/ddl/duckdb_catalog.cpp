@@ -321,8 +321,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case SCHEMA_ENTRY:
-      if (info_name == StaticStrings::kPgCatalogSchema ||
-          info_name == StaticStrings::kInformationSchema) {
+      if (info_name == irs::StaticStrings::kPgCatalogSchema ||
+          info_name == irs::StaticStrings::kInformationSchema) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
           ERR_MSG("cannot drop schema ", info_name,
@@ -468,8 +468,8 @@ void SereneDBCatalog::Initialize(
   // database is attached. Their entries carry the DefaultGenerators that mint
   // the static content.
   for (const auto& [name, oid] :
-       {std::pair{StaticStrings::kPgCatalogSchema, id::kPgCatalogSchema},
-        std::pair{StaticStrings::kInformationSchema,
+       {std::pair{irs::StaticStrings::kPgCatalogSchema, id::kPgCatalogSchema},
+        std::pair{irs::StaticStrings::kInformationSchema,
                   id::kPgInformationSchema}}) {
     // The oid pg_namespace reports for these two is fixed rather than
     // allocated: they have no definition to take one from.
@@ -479,8 +479,8 @@ void SereneDBCatalog::Initialize(
   // ordinary record that lands after this.
   if (_public_schema_id.isSet()) {
     const auto schema = catalog::MakeSchemaInfo(_public_schema_id, _database_id,
-                                                StaticStrings::kPublic);
-    CreateSchemaEntry(system, StaticStrings::kPublic, _public_schema_id,
+                                                irs::StaticStrings::kPublic);
+    CreateSchemaEntry(system, irs::StaticStrings::kPublic, _public_schema_id,
                       _public_schema_owner, EntryDependencies(*schema));
   }
 }

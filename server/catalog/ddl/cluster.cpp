@@ -395,7 +395,7 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("current user cannot be dropped"));
   }
-  if (role == StaticStrings::kDefaultUser) {
+  if (role == irs::StaticStrings::kDefaultUser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     ERR_MSG("cannot drop role ", role,
                             " because it is required by the database system"));

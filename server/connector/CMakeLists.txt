@@ -43,13 +43,7 @@ add_library(
     highlight/memory_index.cpp
 )
 
-target_link_libraries(
-    serene_connector
-    iresearch-static
-    iresearch-static
-    duckdb_static
-    simdjson
-)
+target_link_libraries(serene_connector iresearch-static duckdb_static simdjson)
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?
 # sereneserver is a single monolithic target without proper include dirs setup

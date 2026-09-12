@@ -125,7 +125,7 @@ inline Frame FrameReader::TryAssemble(FrameKind kind, uint32_t max_len) {
     if (_recv.ReadableSize() >= *total) {
       // Uninitialized resize -- CopyInto overwrites every byte, so skip the
       // value-init memset; capacity is reused across spanning frames.
-      basics::StrResizeAmortized(_scratch, *total);
+      irs::utils::StrResizeAmortized(_scratch, *total);
       CopyInto(reinterpret_cast<uint8_t*>(_scratch.data()), *total);
       _recv.Consume(*total);
       const std::string_view flat{_scratch.data(), *total};

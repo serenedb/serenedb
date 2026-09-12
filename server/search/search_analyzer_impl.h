@@ -74,7 +74,7 @@ class Features final {
 // ObjectFormat (JSON) render: the raw feature mask (combined bits have no
 // enumerator name). The binary tuple format keeps member Serialize above.
 template<typename Context>
-  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+  requires std::is_same_v<typename Context::Format, irs::utils::ObjectFormat>
 void SerdeWrite(Context ctx, const Features& features) {
   ctx.io().WriteValue(
     static_cast<uint64_t>(std::to_underlying(features.GetIndexFeatures())));

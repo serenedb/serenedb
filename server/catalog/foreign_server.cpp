@@ -80,7 +80,7 @@ bool IsForeignServerStorage(std::string_view catalog_type) {
 duckdb::shared_ptr<duckdb::AttachedDatabase> LookupAttachment(
   std::string_view name) {
   auto attached =
-    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
       .GetDatabase(duckdb::Identifier{name});
   if (!attached ||
       !IsForeignServerStorage(attached->GetCatalog().GetCatalogType())) {
@@ -210,7 +210,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Deserialize(
   src.ReadPropertyWithDefault(201, "fdw_name", result->_fdw_name);
   src.OnPropertyBegin(202, "options");
   auto refs = std::tie(result->_option_keys, result->_option_values);
-  basics::ReadTuple(src, refs);
+  irs::utils::ReadTuple(src, refs);
   src.OnPropertyEnd();
   return std::move(result);
 }
@@ -241,7 +241,7 @@ void CreateForeignServerInfo::Serialize(duckdb::Serializer& sink) const {
   // Option lists are std::vector, not duckdb's; the basics framework is what
   // writes them, so they ride inside one property.
   sink.OnPropertyBegin(202, "options");
-  basics::WriteTuple(sink, std::tie(_option_keys, _option_values));
+  irs::utils::WriteTuple(sink, std::tie(_option_keys, _option_values));
   sink.OnPropertyEnd();
 }
 
@@ -339,7 +339,7 @@ void DetachForeignServerAttachment(std::string_view server_name,
     return;
   }
   attached.reset();
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   conn->Query(absl::StrCat("DETACH ", QuoteSqlIdentifier(server_name)));
 }
 

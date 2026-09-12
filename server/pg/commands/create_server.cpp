@@ -73,7 +73,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> MakeServerOptions(
 
 // Establish the live attachment for a server (validates connectivity too).
 uint64_t RunAttach(const catalog::CreateForeignServerInfo& server) {
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   const auto res = catalog::RunForeignServerAttach(*conn, server);
   using Status = catalog::ForeignServerAttachResult::Status;
   if (res.status == Status::Unsupported) {

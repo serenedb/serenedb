@@ -597,7 +597,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
               "', last operation tick '", _last_durable_tick, "'");
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '",
                    GetId().id(), "': ", e.message()));

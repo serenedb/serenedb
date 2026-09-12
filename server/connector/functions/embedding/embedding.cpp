@@ -112,7 +112,7 @@ ProviderConfig LoadProviderConfig(duckdb::ClientContext& context,
                     ERR_MSG("ai_embed: secret '", secret_name, "' not found"));
   }
   const auto& kv =
-    basics::downCast<const duckdb::KeyValueSecret>(*entry->secret);
+    irs::utils::downCast<const duckdb::KeyValueSecret>(*entry->secret);
 
   ProviderConfig cfg;
   cfg.type = embedding::ResolveProviderType(

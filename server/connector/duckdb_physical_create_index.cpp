@@ -70,7 +70,7 @@
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {

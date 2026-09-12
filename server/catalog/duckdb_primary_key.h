@@ -42,7 +42,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/key_encoding.h"
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::catalog::duckdb_primary_key {
 

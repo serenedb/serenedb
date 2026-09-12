@@ -1,15 +1,9 @@
-option(USE_URING "Build iresearch with uring support" OFF)
+add_compile_warnings_flags()
 
 if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-add_definitions(-DUNICODE -D_UNICODE)
-
-# iresearch ships with the database, so it carries the same version
-set(IResearch_version
-    "${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}.${SERENEDB_VERSION_PATCH}"
-)
 set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
@@ -398,7 +392,6 @@ set(IResearch_core_sources
     ./utils/static_strings.cpp
     ./utils/string_utils.cpp
     ./utils/zstd_context.cpp
-    ${IResearch_core_optimized_sources}
 )
 
 find_package(FLEX)
@@ -447,12 +440,8 @@ if(uring_FOUND)
     list(APPEND IResearch_core_sources ./store/async_directory.cpp)
 endif()
 
-set(IRESEARCH_EXTERNAL_INCLUDES
-    ${Boost_INCLUDE_DIRS} # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
-    ${Fasttext_INCLUDE_DIR}
-)
-
-include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
+# ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
+include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
@@ -516,7 +505,7 @@ target_link_libraries(
     PRIVATE absl::failure_signal_handler
     PRIVATE absl::stacktrace
     PRIVATE absl::symbolize
-    PRIVATE boost_boost
+    PUBLIC boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
     PUBLIC iresearch-ofst

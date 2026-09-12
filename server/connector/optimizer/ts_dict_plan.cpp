@@ -1567,7 +1567,7 @@ template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
   return ((type == irs::Type<Fs>::id() &&
-           basics::downCast<Fs>(filter).field_id() == field) ||
+           irs::utils::downCast<Fs>(filter).field_id() == field) ||
           ...);
 }
 
@@ -1589,7 +1589,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
   if (type == irs::Type<irs::BooleanFilter>::id()) {
     // A node's term clauses are leaves of its own rather than children, so
     // the buckets are checked here and `VisitChildren` covers the rest.
-    auto& node = basics::downCast<irs::BooleanFilter>(filter);
+    auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
     size_t clauses = 0;
     // A threshold above one asks for several terms of the field at once, and
     // the enumeration answers about one term at a time.
@@ -1657,8 +1657,8 @@ bool IsCompilableAcceptorOn(irs::Filter& filter, irs::field_id field) {
 
 bool ContainsNegation(irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::BooleanFilter>::id() &&
-      basics::downCast<irs::BooleanFilter>(filter).Size(irs::Occur::MustNot) !=
-        0) {
+      irs::utils::downCast<irs::BooleanFilter>(filter).Size(
+        irs::Occur::MustNot) != 0) {
     return true;
   }
   bool found = false;
@@ -2021,7 +2021,7 @@ class TsDictFilterClaim {
       irs::Filter::ptr fused = std::move(_having_and[f]);
       Optimize(fused, true);
       if (fused->type() == irs::Type<irs::BooleanFilter>::id()) {
-        auto& children = basics::downCast<irs::BooleanFilter>(*fused)
+        auto& children = irs::utils::downCast<irs::BooleanFilter>(*fused)
                            .Bucket(irs::Occur::Must)
                            .filters;
         std::stable_sort(children.begin(), children.end(),

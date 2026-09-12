@@ -248,8 +248,8 @@ void PlaceForeignServer(duckdb::ClientContext* context,
   }
   auto& set = at.catalog->GetForeignServerSet();
   auto entry = duckdb::make_uniq<SereneDBForeignServerEntry>(
-    *at.catalog, basics::downCast<const catalog::CreateForeignServerInfo>(info),
-    perm);
+    *at.catalog,
+    irs::utils::downCast<const catalog::CreateForeignServerInfo>(info), perm);
   const auto deps = EntryDependencies(info);
   PutSetEntry(set, *at.transaction, old_name, std::move(entry), deps);
 }
@@ -272,25 +272,25 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
     case TABLE_ENTRY:
       built = SereneDBTableEntry::Make(
         catalog, schema, name,
-        basics::downCast<const duckdb::CreateTableInfo>(info), perm, context,
-        superseded);
+        irs::utils::downCast<const duckdb::CreateTableInfo>(info), perm,
+        context, superseded);
       break;
     case VIEW_ENTRY:
       built = MakeViewEntry(
         catalog, schema, name,
-        basics::downCast<const duckdb::CreateViewInfo>(info), perm);
+        irs::utils::downCast<const duckdb::CreateViewInfo>(info), perm);
       break;
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
       built = MakeMacroEntry(
         catalog, schema, name, /*internal=*/false,
-        basics::downCast<const duckdb::CreateMacroInfo>(info), perm);
+        irs::utils::downCast<const duckdb::CreateMacroInfo>(info), perm);
       break;
     case INDEX_ENTRY: {
       // Both slots are built from the same record, and an inverted index is
       // shared across them rather than copied into each.
       const auto& index =
-        basics::downCast<const catalog::CreateIndexInfo>(info);
+        irs::utils::downCast<const catalog::CreateIndexInfo>(info);
       built = slot == INDEX_ENTRY
                 ? SereneDBIndexEntry::Make(catalog, schema, index, context)
                 : MakeIndexScanEntry(catalog, schema, name, index, context);
@@ -299,7 +299,7 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
     case SEQUENCE_ENTRY:
       built = SereneDBSequenceEntry::Make(
         catalog, schema,
-        basics::downCast<const duckdb::CreateSequenceInfo>(info), perm,
+        irs::utils::downCast<const duckdb::CreateSequenceInfo>(info), perm,
         superseded);
       break;
     case TYPE_ENTRY: {
@@ -315,7 +315,7 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
     default:
       built = duckdb::make_uniq<SereneDBTokenizerEntry>(
         catalog, schema,
-        basics::downCast<const catalog::CreateTokenizerInfo>(info), perm);
+        irs::utils::downCast<const catalog::CreateTokenizerInfo>(info), perm);
       break;
   }
   if (!built) {
@@ -337,7 +337,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> RecommentedInfo(
   // goes to the index rather than to the record.
   if (info.type == duckdb::CatalogType::INDEX_ENTRY) {
     return catalog::RecommentedIndexRecord(
-      basics::downCast<const catalog::CreateIndexInfo>(info), comment);
+      irs::utils::downCast<const catalog::CreateIndexInfo>(info), comment);
   }
   auto copied = info.Copy();
   copied->comment = CommentValue(comment);
@@ -648,7 +648,7 @@ ObjectId RecordParentOf(const duckdb::CatalogEntry& entry) {
       return entry.ParentCatalog().Cast<SereneDBCatalog>().GetDatabaseId();
     default:
       return ObjectId{
-        basics::downCast<const duckdb::StandardEntry>(entry).Schema().oid};
+        irs::utils::downCast<const duckdb::StandardEntry>(entry).Schema().oid};
   }
 }
 
@@ -1353,8 +1353,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> PutEntry(
     if (const auto* table = Find<SereneDBTableEntry>(context, schema_id, id)) {
       before = table->Definition();
     }
-    stated =
-      catalog::Clone(basics::downCast<const duckdb::CreateTableInfo>(*info));
+    stated = catalog::Clone(
+      irs::utils::downCast<const duckdb::CreateTableInfo>(*info));
   }
   auto placed = PlaceEntry(context, old_name, std::move(info), perm);
   if (!placed || !stated) {
@@ -1468,9 +1468,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> RequireDropTarget(
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", name, "\" is not ",
-                basics::string_utils::GetArticle(kind), " ", kind),
+                irs::utils::string_utils::GetArticle(kind), " ", kind),
         ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual), " to remove ",
-                 basics::string_utils::GetArticle(actual), " ", actual, "."));
+                 irs::utils::string_utils::GetArticle(actual), " ", actual,
+                 "."));
     }
   }
   if (missing_ok) {
@@ -1622,7 +1623,7 @@ void ReplayCatalogRecord(duckdb::unique_ptr<duckdb::CreateInfo> info,
       return;
     case DATABASE_ENTRY: {
       const auto& database =
-        basics::downCast<const catalog::CreateDatabaseInfo>(*info);
+        irs::utils::downCast<const catalog::CreateDatabaseInfo>(*info);
       PutDatabase(
         nullptr, old_name,
         duckdb::unique_ptr_cast<duckdb::CreateInfo,
@@ -1644,7 +1645,7 @@ void ReplayCatalogRecord(duckdb::unique_ptr<duckdb::CreateInfo> info,
     case SEQUENCE_ENTRY:
       ReplaySequenceRecord(
         catalog::IdOf(*info), old_name,
-        basics::downCast<const duckdb::CreateSequenceInfo>(*info), perm);
+        irs::utils::downCast<const duckdb::CreateSequenceInfo>(*info), perm);
       return;
     case INDEX_ENTRY:
       // An index has no owner and no ACL: every privilege decision reads the

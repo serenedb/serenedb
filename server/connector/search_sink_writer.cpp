@@ -36,7 +36,7 @@
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "search_remove_filter.hpp"
-#include "server/utils/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {

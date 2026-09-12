@@ -161,12 +161,12 @@ class HttpSession final
   // authenticated the request that first touched the connection.
   duckdb::Connection& Connection() override {
     if (!_conn) {
-      const auto dbname = StaticStrings::kDefaultDatabase;
+      const auto dbname = irs::StaticStrings::kDefaultDatabase;
       auto database = catalog::FindDatabase(nullptr, dbname);
       SDB_ENSURE(database);
       const auto database_id = catalog::IdOf(*database);
       const std::string_view user =
-        _user.empty() ? StaticStrings::kDefaultUser : _user;
+        _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
       auto login =
         sdb::pg::RequireLoginRole(user, dbname, database->permissions);
       if (!login.role) {
@@ -174,7 +174,7 @@ class HttpSession final
       }
       const auto& role = login.role;
 
-      _conn = DuckDBEngine::Instance().CreateConnection();
+      _conn = irs::DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
         *_conn->context, user, role, dbname, database_id, nullptr,
         static_cast<int32_t>(_cancel_key >> 32), _cancel);
@@ -377,7 +377,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
     _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
+      duckdb::TaskScheduler::GetScheduler(
+        irs::DuckDBEngine::Instance().instance()),
       *_ioexec);
     // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
     // it onto a duck worker.

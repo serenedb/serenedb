@@ -29,7 +29,11 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -37,10 +41,6 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -64,7 +64,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   // A dedicated connection whose ClientContext drives indexed-expression
   // evaluation for replayed rows (the WAL stores raw columns; expressions must
   // be recomputed). Rolled back at the end -- it never writes anything.
-  duckdb::Connection expr_conn(DuckDBEngine::Instance().instance());
+  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
   expr_conn.BeginTransaction();
   absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
   auto& expr_context = *expr_conn.context;
@@ -105,7 +105,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                             database_ids.push_back(catalog::IdOf(db));
                           });
   for (const ObjectId db_id : database_ids) {
-    containers::NodeHashMap<ObjectId, ShardInfo> shards;
+    irs::containers::NodeHashMap<ObjectId, ShardInfo> shards;
     catalog::Visit<catalog::SereneDBTableEntry>(
       nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
         if (!entry.IsSearchTable()) {
@@ -128,7 +128,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     }
 
     auto& wal = engine.GetDbWal(db_id);
-    containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
+    irs::containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
     auto exists_of = [&](ObjectId table_id) {
       return shards.find(table_id) != shards.end();
     };
@@ -234,7 +234,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ++recovered_shards;
     }
 
-    // Advance every shard -- including ones with no replayed records -- to the
+    // Next every shard -- including ones with no replayed records -- to the
     // recovered max tick, so an idle shard doesn't pin this database WAL's GC
     // floor after recovery. FinishRecovery is per-shard for the same reason:
     // one that adopted nothing still has to reclaim what the crash left behind.

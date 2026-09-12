@@ -27,11 +27,11 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 
-#include "basics/containers/node_hash_map.h"
-#include "basics/message_buffer.h"
 #include "query/config.h"
+#include "server/utils/message_buffer.h"
 
 namespace duckdb {
 
@@ -64,7 +64,7 @@ struct RecordSerializers {
 };
 
 using TypesSerializationCache =
-  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
+  irs::containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
 
 struct SerializationContext {
   message::Writer* writer = nullptr;

@@ -28,21 +28,21 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <ranges>
 #include <span>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/primary_key.hpp"
-#include "basics/string_utils.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/key_encoding.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/primary_key.h"
 
 namespace sdb::catalog::duckdb_primary_key {
 

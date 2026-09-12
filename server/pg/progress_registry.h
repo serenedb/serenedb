@@ -24,12 +24,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "basics/containers/flat_hash_map.h"
 
 namespace duckdb {
 
@@ -193,8 +192,8 @@ class ProgressRegistry {
 
  private:
   mutable absl::Mutex _mu;
-  containers::FlatHashMap<const ProgressSource*,
-                          std::shared_ptr<ProgressSource>>
+  irs::containers::FlatHashMap<const ProgressSource*,
+                               std::shared_ptr<ProgressSource>>
     _sources;
 };
 

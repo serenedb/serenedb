@@ -14,7 +14,7 @@ macro(sdb_update_module _GIT _SUBMODULE _CWD _SENTINEL)
 
         if(
             NOT EXISTS ${_CWD}/${_SUBMODULE}/${_SENTINEL}
-            OR NOT ${_EXPECTED_SUBMODULE_HASH} EQUAL ${_ACTUAL_SUBMODULE_HASH}
+            OR NOT _EXPECTED_SUBMODULE_HASH STREQUAL _ACTUAL_SUBMODULE_HASH
         )
             execute_process(
                 COMMAND ${_GIT} submodule update --init --force -- ${_SUBMODULE}
@@ -22,7 +22,7 @@ macro(sdb_update_module _GIT _SUBMODULE _CWD _SENTINEL)
                 WORKING_DIRECTORY ${_CWD}
             )
 
-            if(NOT ${_INIT_RESULT} EQUAL "0")
+            if(NOT _INIT_RESULT EQUAL 0)
                 message(
                     WARNING
                     "FAILED: ${_GIT} submodule update --init -- ${_SUBMODULE}"

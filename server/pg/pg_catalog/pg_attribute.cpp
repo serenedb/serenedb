@@ -20,10 +20,9 @@
 #include "pg/pg_catalog/pg_attribute.h"
 
 #include <duckdb/parser/constraints/list.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 
-#include "app/app_server.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -35,6 +34,7 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {
@@ -108,7 +108,7 @@ void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
 
   // NOT NULL is a constraint on the entry, keyed by logical column index; a
   // primary key implies it for every key column, as in postgres.
-  containers::FlatHashSet<duckdb::idx_t> notnull_cols;
+  irs::containers::FlatHashSet<duckdb::idx_t> notnull_cols;
   for (const auto& constraint : table.GetConstraints()) {
     if (constraint->type == duckdb::ConstraintType::NOT_NULL) {
       notnull_cols.insert(

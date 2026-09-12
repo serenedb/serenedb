@@ -35,21 +35,21 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/message_buffer.h"
-#include "basics/string_utils.h"
 #include "connector/copy_byte_source.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {
@@ -61,7 +61,7 @@ bool ParseCopyBool(std::string_view value) {
   if (value.empty()) {
     return true;
   }
-  if (const auto parsed = basics::ParseBool(value)) {
+  if (const auto parsed = irs::utils::ParseBool(value)) {
     return *parsed;
   }
   THROW_SQL_ERROR(
@@ -526,7 +526,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
       const auto nl = view.find(kRowSep);
       if (nl == std::string_view::npos) {
         g.partial.append(view.data(), view.size());
-        source.Advance(view.size());
+        source.Next(view.size());
         view = {};
         break;
       }
@@ -545,7 +545,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
         ++row;
       }
       g.partial.clear();
-      source.Advance(nl + 1);
+      source.Next(nl + 1);
       view.remove_prefix(nl + 1);
     }
   }

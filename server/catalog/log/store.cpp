@@ -37,16 +37,17 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <filesystem>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -59,8 +60,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
 #include "connector/inverted_store_index.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -122,7 +122,7 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
   if (!database) {
     return nullptr;
   }
-  return duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+  return duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
     .GetDatabase(duckdb::Identifier{database->name.GetIdentifierName()});
 }
 
@@ -270,7 +270,7 @@ CatalogStore::~CatalogStore() {
 }
 
 std::string CatalogStore::DatabaseFilePath(ObjectId database_id) {
-  return basics::file_utils::BuildFilename(
+  return utils::file_utils::BuildFilename(
     std::string{GetCatalogStore().DataDirectory()},
     absl::StrCat(database_id.id(), ".db"));
 }
@@ -298,11 +298,12 @@ std::vector<ObjectId> CatalogStore::DatabaseFileIds() {
 }
 
 void CatalogStore::Initialize(std::string_view database_directory) {
-  _directory = basics::file_utils::BuildFilename(
-    std::string{database_directory}, std::string{StaticStrings::kCatalogRoot});
-  _data_directory = basics::file_utils::BuildFilename(
+  _directory = utils::file_utils::BuildFilename(
     std::string{database_directory},
-    std::string{StaticStrings::kDataStoreRoot});
+    std::string{irs::StaticStrings::kCatalogRoot});
+  _data_directory = utils::file_utils::BuildFilename(
+    std::string{database_directory},
+    std::string{irs::StaticStrings::kDataStoreRoot});
   for (const auto* directory : {&_directory, &_data_directory}) {
     std::error_code ec;
     std::filesystem::create_directories(*directory, ec);

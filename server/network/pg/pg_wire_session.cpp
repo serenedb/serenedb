@@ -29,12 +29,10 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/lifecycle.h"
-#include "basics/metrics.h"
-#include "basics/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -44,6 +42,8 @@
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/metrics.h"
 
 namespace sdb::network::pg {
 namespace {
@@ -407,7 +407,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   const auto role = login.role;
   const bool superuser = login.superuser;
 
-  _conn = DuckDBEngine::Instance().CreateConnection();
+  _conn = irs::DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
@@ -735,7 +735,7 @@ void PgWireSession<Kind>::DrainNotices() {
   if (!_connection_ctx->HasNotices()) {
     return;
   }
-  _connection_ctx->ConsumeNotices([this](const sdb::pg::SqlErrorData& notice) {
+  _connection_ctx->ConsumeNotices([this](const irs::pg::SqlErrorData& notice) {
     WriteNoticeResponse(this->_send, notice);
   });
 }
@@ -776,7 +776,7 @@ void PgWireSession<Kind>::ReportChangedParameters() {
 // fails like PG's 34000. Returns the commit error, if any, so the caller orders
 // it against the CommandComplete.
 template<SocketKind Kind>
-std::optional<sdb::pg::SqlErrorData>
+std::optional<irs::pg::SqlErrorData>
 PgWireSession<Kind>::CommitImplicitBlock() {
   if (!_txn_state->ShouldCommitAtSync()) {
     return std::nullopt;
@@ -1354,7 +1354,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (is_last && implicit_block &&
         type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       if (auto err = CommitImplicitBlock()) {
-        throw sdb::SqlException{std::move(*err),
+        throw irs::SqlException{std::move(*err),
                                 std::source_location::current()};
       }
     }
@@ -1739,7 +1739,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     this->_task->RequestRun();
   };
   const auto fail = [&](int code, auto&&... msg) {
-    bridge.Fail(std::make_exception_ptr(sdb::SqlException{
+    bridge.Fail(std::make_exception_ptr(irs::SqlException{
       SQL_ERROR_DATA(ERR_CODE(code),
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
@@ -2807,7 +2807,8 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
-    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
+    duckdb::TaskScheduler::GetScheduler(
+      irs::DuckDBEngine::Instance().instance()),
     *this->_ioexec);
   // SessionMain (eager) runs to its first Park, setting the resume job; the one
   // bootstrap kick then schedules it onto a duck worker.
@@ -2857,7 +2858,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // ~ConnectionContext asserts an empty queue.
   _proto.Clear();
   if (_connection_ctx) {
-    _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
+    _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
   // mid-write would truncate them, so drain first, then stop -- SendWriter (io)

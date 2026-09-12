@@ -1,0 +1,596 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/algorithm/container.h>
+
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/types.hpp>
+#include <span>
+
+#include "index/index_tests.hpp"
+#include "tests_shared.hpp"
+
+namespace {
+
+using namespace tests;
+
+// Scorer that returns doc_id as score, optionally with modulo divisor.
+// When divisor is 0, returns doc_id directly. Otherwise returns doc_id %
+// divisor.
+struct DocIdScorer : irs::ScorerBase<void> {
+  explicit DocIdScorer(irs::doc_id_t divisor = 0) noexcept : divisor{divisor} {}
+
+  irs::IndexFeatures GetIndexFeatures() const final {
+    return irs::IndexFeatures::Freq;
+  }
+
+  struct ScorerContext : irs::ScoreOperator {
+    explicit ScorerContext(irs::doc_id_t divisor) noexcept : divisor{divisor} {}
+
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+      ASSERT_NE(nullptr, res);
+      for (size_t i = 0; i < n; ++i) {
+        auto doc_id = next_doc++;
+        irs::Merge<MergeType>(
+          res[i], divisor == 0 ? static_cast<irs::score_t>(doc_id)
+                               : static_cast<irs::score_t>(doc_id % divisor));
+      }
+    }
+
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+    }
+
+    irs::doc_id_t divisor;
+    mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
+  };
+
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext&) const final {
+    return irs::ScoreFunction::Make<ScorerContext>(divisor);
+  }
+
+  irs::doc_id_t divisor;
+};
+
+constexpr auto kScoreDescending = [](const auto& l, const auto& r) noexcept {
+  return l.score > r.score;
+};
+
+constexpr irs::field_id kNameFieldId = 1;
+constexpr irs::field_id kPrefixFieldId = 2;
+constexpr irs::field_id kSeqFieldId = 3;
+constexpr irs::field_id kSameFieldId = 4;
+constexpr irs::field_id kValueFieldId = 5;
+constexpr irs::field_id kDuplicatedFieldId = 6;
+
+// Wrap tests::GenericJsonFieldFactory to assign per-name field ids to the
+// freshly inserted indexed field. The factory itself is shared with other
+// tests, so we cannot modify it directly.
+auto WrapFactory = [](tests::Document& doc, const std::string& name,
+                      const tests::JsonDocGenerator::JsonValue& data) {
+  const auto before = doc.indexed.size();
+  tests::GenericJsonFieldFactory(doc, name, data);
+  if (doc.indexed.size() == before) {
+    return;
+  }
+  auto& f = doc.indexed.back<tests::FieldBase>();
+  if (name == "name") {
+    f.id = kNameFieldId;
+  } else if (name == "prefix") {
+    f.id = kPrefixFieldId;
+  } else if (name == "seq") {
+    f.id = kSeqFieldId;
+  } else if (name == "same") {
+    f.id = kSameFieldId;
+  } else if (name == "value") {
+    f.id = kValueFieldId;
+  } else if (name == "duplicated") {
+    f.id = kDuplicatedFieldId;
+  }
+};
+
+constexpr irs::field_id kFreqFieldId = 7;
+
+auto FreqFactory = [](tests::Document& doc, const std::string& name,
+                      const tests::JsonDocGenerator::JsonValue& data) {
+  tests::GenericJsonFieldFactory(doc, name, data);
+  if (name != "seq" || !data.is_number()) {
+    return;
+  }
+  auto field =
+    std::make_shared<tests::TextField<std::string>>("freq", std::string{"tok"});
+  field->id = kFreqFieldId;
+  doc.insert(std::move(field));
+};
+
+class DocCollectorTestCase : public IndexTestBase {};
+
+TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                FreqFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test basic top-k retrieval with All filter
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
+    constexpr size_t k = 5;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(5, result_count);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+    // With DocIdScorer, score equals doc_id
+    for (size_t i = 0; i < result_count; ++i) {
+      ASSERT_EQ(results[i].doc, results[i].score);
+    }
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test with k larger than matching documents
+  {
+    irs::All filter;
+    constexpr size_t k = 1000;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(total_docs, result_count);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
+  // Create index with documents; WrapFactory pins indexed `name` to
+  // `kNameFieldId` so the negative-match filter below targets the same id
+  // the docs were indexed under.
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+
+  // Test with non-matching filter
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kNameFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("nonexistent_term_xyz"));
+    constexpr size_t k = 10;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(0, count);
+    ASSERT_EQ(0, std::min(count, k));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test with All filter
+  {
+    irs::All filter;
+    constexpr size_t k = 10;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(10, result_count);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
+  // Create index with multiple segments
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    auto writer = open_writer(irs::kOmCreate);
+    const Document* doc;
+
+    // Add first segment (even docs)
+    {
+      gen.reset();
+      while ((doc = gen.next())) {
+        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+        gen.next();  // skip 1 doc
+      }
+      writer->RefreshCommit();
+      AssertSnapshotEquality(*writer);
+    }
+
+    // Add second segment (odd docs)
+    {
+      gen.reset();
+      gen.next();  // skip 1 doc
+      while ((doc = gen.next())) {
+        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+        gen.next();  // skip 1 doc
+      }
+      writer->RefreshCommit();
+      AssertSnapshotEquality(*writer);
+    }
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  size_t total_docs = 0;
+  for (auto& segment : reader) {
+    total_docs += segment.docs_count();
+  }
+
+  // Test across multiple segments
+  {
+    irs::All filter;
+    constexpr size_t k = 5;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(5, result_count);
+    // Results should be sorted by score descending (may have equal scores
+    // from different segments since doc_ids restart per segment)
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+
+  // Test with term filter
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kPrefixFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
+    constexpr size_t k = 3;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_GT(count, 0);
+    auto result_count = std::min(count, k);
+    ASSERT_LE(result_count, 3);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+
+  // Test with disjunction filter (OR)
+  {
+    irs::BooleanFilter filter;
+    filter.Add(
+      irs::TermClause{.field = kPrefixFieldId,
+                      .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                        std::string_view("abcd"))}},
+      irs::Occur::Should);
+    filter.Add(
+      irs::TermClause{.field = kPrefixFieldId,
+                      .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                        std::string_view("abcde"))}},
+      irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
+    constexpr size_t k = 5;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_GT(count, 0);
+    auto result_count = std::min(count, k);
+    ASSERT_LE(result_count, 5);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                FreqFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test with k=1
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
+    constexpr size_t k = 1;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(1, result_count);
+    // The single result should have score equal to doc_id (highest doc_id)
+    ASSERT_EQ(results[0].doc, results[0].score);
+    ASSERT_EQ(total_docs, results[0].doc);
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                FreqFactory);
+    add_segment(gen);
+  }
+
+  DocIdScorer scorer;
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test that top-k returns the highest scoring documents
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
+    constexpr size_t k = 3;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(3, result_count);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+
+    // With DocIdScorer, top 3 should be docs with highest doc_ids
+    // Doc IDs start from 1, so for N docs, top 3 are N, N-1, N-2
+    ASSERT_EQ(total_docs, results[0].doc);
+    ASSERT_EQ(total_docs - 1, results[1].doc);
+    ASSERT_EQ(total_docs - 2, results[2].doc);
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                FreqFactory);
+    add_segment(gen);
+  }
+
+  // Use DocIdScorer with divisor 3, so scores are 0, 1, or 2
+  // This creates many documents with identical scores
+  DocIdScorer scorer{3};
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test top-k with many duplicate scores
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
+    constexpr size_t k = 5;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(5, result_count);
+    // Results should still be sorted by score descending
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+    // All top results should have score 2 (the maximum score from mod 3)
+    for (size_t i = 0; i < result_count; ++i) {
+      ASSERT_EQ(2, results[i].score);
+    }
+  }
+
+  // Test with k larger than documents with max score
+  {
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
+    constexpr size_t k = 10;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(10, result_count);
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
+    // Verify scores are valid (0, 1, or 2)
+    for (size_t i = 0; i < result_count; ++i) {
+      ASSERT_GE(results[i].score, 0);
+      ASSERT_LE(results[i].score, 2);
+    }
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
+  // Create index with documents
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  // Use DocIdScorer with divisor 1, so all scores are 0
+  DocIdScorer scorer{1};
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  auto& segment = *reader.begin();
+  auto total_docs = segment.docs_count();
+
+  // Test top-k when all documents have identical score
+  {
+    irs::All filter;
+    constexpr size_t k = 5;
+
+    std::vector<irs::ScoreDoc> results(k);
+    size_t count =
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+    ASSERT_EQ(total_docs, count);
+    auto result_count = std::min(count, k);
+    ASSERT_EQ(5, result_count);
+    // All scores should be 0
+    for (size_t i = 0; i < result_count; ++i) {
+      ASSERT_EQ(0, results[i].score);
+    }
+  }
+}
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(doc_collector_test, DocCollectorTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values("1_5simd")),
+                         DocCollectorTestCase::to_string);
+
+}  // namespace

@@ -22,7 +22,7 @@
 
 #include <duckdb/common/explain_value.hpp>
 #include <functional>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
 #include <string>
 
 #include "catalog/inverted_index.h"

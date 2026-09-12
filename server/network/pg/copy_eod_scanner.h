@@ -125,7 +125,7 @@ class CopyEodScanner {
         }
         // Not a marker (e.g. "\t" escape): real data, fall through.
       }
-      // Advance to the next line start.
+      // Next to the next line start.
       const auto nl = chunk.find('\n', pos);
       if (nl == std::string_view::npos) {
         _at_line_start = false;

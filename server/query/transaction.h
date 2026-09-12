@@ -21,10 +21,10 @@
 #pragma once
 
 #include <functional>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <yaclib/async/future.hpp>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
@@ -156,10 +156,10 @@ class Transaction : public Config {
   // the transaction only has to drive prepare/commit/abort. Shared with the
   // bound index rather than borrowed: DROP INDEX destroys the index without
   // waiting for a commit that has already engaged its feed.
-  containers::FlatHashMap<ObjectId,
-                          std::shared_ptr<connector::InvertedFeedSession>>
+  irs::containers::FlatHashMap<ObjectId,
+                               std::shared_ptr<connector::InvertedFeedSession>>
     _search_feeds;
-  containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
+  irs::containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. Separate from the feeds above:

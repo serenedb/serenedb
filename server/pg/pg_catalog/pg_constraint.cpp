@@ -22,11 +22,11 @@
 
 #include <deque>
 #include <duckdb/parser/constraints/list.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <span>
 #include <string_view>
 #include <utility>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -74,7 +74,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   // id the constraint carries and not by the qualified name it also carries:
   // the name is only what it was when the definition was written, and a rename
   // since has moved it.
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
     tables_by_id;
   catalog::VisitTableEntries(context, GetDatabaseId(),
                              [&](const catalog::SereneDBSchemaEntry&,

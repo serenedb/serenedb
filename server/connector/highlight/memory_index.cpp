@@ -21,13 +21,12 @@
 #include "connector/highlight/memory_index.h"
 
 #include <duckdb/main/database.hpp>
-
-#include "basics/duckdb_engine.h"
+#include <iresearch/utils/duckdb_engine.hpp>
 
 namespace sdb::connector::highlight {
 
 MemoryIndex::MemoryIndex()
   : _codec{irs::formats::Get("1_5simd")},
-    _db{&sdb::DuckDBEngine::Instance().instance()} {}
+    _db{&irs::DuckDBEngine::Instance().instance()} {}
 
 }  // namespace sdb::connector::highlight

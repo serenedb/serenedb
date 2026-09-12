@@ -12914,7 +12914,7 @@
   {
     "query": "(the world state)@2",
     "count": 1027681,
-    "top_100": 1717,
+    "top_100": 1027681,
     "result_type": "Hash",
     "top_100_result": [
       "3e374e4991c856f337b9e05cc0d438a0c604a6f8ae12ee7603f6bf0c1355dfc0"
@@ -12926,7 +12926,7 @@
   {
     "query": "(the world state history)@3",
     "count": 368422,
-    "top_100": 11726,
+    "top_100": 368422,
     "result_type": "Hash",
     "top_100_result": [
       "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"

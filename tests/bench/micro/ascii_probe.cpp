@@ -32,12 +32,11 @@
 
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
+#include <iresearch/analysis/text/classify/block_masks.hpp>
 #include <random>
 #include <span>
 #include <string>
 #include <vector>
-
-#include "iresearch/analysis/text/classify/block_masks.hpp"
 
 namespace {
 

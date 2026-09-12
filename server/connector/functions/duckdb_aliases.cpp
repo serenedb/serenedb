@@ -34,11 +34,10 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parser_options.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include "basics/assert.h"
 
 namespace sdb::connector {
 namespace {

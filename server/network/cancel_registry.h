@@ -25,12 +25,12 @@
 #include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/random/random_generator.h"
+#include "server/utils/random_generator.h"
 
 namespace sdb::network {
 
@@ -199,7 +199,7 @@ class CancelRegistry {
 
  private:
   absl::Mutex _mu;
-  containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
+  irs::containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
   bool _terminating = false;
 };
 

@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <exception>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>
 #include <yaclib/async/make.hpp>
@@ -38,13 +39,12 @@
 #include <yaclib/coro/on.hpp>
 #include <yaclib/util/result.hpp>
 
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/metrics.h"
 #include "catalog/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/metrics.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {

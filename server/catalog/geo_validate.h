@@ -21,10 +21,9 @@
 #pragma once
 
 #include <duckdb/common/types/geometry_crs.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
-
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 

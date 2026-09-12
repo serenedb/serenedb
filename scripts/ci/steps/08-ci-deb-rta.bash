@@ -64,7 +64,7 @@ fi
 # deb-installed binary (must precede the apt remove below).
 echo "=== HBA network tests ==="
 network_rc=0
-$EXEC env SERENED=/usr/bin/serened /workspace/tests/network/run.sh \
+$EXEC env SERENED=/usr/bin/serened /workspace/tests/drivers/network/run.sh \
 	2>&1 | tee "${WORKSPACE}/out/logs/deb-rta-network.log" || network_rc=$?
 if [[ $network_rc -ne 0 ]]; then
 	echo "DEB_RTA=FAILED (network tests)"

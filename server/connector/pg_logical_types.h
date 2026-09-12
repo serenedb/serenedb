@@ -22,9 +22,8 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/inet/inet_type.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string_view>
-
-#include "basics/containers/flat_hash_set.h"
 
 namespace sdb::pg {
 
@@ -97,7 +96,7 @@ DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
 // as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
 // oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
-inline const containers::FlatHashSet<std::string_view> kOidLikeAliases = {
+inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
   kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
   kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,
   kRegnamespaceAlias, kRegconfigAlias, kRegdictionaryAlias, kRegcollationAlias,

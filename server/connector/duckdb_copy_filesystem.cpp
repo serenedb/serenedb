@@ -26,17 +26,17 @@
 #include <cstring>
 #include <duckdb/common/file_opener.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <span>
 
-#include "basics/assert.h"
-#include "basics/message_buffer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "pg/errcodes.h"
 #include "pg/protocol.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {

@@ -24,12 +24,12 @@
 #include <absl/functional/overload.h>
 
 #include <algorithm>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/states/multiterm_state.hpp>
-#include <iresearch/search/states/ngram_state.hpp>
-#include <iresearch/search/states/phrase_state.hpp>
-#include <iresearch/search/states/term_state.hpp>
+#include <iresearch/search/queries/multiterm_state.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/search/queries/ngram_state.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
+#include <iresearch/search/queries/phrase_state.hpp>
+#include <iresearch/search/queries/term_state.hpp>
 #include <span>
 
 namespace sdb::connector {

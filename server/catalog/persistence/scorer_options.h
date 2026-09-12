@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <iresearch/search/scorer_options.hpp>
+#include <iresearch/search/scorers/scorer_options.hpp>
 #include <magic_enum/magic_enum.hpp>
 
 namespace sdb::catalog::persistence {

@@ -26,6 +26,11 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <filesystem>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,9 +38,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/debugging.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
@@ -47,8 +49,6 @@
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {
@@ -395,7 +395,7 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("current user cannot be dropped"));
   }
-  if (role == StaticStrings::kDefaultUser) {
+  if (role == irs::StaticStrings::kDefaultUser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     ERR_MSG("cannot drop role ", role,
                             " because it is required by the database system"));

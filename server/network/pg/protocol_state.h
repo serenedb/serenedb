@@ -33,18 +33,18 @@
 #include <duckdb/parser/sql_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
-#include "basics/debugging.h"
 #include "network/pg/wire_frames.h"
-#include "pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::network::pg {
 
@@ -405,7 +405,7 @@ class ImplicitTxnState {
   // (the SereneDB commit hook + autocommit restore). Returns the converted
   // error rather than writing it, so the caller's single write site handles it
   // and this stays socket-free / unit-testable.
-  std::optional<sdb::pg::SqlErrorData> Commit() {
+  std::optional<irs::pg::SqlErrorData> Commit() {
     _open = false;
     SDB_IF_FAILURE("implicit_block_commit") {
       // Simulate a commit-time failure (deferred-constraint / write-conflict
@@ -413,7 +413,7 @@ class ImplicitTxnState {
       // transaction down (ClearTransaction runs before the engine commit), so
       // roll back here too and report the error.
       _txn.Rollback(nullptr);
-      return sdb::pg::SqlErrorData{
+      return irs::pg::SqlErrorData{
         .errcode = ERRCODE_T_R_SERIALIZATION_FAILURE,
         .errmsg = "injected implicit-block commit failure",
       };
@@ -529,8 +529,8 @@ class NamedStore {
 
   T& Anon() { return _anon; }
   const T& Anon() const { return _anon; }
-  containers::NodeHashMap<std::string, T>& Named() { return _named; }
-  const containers::NodeHashMap<std::string, T>& Named() const {
+  irs::containers::NodeHashMap<std::string, T>& Named() { return _named; }
+  const irs::containers::NodeHashMap<std::string, T>& Named() const {
     return _named;
   }
 
@@ -540,7 +540,7 @@ class NamedStore {
   }
 
  private:
-  containers::NodeHashMap<std::string, T> _named;
+  irs::containers::NodeHashMap<std::string, T> _named;
   T _anon{};
   int _missing_code;
   int _duplicate_code;

@@ -1,0 +1,173 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2016 by EMC Corporation, All Rights Reserved
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is EMC Corporation
+///
+/// @author Andrey Abramov
+/// @author Vasiliy Nabatchikov
+////////////////////////////////////////////////////////////////////////////////
+
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+
+#include "filter_test_case_base.hpp"
+#include "tests_shared.hpp"
+
+namespace {
+
+class AllFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(AllFilterTestCase, all_sequential) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_NE(nullptr, rdr);
+  ASSERT_EQ(1, rdr->size());
+
+  Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+  std::vector<uint64_t> cost{docs.size()};
+
+  CheckQuery(irs::All(), docs, cost, rdr);
+
+  MaxMemoryCounter counter;
+  {
+    const irs::All all_filter;
+    tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
+    auto it = prepared.Execute(0);
+    ASSERT_NE(nullptr, it);
+    ASSERT_EQ(docs.size(), prepared.Estimate(0));
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+}
+
+TEST_P(AllFilterTestCase, all_order) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // empty query
+  // CheckQuery(irs::all(), Docs{}, Costs{0}, rdr);
+
+  // no order (same as empty order since no score is calculated)
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+    CheckQuery(irs::All(), docs, Costs{docs.size()}, rdr);
+  }
+
+  // custom order
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+    size_t collector_finish_count = 0;
+    size_t collector_field_docs = 0;
+    size_t scorer_score_count = 0;
+
+    irs::Scorer::ptr bucket{std::make_unique<tests::sort::CustomSort>()};
+    auto* sort = static_cast<tests::sort::CustomSort*>(bucket.get());
+
+    sort->collectors_collect = [&collector_finish_count, &collector_field_docs](
+                                 const irs::byte_type*,
+                                 const irs::FieldCollector* field,
+                                 const irs::TermCollector*) -> void {
+      ++collector_finish_count;
+      if (field) {
+        collector_field_docs += field->docs_with_field;
+      }
+    };
+    sort->scorer_score = [&](const irs::ScoreOperator* ctx, irs::score_t* score,
+                             size_t n) -> void {
+      ASSERT_EQ(1, n);
+      ASSERT_LT(scorer_score_count, docs.size());
+      ++scorer_score_count;
+      *score = irs::score_t(scorer_score_count & 0xAAAAAAAA);
+    };
+
+    CheckQuery(irs::All(), std::span{&bucket, 1}, docs, rdr);
+    ASSERT_EQ(0, collector_field_docs);
+    ASSERT_EQ(1, collector_finish_count);
+    ASSERT_EQ(1, scorer_score_count);
+  }
+
+  // custom order (no scorer)
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    irs::Scorer::ptr bucket{std::make_unique<tests::sort::CustomSort>()};
+    auto& sort = static_cast<tests::sort::CustomSort&>(*bucket);
+
+    sort.prepare_scorer =
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+      return irs::ScoreFunction::Default();
+    };
+    CheckQuery(irs::All(), std::span{&bucket, 1}, docs, rdr, false);
+  }
+
+  // frequency order
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
+
+    CheckQuery(irs::All(), std::span{&sort, 1}, docs, rdr);
+  }
+
+  // bm25 order
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    irs::Scorer::ptr sort = irs::BM25::Make(irs::BM25::Options{});
+
+    CheckQuery(irs::All(), std::span{&sort, 1}, docs, rdr);
+  }
+
+  // tfidf order
+  {
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    irs::Scorer::ptr sort = irs::TFIDF::Make(irs::TFIDF::Options{});
+    CheckQuery(irs::All(), std::span{&sort, 1}, docs, rdr);
+  }
+}
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(all_filter_test, AllFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values("1_5simd")),
+                         AllFilterTestCase::to_string);
+
+}  // namespace

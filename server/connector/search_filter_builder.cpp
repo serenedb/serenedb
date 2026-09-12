@@ -40,36 +40,38 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/unscored.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "functions/search.h"
@@ -77,8 +79,6 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace magic_enum {
 
@@ -984,7 +984,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-const containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
+const irs::containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
     {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
     {kNGramMatches, BuildPassthrough<kTSQNGram>},
@@ -1074,7 +1074,7 @@ bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
          t == irs::Type<irs::analysis::WildcardTokenizer>::id();
 }
 
-const containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
+const irs::containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
   kBuiltinBuilder = {
     {"contains", &BuildTSContainsLike},
     {"^@", &BuildTSStartsWith},
@@ -1340,7 +1340,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
-  const auto& node = basics::downCast<irs::BooleanFilter>(filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
   if (node.GetScorer() != nullptr) {
     return !irs::IsConstScoreSingleton(node.GetScorer());
   }
@@ -1416,7 +1416,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
         clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
       break;
     }
-    group = &sdb::basics::downCast<irs::BooleanFilter>(*clauses[0]);
+    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
     node = group;
   }
   if (!group) {
@@ -2282,7 +2282,7 @@ absl::Status MakeSearchFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
   duckdb::Value v;
   uint32_t levenshtein_max_terms = 50;

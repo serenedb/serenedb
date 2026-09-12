@@ -28,15 +28,14 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -53,6 +52,7 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {
@@ -179,18 +179,18 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   // Both come off the same sets the rows do, so the whole projection answers
   // from one place.
   std::vector<const catalog::SereneDBIndexEntry*> indexes;
-  containers::FlatHashSet<ObjectId> indexed_relations;
+  irs::containers::FlatHashSet<ObjectId> indexed_relations;
   catalog::Visit<catalog::SereneDBIndexEntry>(
     &context, database_id, [&](const catalog::SereneDBIndexEntry& entry) {
       indexed_relations.insert(entry.GetRelationId());
       indexes.push_back(&entry);
     });
-  containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
+  irs::containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
   // The tables in set order, for the synthetic key-index rows below, and the
   // sequences that feed a synthetic primary key -- serenedb's own machinery,
   // which postgres has no relation for.
   std::vector<std::pair<ObjectId, const catalog::SereneDBTableEntry*>> tables;
-  containers::FlatHashSet<ObjectId> generated_pk_sequences;
+  irs::containers::FlatHashSet<ObjectId> generated_pk_sequences;
 
   catalog::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,

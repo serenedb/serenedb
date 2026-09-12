@@ -25,9 +25,9 @@
 #include <array>
 #include <iosfwd>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/utils/type_limits.hpp>
 
 #include "executor.h"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace bench {
 

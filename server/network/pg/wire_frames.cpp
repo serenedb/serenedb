@@ -30,17 +30,17 @@
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <utility>
 #include <vector>
 
-#include "basics/dtoa.h"
 #include "pg/command_tag.h"
-#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
-#include "pg/sql_exception.h"
 #include "pg/sql_utils.h"
 #include "query/utils.h"
+#include "server/utils/dtoa.h"
 
 namespace sdb::network::pg {
 namespace {
@@ -445,7 +445,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
   if (tag.rowcount) {
     // PG appends the affected/returned count straight into the frame: " 0 <n>"
     // for INSERT (the legacy oid field, always 0), " <n>" for the rest.
-    w.Write(basics::kIntStrMaxLen + 3, [&](auto* data) {
+    w.Write(utils::kIntStrMaxLen + 3, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = buf;
       *ptr++ = ' ';
@@ -465,7 +465,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
 }
 
 void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
-                     const sdb::pg::SqlErrorData& data) {
+                     const irs::pg::SqlErrorData& data) {
   message::Writer w{out};
   char sql_state[sdb::pg::kSqlStateSize];
   sdb::pg::UnpackSqlState(sql_state, data.errcode);
@@ -495,27 +495,27 @@ void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
 }
 
 void WriteErrorResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error) {
+                        const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "ERROR", error);
 }
 
 void WriteFatalResponse(message::Buffer& out,
-                        const sdb::pg::SqlErrorData& error) {
+                        const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "FATAL", error);
 }
 
 void WriteNoticeResponse(message::Buffer& out,
-                         const sdb::pg::SqlErrorData& notice) {
+                         const irs::pg::SqlErrorData& notice) {
   WriteDiagnostic(out, PQ_MSG_NOTICE_RESPONSE, "WARNING", notice);
 }
 
-sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
+irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   // DuckDB reports running a statement in an aborted explicit transaction as a
   // generic TransactionException (40001 by type); postgres flags it 25P02. The
   // message is the stable ErrorManager::INVALIDATED_TRANSACTION text.
   if (error.Type() == duckdb::ExceptionType::TRANSACTION &&
       error.RawMessage().starts_with("current transaction is aborted")) {
-    return sdb::pg::SqlErrorData{
+    return irs::pg::SqlErrorData{
       .errcode = ERRCODE_IN_FAILED_SQL_TRANSACTION,
       .errmsg = error.RawMessage(),
     };
@@ -526,21 +526,21 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     const std::string_view subtype =
       subtype_it != extra.end() ? subtype_it->second : std::string_view{};
     if (subtype == "CROSS_DATABASE_WRITE") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
                                    .errmsg = error.RawMessage()};
     }
     if (subtype == "READ_ONLY") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
                                    .errmsg = error.RawMessage()};
     }
     if (subtype == "TRANSACTION_LOCAL_CHANGES") {
-      return sdb::pg::SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
+      return irs::pg::SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
                                    .errmsg = error.RawMessage()};
     }
   }
   // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
-  sdb::pg::SqlErrorData data{
+  irs::pg::SqlErrorData data{
     .errcode = DuckExceptionToErrcode(error),
     .errmsg = interrupted ? "canceling statement due to user request"
                           : error.RawMessage(),
@@ -559,14 +559,14 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   return data;
 }
 
-sdb::pg::SqlErrorData ToSqlError(const std::exception& exception) {
-  if (const auto* sql = dynamic_cast<const sdb::SqlException*>(&exception)) {
+irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
+  if (const auto* sql = dynamic_cast<const irs::SqlException*>(&exception)) {
     return sql->error();
   }
   if (const auto* duck = dynamic_cast<const duckdb::Exception*>(&exception)) {
     return DuckErrorToSqlData(duckdb::ErrorData{*duck});
   }
-  return sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
+  return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};
 }
 

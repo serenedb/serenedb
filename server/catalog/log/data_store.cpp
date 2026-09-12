@@ -37,14 +37,14 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <exception>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -176,7 +176,7 @@ DataStore::DataStore() {
 DataStore::~DataStore() { gInstance = nullptr; }
 
 void DataStore::Initialize() {
-  _conn = DuckDBEngine::Instance().CreateConnection();
+  _conn = irs::DuckDBEngine::Instance().CreateConnection();
 }
 
 void DataStore::MarkReady() { _ready.store(true, std::memory_order_release); }
@@ -554,15 +554,16 @@ duckdb::Connection* DataStore::BindConnection(duckdb::AttachedDatabase& db) {
     // transaction out from under it.
     const auto open = [&](duckdb::unique_ptr<duckdb::Connection>& conn,
                           std::shared_ptr<ConnectionContext>& ctx) {
-      conn = DuckDBEngine::Instance().CreateConnection();
+      conn = irs::DuckDBEngine::Instance().CreateConnection();
       ctx = std::make_shared<ConnectionContext>(
-        *conn->context, StaticStrings::kDefaultUser, ObjectId{}, name,
+        *conn->context, irs::StaticStrings::kDefaultUser, ObjectId{}, name,
         database_id, nullptr, 0, nullptr);
       ctx->MarkStorageConnection();
       connector::SereneDBClientState::Register(*conn->context, ctx);
       // Same search path a session gets: an indexed expression names its
       // dictionary unqualified, so resolving it needs `public` on the path.
-      conn->context->session_user = std::string{StaticStrings::kDefaultUser};
+      conn->context->session_user =
+        std::string{irs::StaticStrings::kDefaultUser};
       std::vector<duckdb::CatalogSearchEntry> paths{
         duckdb::CatalogSearchEntry{duckdb::Identifier{name},
                                    duckdb::Identifier{"$user"}},
@@ -655,7 +656,7 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
         table_ids.push_back(catalog::IdOf(table));
       }
     });
-  containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
+  irs::containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
   catalog::Visit<catalog::SereneDBIndexEntry>(
     nullptr, database_id, [&](const catalog::SereneDBIndexEntry& index) {
       index_ids[index.GetRelationId()].push_back(catalog::IdOf(index));

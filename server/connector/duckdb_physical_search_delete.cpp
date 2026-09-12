@@ -23,6 +23,8 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -36,8 +38,6 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -206,7 +206,7 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
     auto& gstate = input.global_state.Cast<IndexDeleteState>();
     gstate.trx->RegisterFlush();
     const auto tick =
-      search::TickDomain::Instance().Advance(gstate.trx->GetQueries() + 1);
+      search::TickDomain::Instance().Next(gstate.trx->GetQueries() + 1);
     if (!gstate.trx->Commit(tick)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("failed to commit the removes for index with id ",

@@ -41,15 +41,14 @@
 #include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -195,7 +194,7 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                       ERR_MSG("external lookup key type resolution failed: ",
                               result->GetError()));
     }
-    containers::FlatHashMap<std::string, std::string> by_name;
+    irs::containers::FlatHashMap<std::string, std::string> by_name;
     while (auto chunk = result->Fetch()) {
       for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
         by_name.emplace(chunk->GetValue(0, row).ToString(),

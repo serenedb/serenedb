@@ -24,7 +24,7 @@
 
 #include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/top_terms_selector.hpp>
+#include <iresearch/search/detail/top_terms_selector.hpp>
 #include <iresearch/utils/string.hpp>
 
 namespace {

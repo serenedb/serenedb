@@ -1,0 +1,37 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+
+namespace irs::geo {
+
+// Volumetric mean radius of Earth, in meters.
+// Source: http://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+inline constexpr double kEarthRadiusInMeters = 6'371'000.0;
+
+constexpr double MetersToRadians(double distance_in_meters) noexcept {
+  return std::clamp(distance_in_meters / kEarthRadiusInMeters, 0.0, M_PI);
+}
+
+}  // namespace irs::geo

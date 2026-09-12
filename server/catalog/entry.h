@@ -29,6 +29,9 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/serialization.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,12 +39,9 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/identifier.h"
-#include "basics/serialization.h"
-#include "basics/serializer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
+#include "server/utils/identifier.h"
 
 namespace duckdb {
 

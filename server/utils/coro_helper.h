@@ -20,12 +20,11 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.hpp>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
-
-#include "basics/assert.h"
 
 // For more safety
 template<>

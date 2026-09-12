@@ -46,18 +46,17 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/stream_query_result.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "basics/duckdb_engine.h"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/internal/gather_arms.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/memory_directory.hpp"
 
 namespace {
 
@@ -93,7 +92,7 @@ bool IsNull(uint64_t g, bool nullable) { return nullable && (g % 10 == 0); }
 // The process-wide DuckDBEngine instance (brought up in main()) supplies the
 // DatabaseInstance the columnstore codecs read their compression registry from.
 duckdb::DatabaseInstance& CsDb() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 struct Seg {
@@ -391,10 +390,10 @@ IRS_CASES(IrsWriteSeal);
 IRS_CASES(DuckFullScan);
 
 int main(int argc, char** argv) {
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

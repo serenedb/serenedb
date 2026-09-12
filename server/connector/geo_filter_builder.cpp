@@ -26,19 +26,19 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
-#include <iresearch/search/geo_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/geo/coding.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/geo/shape_container.hpp>
+#include <iresearch/utils/geo/wkb.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "basics/assert.h"
 #include "catalog/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
-#include "geo/coding.h"
-#include "geo/geo_json.h"
-#include "geo/shape_container.h"
-#include "geo/wkb.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -100,8 +100,8 @@ void SetupGeoFilter(const SearchColumnInfo& column_info,
 // GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
 //   when the bytes carry an EWKB SRID).
 void ParseGeoConstant(const duckdb::Value& value,
-                      sdb::geo::coding::Options coding,
-                      sdb::geo::ShapeContainer& shape) {
+                      irs::geo::coding::Options coding,
+                      irs::geo::ShapeContainer& shape) {
   switch (value.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR: {
       // StringValue::Get returns the raw stored bytes; for VARCHAR that's the
@@ -127,7 +127,7 @@ void ParseGeoConstant(const duckdb::Value& value,
       // ParseShape (geo_json.cpp) uses the cache as scratch for LatLng
       // pre-quantization; ParseShapeWKB no longer needs one.
       std::vector<S2LatLng> cache;
-      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(json, shape, cache,
+      if (!irs::geo::ParseShape<irs::geo::Parsing::GeoJson>(json, shape, cache,
                                                             coding, nullptr)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("Geo argument is not valid GeoJSON"));
@@ -137,7 +137,7 @@ void ParseGeoConstant(const duckdb::Value& value,
     case duckdb::LogicalTypeId::GEOMETRY: {
       sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       const auto& wkb_str = duckdb::StringValue::Get(value);
-      if (!sdb::geo::ParseShapeWKB(wkb_str, shape)) {
+      if (!irs::geo::ParseShapeWKB(wkb_str, shape)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("GEOMETRY constant is not valid WKB"));
       }
@@ -218,7 +218,7 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer centroid_shape;
+  irs::geo::ShapeContainer centroid_shape;
   ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
   options->origin = centroid_shape.centroid();
 
@@ -319,7 +319,7 @@ void FromGeoInRange(BoolTarget filter, const FilterContext& ctx,
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer centroid_shape;
+  irs::geo::ShapeContainer centroid_shape;
   ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
   options->origin = centroid_shape.centroid();
 
@@ -398,7 +398,7 @@ void FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   ParseGeoConstant(*shape_val, options->coding, shape);
   options->shape = std::move(shape);
 

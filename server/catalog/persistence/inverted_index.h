@@ -26,12 +26,12 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
 #include "catalog/table_options.h"
 #include "search/search_analyzer_impl.h"
@@ -97,7 +97,7 @@ struct InvertedIndexDataT {
   std::vector<ColumnEntry> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
-  containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
+  irs::containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
   InvertedIndexOptions options;
   // Partial-index predicate (CREATE INDEX ... WHERE): rows are indexed and
   // maintained only when it evaluates to true. An empty serialized_expr

@@ -22,11 +22,10 @@
 
 #include <ada.h>
 
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include "basics/assert.h"
 
 namespace sdb::network {
 

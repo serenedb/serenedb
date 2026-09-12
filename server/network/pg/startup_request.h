@@ -21,11 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "basics/containers/flat_hash_map.h"
 
 namespace sdb::network::pg {
 
@@ -36,7 +35,7 @@ namespace sdb::network::pg {
 struct StartupRequest {
   uint32_t major = 0;
   uint32_t minor = 0;
-  containers::FlatHashMap<std::string, std::string> params;
+  irs::containers::FlatHashMap<std::string, std::string> params;
   std::vector<std::string> unrecognized_pq;
   bool replication = false;
   bool replication_invalid = false;

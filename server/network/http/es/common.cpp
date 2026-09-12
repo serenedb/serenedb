@@ -24,11 +24,11 @@
 #include <simdjson.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <utility>
 
 #include "network/pg/wire_frames.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
 
 namespace sdb::network::http::es {
 
@@ -52,10 +52,10 @@ void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
 
 void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
                    std::string_view index) {
-  sdb::pg::SqlErrorData data;
+  irs::pg::SqlErrorData data;
   try {
     error.Throw();
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     data = e.error();
   } catch (...) {
     data = pg::DuckErrorToSqlData(error);

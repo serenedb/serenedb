@@ -27,13 +27,13 @@
 #include <duckdb/catalog/catalog_permissions.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/log/store_op.h"
@@ -259,7 +259,7 @@ class CatalogStore {
   // Guarded by the cluster catalog log's lock (LockClusterCatalogWal): the map
   // mirrors the log's sequence records, staged beside the file they replay
   // from.
-  containers::FlatHashMap<uint64_t, uint64_t> _sequences;
+  irs::containers::FlatHashMap<uint64_t, uint64_t> _sequences;
 };
 
 CatalogStore& GetCatalogStore();

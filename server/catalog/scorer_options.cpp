@@ -34,14 +34,13 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 #include <span>
 #include <string>
 #include <vector>
-
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

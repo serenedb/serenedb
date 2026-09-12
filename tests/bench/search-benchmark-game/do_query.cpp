@@ -23,11 +23,11 @@
 
 #include <cstdio>
 #include <iostream>  // std::cin
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <string>
 
-#include "basics/duckdb_engine.h"
 #include "executor.h"
 
 namespace {
@@ -43,11 +43,11 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
       const auto result = executor.ExecuteEmitDocs(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case bench::Kind::Scored: {
-      const auto result = executor.ExecuteEmitScoredDocs(query, cmd.report);
+    case bench::Kind::Hits: {
+      const auto result = executor.ExecuteEmitHits(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case bench::Kind::TopK: {
+    case bench::Kind::Top: {
       const auto count = cmd.prune
                            ? executor.ExecuteTopK(cmd.k, query)
                            : executor.ExecuteTopKWithCount(cmd.k, query);
@@ -71,7 +71,7 @@ int main(int argc, const char* argv[]) {
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the
   // BlockAllocator/thread_local UAF rationale).
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
     irs::formats::Init();
@@ -114,6 +114,6 @@ int main(int argc, const char* argv[]) {
     absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;
   }
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }

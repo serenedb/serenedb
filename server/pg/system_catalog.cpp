@@ -28,15 +28,14 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/serializer.h"
-#include "basics/static_strings.h"
-#include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
@@ -113,6 +112,7 @@
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {
@@ -138,7 +138,7 @@ struct HashEq {
 };
 
 using PgSystemSchema =
-  containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
+  irs::containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
 
 template<typename T>
 const VirtualTable* MakeTable() {
@@ -234,18 +234,18 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
 
 // Node-based: the value is a definition plus a whole permission set, which is
 // past what a flat map wants to move, and these are built once at startup.
-containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
-containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
-containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
-containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
+irs::containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
+irs::containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
+irs::containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
+irs::containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
 }  // namespace
 
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name) {
-  if (schema == StaticStrings::kPgCatalogSchema) {
+  if (schema == irs::StaticStrings::kPgCatalogSchema) {
     return GetTableFromSchema(name, kPgCatalog);
-  } else if (schema == StaticStrings::kInformationSchema) {
+  } else if (schema == irs::StaticStrings::kInformationSchema) {
     return GetTableFromSchema(name, kInformationSchema);
   } else {
     SDB_UNREACHABLE();
@@ -365,7 +365,8 @@ void InitSystemViews(duckdb::Parser& parser) {
     if (!view.superuser_only) {
       acl.push_back(catalog::kSystemPublicSelect);
     }
-    const bool info_schema = view.schema == StaticStrings::kInformationSchema;
+    const bool info_schema =
+      view.schema == irs::StaticStrings::kInformationSchema;
     catalog::SetIdentity(
       *info, id, info_schema ? id::kPgInformationSchema : id::kPgCatalogSchema);
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
@@ -408,11 +409,11 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
 void InitSystemFunctions(duckdb::Parser& parser) {
   // All the overloads of one name share one info, as duckdb's macro entry does,
   // so they are merged while still writable and published once each.
-  containers::FlatHashMap<std::string,
-                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     pg_catalog;
-  containers::FlatHashMap<std::string,
-                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     info_schema_map;
   for (const auto& macro : kExternalMacros) {
     auto info = ParseMacro(parser, macro);
@@ -420,7 +421,8 @@ void InitSystemFunctions(duckdb::Parser& parser) {
     // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
     // pg_catalog is always implicitly searched -- functions like current_user,
     // overlay, etc. should be findable without schema qualification.
-    const bool info_schema = macro.schema == StaticStrings::kInformationSchema;
+    const bool info_schema =
+      macro.schema == irs::StaticStrings::kInformationSchema;
     auto& map = info_schema ? info_schema_map : pg_catalog;
 
     auto it = map.find(macro.name);

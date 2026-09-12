@@ -28,15 +28,15 @@
 #include <cstdint>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/column_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
@@ -104,7 +104,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // at the column id, so several indexes on one column keep independent
   // analyzers.
   using TermsByColumn =
-    containers::FlatHashMap<catalog::ColumnId, std::vector<irs::field_id>>;
+    irs::containers::FlatHashMap<catalog::ColumnId, std::vector<irs::field_id>>;
   std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
 
   // The per-field iresearch encoding config (norms/compression/row-group) the

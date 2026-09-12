@@ -15,17 +15,16 @@ import sys
 from pathlib import Path
 
 EXCEPTIONS = {
-    "libs/iresearch/include/iresearch/parser/lucene_parser.hpp",
-    "libs/iresearch/include/iresearch/parser/lucene_parser.cpp",
-    "libs/iresearch/include/iresearch/parser/lucene_lexer.cpp",
-    "libs/iresearch/include/iresearch/utils/fstext/fst_draw.hpp",
-    "libs/basics/wyhash.h",
+    "iresearch/parser/lucene_parser.hpp",
+    "iresearch/parser/lucene_parser.cpp",
+    "iresearch/parser/lucene_lexer.cpp",
+    "iresearch/utils/fstext/fst_draw.hpp",
+    "server/utils/wyhash.h",
     "server/pg/protocol.h",
     "server/pg/functions/interval.cpp",
     "tests/bench/micro/call_once.cpp",
     "tests/bench/micro/random.cpp",
     "tests/bench/micro/function.cpp",
-    "tests/libs/fuerte/main.cpp",
 }
 
 BORDER = "/" * 80

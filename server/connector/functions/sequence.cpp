@@ -30,12 +30,15 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -44,9 +47,6 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -59,7 +59,7 @@ const catalog::SereneDBSequenceEntry& ResolveSequence(
   catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
   std::string_view schema_name = qname.Schema().empty()
-                                   ? StaticStrings::kPublic
+                                   ? irs::StaticStrings::kPublic
                                    : qname.Schema().GetIdentifierName();
 
   auto& conn_ctx = GetSereneDBContext(context);
@@ -106,7 +106,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindSequenceReference(
   }
   auto qname = duckdb::QualifiedName::Parse(duckdb::StringValue::Get(name));
   const auto schema = qname.Schema().empty()
-                        ? duckdb::Identifier{StaticStrings::kPublic}
+                        ? duckdb::Identifier{irs::StaticStrings::kPublic}
                         : qname.Schema();
   const duckdb::EntryLookupInfo lookup{
     duckdb::CatalogType::SEQUENCE_ENTRY,

@@ -27,14 +27,16 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -47,8 +49,6 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::optimizer {
 namespace {
@@ -76,8 +76,8 @@ catalog::AclMode AsAclMode(duckdb::AccessVerb verb) {
 
 bool IsSystemSchema(const duckdb::CatalogEntry& entry) {
   const auto schema = entry.ParentSchema().name.GetIdentifierName();
-  return schema == StaticStrings::kPgCatalogSchema ||
-         schema == StaticStrings::kInformationSchema;
+  return schema == irs::StaticStrings::kPgCatalogSchema ||
+         schema == irs::StaticStrings::kInformationSchema;
 }
 
 // What a bound relation entry contributes to an access check: the owner and ACL
@@ -210,7 +210,7 @@ using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
 // it walks every attached catalog's set, hence the dedup per alias.
 void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
                                const AccessRequirements& reqs) {
-  containers::FlatHashSet<std::string_view> checked;
+  irs::containers::FlatHashSet<std::string_view> checked;
   for (const auto& req : reqs) {
     if (!req.table) {
       continue;
@@ -251,9 +251,9 @@ std::vector<Governed> CollectRelations(const AccessRequirements& reqs,
   return objects;
 }
 
-containers::FlatHashSet<uint64_t> CollectWriteTargets(
+irs::containers::FlatHashSet<uint64_t> CollectWriteTargets(
   const AccessRequirements& reqs, const std::vector<Governed>& objects) {
-  containers::FlatHashSet<uint64_t> targets;
+  irs::containers::FlatHashSet<uint64_t> targets;
   for (size_t i = 0; i < reqs.size(); ++i) {
     if (objects[i].type == duckdb::CatalogType::TABLE_ENTRY &&
         Has(reqs[i].verb,

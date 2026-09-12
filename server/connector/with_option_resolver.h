@@ -23,10 +23,9 @@
 #include <cstdint>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
-
-#include "basics/assert.h"
 
 namespace sdb::connector {
 

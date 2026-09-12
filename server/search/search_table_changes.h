@@ -24,13 +24,13 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
@@ -126,6 +126,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

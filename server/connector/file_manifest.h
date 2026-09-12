@@ -22,7 +22,10 @@
 
 #include <cstdint>
 #include <duckdb/common/open_file_info.hpp>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>
@@ -30,9 +33,6 @@
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::search {
@@ -49,7 +49,7 @@ struct FileManifestEntry {
 };
 
 struct FileManifest {
-  containers::NodeHashMap<uint64_t, FileManifestEntry> entries;
+  irs::containers::NodeHashMap<uint64_t, FileManifestEntry> entries;
   // Iceberg: the indexed snapshot id (everything else -- the sequence
   // baseline, the diff -- resolves from the table metadata by it). 0 for
   // the stat regime.
@@ -93,8 +93,8 @@ struct IcebergDeleteState {
     std::string partition_key;  // empty = global
   };
   // File-scoped deletes: the newest sequence per data file.
-  containers::FlatHashMap<std::string, uint64_t> per_file;
-  containers::FlatHashMap<std::string, Watermarks> per_partition;
+  irs::containers::FlatHashMap<std::string, uint64_t> per_file;
+  irs::containers::FlatHashMap<std::string, Watermarks> per_partition;
   std::vector<EqualityDelete> equality;
   const duckdb::IcebergMultiFileList* list = nullptr;
   Watermarks global;
@@ -226,13 +226,14 @@ struct StatObserve {
 template<typename Observe>
 FileDiff DiffListing(const Source& src, const search::FileManifest& manifest,
                      Observe& observe) {
-  containers::FlatHashMap<std::string_view, const search::FileManifestEntry*>
+  irs::containers::FlatHashMap<std::string_view,
+                               const search::FileManifestEntry*>
     by_path;
   by_path.reserve(manifest.entries.size());
   for (const auto& [id, e] : manifest.entries) {
     by_path.emplace(e.path, &e);
   }
-  containers::FlatHashSet<std::string_view> live_paths;
+  irs::containers::FlatHashSet<std::string_view> live_paths;
   live_paths.reserve(src.files.size());
 
   FileDiff files;

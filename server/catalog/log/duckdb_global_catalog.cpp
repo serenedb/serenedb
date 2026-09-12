@@ -34,12 +34,13 @@
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
-#include "basics/file_utils.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -47,8 +48,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/read/duckdb_dependency.h"
 #include "connector/duckdb_storage_extension.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -154,8 +154,9 @@ duckdb::optional_ptr<SereneDBGlobalCatalog> TryGlobalCatalog(
 }
 
 duckdb::optional_ptr<SereneDBGlobalCatalog> TryGlobalCatalog() {
-  auto db = duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
+  auto db =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
   return AsGlobalCatalog(db.get());
 }
 
@@ -210,8 +211,9 @@ void ThrowIfCatalogAppendRefused() {
 }
 
 void InitClusterCatalogWal() {
-  auto db = duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
+  auto db =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{kGlobalDatabaseName});
   SDB_ENSURE(db && db->HasStorageManager(),
              "the cluster-global attachment has no storage manager to hang the "
              "catalog log off");
@@ -222,7 +224,7 @@ void InitClusterCatalogWal() {
   // write finding no log is what keeps it from re-recording itself.
   auto wal = duckdb::WriteAheadLog::Replay(
     duckdb::QueryContext{}, *gClusterWalStorage,
-    basics::file_utils::BuildFilename(
+    utils::file_utils::BuildFilename(
       std::string{GetCatalogStore().WalDirectory()}, "catalog.wal"));
   const auto lock = LockClusterCatalogWal();
   gClusterWal = std::move(wal);
@@ -265,8 +267,8 @@ void SereneDBGlobalCatalog::WriteCatalogChange(
 namespace {
 
 // Staged beside the log they came out of, so the log's own lock guards them.
-containers::NodeHashMap<uint64_t,
-                        std::vector<duckdb::unique_ptr<duckdb::AlterInfo>>>
+irs::containers::NodeHashMap<uint64_t,
+                             std::vector<duckdb::unique_ptr<duckdb::AlterInfo>>>
   gRowRecipes;
 
 void StashRowRecipe(ObjectId table_id,

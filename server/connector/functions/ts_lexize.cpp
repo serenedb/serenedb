@@ -30,6 +30,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
 #include <variant>
@@ -41,8 +43,6 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

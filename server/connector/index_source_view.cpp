@@ -25,11 +25,10 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <numeric>
-
-#include "basics/assert.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

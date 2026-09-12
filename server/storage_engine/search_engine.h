@@ -26,11 +26,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
 #include "absl/synchronization/mutex.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "rest_server/database_path_feature.h"
 #include "search/search_db_wal.h"
@@ -121,7 +121,7 @@ class SearchEngine final {
  private:
   DatabasePathFeature& _dir_feature;
   absl::Mutex _db_wals_mu;
-  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
+  irs::containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};

@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include "basics/identifier.h"
+#include "server/utils/identifier.h"
 
 namespace sdb {
 
-class ObjectId : public basics::Identifier {
+class ObjectId : public utils::Identifier {
  public:
   using Identifier::Identifier;
 

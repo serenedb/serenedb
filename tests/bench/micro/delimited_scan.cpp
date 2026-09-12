@@ -27,11 +27,10 @@
 #include <benchmark/benchmark.h>
 
 #include <cstring>
+#include <iresearch/utils/string.hpp>
 #include <random>
 #include <string>
 #include <vector>
-
-#include "iresearch/utils/string.hpp"
 
 namespace {
 

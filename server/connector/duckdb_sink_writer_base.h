@@ -23,13 +23,13 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string_view>
 
 #include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace irs {
 

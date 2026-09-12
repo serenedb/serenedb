@@ -23,12 +23,12 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

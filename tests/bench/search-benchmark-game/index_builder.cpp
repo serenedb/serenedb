@@ -25,13 +25,12 @@
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
-#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <istream>
 #include <memory>
-
-#include "basics/duckdb_engine.h"
 
 namespace bench {
 
@@ -39,7 +38,7 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max,
                                                  uint32_t row_group_size) {
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;

@@ -35,18 +35,20 @@
 #include <cstdlib>
 #include <duckdb/main/database_manager.hpp>
 #include <filesystem>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/static_strings.h"
-#include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -68,8 +70,6 @@
 #include "connector/duckdb_storage_extension.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -146,7 +146,7 @@ void EnsureWritableSchema(duckdb::ClientContext* context,
     std::string_view detail;
   };
   constexpr std::array kReadOnlySchemas{
-    ReadOnlySchema{StaticStrings::kDocsSchema,
+    ReadOnlySchema{irs::StaticStrings::kDocsSchema,
                    "The embedded documentation is rebuilt from the server "
                    "binary at startup."},
   };
@@ -439,9 +439,10 @@ void EnsureSystemDatabase() {
   // The database every connection defaults to. Its public schema is not a
   // record of its own -- opening the catalog makes it, from the id this record
   // states.
-  BootstrapEntry(duckdb::make_uniq<CreateDatabaseInfo>(
-                   id::kSystemDB, StaticStrings::kDefaultDatabase, NextId()),
-                 Permissions{id::kRootUser, {}, {}});
+  BootstrapEntry(
+    duckdb::make_uniq<CreateDatabaseInfo>(
+      id::kSystemDB, irs::StaticStrings::kDefaultDatabase, NextId()),
+    Permissions{id::kRootUser, {}, {}});
 }
 
 }  // namespace
@@ -564,11 +565,11 @@ void InitCatalog() {
       }
       initial_verifier = std::move(*verifier);
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '",
-               StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
+               irs::StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
     }
     auto root = duckdb::make_uniq<CreateRoleInfo>(
       id::kRootUser, persistence::RoleData{
-                       .name = std::string{StaticStrings::kDefaultUser},
+                       .name = std::string{irs::StaticStrings::kDefaultUser},
                        .options = static_cast<uint32_t>(RoleOption::All),
                        .conn_limit = CreateRoleInfo::kNoConnLimit,
                        .valid_until = CreateRoleInfo::kNoValidUntil,
@@ -579,8 +580,8 @@ void InitCatalog() {
 
   GetCatalog().FinalizeLoad();
 
-  if (!catalog::GetDatabaseId(StaticStrings::kDefaultDatabase).isSet()) {
-    SDB_FATAL(GENERAL, "No ", StaticStrings::kDefaultDatabase,
+  if (!catalog::GetDatabaseId(irs::StaticStrings::kDefaultDatabase).isSet()) {
+    SDB_FATAL(GENERAL, "No ", irs::StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 
@@ -614,7 +615,7 @@ void InitCatalog() {
   {
     const auto attach_begin = std::chrono::steady_clock::now();
     const auto missing_policy = ParseMissingDatabasePolicy();
-    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    auto conn = irs::DuckDBEngine::Instance().CreateConnection();
     std::vector<const catalog::SereneDBDatabaseEntry*> databases;
     catalog::VisitDatabases(nullptr,
                             [&](const catalog::SereneDBDatabaseEntry& db) {
@@ -646,7 +647,7 @@ void InitCatalog() {
     // resolve into: a connection with no search path gets the default database.
     duckdb::DatabaseManager::Get(*conn->context)
       .SetDefaultDatabase(*conn->context,
-                          std::string{StaticStrings::kDefaultDatabase});
+                          std::string{irs::StaticStrings::kDefaultDatabase});
     SDB_INFO(STARTUP, "database storage loaded in ",
              absl::FormatDuration(absl::FromChrono(
                std::chrono::steady_clock::now() - attach_begin)));
@@ -678,10 +679,10 @@ void InitCatalog() {
           servers.push_back(server.GetInfo());
         });
     }
-    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    auto conn = irs::DuckDBEngine::Instance().CreateConnection();
     for (const auto& info : servers) {
       const auto& server =
-        basics::downCast<const catalog::CreateForeignServerInfo>(*info);
+        irs::utils::downCast<const catalog::CreateForeignServerInfo>(*info);
       auto res = RunForeignServerAttach(*conn, server);
       if (res.status == ForeignServerAttachResult::Status::Failed) {
         SDB_WARN(GENERAL, "Failed to re-attach foreign server ",

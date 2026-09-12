@@ -21,8 +21,7 @@
 #include "search/store_stats.h"
 
 #include <iresearch/index/directory_reader.hpp>
-
-#include "basics/assert.h"
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::search {
 

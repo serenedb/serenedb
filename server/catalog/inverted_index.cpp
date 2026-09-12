@@ -26,20 +26,20 @@
 #include <duckdb/main/attached_database.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 
 #include "absl/algorithm/container.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/down_cast.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 
@@ -138,7 +138,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
   // field_id); the transactional layout is bare column ids (empty map).
   constexpr bool kSearch = std::is_same_v<ColumnEntry, persistence::ColumnKey>;
   std::vector<ColumnId> columns;
-  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
   columns.reserve(data.columns.size());
   if constexpr (kSearch) {
     for (const auto& ck : data.columns) {
@@ -162,7 +162,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
 duckdb::unique_ptr<InvertedIndex> InvertedIndex::FromData(
   ObjectId schema_id, ObjectId id, ObjectId relation_id,
   persistence::InvertedIndexData data,
-  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field) {
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field) {
   auto index = UnpackEntries(schema_id, id, relation_id, std::move(data));
   index->_col_to_term_field = std::move(col_to_term_field);
   return index;
@@ -173,11 +173,11 @@ duckdb::unique_ptr<InvertedIndex> InvertedIndex::Deserialize(
   ObjectId relation_id, bool column_term_fields) {
   if (column_term_fields) {
     persistence::SearchInvertedIndexData data;
-    basics::ReadTuple(src, data);
+    irs::utils::ReadTuple(src, data);
     return UnpackEntries(schema_id, id, relation_id, std::move(data));
   }
   persistence::InvertedIndexData data;
-  basics::ReadTuple(src, data);
+  irs::utils::ReadTuple(src, data);
   return UnpackEntries(schema_id, id, relation_id, std::move(data));
 }
 
@@ -200,16 +200,16 @@ persistence::InvertedIndexData InvertedIndex::ToData() const {
   return data;
 }
 
-void InvertedIndex::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
+void InvertedIndex::WriteJson(utils::JsonSink& sink) const {
+  irs::utils::WriteObject(sink, ToData());
 }
 
 void InvertedIndex::SerializePayload(duckdb::Serializer& sink) const {
   if (HasAllocatedTermFields()) {
-    basics::WriteTuple(sink, ToSearchData());
+    irs::utils::WriteTuple(sink, ToSearchData());
     return;
   }
-  basics::WriteTuple(sink, ToData());
+  irs::utils::WriteTuple(sink, ToData());
 }
 
 void InvertedIndex::BuildDerivedIndexes() {
@@ -581,8 +581,8 @@ TokenizerMap ResolveTokenizers(duckdb::ClientContext* context,
   return dicts;
 }
 
-containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
-  containers::FlatHashSet<ObjectId> res;
+irs::containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
+  irs::containers::FlatHashSet<ObjectId> res;
   for (const auto& [_, entry] : _entries) {
     if (entry.text_dictionary.isSet()) {
       res.insert(entry.text_dictionary);

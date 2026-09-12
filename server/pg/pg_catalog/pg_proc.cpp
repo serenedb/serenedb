@@ -23,11 +23,10 @@
 #include <deque>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <vector>
 
-#include "app/app_server.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -36,6 +35,7 @@
 #include "pg/pg_catalog/builtin_functions.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

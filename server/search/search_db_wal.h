@@ -26,13 +26,13 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
@@ -151,7 +151,7 @@ class SearchDbWal {
   uint64_t _active_first_tick = 0;
 
   absl::Mutex _sub_mu;
-  containers::FlatHashMap<uint64_t, uint64_t> _committed;
+  irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);

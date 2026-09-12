@@ -25,6 +25,10 @@
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -32,8 +36,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"
@@ -49,8 +51,6 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/search_table.h"
 

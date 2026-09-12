@@ -28,12 +28,14 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -45,8 +47,6 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

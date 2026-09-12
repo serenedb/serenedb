@@ -28,10 +28,9 @@
 #include <fast_float/fast_float.h>
 
 #include <charconv>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <set>
-
-#include "basics/log.h"
-#include "basics/string_utils.h"
 
 namespace sdb::network {
 namespace {
@@ -42,7 +41,7 @@ std::string PercentDecode(std::string_view s) {
 
 bool ParseBoolParam(std::string_view v, std::string_view key,
                     std::string_view url) {
-  if (const auto parsed = basics::ParseBool(v)) {
+  if (const auto parsed = irs::utils::ParseBool(v)) {
     return *parsed;
   }
   SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,
@@ -224,7 +223,7 @@ std::vector<asio_ns::ip::tcp::endpoint> ResolveTcp(
     SDB_FATAL(GENERAL, "cannot resolve host '", host, "' in endpoint '", url,
               "': ", ec.message());
   }
-  containers::FlatHashSet<std::string> seen;
+  irs::containers::FlatHashSet<std::string> seen;
   for (const auto& entry : results) {
     auto ep = entry.endpoint();
     if (seen.emplace(ep.address().to_string()).second) {

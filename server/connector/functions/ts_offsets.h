@@ -24,7 +24,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
 #include <memory>
 
 #include "catalog/inverted_index.h"

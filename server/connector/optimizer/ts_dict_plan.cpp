@@ -44,15 +44,21 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -62,9 +68,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -73,10 +76,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/search_filter_builder.hpp"
-#include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::optimizer {
 namespace {
@@ -602,7 +602,7 @@ struct EnumFieldRefs {
 
 void CollectEnumFieldRefs(
   const duckdb::Expression& expr,
-  const containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
+  const irs::containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get, EnumFieldRefs& refs) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
@@ -1406,7 +1406,8 @@ bool KeywordAggsConvertible(
   }
   const auto& bind_data =
     target.bind_data->Cast<connector::SereneDBScanBindData>();
-  const containers::FlatHashMap<irs::field_id, size_t> key_by_field{{field, 0}};
+  const irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field{
+    {field, 0}};
   for (auto& expr : filter->expressions) {
     EnumFieldRefs refs;
     CollectEnumFieldRefs(*expr, key_by_field, bind_data, target, refs);
@@ -1566,7 +1567,7 @@ template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
   return ((type == irs::Type<Fs>::id() &&
-           basics::downCast<Fs>(filter).field_id() == field) ||
+           irs::utils::downCast<Fs>(filter).field_id() == field) ||
           ...);
 }
 
@@ -1588,7 +1589,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
   if (type == irs::Type<irs::BooleanFilter>::id()) {
     // A node's term clauses are leaves of its own rather than children, so
     // the buckets are checked here and `VisitChildren` covers the rest.
-    auto& node = basics::downCast<irs::BooleanFilter>(filter);
+    auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
     size_t clauses = 0;
     // A threshold above one asks for several terms of the field at once, and
     // the enumeration answers about one term at a time.
@@ -1633,8 +1634,8 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  containers::FlatHashSet<irs::field_id>& analyzed_fields,
-  containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
   duckdb::ClientContext& context) {
   auto root = std::make_unique<irs::BooleanFilter>();
   if (!TryClaimIResearchConjunct(*root, conjunct, getter, expr_getter,
@@ -1656,8 +1657,8 @@ bool IsCompilableAcceptorOn(irs::Filter& filter, irs::field_id field) {
 
 bool ContainsNegation(irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::BooleanFilter>::id() &&
-      basics::downCast<irs::BooleanFilter>(filter).Size(irs::Occur::MustNot) !=
-        0) {
+      irs::utils::downCast<irs::BooleanFilter>(filter).Size(
+        irs::Occur::MustNot) != 0) {
     return true;
   }
   bool found = false;
@@ -1677,7 +1678,7 @@ bool TsDictFacetPushdown::WhereOk() {
     return true;
   }
   bool term_conjunct = false;
-  containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+  irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
   key_by_field.reserve(_keys.size());
   for (size_t k = 0; k < _keys.size(); ++k) {
     key_by_field[_keys[k].field_id] = k;
@@ -1988,7 +1989,7 @@ class TsDictFilterClaim {
   }
 
   void ValidateResiduals() {
-    containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+    irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
     if (EnumeratedFieldCount() == 1) {
       key_by_field.emplace(_ss.ts_dicts.front().field_id, 0);
     }
@@ -2020,7 +2021,7 @@ class TsDictFilterClaim {
       irs::Filter::ptr fused = std::move(_having_and[f]);
       Optimize(fused, true);
       if (fused->type() == irs::Type<irs::BooleanFilter>::id()) {
-        auto& children = basics::downCast<irs::BooleanFilter>(*fused)
+        auto& children = irs::utils::downCast<irs::BooleanFilter>(*fused)
                            .Bucket(irs::Occur::Must)
                            .filters;
         std::stable_sort(children.begin(), children.end(),
@@ -2124,7 +2125,7 @@ class TsDictFilterClaim {
   std::vector<bool> _row_origin;
   std::vector<std::unique_ptr<irs::BooleanFilter>> _having_and;
   std::unique_ptr<irs::BooleanFilter> _where_and;
-  containers::FlatHashSet<irs::field_id> _enum_fields;
+  irs::containers::FlatHashSet<irs::field_id> _enum_fields;
 };
 
 }  // namespace

@@ -28,8 +28,8 @@
 #include <utility>
 #include <vector>
 
-#include "basics/message_sequence_view.h"
 #include "network/http/header.h"
+#include "server/utils/message_sequence_view.h"
 
 namespace sdb::network {
 

@@ -50,6 +50,13 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <optional>
 #include <source_location>
@@ -67,12 +74,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/util/helper.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/message_buffer.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
@@ -93,12 +94,11 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network::pg {
 
@@ -271,7 +271,7 @@ class PgWireSession final
   // resolved and txn-scoped portals are dropped, so the logic cannot smear.
   // Commit the implicit block if we own it (drops its portals); returns the
   // commit error, if any, for the caller to order against the CommandComplete.
-  std::optional<sdb::pg::SqlErrorData> CommitImplicitBlock();
+  std::optional<irs::pg::SqlErrorData> CommitImplicitBlock();
   // Roll the implicit block back if we own it (drops its portals); returns
   // whether it rolled back (so the caller can fall through to the explicit
   // case).
@@ -422,8 +422,8 @@ class PgWireSession final
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so
   // the feeder reads past it) and zeroes this.
   size_t _dispatch_consume = 0;
-  containers::FlatHashMap<std::string, std::string> _params;
-  containers::FlatHashMap<std::string, std::string> _reported_params;
+  irs::containers::FlatHashMap<std::string, std::string> _params;
+  irs::containers::FlatHashMap<std::string, std::string> _reported_params;
   // Connection settings version last reflected into _reported_params; gates the
   // per-command ParameterStatus poll in ReportChangedParameters.
   uint64_t _reported_settings_version = 0;

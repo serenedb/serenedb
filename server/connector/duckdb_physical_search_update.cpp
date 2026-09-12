@@ -23,13 +23,13 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"

@@ -30,10 +30,9 @@
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-
-#include "basics/assert.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::connector {
 namespace {

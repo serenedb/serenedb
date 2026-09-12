@@ -28,14 +28,14 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/log/store.h"
 #include "catalog/table.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -173,7 +173,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   // Store physical positions follow the facade column order; map catalog
   // column ids through that order.
   const auto& scan_columns = scan_entry.GetColumns();
-  containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
+  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
   id_to_pos.reserve(scan_columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : scan_columns.Logical()) {

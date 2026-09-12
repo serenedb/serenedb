@@ -23,9 +23,9 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
 #include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
 
@@ -91,7 +91,7 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
     duckdb::unique_ptr<duckdb::FunctionData> bind_data;
     duckdb::unique_ptr<duckdb::GlobalTableFunctionState> gstate;
   };
-  containers::FlatHashMap<uint64_t, CachedFileLookup> _file_cache;
+  irs::containers::FlatHashMap<uint64_t, CachedFileLookup> _file_cache;
   // The pinned snapshot's source manifest: docs store manifest file_ids, so
   // paths resolve through it (never through the live glob expansion).
   std::shared_ptr<const search::FileManifest> _file_manifest;

@@ -25,6 +25,8 @@
 #include <absl/strings/str_join.h>
 
 #include <cassert>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <ranges>
@@ -35,8 +37,6 @@
 #include <variant>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/system-compiler.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/sql_utils.h"
 

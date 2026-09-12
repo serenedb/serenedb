@@ -1,0 +1,569 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2019 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+///
+/// @author Andrey Abramov
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/strings/str_cat.h>
+
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/queries/multiterm_query.hpp>
+
+#include "filter_test_case_base.hpp"
+#include "tests_shared.hpp"
+
+namespace {
+
+// Stable field ids for the wildcard fixtures. Sourced from
+// `tests::FieldIdFor` so the shared JSON factories and these tests agree
+// on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kFooId =
+  tests::FieldIdFor("foo");
+[[maybe_unused]] inline constexpr irs::field_id kFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1Id =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kSameId =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kDuplicatedId =
+  tests::FieldIdFor("duplicated");
+[[maybe_unused]] inline constexpr irs::field_id kNameId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kUtf8Id =
+  tests::FieldIdFor("utf8");
+[[maybe_unused]] inline constexpr irs::field_id kInvalidFieldId =
+  tests::FieldIdFor("invalid_field");
+[[maybe_unused]] inline constexpr irs::field_id kEmptyFieldId =
+  irs::field_limits::invalid();
+
+template<typename Filter = irs::ByWildcard>
+Filter MakeFilter(irs::field_id field, std::string_view term) {
+  Filter q;
+  *q.mutable_field_id() = field;
+  if constexpr (std::is_same_v<Filter, irs::ByWildcard>) {
+    *q.mutable_options() =
+      irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(term)};
+  } else {
+    q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  }
+  return q;
+}
+
+// Resolves a wildcard pattern into its concrete executable filter
+// (ByTerm / ByPrefix / AutomatonFilter), mirroring how callers build and
+// optimize wildcard filters in production.
+irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term) {
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  irs::Optimize(filter);
+  return filter;
+}
+
+irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term,
+                              const irs::Scorer* scorer) {
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  filter->SetScorer(scorer);
+  irs::Optimize(filter, {.scored = true});
+  return filter;
+}
+
+}  // namespace
+
+TEST(by_wildcard_test, options) {
+  irs::ByWildcardOptions opts;
+  ASSERT_TRUE(opts.term.empty());
+}
+
+TEST(by_wildcard_test, ctor) {
+  irs::ByWildcard q;
+  ASSERT_EQ(irs::Type<irs::ByWildcard>::id(), q.type());
+  ASSERT_EQ(irs::ByWildcardOptions{}, q.options());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
+}
+
+TEST(by_wildcard_test, equal) {
+  const irs::ByWildcard q = MakeFilter(kFieldId, "bar*");
+
+  ASSERT_EQ(q, MakeFilter(kFieldId, "bar*"));
+  ASSERT_NE(q, MakeFilter(kField1Id, "bar*"));
+  ASSERT_NE(q, MakeFilter(kFieldId, "bar"));
+}
+
+TEST(by_wildcard_test, boost) {
+  MaxMemoryCounter counter;
+
+  // the boost reaches the filter
+  {
+    irs::Filter::ptr q = MakeWildcard(kFieldId, "bar*");
+    ASSERT_EQ(irs::kNoBoost, q->GetBoost());
+  }
+
+  {
+    irs::score_t boost = 1.5f;
+
+    irs::Filter::ptr q = irs::CreateByWildcard(
+      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), boost);
+    irs::Optimize(q);
+    ASSERT_EQ(boost, q->GetBoost());
+
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
+    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+  }
+  EXPECT_EQ(counter.current, 0);
+  counter.Reset();
+}
+
+TEST(by_wildcard_test, type_of_lowered_filter) {
+  struct Case {
+    std::string_view pattern;
+    irs::TypeInfo::type_id type;
+  };
+  const Case cases[]{
+    {"bar", irs::Type<irs::ByTerm>::id()},
+    {"", irs::Type<irs::ByTerm>::id()},
+    {"foo\\%", irs::Type<irs::ByTerm>::id()},
+    {"bar%", irs::Type<irs::ByPrefix>::id()},
+    {"bar%%", irs::Type<irs::ByPrefix>::id()},
+    {"bar\\%", irs::Type<irs::ByTerm>::id()},
+    {"%", irs::Type<irs::ByPrefix>::id()},
+    {"%%", irs::Type<irs::ByPrefix>::id()},
+    {"\\%", irs::Type<irs::ByTerm>::id()},
+  };
+
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.pattern);
+    auto lowered = tests::Optimized(MakeFilter(kFooId, c.pattern));
+    ASSERT_NE(nullptr, lowered);
+    ASSERT_EQ(c.type, lowered->type());
+  }
+}
+
+class WildcardFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(WildcardFilterTestCase, simple_sequential_order) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // empty query
+  CheckQuery(*MakeWildcard(kEmptyFieldId, ""), Docs{}, Costs{0}, rdr);
+
+  // empty prefix test collector call count for field/term/finish
+  {
+    Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
+    Costs costs{docs.size()};
+    size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::CustomSort>()};
+    auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
+
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
+    ASSERT_EQ(9, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
+  }
+
+  // match all
+  {
+    Docs docs{31, 32, 1, 4, 9, 16, 21, 24, 26, 29};
+    Costs costs{docs.size()};
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::FrequencySort>()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
+  }
+
+  // prefix
+  {
+    Docs docs{31, 32, 1, 4, 16, 21, 26, 29};
+    Costs costs{docs.size()};
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::FrequencySort>()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "a%", order.front().get()), order, docs,
+               rdr);
+  }
+}
+
+TEST_P(WildcardFilterTestCase, simple_sequential) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // empty query
+  CheckQuery(*MakeWildcard(kEmptyFieldId, ""), Docs{}, Costs{0}, rdr);
+
+  // empty field
+  CheckQuery(*MakeWildcard(kEmptyFieldId, "xyz%"), Docs{}, Costs{0}, rdr);
+
+  // invalid field
+  CheckQuery(*MakeWildcard(kInvalidFieldId, "xyz%"), Docs{}, Costs{0}, rdr);
+
+  // invalid prefix
+  CheckQuery(*MakeWildcard(kSameId, "xyz_invalid%"), Docs{}, Costs{0}, rdr);
+
+  // empty pattern - no match
+  CheckQuery(*MakeWildcard(kDuplicatedId, ""), Docs{}, Costs{0}, rdr);
+
+  // match all
+  {
+    Docs result;
+    for (size_t i = 0; i < 32; ++i) {
+      result.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
+
+    Costs costs{result.size()};
+
+    CheckQuery(*MakeWildcard(kSameId, "%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "___"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "%_"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "x_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "__z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "%_z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "x%_"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "x_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "x_z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "x%z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "_yz"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "%yz"), result, costs, rdr);
+    CheckQuery(*MakeWildcard(kSameId, "xyz"), result, costs, rdr);
+  }
+
+  // match nothing
+  CheckQuery(*MakeWildcard(kPrefixId, "ab\\%"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard(kSameId, "x\\_z"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard(kSameId, "x\\%z"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard(kSameId, "_"), Docs{}, Costs{0}, rdr);
+
+  // escaped prefix
+  {
+    Docs result{10, 11};
+    Costs costs{result.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "ab\\\\%"), result, costs, rdr);
+  }
+
+  // escaped term
+  {
+    Docs result{10};
+    Costs costs{result.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "ab\\\\\\%"), result, costs, rdr);
+  }
+
+  // escaped term
+  {
+    Docs result{11};
+    Costs costs{result.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "ab\\\\\\\\%"), result, costs, rdr);
+  }
+
+  // valid prefix
+  {
+    Docs result;
+    for (size_t i = 0; i < 32; ++i) {
+      result.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
+
+    Costs costs{result.size()};
+
+    CheckQuery(*MakeWildcard(kSameId, "xyz%"), result, costs, rdr);
+  }
+
+  // pattern
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kDuplicatedId, "v_z%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kDuplicatedId, "v%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kDuplicatedId, "v%%%%%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kDuplicatedId, "%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kDuplicatedId, "%_c"), docs, costs, rdr);
+  }
+
+  // pattern
+  {
+    Docs docs{1, 4, 9, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "%c%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%c%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%%%%c%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%%c%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%%c%%"), docs, costs, rdr);
+  }
+
+  // single digit prefix
+  {
+    Docs docs{1, 5, 11, 21, 27, 31};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kDuplicatedId, "a%"), docs, costs, rdr);
+  }
+
+  CheckQuery(*MakeWildcard(kNameId, "!%"), Docs{28}, Costs{1}, rdr);
+  CheckQuery(*MakeWildcard(kPrefixId, "b%"), Docs{9, 24}, Costs{2}, rdr);
+
+  // multiple digit prefix
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kDuplicatedId, "vcz%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kDuplicatedId, "vcz%%%%%"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{1, 4, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+    CheckQuery(*MakeWildcard(kPrefixId, "abc%"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{1, 4, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "abc%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "abc%%"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{1, 4, 16, 26};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kPrefixId, "a%d%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "a%d%%"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{1, 26};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kUtf8Id, "\x25\xD0\xB9"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kUtf8Id, "\x25\x25\xD0\xB9"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{26};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xB2\x25\xD0\xB9"), docs, costs,
+               rdr);
+    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xB2\x25\x25\xD0\xB9"), docs, costs,
+               rdr);
+  }
+
+  {
+    Docs docs{1, 3};
+    Costs costs{docs.size()};
+
+    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xBF\x25"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xBF\x25\x25"), docs, costs, rdr);
+  }
+
+  // whole word
+  CheckQuery(*MakeWildcard(kPrefixId, "bateradsfsfasdf"), Docs{24}, Costs{1},
+             rdr);
+}
+
+TEST_P(WildcardFilterTestCase, visit) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  const irs::field_id field = kPrefixId;
+
+  // read segment
+  auto index = open_reader();
+  ASSERT_EQ(1, index.size());
+  auto& segment = index[0];
+  // get term dictionary for field
+  const auto* reader = segment.field(field);
+  ASSERT_NE(nullptr, reader);
+
+  {
+    auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
+    tests::EmptyFilterVisitor visitor;
+    auto automaton = irs::FromWildcard(term);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(1, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", irs::kNoBoost},
+              }),
+              visitor.term_refs<char>());
+
+    visitor.reset();
+  }
+
+  {
+    auto prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab%"));
+    tests::EmptyFilterVisitor visitor;
+    auto automaton = irs::FromWildcard(prefix);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(6, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcde", irs::kNoBoost},
+                {"abcdrer", irs::kNoBoost},
+                {"abcy", irs::kNoBoost},
+                {"abde", irs::kNoBoost}}),
+              visitor.term_refs<char>());
+
+    visitor.reset();
+  }
+
+  {
+    auto wildcard = irs::ViewCast<irs::byte_type>(std::string_view("a_c%"));
+    tests::EmptyFilterVisitor visitor;
+    auto automaton = irs::FromWildcard(wildcard);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(5, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcde", irs::kNoBoost},
+                {"abcdrer", irs::kNoBoost},
+                {"abcy", irs::kNoBoost},
+              }),
+              visitor.term_refs<char>());
+
+    visitor.reset();
+  }
+}
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+// A term other terms extend is written inside the block it names, as the
+// entry with an empty suffix, so finding it means descending into that block.
+// The dictionary only makes such a block once a prefix has enough terms under
+// it, which is why nothing smaller catches this.
+namespace {
+
+class TermsGenerator : public tests::DocGeneratorBase {
+ public:
+  explicit TermsGenerator(std::vector<std::string> terms)
+    : _terms{std::move(terms)} {}
+
+  const tests::Document* next() final {
+    if (_pos == _terms.size()) {
+      return nullptr;
+    }
+    _doc.clear();
+    auto field = std::make_shared<tests::StringField>("name", _terms[_pos++]);
+    field->id = kNameId;
+    _doc.insert(field);
+    return &_doc;
+  }
+
+  void reset() final { _pos = 0; }
+
+ private:
+  std::vector<std::string> _terms;
+  size_t _pos{0};
+  tests::Document _doc;
+};
+
+}  // namespace
+
+TEST_P(WildcardFilterTestCase, term_a_block_is_named_by) {
+  constexpr size_t kTermsPerBlock = 32;  // over the dictionary's block minimum
+
+  std::vector<std::string> terms{"hello"};  // doc 1: the block's own term
+  for (size_t i = 0; i < kTermsPerBlock; ++i) {
+    terms.push_back(absl::StrCat("hello", i));  // and what extends it
+  }
+  terms.emplace_back("hellp");  // a neighbour with nothing under it
+
+  {
+    TermsGenerator gen{terms};
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // the term itself is still a term
+  CheckQuery(*MakeWildcard(kNameId, "hello"), Docs{1}, Costs{1}, rdr);
+
+  // and a pattern that ends where the block begins must find it
+  const Docs expected{1, irs::doc_id_t(terms.size())};  // hello, hellp
+  CheckQuery(*MakeWildcard(kNameId, "hell_"), expected, Costs{expected.size()},
+             rdr);
+  CheckQuery(*MakeWildcard(kNameId, "_ello"), Docs{1}, Costs{1}, rdr);
+}
+
+INSTANTIATE_TEST_SUITE_P(wildcard_filter_test, WildcardFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         WildcardFilterTestCase::to_string);

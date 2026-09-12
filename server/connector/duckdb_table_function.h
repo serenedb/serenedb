@@ -26,17 +26,17 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>
 
-#include "basics/assert.h"
-#include "basics/bit_utils.hpp"
-#include "basics/down_cast.h"
-#include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
@@ -44,7 +44,7 @@
 
 namespace irs {
 
-class IndexReader;
+struct IndexReader;
 }
 
 #include "search/inverted_index_storage.h"
@@ -278,11 +278,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   template<typename T>
   T& As() & {
-    return basics::downCast<T>(*this);
+    return irs::utils::downCast<T>(*this);
   }
   template<typename T>
   const T& As() const& {
-    return basics::downCast<const T>(*this);
+    return irs::utils::downCast<const T>(*this);
   }
 
   virtual duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(

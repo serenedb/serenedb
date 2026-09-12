@@ -19,22 +19,17 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
-
-#include <cstddef>
-#include <iresearch/utils/vector.hpp>
-
-#ifdef ENABLE_FAISS
 #include <faiss/utils/distances.h>
-#endif
 
 #include <cmath>
+#include <cstddef>
+#include <iresearch/utils/vector.hpp>
 #include <memory>
 #include <vector>
 
 // Benchmarks comparing:
 //   - sdb::pg distance functions (iresearch SIMD-backed)
-//   - Velox UDF structs from velox/functions/prestosql/DistanceFunctions.h
-//     (only available with VELOX_ENABLE_FAISS; backed by FAISS)
+//   - FAISS distance kernels
 //
 // Vector construction is done in the fixture's SetUp, outside the timed loop.
 // Parameterized by dimension: 64, 128, 256, 512, 1024, 2048.
@@ -101,8 +96,7 @@ class DistanceFixture : public benchmark::Fixture {
   return static_cast<float>(lr / std::sqrt(ll * rr));
 }
 
-#ifdef ENABLE_FAISS
-[[gnu::noinline]] float VeloxComputeCosine(const float* left,
+[[gnu::noinline]] float FaissComputeCosine(const float* left,
                                            const float* right, size_t sz) {
   float norm_x = 0, norm_y = 0;
   faiss::fvec_norms_L2(&norm_x, left, sz, 1);
@@ -110,7 +104,6 @@ class DistanceFixture : public benchmark::Fixture {
   float product = faiss::fvec_inner_product(left, right, sz);
   return static_cast<float>(product / (norm_x * norm_y));
 }
-#endif
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
@@ -119,11 +112,9 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   }
 }
 
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
 
-#ifdef VELOX_ENABLE_FAISS
-
-BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(DistanceFixture, FaissL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
     float result = faiss::fvec_L2sqr(
       reinterpret_cast<const float*>(ldata.data()),
@@ -132,9 +123,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
   }
 }
 
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL2Squared);
-
-#endif
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, FaissL2Squared);
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
   for (auto _ : state) {
@@ -145,9 +134,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
 
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL1Distance);
 
-#ifdef VELOX_ENABLE_FAISS
-
-BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(DistanceFixture, FaissL1Distance)(benchmark::State& state) {
   for (auto _ : state) {
     float result = faiss::fvec_L1(reinterpret_cast<const float*>(ldata.data()),
                                   reinterpret_cast<const float*>(rdata.data()),
@@ -156,9 +143,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
   }
 }
 
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL1Distance);
-
-#endif
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, FaissL1Distance);
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
@@ -168,11 +153,9 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
   }
 }
 
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 
-#ifdef ENABLE_FAISS
-
-BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(DistanceFixture, FaissDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
     float result = faiss::fvec_inner_product(
       reinterpret_cast<const float*>(ldata.data()),
@@ -181,9 +164,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   }
 }
 
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxDotProduct);
-
-#endif
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, FaissDotProduct);
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
   for (auto _ : state) {
@@ -191,17 +172,15 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
     benchmark::DoNotOptimize(result);
   }
 }
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
 
-#ifdef ENABLE_FAISS
-BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(DistanceFixture, FaissCosine)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = VeloxComputeCosine(ldata.data(), rdata.data(), ldata.size());
+    float result = FaissComputeCosine(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
-// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxCosine);
-#endif
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, FaissCosine);
 
 }  // namespace
 

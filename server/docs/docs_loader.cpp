@@ -57,7 +57,7 @@ namespace {
 constexpr std::string_view kSchema = irs::StaticStrings::kDocsSchema;
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kMeta = "sdb_docs.meta";
-constexpr int kLayout = 14;
+constexpr int kLayout = 15;
 constexpr size_t kInsertBatch = 32;
 
 constexpr std::string_view kSchemaToken = "@schema@";
@@ -187,6 +187,27 @@ rows_named AS (
               THEN regexp_extract(name, '^([A-Za-z_][A-Za-z0-9_]*)\(', 1)
               ELSE name END AS bare
   FROM rows
+),
+fn_rows AS (
+  SELECT d.page AS page, d.path AS path, d.breadcrumb AS breadcrumb,
+         regexp_replace(v.cells[1], '\[([^\]]*)\]\([^)]*\)', '\1', 'g') AS name,
+         CASE WHEN list_contains(u.tbl.headers, 'Aliases')
+              THEN nullif(regexp_replace(v.cells[list_position(u.tbl.headers, 'Aliases')],
+                                         '\[([^\]]*)\]\([^)]*\)', '\1', 'g'), '')
+              WHEN list_contains(u.tbl.headers, 'Alias')
+              THEN nullif(regexp_replace(v.cells[list_position(u.tbl.headers, 'Alias')],
+                                         '\[([^\]]*)\]\([^)]*\)', '\1', 'g'), '') END AS aliases,
+         regexp_replace(CASE WHEN list_contains(u.tbl.headers, 'Description')
+                             THEN v.cells[list_position(u.tbl.headers, 'Description')] END,
+                        '\[([^\]]*)\]\([^)]*\)', '\1', 'g') AS summary
+  FROM d, unnest(md_extract_tables_json(d.content)) AS u(tbl),
+          unnest(u.tbl.table_data) AS v(cells)
+  WHERE CASE WHEN starts_with(d.page, 'sql/functions/')
+                  OR (starts_with(d.page, 'sql/data_types/')
+                      AND d.page <> 'sql/data_types/overview.md')
+             THEN u.tbl.headers[1] IN ('Function', 'Aggregate', 'Name')
+             ELSE u.tbl.headers[1] IN ('Function', 'Aggregate')
+                  AND starts_with(d.page, 'data_import_and_export/') END
 )
 SELECT 'function' AS kind,
        regexp_extract(title, '^(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)\(', 1) AS name,
@@ -196,6 +217,15 @@ SELECT 'function' AS kind,
        breadcrumb AS breadcrumb
 FROM d WHERE starts_with(page, 'sql/functions/') AND position('#' IN path) > 0
    AND regexp_matches(title, '^(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*\(')
+UNION ALL
+SELECT 'function',
+       regexp_extract(name, '^(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)', 1),
+       name, summary, aliases, path, page,
+       regexp_replace(regexp_replace(page, '^sql/functions/', ''), '(/index)?\.mdx?$', ''),
+       breadcrumb
+FROM fn_rows
+WHERE regexp_matches(name, '^[A-Za-z_][A-Za-z0-9_]*$|^(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*\s*\(')
+  AND NOT regexp_matches(name, '^[A-Z][A-Z0-9_ ]*$')
 UNION ALL
 SELECT 'statement', title, title, @schema@.summary(content), NULL, path, page, NULL, breadcrumb
 FROM d WHERE starts_with(page, 'sql/statements/') AND is_title_row

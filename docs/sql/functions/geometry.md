@@ -73,16 +73,16 @@ Wraps a single geometry in the matching multi-geometry. A geometry that is alrea
 
 ## Reading and Writing Formats
 
-| Name                                                   | Description                                                    |
-| :------------------------------------------------------ | :------------------------------------------------------------- |
-| [`ST_GeomFromText`](#st_geomfromtext-function)         | Creates a geometry from Well-Known Text (WKT)                  |
-| [`ST_GeomFromWKB`](#st_geomfromwkb-function)           | Creates a geometry from Well-Known Binary (WKB)                |
-| [`ST_GeomFromGeoJSON`](#st_geomfromgeojson-function)   | Creates a geometry from a GeoJSON object                       |
-| [`ST_AsWKT`](#st_aswkt-function)                       | Returns the Well-Known Text (WKT) representation               |
-| [`ST_AsWKB`](#st_aswkb-function)                       | Returns the Well-Known Binary (WKB) representation             |
-| [`ST_AsHEXWKB`](#st_ashexwkb-function)                 | Returns the WKB representation as a hexadecimal string         |
-| [`ST_AsGeoJSON`](#st_asgeojson-function)               | Returns the GeoJSON representation                             |
-| [`ST_AsSVG`](#st_assvg-function)                       | Returns the SVG path data for the geometry                     |
+| Name                                                   | Description                                                    | Aliases       |
+| :------------------------------------------------------ | :------------------------------------------------------------- | :------------ |
+| [`ST_GeomFromText`](#st_geomfromtext-function)         | Creates a geometry from Well-Known Text (WKT)                  |               |
+| [`ST_GeomFromWKB(wkb)`](#st_geomfromwkb-function)      | Creates a geometry from Well-Known Binary (WKB)                |               |
+| [`ST_GeomFromGeoJSON`](#st_geomfromgeojson-function)   | Creates a geometry from a GeoJSON object                       |               |
+| [`ST_AsWKT(geom)`](#st_aswkt-function)                 | Returns the Well-Known Text (WKT) representation               | `ST_AsText`   |
+| [`ST_AsWKB(geom)`](#st_aswkb-function)                 | Returns the Well-Known Binary (WKB) representation             | `ST_AsBinary` |
+| [`ST_AsHEXWKB`](#st_ashexwkb-function)                 | Returns the WKB representation as a hexadecimal string         |               |
+| [`ST_AsGeoJSON`](#st_asgeojson-function)               | Returns the GeoJSON representation                             |               |
+| [`ST_AsSVG`](#st_assvg-function)                       | Returns the SVG path data for the geometry                     |               |
 
 #### `ST_GeomFromText` function
 
@@ -90,7 +90,7 @@ Creates a geometry from Well-Known Text (WKT). A second argument of `true` retur
 
 <SqlLogicTest id="sql/functions/geometry/st_geomfromtext" />
 
-#### `ST_GeomFromWKB` function
+#### `ST_GeomFromWKB(wkb)` {#st_geomfromwkb-function}
 
 Creates a geometry from Well-Known Binary (WKB) representation.
 
@@ -102,13 +102,13 @@ Creates a geometry from a GeoJSON object.
 
 <SqlLogicTest id="sql/functions/geometry/st_geomfromgeojson" />
 
-#### `ST_AsWKT` function
+#### `ST_AsWKT(geom)` {#st_aswkt-function}
 
 Returns the Well-Known Text (WKT) representation of the geometry. Alias: `ST_AsText`.
 
 <SqlLogicTest id="sql/functions/geometry/st_aswkt" />
 
-#### `ST_AsWKB` function
+#### `ST_AsWKB(geom)` {#st_aswkb-function}
 
 Returns the Well-Known Binary (WKB) representation of the geometry. Alias: `ST_AsBinary`.
 
@@ -293,21 +293,21 @@ Returns the bearing from one point to another, in radians clockwise from north.
 
 ## Testing Relationships
 
-| Name                                                     | Description                                                        |
-| :--------------------------------------------------------- | :------------------------------------------------------------------ |
-| [`ST_Intersects`](#st_intersects-function)               | Returns true if the geometries share any point                     |
-| [`ST_Disjoint`](#st_disjoint-function)                    | Returns true if the geometries share no point                      |
-| [`ST_Contains`](#st_contains-function)                   | Returns true if the first geometry contains the second             |
-| [`ST_Covers`](#st_covers-function)                       | Like `ST_Contains`, but a boundary point counts as covered         |
-| [`ST_ContainsProperly`](#st_containsproperly-function)   | Returns true if the second geometry is in the first's interior     |
-| [`ST_Crosses`](#st_crosses-function)                     | Returns true if the geometries cross                               |
-| [`ST_Overlaps`](#st_overlaps-function)                   | Returns true if the geometries overlap at their own dimension      |
-| [`ST_Touches`](#st_touches-function)                     | Returns true if the geometries meet only at their boundaries       |
-| [`ST_Equals`](#st_equals-function)                       | Returns true if the geometries cover the same space                |
-| [`ST_DWithin`](#st_dwithin-function)                     | Returns true if the geometries are within a given distance         |
-| [`ST_Intersects_Extent`](#st_intersects_extent-function) | Returns true if the geometries bounding boxes intersect            |
-| [`ST_IsValid`](#st_isvalid-function)                     | Reports whether the geometry is valid. Also `ST_IsEmpty`           |
-| [`ST_IsClosed`](#st_isclosed-function)                   | Reports line properties. Also `ST_IsRing`, `ST_IsSimple`           |
+| Name                                                     | Description                                                        | Aliases |
+| :--------------------------------------------------------- | :------------------------------------------------------------------ | :------ |
+| [`ST_Intersects`](#st_intersects-function)               | Returns true if the geometries share any point                     |         |
+| [`ST_Disjoint`](#st_disjoint-function)                    | Returns true if the geometries share no point                      |         |
+| [`ST_Contains`](#st_contains-function)                   | Returns true if the first geometry contains the second             |         |
+| [`ST_Covers`](#st_covers-function)                       | Like `ST_Contains`, but a boundary point counts as covered         |         |
+| [`ST_ContainsProperly`](#st_containsproperly-function)   | Returns true if the second geometry is in the first's interior     |         |
+| [`ST_Crosses`](#st_crosses-function)                     | Returns true if the geometries cross                               |         |
+| [`ST_Overlaps`](#st_overlaps-function)                   | Returns true if the geometries overlap at their own dimension      |         |
+| [`ST_Touches`](#st_touches-function)                     | Returns true if the geometries meet only at their boundaries       |         |
+| [`ST_Equals`](#st_equals-function)                       | Returns true if the geometries cover the same space                |         |
+| [`ST_DWithin`](#st_dwithin-function)                     | Returns true if the geometries are within a given distance         |         |
+| [`ST_Intersects_Extent(geom1, geom2)`](#st_intersects_extent-function) | Returns true if the geometries bounding boxes intersect | `&&`    |
+| [`ST_IsValid`](#st_isvalid-function)                     | Reports whether the geometry is valid. Also `ST_IsEmpty`           |         |
+| [`ST_IsClosed`](#st_isclosed-function)                   | Reports line properties. Also `ST_IsRing`, `ST_IsSimple`           |         |
 
 #### `ST_Intersects` function
 
@@ -369,7 +369,7 @@ Returns true if the geometries are within the given distance of one another.
 
 <SqlLogicTest id="sql/functions/geometry/st_dwithin" />
 
-#### `ST_Intersects_Extent` function
+#### `ST_Intersects_Extent(geom1, geom2)` {#st_intersects_extent-function}
 
 Returns true if the geometries bounding boxes intersect. Alias: `&&`.
 
@@ -585,16 +585,16 @@ A CRS is a label that SereneDB tracks and checks. It does not reproject: there i
 
 | Name                                       | Description                                                   |
 | :------------------------------------------ | :-------------------------------------------------------------- |
-| [`ST_CRS`](#st_crs-function)               | Returns the CRS identifier of the geometry                    |
-| [`ST_SetCRS`](#st_setcrs-function)         | Sets the CRS identifier of the geometry                       |
+| [`ST_CRS(geom)`](#st_crs-function)         | Returns the CRS identifier of the geometry                    |
+| [`ST_SetCRS(geom, crs)`](#st_setcrs-function) | Sets the CRS identifier of the geometry                    |
 
-#### `ST_CRS` function
+#### `ST_CRS(geom)` {#st_crs-function}
 
 Returns the Coordinate Reference System (CRS) identifier of the geometry.
 
 <SqlLogicTest id="sql/functions/geometry/st_crs" />
 
-#### `ST_SetCRS` function
+#### `ST_SetCRS(geom, crs)` {#st_setcrs-function}
 
 Sets the Coordinate Reference System (CRS) identifier of the geometry. The coordinates are left as they are; only the label changes.
 

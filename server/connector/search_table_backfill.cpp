@@ -43,8 +43,10 @@
 #include "basics/system-compiler.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/progress_registry.h"
 #include "pg/sql_exception_macro.h"
@@ -269,6 +271,13 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // The config is already published (CreateIndexImpl). Open the log first so no
   // committed delete falls between the floor and the first drain, then arm the
   // floor -- after the publish, never before (§3.2).
+  // The statement pinned a reader of this shard at bind time and only drops it
+  // at a statement boundary, so every segment it saw would outlive the build
+  // and none of the ones this rewrites could be reclaimed while it runs. The
+  // plan here produces no rows (LogicalEmptyResult), so nothing reads it. A
+  // frozen view keeps its pin and pays the disk instead.
+  GetSereneDBContext(context).TryDropSearchReader(target.table_id);
+
   shard.OpenDeleteLog();
   absl::Cleanup close_log = [&shard] { shard.CloseDeleteLog(); };
 
@@ -292,20 +301,34 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
 
   RowSource source;
   InitRowSource(context, target, source);
+  // Groups by byte budget: peak disk is ~2x one group, and each publish is
+  // proportional to one group rather than the table. A zero budget is "no
+  // limit" -- one group, one swap, the whole table's worth of peak disk.
+  const bool unlimited = target.group_bytes == 0;
   bool counted = false;
+  // One group per pass, and the reader that named it dies with the pass: it
+  // references every segment it can see, so holding it across groups would
+  // keep the ones already swapped out unreclaimable and make the budget above
+  // bound nothing. A straddler that committed after the drain shows up on a
+  // later pass as a sub-floor segment; loop until none do.
   for (;;) {
     auto reader = shard.GetDirectoryReader();
-    std::vector<const irs::SubReader*> stale;
+    std::vector<const irs::SubReader*> group;
     uint64_t live = 0;
+    uint64_t bytes = 0;
     for (const auto& sub : reader) {
       uint64_t id = 0;
-      if (SegmentIdOf(sub.Meta().name, id) && id <= floor.Floor() &&
-          sub.live_docs_count() != 0) {
-        stale.push_back(&sub);
-        live += sub.live_docs_count();
+      if (!SegmentIdOf(sub.Meta().name, id) || id > floor.Floor() ||
+          sub.live_docs_count() == 0) {
+        continue;
+      }
+      live += sub.live_docs_count();
+      if (unlimited || bytes < target.group_bytes) {
+        group.push_back(&sub);
+        bytes += sub.Meta().byte_size;
       }
     }
-    if (stale.empty()) {
+    if (group.empty()) {
       break;
     }
     if (progress != nullptr && !counted) {
@@ -314,26 +337,10 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
-    // Groups by byte budget: peak disk is ~2x one group, and each publish is
-    // proportional to one group rather than the table. A zero budget is "no
-    // limit" -- one group, one swap, the whole table's worth of peak disk.
-    const bool unlimited = target.group_bytes == 0;
-    size_t i = 0;
-    while (i < stale.size()) {
-      std::vector<const irs::SubReader*> group;
-      uint64_t bytes = 0;
-      do {
-        group.push_back(stale[i]);
-        bytes += stale[i]->Meta().byte_size;
-        ++i;
-      } while (i < stale.size() && (unlimited || bytes < target.group_bytes));
-      RebuildGroup(context, target, source, group, progress);
-      SDB_IF_FAILURE("crash_after_search_backfill_group") {
-        SDB_IMMEDIATE_ABORT();
-      }
+    RebuildGroup(context, target, source, group, progress);
+    SDB_IF_FAILURE("crash_after_search_backfill_group") {
+      SDB_IMMEDIATE_ABORT();
     }
-    // A straddler that committed after the drain shows up on the next pass as
-    // a sub-floor segment; loop until none do.
   }
   // Nothing below the floor is left to reissue against, but a delete that
   // landed after the last group's drain is in the log; it already reached the

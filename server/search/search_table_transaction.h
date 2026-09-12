@@ -118,6 +118,8 @@ class SearchTableTransaction {
 
   void ResetReaders() noexcept { _readers.clear(); }
 
+  void ResetReader(ObjectId shard_id) noexcept { _readers.erase(shard_id); }
+
  private:
   // Builds the shard sections, reserves the tick band (width = max over shards
   // of sum-over-trxs(GetQueries()+1)), appends the record, and returns the

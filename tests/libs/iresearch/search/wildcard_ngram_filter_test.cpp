@@ -18,16 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/analysis/wildcard_tokenizer.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

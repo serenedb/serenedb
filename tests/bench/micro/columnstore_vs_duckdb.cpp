@@ -37,6 +37,7 @@
 // absolute numbers under the `bench` preset before publishing a claim.
 
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <cstdint>
@@ -46,18 +47,16 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/stream_query_result.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/internal/gather_arms.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

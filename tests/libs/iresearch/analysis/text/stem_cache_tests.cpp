@@ -20,14 +20,13 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/analysis/text/dict/stem_cache.hpp>
+#include <iresearch/analysis/text/term_view.hpp>
+#include <iresearch/utils/snowball_stemmer.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "iresearch/analysis/text/dict/stem_cache.hpp"
-#include "iresearch/analysis/text/term_view.hpp"
-#include "iresearch/utils/snowball_stemmer.hpp"
 
 namespace {
 

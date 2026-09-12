@@ -20,13 +20,14 @@
 
 #include "tokenizer_fuzz_oracles.hpp"
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <algorithm>
 #include <cctype>
 #include <duckdb.hpp>
 #include <format>
 #include <unordered_map>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "pipeline_reference.hpp"
 
 namespace tests::fuzz {

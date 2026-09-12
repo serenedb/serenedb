@@ -23,9 +23,8 @@
 #include <absl/crc/crc32c.h>
 #include <benchmark/benchmark.h>
 
+#include <iresearch/utils/crc.hpp>
 #include <string>
-
-#include "iresearch/utils/crc.hpp"
 
 #ifdef SDB_ENABLE_FOLLY
 #include <folly/hash/Checksum.h>

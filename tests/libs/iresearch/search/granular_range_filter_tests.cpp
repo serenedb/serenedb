@@ -21,10 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/store/store_utils.hpp>
+
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/search/filters/granular_range_filter.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

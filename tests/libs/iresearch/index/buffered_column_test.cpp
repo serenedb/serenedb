@@ -31,13 +31,13 @@
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/norm_reader.hpp>
+#include <iresearch/formats/column/norm_writer.hpp>
+#include <iresearch/store/memory_directory.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/column/norm_writer.hpp"
-#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 namespace {

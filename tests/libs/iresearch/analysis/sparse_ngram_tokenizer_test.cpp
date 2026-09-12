@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <set>
 #include <string>
 
-#include "iresearch/analysis/sparse_ngram_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

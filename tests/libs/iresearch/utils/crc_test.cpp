@@ -23,8 +23,8 @@
 
 #include <boost/crc.hpp>
 #include <fstream>
+#include <iresearch/utils/crc.hpp>
 
-#include "iresearch/utils/crc.hpp"
 #include "tests_shared.hpp"
 
 using Crc32cExpected =

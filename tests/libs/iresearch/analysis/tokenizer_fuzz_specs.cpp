@@ -20,15 +20,16 @@
 
 #include "tokenizer_fuzz_specs.hpp"
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <duckdb.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/analysis/geo_tokenizer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <utility>
 
-#include "iresearch/analysis/geo_tokenizer.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

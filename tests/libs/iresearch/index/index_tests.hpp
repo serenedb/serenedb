@@ -23,14 +23,15 @@
 
 #pragma once
 
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/timer_utils.hpp>
+
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/directory_reader_impl.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/utils/timer_utils.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

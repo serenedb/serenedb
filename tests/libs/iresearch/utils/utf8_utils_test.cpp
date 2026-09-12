@@ -22,10 +22,11 @@
 
 #include <absl/algorithm/container.h>
 
-#include "iresearch/utils/std.hpp"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/utf8_character_utils.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
+#include <iresearch/utils/std.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/utf8_character_utils.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
+
 #include "tests_shared.hpp"
 
 TEST(utf8_utils_test, test) {

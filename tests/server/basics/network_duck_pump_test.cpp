@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <atomic>
 #include <duckdb/main/connection.hpp>
@@ -31,7 +32,6 @@
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "network/cpu_resumer.h"
 #include "network/io_context.h"
 

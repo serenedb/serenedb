@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_format.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <cstdio>
 #include <iostream>  // std::cin
@@ -28,7 +29,6 @@
 #include "executor.h"
 #include "index_builder.h"
 #include "insert_field.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 
 int main(int argc, const char* argv[]) {
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.

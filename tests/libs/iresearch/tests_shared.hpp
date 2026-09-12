@@ -28,9 +28,8 @@
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <iresearch/utils/resource_manager.hpp>
 #include <memory>
-
-#include "iresearch/utils/resource_manager.hpp"
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 

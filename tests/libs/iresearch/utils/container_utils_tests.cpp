@@ -21,8 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/container_utils.hpp>
+
 #include "gtest/gtest.h"
-#include "iresearch/utils/container_utils.hpp"
 
 TEST(container_utils_tests, test_compute_bucket_meta) {
   // test meta for num buckets == 1, skip bits == 0

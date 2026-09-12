@@ -28,14 +28,14 @@
 #include <stringzilla/utf8_norm/skylake.h>
 
 #include <fstream>
+#include <iresearch/analysis/text/normalize/normalize.hpp>
+#include <iresearch/analysis/text/sz/stringzilla.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/text/normalize/normalize.hpp"
-#include "iresearch/analysis/text/sz/stringzilla.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "tests_config.hpp"
 
 namespace {

@@ -30,36 +30,37 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
   return os << "(" << p.first << ", " << p.second << ")";
 }
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/formats/posting/score_bound_writer.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/index/typed_terms.hpp>
+#include <iresearch/parser/parser.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/dfi.hpp>
+#include <iresearch/search/scorers/indri_dirichlet.hpp>
+#include <iresearch/search/scorers/lm_dirichlet.hpp>
+#include <iresearch/search/scorers/lm_jelinek_mercer.hpp>
+#include <iresearch/search/scorers/raw_tf.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/scorer_options.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/types.hpp>
 
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/formats/posting/score_bound_writer.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/index/table_filter_iterator.hpp"
-#include "iresearch/index/typed_terms.hpp"
-#include "iresearch/parser/parser.hpp"
-#include "iresearch/search/detail/doc_collector.hpp"
-#include "iresearch/search/detail/term_set.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/dfi.hpp"
-#include "iresearch/search/scorers/indri_dirichlet.hpp"
-#include "iresearch/search/scorers/lm_dirichlet.hpp"
-#include "iresearch/search/scorers/lm_jelinek_mercer.hpp"
-#include "iresearch/search/scorers/raw_tf.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/scorers/scorer_options.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/types.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 #include "tests_shared.hpp"
 
 namespace {

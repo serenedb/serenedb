@@ -20,18 +20,19 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstdint>
+#include <iresearch/utils/down_cast.h>
 
-#include "iresearch/formats/empty_term_reader.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/top_terms_selector.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/memory.hpp"
+#include <cstdint>
+#include <iresearch/formats/empty_term_reader.hpp>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/detail/collectors.hpp>
+#include <iresearch/search/detail/top_terms_selector.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/queries/multiterm_query.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/memory.hpp>
+
 #include "tests_shared.hpp"
 
 namespace {

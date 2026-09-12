@@ -24,35 +24,35 @@
 #include "assert_format.hpp"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <algorithm>
 #include <iostream>
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/index/comparer.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
+#include <iresearch/search/detail/term_predicate.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/lead/make.hpp>
+#include <iresearch/search/queries/term_state.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/store/data_output.hpp>
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/fstext/fst_table_matcher.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/index/comparer.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/directory_reader_impl.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/detail/term_predicate.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/queries/term_state.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/fstext/fst_table_matcher.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {

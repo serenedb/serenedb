@@ -25,17 +25,17 @@
 
 #include <algorithm>
 #include <deque>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/detail/posting_pos.hpp>
+#include <iresearch/search/detail/resolve.hpp>
+#include <iresearch/search/lead/node.hpp>
+#include <iresearch/search/lead/posting_docs.hpp>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/search/detail/posting_pos.hpp"
-#include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/lead/node.hpp"
-#include "iresearch/search/lead/posting_docs.hpp"
 
 namespace tests {
 

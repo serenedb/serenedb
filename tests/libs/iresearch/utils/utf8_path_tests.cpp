@@ -25,9 +25,9 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <thread>
 
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

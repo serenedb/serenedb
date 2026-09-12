@@ -23,29 +23,30 @@
 
 #include "formats_test_case_base.hpp"
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <iresearch/error/error.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/format_utils.hpp>
+#include <iresearch/formats/index/burst_trie.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/error/error.hpp"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
-#include "iresearch/formats/index/idx_reader.hpp"
-#include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/resource_manager.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {

@@ -23,15 +23,15 @@
 
 #include <unicode/bytestream.h>
 
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/normalizing_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {

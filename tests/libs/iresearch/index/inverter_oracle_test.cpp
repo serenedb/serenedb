@@ -26,16 +26,16 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/store/fs_directory.hpp>
 #include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/store/fs_directory.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

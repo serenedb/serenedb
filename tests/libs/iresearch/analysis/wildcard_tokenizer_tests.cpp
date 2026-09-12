@@ -18,9 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/wildcard_tokenizer.hpp"
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
+
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

@@ -21,13 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/column_existence_filter.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/column_existence_filter.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -24,11 +24,10 @@
 #include <simdjson.h>
 
 #include <algorithm>
+#include <iresearch/search/detail/geo_terms.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "iresearch/search/detail/geo_terms.hpp"
 
 namespace irs::tests {
 

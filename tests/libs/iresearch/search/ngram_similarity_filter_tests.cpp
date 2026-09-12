@@ -21,21 +21,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <functional>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/utils/ngram_match_utils.hpp>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/ngram_similarity_filter.hpp"
-#include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {

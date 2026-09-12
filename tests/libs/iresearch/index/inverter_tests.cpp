@@ -22,22 +22,22 @@
 
 #include <cctype>
 #include <cstring>
+#include <iresearch/analysis/numeric_terms.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/inverter/columnar_readers.hpp>
+#include <iresearch/index/typed_terms.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/analysis/numeric_terms.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/index/inverter/columnar_readers.hpp"
-#include "iresearch/index/typed_terms.hpp"
-#include "iresearch/store/memory_directory.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"

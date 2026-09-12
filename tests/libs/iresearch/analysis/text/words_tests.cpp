@@ -25,15 +25,15 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iresearch/analysis/text/words/unicode.hpp>
+#include <iresearch/utils/utf8_case_tables.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "break_test_utils.hpp"
-#include "iresearch/analysis/text/words/unicode.hpp"
-#include "iresearch/utils/utf8_case_tables.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "tests_config.hpp"
 
 namespace {

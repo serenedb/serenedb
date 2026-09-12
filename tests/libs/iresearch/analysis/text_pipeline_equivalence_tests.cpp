@@ -20,20 +20,20 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iresearch/analysis/icu_text_tokenizer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/pipeline_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/icu_text_tokenizer.hpp"
-#include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/normalizing_tokenizer.hpp"
-#include "iresearch/analysis/pipeline_tokenizer.hpp"
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/analysis/stemming_tokenizer.hpp"
-#include "iresearch/analysis/stopwords_tokenizer.hpp"
-#include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"

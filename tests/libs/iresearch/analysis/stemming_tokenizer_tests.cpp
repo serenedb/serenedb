@@ -21,9 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+
 #include "gtest/gtest.h"
-#include "iresearch/analysis/stemming_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {

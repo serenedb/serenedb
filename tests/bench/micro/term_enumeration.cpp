@@ -38,8 +38,22 @@
 // per single-letter prefix).
 
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <filesystem>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/containers/bitset.hpp>
+#include <iresearch/utils/regexp_utils.hpp>
+#include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
 #include <span>
@@ -51,20 +65,6 @@
 #include "fst/arcsort.h"
 #include "fst/minimize.h"
 #include "insert_field.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace {
 

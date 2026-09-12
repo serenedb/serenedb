@@ -32,6 +32,8 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -42,8 +44,6 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/index/index_features.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {

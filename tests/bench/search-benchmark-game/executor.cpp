@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <algorithm>
 #include <charconv>
@@ -47,7 +48,6 @@
 #include <vector>
 
 #include "index_builder.h"
-#include "iresearch/utils/duckdb_engine.h"
 #include "server/utils/wyhash.h"
 
 namespace bench {

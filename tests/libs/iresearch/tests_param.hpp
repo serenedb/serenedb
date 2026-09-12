@@ -25,12 +25,12 @@
 
 #include <array>
 #include <bit>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/utils/ctr_encryption.hpp>
+#include <iresearch/utils/type_id.hpp>
 #include <memory>
 
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/directory_attributes.hpp"
-#include "iresearch/utils/ctr_encryption.hpp"
-#include "iresearch/utils/type_id.hpp"
 #include "tests_shared.hpp"
 
 class TestBase;

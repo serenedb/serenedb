@@ -41,6 +41,7 @@
 
 #include <absl/algorithm/container.h>
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/duckdb_engine.h>
 #include <simdutf.h>
 
 #include <algorithm>
@@ -72,7 +73,6 @@
 #include <vector>
 
 #include "insert_field.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 #include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"
 

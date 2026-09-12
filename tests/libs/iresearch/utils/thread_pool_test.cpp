@@ -23,10 +23,10 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <iresearch/utils/async_utils.hpp>
+#include <iresearch/utils/misc.hpp>
 #include <mutex>
 
-#include "iresearch/utils/async_utils.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "tests_shared.hpp"
 
 namespace {

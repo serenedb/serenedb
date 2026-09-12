@@ -25,6 +25,14 @@
 #include <cstring>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/formats/ivf/centroids.hpp>
+#include <iresearch/formats/ivf/clustering.hpp>
+#include <iresearch/store/data_output.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -32,14 +40,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/formats/ivf/centroids.hpp"
-#include "iresearch/formats/ivf/clustering.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

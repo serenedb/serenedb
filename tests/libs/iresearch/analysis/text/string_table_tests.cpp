@@ -22,13 +22,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iresearch/analysis/stopword_set.hpp>
+#include <iresearch/analysis/text/dict/string_table.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include "iresearch/analysis/stopword_set.hpp"
-#include "iresearch/analysis/text/dict/string_table.hpp"
 
 namespace {
 

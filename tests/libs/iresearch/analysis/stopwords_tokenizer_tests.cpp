@@ -21,13 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/pg/sql_exception.h>
+
 #include <filesystem>
 #include <fstream>
+#include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/stopwords_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/pg/sql_exception.h"
 #include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 

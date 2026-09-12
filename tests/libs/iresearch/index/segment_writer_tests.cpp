@@ -21,16 +21,18 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/segment_writer.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/string.hpp>
+
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/segment_writer.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 
 namespace {

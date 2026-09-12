@@ -21,7 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/file_utils_ext.hpp"
+#include <iresearch/utils/file_utils_ext.hpp>
+
 #include "tests_shared.hpp"
 
 #ifdef _WIN32

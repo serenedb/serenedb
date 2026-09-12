@@ -19,9 +19,16 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <algorithm>
 #include <filesystem>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <map>
 #include <memory>
 #include <string>
@@ -29,13 +36,6 @@
 
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/directory_utils.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 #include "tests_shared.hpp"
 
 namespace {

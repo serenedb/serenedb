@@ -21,6 +21,8 @@
 // Struct round-trips through the duckdb-binary serializer/deserializer.
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/serialization.h>
+#include <iresearch/utils/serializer.h>
 
 #include <array>
 #include <cstdint>
@@ -40,9 +42,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include "iresearch/utils/serialization.h"
-#include "iresearch/utils/serializer.h"
 
 namespace {
 

@@ -37,6 +37,7 @@
 // Run: ./bin/serenedb-bench-micro-select_thresholds [--benchmark_filter=...]
 
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -47,17 +48,15 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

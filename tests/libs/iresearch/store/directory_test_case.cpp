@@ -25,18 +25,18 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/async_utils.hpp>
+#include <iresearch/utils/crc.hpp>
+#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/network_utils.hpp>
 #include <string>
 #include <vector>
 
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/async_utils.hpp"
-#include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/directory_utils.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/network_utils.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

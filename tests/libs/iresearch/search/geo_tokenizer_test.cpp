@@ -18,22 +18,22 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/geo/geo_json.h>
 #include <s2/s2point_region.h>
 #include <simdjson.h>
 
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
 #include <memory>
 #include <optional>
 
 #include "geo_test_helpers.hpp"
-#include "iresearch/analysis/geo_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/geo/geo_json.h"
 #include "tests_shared.hpp"
 
 using namespace irs;

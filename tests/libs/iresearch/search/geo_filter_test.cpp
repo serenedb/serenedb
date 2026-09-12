@@ -18,22 +18,23 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/geo/geo_json.h>
+
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/detail/collectors.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/search/scorers/raw_boost.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
-#include "iresearch/search/scorers/raw_boost.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/scorers/unscored.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/geo/geo_json.h"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
 #include "search/filter_test_case_base.hpp"

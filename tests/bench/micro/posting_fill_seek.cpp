@@ -58,6 +58,8 @@
 // directly.
 
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <bit>
 #include <cmath>
@@ -87,8 +89,6 @@
 #include <vector>
 
 #include "insert_field.hpp"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

@@ -21,25 +21,26 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/bytes_output.hpp>
+
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/filters/ngram_similarity_filter.hpp"
-#include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -21,16 +21,16 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

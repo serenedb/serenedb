@@ -21,6 +21,7 @@
 #include "index_builder.h"
 
 #include <absl/strings/str_format.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <atomic>
 #include <cstdio>
@@ -30,8 +31,6 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <istream>
 #include <memory>
-
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace bench {
 

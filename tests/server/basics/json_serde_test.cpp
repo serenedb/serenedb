@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <array>
@@ -29,7 +30,6 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/utils/serializer.h"
 #include "server/utils/simdjson_sink.h"
 
 namespace {

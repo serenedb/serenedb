@@ -20,12 +20,34 @@
 
 #include <absl/strings/str_format.h>
 #include <benchmark/benchmark.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <atomic>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,28 +56,6 @@
 #include <vector>
 
 #include "insert_field.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/detail/search_range.hpp"
-#include "iresearch/search/detail/term_set.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/filters/levenshtein_filter.hpp"
-#include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/filters/wildcard_filter.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 

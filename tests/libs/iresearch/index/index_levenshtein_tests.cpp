@@ -20,13 +20,14 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/containers/small_vector.h>
 #include <simdutf.h>
 
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/levenshtein_utils.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
+
 #include "index/index_tests.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/containers/small_vector.h"
-#include "iresearch/utils/levenshtein_utils.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 
 class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
  protected:

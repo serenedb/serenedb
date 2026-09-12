@@ -19,24 +19,23 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <array>
 #include <cstdint>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/parser/parser.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/utils/string.hpp>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/parser/parser.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/levenshtein_filter.hpp"
-#include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/filters/wildcard_filter.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/string.hpp"
 
 namespace {
 

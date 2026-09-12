@@ -20,18 +20,19 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/nested_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/attribute_provider.hpp>
+
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/filters/granular_range_filter.hpp"
-#include "iresearch/search/filters/nested_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/utils/attribute_provider.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 

@@ -23,9 +23,9 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <iresearch/utils/async_utils.hpp>
 #include <mutex>
 
-#include "iresearch/utils/async_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

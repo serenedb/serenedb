@@ -20,13 +20,13 @@
 
 #pragma once
 
+#include <iresearch/analysis/tokenizer.hpp>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/tokenizer.hpp"
 #include "token_sink_utils.hpp"
 
 namespace tests {

@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/token_batch.hpp"
 #include "token_sink_utils.hpp"
 
 namespace irs::analysis {

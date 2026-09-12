@@ -21,9 +21,9 @@
 
 #pragma once
 
-#include <string>
+#include <iresearch/utils/common.h>
 
-#include "iresearch/utils/common.h"
+#include <string>
 
 struct IcuInitializer {
   static void setup(const char* path);

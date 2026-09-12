@@ -21,11 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <climits>
+#include <iresearch/utils/number_utils.h>
 
-#include "iresearch/types.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/number_utils.h"
+#include <climits>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/bit_utils.hpp>
+
 #include "tests_shared.hpp"
 
 TEST(bit_utils_test, zig_zag_32) {

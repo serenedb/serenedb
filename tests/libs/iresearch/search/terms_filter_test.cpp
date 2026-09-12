@@ -21,24 +21,24 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
+#include <iresearch/search/detail/term_predicate.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/raw_boost.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/regexp_utils.hpp>
 
 #include "filter_test_case_base.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/detail/term_predicate.hpp"
-#include "iresearch/search/detail/term_set.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/automaton_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/levenshtein_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/scorers/raw_boost.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/scorers/unscored.hpp"
-#include "iresearch/utils/regexp_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

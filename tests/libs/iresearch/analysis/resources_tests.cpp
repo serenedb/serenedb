@@ -25,10 +25,9 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/shared_object_cache.hpp>
-
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/stopword_set.hpp"
-#include "iresearch/analysis/tokenizer_pool.hpp"
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/stopword_set.hpp>
+#include <iresearch/analysis/tokenizer_pool.hpp>
 
 namespace {
 

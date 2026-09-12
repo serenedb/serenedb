@@ -21,14 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/numeric_terms.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
 #include <span>
 
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/numeric_terms.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

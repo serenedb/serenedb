@@ -23,36 +23,35 @@
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
+#include <iresearch/utils/application-exit.h>
 
 #include <type_traits>
 #include <utility>
-
-#include "iresearch/utils/application-exit.h"
 
 #if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
 #endif
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
 #include <signal.h>          // for signal(...)/raise(...)
 #include <unicode/uclean.h>  // for u_cleanup
 #include <unicode/udata.h>
 
 #include <ctime>
 #include <filesystem>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/attributes.hpp>
+#include <iresearch/utils/containers/bitset.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/mmap_utils.hpp>
+#include <iresearch/utils/network_utils.hpp>
 #include <vector>
 
 #include "index/doc_generator.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/utils/attributes.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/mmap_utils.hpp"
-#include "iresearch/utils/network_utils.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 

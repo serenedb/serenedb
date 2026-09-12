@@ -22,11 +22,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cstring>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sink.hpp>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/token_sink.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"
 

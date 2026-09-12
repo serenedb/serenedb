@@ -24,6 +24,14 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <iresearch/formats/ivf/clustering.hpp>
+#include <iresearch/formats/ivf/quantizer.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/store/data_input.hpp>
+#include <iresearch/store/data_output.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/misc.hpp>
 #include <limits>
 #include <memory>
 #include <random>
@@ -31,14 +39,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/ivf/clustering.hpp"
-#include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

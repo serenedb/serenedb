@@ -21,6 +21,8 @@
 #pragma once
 
 #include <cstdint>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -28,8 +30,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
 #include "tokenizer_fuzz_specs.hpp"
 
 namespace tests::fuzz {

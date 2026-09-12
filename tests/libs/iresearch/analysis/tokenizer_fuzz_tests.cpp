@@ -22,11 +22,11 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <string>
 #include <variant>
 #include <vector>
 
-#include "iresearch/analysis/tokenizer_config.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

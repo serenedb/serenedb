@@ -27,14 +27,14 @@
 #include <unicode/ucnv.h>      // for UConverter
 #include <unicode/ustring.h>   // for u_strToUTF32, u_strToUTF8
 
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <unordered_set>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "token_sink_asserts.hpp"

@@ -19,18 +19,18 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/lm_dirichlet.hpp>
+#include <iresearch/search/scorers/lm_jelinek_mercer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <limits>
 #include <map>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/scorers/lm_dirichlet.hpp"
-#include "iresearch/search/scorers/lm_jelinek_mercer.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

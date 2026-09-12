@@ -19,13 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cctype>
+#include <iresearch/analysis/shingle_tokenizer.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/string.hpp>
 #include <string>
 #include <vector>
 
-#include "iresearch/analysis/shingle_tokenizer.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

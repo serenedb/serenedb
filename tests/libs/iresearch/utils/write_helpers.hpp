@@ -22,9 +22,8 @@
 
 #include <cmath>
 #include <cstdint>
-
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/store/data_output.hpp"
+#include <iresearch/store/data_input.hpp>
+#include <iresearch/store/data_output.hpp>
 
 namespace tests {
 

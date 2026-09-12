@@ -21,11 +21,11 @@
 #pragma once
 
 #include <functional>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <string>
 #include <vector>
 
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
 #include "tokenizer_fuzz_oracles.hpp"
 
 namespace tests::fuzz {

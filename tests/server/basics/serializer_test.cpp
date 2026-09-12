@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 #include <gtest/gtest.h>
+#include <iresearch/utils/serialization.h>
+#include <iresearch/utils/serializer.h>
 
 #include <array>
 #include <cstdint>
@@ -39,9 +41,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#include "iresearch/utils/serialization.h"
-#include "iresearch/utils/serializer.h"
 
 namespace {
 

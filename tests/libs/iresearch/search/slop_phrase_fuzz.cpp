@@ -30,16 +30,16 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <iresearch/search/detail/phrase_iterator.hpp>
+#include <iresearch/search/detail/slop_phrase.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
 #include <random>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/detail/slop_phrase.hpp"
-#include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
 #include "tests_shared.hpp"
 
 namespace {

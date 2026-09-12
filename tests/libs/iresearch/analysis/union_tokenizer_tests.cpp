@@ -18,17 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/analysis/union_tokenizer.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/analysis/union_tokenizer.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"

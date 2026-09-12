@@ -21,28 +21,29 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/pg/sql_exception.h>
+
 #include <cstring>
+#include <iresearch/analysis/collation_tokenizer.hpp>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/pipeline_tokenizer.hpp>
+#include <iresearch/analysis/process_tokens.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/collation_tokenizer.hpp"
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/multi_delimited_tokenizer.hpp"
-#include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/normalizing_tokenizer.hpp"
-#include "iresearch/analysis/pipeline_tokenizer.hpp"
-#include "iresearch/analysis/process_tokens.hpp"
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
-#include "iresearch/analysis/stemming_tokenizer.hpp"
-#include "iresearch/analysis/stopwords_tokenizer.hpp"
-#include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
-#include "iresearch/utils/pg/sql_exception.h"
 #include "pipeline_reference.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"

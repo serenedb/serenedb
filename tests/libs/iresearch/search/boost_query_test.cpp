@@ -21,20 +21,20 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/parser/parser.hpp>
+#include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/types.hpp>
 #include <tuple>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/parser/parser.hpp"
-#include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/doc_collector.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 
 namespace {

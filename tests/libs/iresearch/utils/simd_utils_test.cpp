@@ -20,7 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/simd_utils.hpp"
+#include <iresearch/utils/simd_utils.hpp>
+
 #include "tests_shared.hpp"
 
 // `irs::AllSame` is the only function left in simd_utils.hpp after the

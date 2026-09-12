@@ -19,14 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
+#include <iresearch/analysis/pattern_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/pattern_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"
 

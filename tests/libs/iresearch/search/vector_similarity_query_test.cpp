@@ -20,15 +20,15 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/ivf/centroids.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/store/memory_directory.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/formats/ivf/centroids.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filters/vector_similarity_filter.hpp"
-#include "iresearch/search/queries/vector_similarity_query.hpp"
-#include "iresearch/store/memory_directory.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"

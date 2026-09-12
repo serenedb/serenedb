@@ -31,6 +31,8 @@
 
 #include <absl/algorithm/container.h>
 #include <gtest/gtest.h>
+#include <iresearch/utils/serialization.h>
+#include <iresearch/utils/serializer.h>
 
 #include <array>
 #include <cstdint>
@@ -50,9 +52,6 @@
 #include <unordered_set>
 #include <variant>
 #include <vector>
-
-#include "iresearch/utils/serialization.h"
-#include "iresearch/utils/serializer.h"
 
 namespace {
 

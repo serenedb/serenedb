@@ -20,13 +20,12 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/analysis/text/case/case.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "iresearch/analysis/text/case/case.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace {
 

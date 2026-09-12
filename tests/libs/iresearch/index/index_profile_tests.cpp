@@ -23,18 +23,18 @@
 
 #include <absl/synchronization/notification.h>
 
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/fs_directory.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/fs_directory.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/index_utils.hpp"
 
 namespace {
 

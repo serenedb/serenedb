@@ -20,24 +20,25 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+
+#include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/types.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "search/filter_test_case_base.hpp"
 
 namespace {

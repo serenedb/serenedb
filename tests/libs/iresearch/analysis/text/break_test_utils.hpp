@@ -21,11 +21,10 @@
 #pragma once
 
 #include <fstream>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
-
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace tests {
 

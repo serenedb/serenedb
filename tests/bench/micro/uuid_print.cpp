@@ -29,10 +29,9 @@
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <iresearch/utils/shared.hpp>
 #include <limits>
 #include <random>
-
-#include "iresearch/utils/shared.hpp"
 
 namespace {
 

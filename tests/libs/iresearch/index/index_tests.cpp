@@ -25,7 +25,24 @@
 
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
+#include <iresearch/utils/duckdb_engine.h>
 
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/fs_directory.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/fstext/fst_table_matcher.hpp>
+#include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/type_limits.hpp>
+#include <iresearch/utils/vector.hpp>
+#include <iresearch/utils/wildcard_utils.hpp>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -34,23 +51,6 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/fs_directory.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/fstext/fst_table_matcher.hpp"
-#include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
-#include "iresearch/utils/vector.hpp"
-#include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::literals;

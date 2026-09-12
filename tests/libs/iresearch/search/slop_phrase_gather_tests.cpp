@@ -28,16 +28,16 @@
 // same-position (term-group) semantics of spm::Run and run in any build.
 
 #include <array>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/detail/phrase_iterator.hpp>
+#include <iresearch/search/detail/slop_phrase.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/offsets/make.hpp>
+#include <iresearch/search/offsets/root.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/detail/slop_phrase.hpp"
-#include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/offsets/make.hpp"
-#include "iresearch/search/offsets/root.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
 #include "tests_shared.hpp"
 
 namespace {

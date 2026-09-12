@@ -42,19 +42,19 @@
 #include <cstring>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/types.hpp"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 

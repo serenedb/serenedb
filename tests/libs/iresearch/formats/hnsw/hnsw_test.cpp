@@ -22,19 +22,19 @@
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/hnsw/hnsw_graph.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/search/scorers/vector_similarity_scorer.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <random>
 #include <tuple>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/formats/hnsw/hnsw_graph.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/detail/doc_collector.hpp"
-#include "iresearch/search/filters/vector_similarity_filter.hpp"
-#include "iresearch/search/scorers/vector_similarity_scorer.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 

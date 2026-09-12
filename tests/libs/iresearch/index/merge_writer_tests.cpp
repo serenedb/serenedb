@@ -21,25 +21,26 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+
+#include <iresearch/formats/column/norm_reader.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/comparer.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/async.hpp>
+#include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/comparer.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/merge_writer.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/index/segment_reader_impl.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/async.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {

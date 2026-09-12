@@ -24,24 +24,24 @@
 #pragma once
 
 #include <algorithm>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/detail/collectors.hpp>
+#include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_visitor.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/memory.hpp>
+#include <iresearch/utils/singleton.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <optional>
 #include <variant>
 #include <vector>
 
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/filters/filter_visitor.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/types.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/singleton.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {

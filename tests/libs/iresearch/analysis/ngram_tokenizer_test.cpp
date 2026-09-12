@@ -23,11 +23,11 @@
 
 #include <unicode/locid.h>
 
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
 
-#include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

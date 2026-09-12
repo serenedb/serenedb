@@ -18,6 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/geo/s2/multi_point_region.h>
+#include <iresearch/utils/geo/s2/multi_polyline_region.h>
+#include <iresearch/utils/geo/shape_container.h>
+#include <iresearch/utils/geo/wkb.h>
 #include <s2/s2latlng.h>
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
@@ -27,10 +31,6 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "iresearch/utils/geo/s2/multi_point_region.h"
-#include "iresearch/utils/geo/s2/multi_polyline_region.h"
-#include "iresearch/utils/geo/shape_container.h"
-#include "iresearch/utils/geo/wkb.h"
 
 namespace {
 

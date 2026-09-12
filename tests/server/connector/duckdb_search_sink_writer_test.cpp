@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <duckdb.hpp>
@@ -42,7 +43,6 @@
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

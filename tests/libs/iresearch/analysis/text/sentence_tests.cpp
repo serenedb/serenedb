@@ -22,13 +22,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <fstream>
+#include <iresearch/analysis/text/sz/stringzilla.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "break_test_utils.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "tests_config.hpp"
 
 namespace {

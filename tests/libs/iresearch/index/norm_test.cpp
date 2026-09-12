@@ -22,14 +22,15 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {

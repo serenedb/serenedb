@@ -22,12 +22,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
+#include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/object_pool.hpp>
 #include <shared_mutex>
 #include <thread>
 
 #include "gtest/gtest.h"
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/object_pool.hpp"
 
 using namespace std::chrono_literals;
 namespace irs {

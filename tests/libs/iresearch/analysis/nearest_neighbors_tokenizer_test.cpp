@@ -21,8 +21,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/nearest_neighbors_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
+#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"

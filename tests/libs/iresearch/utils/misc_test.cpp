@@ -20,7 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/misc.hpp"
+#include <iresearch/utils/misc.hpp>
+
 #include "tests_shared.hpp"
 
 TEST(misc_test, cached_func_contexpr) {

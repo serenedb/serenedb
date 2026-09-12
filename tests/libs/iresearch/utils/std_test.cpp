@@ -21,8 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/std.hpp"
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/std.hpp>
+
 #include "tests_shared.hpp"
 
 using namespace irs;

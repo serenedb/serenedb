@@ -23,26 +23,26 @@
 // ColumnReader / ColumnOutput interfaces are gone from production; ported
 // tests use BLOB-typed cs columns through this thin layer.
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <atomic>
 #include <duckdb/common/types/vector.hpp>
 #include <functional>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/store/data_output.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
-
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/index/index_reader_options.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::tests {
 

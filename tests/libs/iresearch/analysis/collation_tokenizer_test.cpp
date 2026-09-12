@@ -24,13 +24,13 @@
 #include <unicode/locid.h>
 #include <unicode/sortkey.h>
 
+#include <iresearch/analysis/collation_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "iresearch/analysis/collation_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

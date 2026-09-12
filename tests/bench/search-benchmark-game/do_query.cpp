@@ -20,6 +20,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_format.h>
+#include <iresearch/utils/duckdb_engine.h>
 
 #include <cstdio>
 #include <iostream>  // std::cin
@@ -28,7 +29,6 @@
 #include <string>
 
 #include "executor.h"
-#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

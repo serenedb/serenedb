@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/geo/coding.h>
 #include <s2/s2cell_union.h>
 #include <s2/s2latlng.h>
 #include <s2/s2loop.h>
@@ -28,6 +29,9 @@
 #include <bit>
 #include <cstring>
 #include <format>
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/search/detail/geo_terms.hpp>
 #include <memory>
 #include <random>
 #include <span>
@@ -36,10 +40,6 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/geo_tokenizer.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/search/detail/geo_terms.hpp"
-#include "iresearch/utils/geo/coding.h"
 #include "search/geo_test_helpers.hpp"
 #include "token_sink_utils.hpp"
 

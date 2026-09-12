@@ -21,8 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"

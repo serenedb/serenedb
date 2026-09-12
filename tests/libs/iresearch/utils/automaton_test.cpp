@@ -20,8 +20,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/misc.hpp"
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/misc.hpp>
+
 #include "tests_shared.hpp"
 
 TEST(boolean_weight_test, static_const) {

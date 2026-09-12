@@ -18,21 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/pg/sql_exception.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <format>
+#include <iresearch/analysis/sql_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <map>
 #include <random>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/sql_tokenizer.hpp"
-#include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/pg/sql_exception.h"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

@@ -29,6 +29,7 @@
 //     --gtest_filter='CatalogPersistence.*'
 
 #include <gtest/gtest.h>
+#include <iresearch/utils/serializer.h>
 
 #include <cstdlib>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -52,7 +53,6 @@
 #include "catalog/table.h"
 #include "catalog/tokenizer.h"
 #include "connector/file_manifest.h"
-#include "iresearch/utils/serializer.h"
 
 namespace sdb::catalog::persistence {
 namespace {

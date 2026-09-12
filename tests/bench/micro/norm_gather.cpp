@@ -24,11 +24,10 @@
 #include <cstdint>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/utils/shared.hpp>
 #include <numeric>
 #include <random>
 #include <vector>
-
-#include "iresearch/utils/shared.hpp"
 
 #ifdef __AVX2__
 #include <immintrin.h>

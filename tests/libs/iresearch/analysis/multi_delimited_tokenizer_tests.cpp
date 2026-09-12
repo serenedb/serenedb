@@ -18,9 +18,10 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+
 #include "gtest/gtest.h"
-#include "iresearch/analysis/multi_delimited_tokenizer.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"
 

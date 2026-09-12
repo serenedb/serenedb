@@ -29,10 +29,10 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <format>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <set>
 
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
 #include "tokenizer_fuzz_mutator.hpp"

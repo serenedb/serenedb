@@ -21,15 +21,15 @@
 #include <absl/strings/ascii.h>
 
 #include <cstring>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
+#include <iresearch/analysis/text/words/masks.hpp>
+#include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "iresearch/analysis/split_by_non_alpha_tokenizer.hpp"
-#include "iresearch/analysis/text/words/masks.hpp"
-#include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
-#include "iresearch/analysis/token_batch.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 

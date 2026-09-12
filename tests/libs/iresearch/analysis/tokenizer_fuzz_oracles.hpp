@@ -22,14 +22,13 @@
 
 #include <bitset>
 #include <cstdint>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "iresearch/analysis/tokenizer.hpp"
 
 namespace tests::fuzz {
 

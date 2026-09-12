@@ -21,17 +21,17 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/directory_cleaner.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/store/directory_cleaner.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

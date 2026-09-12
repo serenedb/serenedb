@@ -132,11 +132,27 @@ class SinglePositionStrategy {
     return seek == sought;
   }
 
+  bool AdvanceIterators(bool match, PosAttr::value_t sought,
+                        const Iterator& end, Iterator& it,
+                        PosAttr::value_t& lead_bound) {
+    if (!match) {
+      SDB_ASSERT(sought + Traits::Interval(*_lead_it).lead_offset >
+                 Traits::Interval(*it).lead_offset);
+      lead_bound = sought - Traits::Interval(*it).lead_offset +
+                   Traits::Interval(*_lead_it).lead_offset;
+    }
+    _base_position = sought;
+    ++it;
+    return match;
+  }
+
   bool AdvanceIterators(bool match, PosAttr::value_t sought, const Iterator&,
                         Iterator& it) {
     if (!match) {
-      SDB_ASSERT(sought > Traits::Interval(*it).lead_offset);
-      _lead_pos.seek(sought - Traits::Interval(*it).lead_offset);
+      SDB_ASSERT(sought + Traits::Interval(*_lead_it).lead_offset >
+                 Traits::Interval(*it).lead_offset);
+      _lead_pos.seek(sought - Traits::Interval(*it).lead_offset +
+                     Traits::Interval(*_lead_it).lead_offset);
     }
     _base_position = sought;
     ++it;
@@ -149,6 +165,7 @@ class SinglePositionStrategy {
   Iterator& _lead_it;
   PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
+  bool _reversed{false};
 };
 
 template<typename Iterator>
@@ -187,6 +204,17 @@ class IntervalPositionStrategy {
 
   bool AdvanceIterators(bool match, PosAttr::value_t sought,
                         const Iterator& end, Iterator& it) {
+    PosAttr::value_t lead_bound = 0;
+    const auto result = AdvanceIterators(match, sought, end, it, lead_bound);
+    if (!result) {
+      _lead_pos.seek(std::max(lead_bound, _lead_pos.value() + 1));
+    }
+    return result;
+  }
+
+  bool AdvanceIterators(bool match, PosAttr::value_t sought,
+                        const Iterator& end, Iterator& it,
+                        PosAttr::value_t& lead_bound) {
     const auto fail_it = it;
     _interval_delta = 0;
     if (match) {
@@ -208,7 +236,8 @@ class IntervalPositionStrategy {
     }
 
     const auto bound = _skipped ? 0 : Reach(sought, _lead_it, fail_it);
-    _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));
+    lead_bound = std::max(bound, _lead_pos.value() + 1);
+
     return false;
   }
 
@@ -323,6 +352,10 @@ class PhraseFrequency {
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
+  using ReverseExecutionStrategy = std::conditional_t<
+    HasIntervals,
+    IntervalPositionStrategy<typename Positions::reverse_iterator>,
+    SinglePositionStrategy<typename Positions::reverse_iterator>>;
 
   static_assert(!HasBoost || HasFreq);
 
@@ -374,7 +407,8 @@ class PhraseFrequency {
 
   uint32_t DocFreqBound() {
     OrderByDocFreq();
-    const auto freq = _pos.front().first->DocFreq();
+    FindRarestTerm();
+    const auto freq = _rarest_term_it->first->DocFreq();
     if constexpr (HasIntervals) {
       uint64_t by_window = uint64_t{freq} * _freq_scale;
       uint64_t by_occurrence = 1;
@@ -408,10 +442,14 @@ class PhraseFrequency {
     if constexpr (HasBoost) {
       _phrase_boost = 0.f;
     }
+    if constexpr (!Ordered) {
+      OrderByDocFreq();
+    }
+    FindRarestTerm();
     if constexpr (HasIntervals || Offs) {
-      return NextPositionGeneric<Ordered>();
+      return NextPositionGeneric();
     } else {
-      return NextPositionOptimized<Ordered>();
+      return NextPositionOptimized();
     }
   }
 
@@ -423,70 +461,80 @@ class PhraseFrequency {
     }
   }
 
-  template<bool Ordered = false>
   uint32_t NextPositionGeneric() {
-    if constexpr (!Ordered) {
-      OrderByDocFreq();
-    }
     uint32_t phrase_freq = 0;
-    auto& lead = *_pos.front().first;
-    lead.next();
-    auto lead_it = std::begin(_pos);
-    ExecutionStrategy strategy{lead_it, lead, _reversed};
+    auto& rarest_term = *_rarest_term_it->first;
+    ExecutionStrategy strategy_to_end{_rarest_term_it, rarest_term, false};
+
+    auto reversed_rarest_it =
+      std::reverse_iterator<decltype(_rarest_term_it)>(_rarest_term_it + 1);
+    ReverseExecutionStrategy strategy_to_start{reversed_rarest_it, rarest_term,
+                                               true};
     SDB_ASSERT(_pos.size() > 1);
 
-    for (auto end = std::end(_pos); !pos_limits::eof(lead.value());) {
-      strategy.NotifyNextLead(end);
-      bool match = true;
-      for (auto it = lead_it + 1; it != end;) {
-        auto& pos = *it->first;
+    rarest_term.next();
+    auto end = std::end(_pos);
 
-        const auto term_position = strategy.NextPosition(it);
-        if (!pos_limits::valid(term_position)) {
+    if (_rarest_term_it == _pos.begin()) {
+      while (!pos_limits::eof(rarest_term.value())) {
+        auto [freq, bound, need_break] =
+          FixedRarestTermLoop(strategy_to_end, _rarest_term_it, end);
+        phrase_freq += freq;
+        if (need_break) {
           return phrase_freq;
         }
-        const auto sought = pos.seek(term_position);
-
-        if (pos_limits::eof(sought)) {
-          if constexpr (HasFreq) {
-            if (!strategy.NextPermutation(it, end)) {
-              return phrase_freq;
-            }
-
-            if (it == end) {
-              lead.next();
-              match = false;
-            }
-            continue;
-          } else {
+        if constexpr (!HasFreq) {
+          if (phrase_freq) {
             return phrase_freq;
           }
         }
-        match = strategy.AdvanceIterators(
-          strategy.Match(term_position, sought, it), sought, end, it);
+        rarest_term.seek(std::max(bound, rarest_term.value() + 1));
+      }
+      return phrase_freq;
+    }
+    auto rend = _pos.rend();
 
-        if constexpr (HasFreq) {
-          if (it == end && match) {
-            if (!strategy.NextPermutation(it, end)) {
-              break;
-            }
-            ++phrase_freq;
-            TakeBoost();
+    if (_rarest_term_it + 1 == _pos.end()) {
+      while (!pos_limits::eof(rarest_term.value())) {
+        auto [freq, bound, need_break] =
+          FixedRarestTermLoop(strategy_to_start, reversed_rarest_it, rend);
+        phrase_freq += freq;
+        if (need_break) {
+          return phrase_freq;
+        }
+        if constexpr (!HasFreq) {
+          if (phrase_freq) {
+            return phrase_freq;
           }
         }
-        if (!match) {
+        rarest_term.seek(std::max(bound, rarest_term.value() + 1));
+      }
+      return phrase_freq;
+    }
+
+    while (!pos_limits::eof(rarest_term.value())) {
+      auto [right_freq, right_bound, need_break1] =
+        FixedRarestTermLoop(strategy_to_end, _rarest_term_it, end);
+      if (!right_freq) {
+        if (need_break1) {
           break;
         }
+        rarest_term.seek(std::max(right_bound, rarest_term.value() + 1));
+        continue;
       }
-      if (match) {
-        if constexpr (HasFreq) {
-          ++phrase_freq;
-          TakeBoost();
-          lead.next();
-        } else {
-          return 1;
+      auto [left_freq, left_bound, need_break2] =
+        FixedRarestTermLoop(strategy_to_start, reversed_rarest_it, rend);
+      phrase_freq += right_freq * left_freq;
+      if (need_break1 || need_break2) {
+        break;
+      }
+      if constexpr (!HasFreq) {
+        if (phrase_freq) {
+          return phrase_freq;
         }
       }
+      rarest_term.seek(
+        std::max(std::max(right_bound, rarest_term.value() + 1), left_bound));
     }
 
     return phrase_freq;
@@ -494,24 +542,89 @@ class PhraseFrequency {
 
  private:
   void OrderByDocFreq() {
-    if constexpr (Offs) {
-    } else if constexpr (HasIntervals) {
-      if (_pos.back().first->DocFreq() < _pos.front().first->DocFreq()) {
-        absl::c_reverse(_pos);
-        _reversed = !_reversed;
-      }
-    } else {
+    if constexpr (!Offs && !HasIntervals) {
       absl::c_sort(_pos, [](const auto& l, const auto& r) {
         return l.first->DocFreq() < r.first->DocFreq();
       });
     }
   }
 
-  template<bool Ordered = false>
-  uint32_t NextPositionOptimized() {
-    if constexpr (!Ordered) {
-      OrderByDocFreq();
+  void FindRarestTerm() {
+    _rarest_term_it = _pos.begin();
+    if constexpr (HasIntervals || Offs) {
+      auto min_term_rate = _rarest_term_it->first->DocFreq();
+      for (auto it = _rarest_term_it + 1; it != _pos.end(); ++it) {
+        const auto cand_term_rate = it->first->DocFreq();
+        if (cand_term_rate < min_term_rate) {
+          _rarest_term_it = it;
+          min_term_rate = cand_term_rate;
+        }
+      }
     }
+  }
+
+  template<typename Strategy, typename Iterator>
+  IRS_FORCE_INLINE std::tuple<uint32_t, PosAttr::value_t, bool>
+  FixedRarestTermLoop(Strategy& strategy, Iterator& lead_it,
+                      const Iterator& end) {
+    strategy.NotifyNextLead(end);
+    bool match = true;
+    uint32_t phrase_freq = 0;
+    auto it = lead_it + 1;
+    PosAttr::value_t lead_bound = 0;
+    while (it != end) {
+      auto& pos = *it->first;
+
+      const auto term_position = strategy.NextPosition(it);
+      if (!pos_limits::valid(term_position)) {
+        return {phrase_freq, lead_bound, true};
+      }
+      const auto sought = pos.seek(term_position);
+
+      if (pos_limits::eof(sought)) {
+        // exhausted
+        if constexpr (HasFreq) {
+          if (!strategy.NextPermutation(it, end)) {
+            return {phrase_freq, lead_bound, true};
+          }
+
+          if (it == end) {
+            match = false;
+          }
+          continue;
+        } else {
+          return {phrase_freq, lead_bound, true};
+        }
+      }
+      match = strategy.AdvanceIterators(
+        strategy.Match(term_position, sought, it), sought, end, it, lead_bound);
+
+      if constexpr (HasFreq) {
+        if (it == end && match) {
+          if (!strategy.NextPermutation(it, end)) {
+            break;
+          }
+          ++phrase_freq;
+          TakeBoost();
+        }
+      }
+      if (!match) {
+        break;
+      }
+    }
+    if (match) {
+      if constexpr (HasFreq) {
+        ++phrase_freq;
+        TakeBoost();
+        return {phrase_freq, lead_bound, false};
+      } else {
+        return {1, lead_bound, false};
+      }
+    }
+    return {phrase_freq, lead_bound, false};
+  }
+
+  uint32_t NextPositionOptimized() {
     auto begin = _pos.begin();
     auto end = _pos.end();
 
@@ -554,7 +667,9 @@ class PhraseFrequency {
   uint32_t _phrase_freq = 0;
   [[no_unique_address]] utils::Need<HasBoost, score_t> _phrase_boost{};
   uint32_t _freq_scale = 1;
-  bool _reversed = false;
+
+  // pointer to rarest term in _pos
+  Positions::iterator _rarest_term_it;
 };
 
 template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>

@@ -38,6 +38,8 @@ class FixedArray {
   using value_type = T;
   using iterator = T*;
   using const_iterator = const T*;
+  using reverse_iterator = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
   FixedArray() = default;
 
@@ -143,6 +145,16 @@ class FixedArray {
   const T* begin() const noexcept { return _data; }
   const T* end() const noexcept { return _data + _size; }
 
+  reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+  reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
+
+  const_reverse_iterator rbegin() const noexcept {
+    return const_reverse_iterator(end());
+  }
+  const_reverse_iterator rend() const noexcept {
+    return const_reverse_iterator(begin());
+  }
+
  private:
   T* _data = nullptr;
   size_t _size = 0;
@@ -154,6 +166,8 @@ class FixedRun {
   using value_type = T;
   using iterator = T*;
   using const_iterator = const T*;
+  using reverse_iterator = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
   FixedRun() = default;
 
@@ -208,6 +222,16 @@ class FixedRun {
   T* end() noexcept { return _data.data() + N; }
   const T* begin() const noexcept { return _data.data(); }
   const T* end() const noexcept { return _data.data() + N; }
+
+  reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+  reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
+
+  const_reverse_iterator rbegin() const noexcept {
+    return const_reverse_iterator(end());
+  }
+  const_reverse_iterator rend() const noexcept {
+    return const_reverse_iterator(begin());
+  }
 
  private:
   template<typename Args, size_t... I>

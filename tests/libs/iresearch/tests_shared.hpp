@@ -50,13 +50,15 @@ class TestEnv {
 
   static uint32_t iteration();
 
+ protected:
+  static int gArgc;
+  static char** gArgv;
+
  private:
   static void make_directories();
   static void parse_command_line();
   static bool prepare();
 
-  static int gArgc;
-  static char** gArgv;
   static std::string gArgvIresOutput;      // argv_ for ires_output
   static std::string gTestName;            // name of the current test //
   static std::filesystem::path gExecPath;  // path where executable resides

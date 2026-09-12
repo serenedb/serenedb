@@ -24,6 +24,14 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <cstring>
@@ -37,12 +45,6 @@
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <map>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/serializer.h"
-#include "server/utils/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -57,11 +59,9 @@
 #include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::connector {
 namespace {

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <array>
 #include <cstdint>
@@ -29,9 +30,8 @@
 #include <string>
 #include <string_view>
 
-#include "server/utils/message_buffer.h"
-#include "iresearch/utils/string_utils.h"
 #include "network/pg/pg_frame_codec.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network::pg {
 

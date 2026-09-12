@@ -20,20 +20,21 @@
 
 #pragma once
 
-#include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/search/scorers/constant_score.hpp>
-#include <iresearch/search/scorers/dfi.hpp>
-#include <iresearch/search/scorers/idf.hpp>
-#include <iresearch/search/scorers/indri_dirichlet.hpp>
-#include <iresearch/search/scorers/lm_dirichlet.hpp>
-#include <iresearch/search/scorers/lm_jelinek_mercer.hpp>
-#include <iresearch/search/scorers/raw_boost.hpp>
-#include <iresearch/search/scorers/raw_dl.hpp>
-#include <iresearch/search/scorers/raw_tf.hpp>
-#include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/search/scorers/tfidf.hpp>
 #include <string_view>
 #include <variant>
+
+#include "iresearch/search/scorers/bm25.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
+#include "iresearch/search/scorers/dfi.hpp"
+#include "iresearch/search/scorers/idf.hpp"
+#include "iresearch/search/scorers/indri_dirichlet.hpp"
+#include "iresearch/search/scorers/lm_dirichlet.hpp"
+#include "iresearch/search/scorers/lm_jelinek_mercer.hpp"
+#include "iresearch/search/scorers/raw_boost.hpp"
+#include "iresearch/search/scorers/raw_dl.hpp"
+#include "iresearch/search/scorers/raw_tf.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/search/scorers/tfidf.hpp"
 
 namespace irs {
 

@@ -21,6 +21,7 @@
 #include "connector/functions/duckdb_aliases.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
@@ -37,8 +38,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::connector {
 namespace {

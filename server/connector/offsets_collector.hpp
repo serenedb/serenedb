@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_set.h>
+
 #include <duckdb/common/types.hpp>
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/offsets/root.hpp>
@@ -28,7 +30,6 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "connector/highlight/highlight_types.h"
 
 namespace irs {

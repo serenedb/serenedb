@@ -25,15 +25,14 @@
 #include "connector/functions/json.h"
 
 #include <absl/strings/numbers.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

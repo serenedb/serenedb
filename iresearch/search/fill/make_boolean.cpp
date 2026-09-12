@@ -24,13 +24,13 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::fill {
 namespace {

@@ -20,16 +20,17 @@
 
 #include "search/search_table_transaction.h"
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/system-compiler.h>
+
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/system-compiler.h"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
 

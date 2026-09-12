@@ -22,8 +22,8 @@
 
 #include <type_traits>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

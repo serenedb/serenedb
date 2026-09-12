@@ -20,12 +20,13 @@
 
 #include "entry.h"
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/extra_type_info.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database_manager.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/database.h"
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"

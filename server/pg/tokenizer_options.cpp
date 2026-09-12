@@ -20,12 +20,13 @@
 
 #include "pg/tokenizer_options.h"
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::pg::tokenizer_options {
 

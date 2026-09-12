@@ -25,8 +25,8 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"

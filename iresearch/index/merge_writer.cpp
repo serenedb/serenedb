@@ -33,9 +33,6 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
@@ -51,7 +48,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

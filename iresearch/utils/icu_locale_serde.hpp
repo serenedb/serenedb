@@ -46,7 +46,7 @@ void SerdeWrite(Context ctx, const icu::Locale& locale) {
     irs::utils::detail::WriteString(ctx.io(), std::string_view{});
   } else {
     irs::utils::detail::WriteString(ctx.io(),
-                                     std::string_view{locale.getName()});
+                                    std::string_view{locale.getName()});
   }
 }
 

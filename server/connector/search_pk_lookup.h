@@ -20,6 +20,11 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
@@ -31,11 +36,7 @@
 #include <optional>
 #include <span>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/table_options.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

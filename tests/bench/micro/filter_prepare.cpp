@@ -33,7 +33,6 @@
 #include <system_error>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "insert_field.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
@@ -54,6 +53,7 @@
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

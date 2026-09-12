@@ -20,6 +20,11 @@
 
 #include "connector/functions/sequence.h"
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
+
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
@@ -35,7 +40,6 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -44,9 +48,6 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

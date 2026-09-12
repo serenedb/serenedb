@@ -20,6 +20,8 @@
 
 #include "network/pg/wire_collector.h"
 
+#include <iresearch/utils/debugging.h>
+
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_result_collector.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
@@ -28,7 +30,6 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 
-#include "iresearch/utils/debugging.h"
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"

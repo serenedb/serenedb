@@ -14,14 +14,14 @@ set(CMAKE_INSTALL_FULL_DATAROOTDIR_SERENE
     "${CMAKE_INSTALL_FULL_DATAROOTDIR}/${CMAKE_PROJECT_NAME}"
 )
 
-if(DARWIN)
+if(OS_DARWIN)
     set(ENABLE_UID_CFG false)
 else()
     set(ENABLE_UID_CFG true)
 endif()
 
 # debug info directory:
-if(${CMAKE_INSTALL_LIBDIR} STREQUAL "usr/lib64")
+if(CMAKE_INSTALL_LIBDIR STREQUAL "lib64")
     # some systems have weird places for usr/lib:
     set(CMAKE_INSTALL_DEBINFO_DIR "usr/lib/debug/")
 else()
@@ -34,8 +34,6 @@ file(MAKE_DIRECTORY ${SERENEDB_DB_DIRECTORY})
 
 # logs
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/var/log/${CMAKE_PROJECT_NAME}")
-
-set(CMAKE_TEST_DIRECTORY "tests")
 
 include(InstallMacros)
 
@@ -68,28 +66,3 @@ install(
 
 # systemd service file is installed via debian packaging
 # (packages/debian/source/common/serenedb.service)
-
-################################################################################
-### @brief propagate the locations into our programms:
-################################################################################
-
-set(PATH_SEP "/")
-
-to_native_path("PATH_SEP")
-to_native_path("CMAKE_INSTALL_FULL_LOCALSTATEDIR")
-to_native_path("CMAKE_INSTALL_FULL_SYSCONFDIR_SERENE")
-to_native_path("PKGDATADIR")
-to_native_path("CMAKE_INSTALL_DATAROOTDIR_SERENE")
-to_native_path("CMAKE_INSTALL_BINDIR")
-to_native_path("CMAKE_TEST_DIRECTORY")
-
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/directories.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/server/utils/directories.h"
-    NEWLINE_STYLE UNIX
-)
-
-install(
-    FILES "${CMAKE_SOURCE_DIR}/server/utils/exitcodes.dat"
-    DESTINATION "${CMAKE_INSTALL_DOCDIR}"
-)

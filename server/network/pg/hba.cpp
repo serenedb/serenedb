@@ -22,6 +22,8 @@
 
 #include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/static_strings.h>
 #include <sys/socket.h>
 
 #include <algorithm>
@@ -34,8 +36,6 @@
 #include <ranges>
 
 #include "server/utils/file_utils.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
 
 namespace sdb::network::pg::hba {
 namespace {

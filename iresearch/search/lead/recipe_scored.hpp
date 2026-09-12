@@ -23,12 +23,12 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

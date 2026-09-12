@@ -23,11 +23,11 @@
 #include <algorithm>
 #include <type_traits>
 
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/formats/column/norm_column_reader.hpp"
-#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

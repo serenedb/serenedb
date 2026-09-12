@@ -21,6 +21,9 @@
 #include "catalog/tokenizer.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/serializer.h>
 
 #include <cstdint>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -33,9 +36,6 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/serializer.h"
 #include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {

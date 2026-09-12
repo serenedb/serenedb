@@ -22,8 +22,8 @@
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/sql_tokenizer.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "gtest/gtest.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/pg/sql_exception.h"
 #include "token_sink_utils.hpp"
 

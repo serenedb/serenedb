@@ -42,17 +42,17 @@
 #include <filesystem>
 #include <vector>
 
-#include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/network_utils.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/utils/attributes.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/mmap_utils.hpp"
+#include "iresearch/utils/network_utils.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 

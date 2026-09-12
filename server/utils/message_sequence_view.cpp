@@ -22,8 +22,7 @@
 
 #include <absl/strings/escaping.h>
 #include <absl/strings/internal/ostringstream.h>
-
-#include "iresearch/utils/assert.h"
+#include <iresearch/utils/assert.h>
 
 namespace sdb::message {
 

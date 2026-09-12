@@ -20,13 +20,14 @@
 
 #include "catalog/entry/duckdb_index_scan_entry.h"
 
+#include <iresearch/utils/assert.h>
+
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 
-#include "iresearch/utils/assert.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"

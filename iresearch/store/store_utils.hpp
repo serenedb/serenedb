@@ -22,16 +22,16 @@
 
 #pragma once
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/number_utils.h"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
 #include "data_input.hpp"
 #include "data_output.hpp"
 #include "directory.hpp"
 #include "iresearch/utils/attributes.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/number_utils.h"
 #include "iresearch/utils/numeric_utils.hpp"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/std.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

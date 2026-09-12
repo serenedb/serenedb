@@ -30,9 +30,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/object_pool.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/object_pool.hpp"
 
 namespace {
 

@@ -23,16 +23,16 @@
 
 #pragma once
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace duckdb {

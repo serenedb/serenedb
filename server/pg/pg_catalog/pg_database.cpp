@@ -20,18 +20,19 @@
 
 #include "pg/pg_catalog/pg_database.h"
 
+#include <iresearch/utils/assert.h>
+
 #include <deque>
 #include <string>
 #include <vector>
 
-#include "server/utils/app_server.h"
-#include "iresearch/utils/assert.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

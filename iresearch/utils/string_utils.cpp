@@ -44,8 +44,8 @@
 #include "iresearch/utils/assert.h"
 #include "iresearch/utils/debugging.h"
 #include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/static_strings.h"
 
 namespace {
 

@@ -22,9 +22,6 @@
 
 #include "levenshtein_filter.hpp"
 
-#include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/all_terms_visitor.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
@@ -38,8 +35,11 @@
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/std.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 namespace {
@@ -156,9 +156,8 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max);
   auto* collector =
-    ctx.collector
-      ? &irs::utils::downCast<BlendedTermsCollector>(*ctx.collector)
-      : nullptr;
+    ctx.collector ? &irs::utils::downCast<BlendedTermsCollector>(*ctx.collector)
+                  : nullptr;
   if (collector) {
     collector->Field(ctx.thread).Collect(*reader);
   }

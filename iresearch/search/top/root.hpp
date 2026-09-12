@@ -22,10 +22,10 @@
 
 #include <cstdint>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scorers/root_window.hpp"
+#include "iresearch/utils/memory.hpp"
 
 namespace irs::top {
 

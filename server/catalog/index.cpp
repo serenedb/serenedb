@@ -24,6 +24,13 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
 
 #include <array>
 #include <duckdb/common/enum_util.hpp>
@@ -42,11 +49,6 @@
 #include <limits>
 #include <string>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/serializer.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -55,8 +57,6 @@
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
 

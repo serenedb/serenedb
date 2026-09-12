@@ -23,6 +23,11 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -42,10 +47,6 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "server/utils/primary_key.hpp"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -65,12 +66,11 @@
 #include "connector/view_fast_path.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/progress_registry.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
+#include "server/utils/primary_key.hpp"
 
 namespace sdb::connector {
 namespace {

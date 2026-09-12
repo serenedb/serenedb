@@ -23,12 +23,12 @@
 #include <cstdint>
 #include <memory>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

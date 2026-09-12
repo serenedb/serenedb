@@ -20,13 +20,14 @@
 
 #pragma once
 
+#include <iresearch/utils/serializer.h>
+
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <optional>
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/serializer.h"
 #include "catalog/column_id.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"

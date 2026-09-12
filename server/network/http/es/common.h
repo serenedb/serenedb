@@ -23,9 +23,9 @@
 #include <string>
 #include <string_view>
 
-#include "server/utils/message_sequence_view.h"
 #include "network/http/common.h"
 #include "network/http/response_writer.h"
+#include "server/utils/message_sequence_view.h"
 
 namespace duckdb {
 

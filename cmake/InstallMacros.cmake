@@ -9,7 +9,7 @@ if(
     OR NOT CMAKE_INSTALL_FULL_DATAROOTDIR_SERENE
 )
     message(
-        FATAL_ERROR,
+        FATAL_ERROR
         "CMAKE_INSTALL_DATAROOTDIR or CMAKE_INSTALL_SYSCONFDIR not set!"
     )
 endif()
@@ -17,14 +17,10 @@ endif()
 # Global macros ----------------------------------------------------------------
 # installs a config file -------------------------------------------------------
 macro(install_config name path)
-    if(DARWIN AND NOT HOMEBREW)
+    if(OS_DARWIN AND NOT HOMEBREW)
         set(PKGDATADIR "@ROOTDIR@/${CMAKE_INSTALL_DATAROOTDIR_SERENE}")
-        if(DARWIN)
-            # var will be redirected to ~ for the macos bundle
-            set(LOCALSTATEDIR "@HOME@${INC_CPACK_SERVER_STATE_DIR}")
-        else()
-            set(LOCALSTATEDIR "@ROOTDIR@${CMAKE_INSTALL_LOCALSTATEDIR}")
-        endif()
+        # var is redirected to ~ for the macos bundle
+        set(LOCALSTATEDIR "@HOME@")
         set(SBINDIR "@ROOTDIR@/${CMAKE_INSTALL_SBINDIR}")
         set(SYSCONFDIR "@ROOTDIR@/${CMAKE_INSTALL_SYSCONFDIR_SERENE}")
     else()
@@ -65,10 +61,6 @@ endmacro()
 macro(install_readme input output)
     set(where "${CMAKE_INSTALL_DOCDIR}")
 
-    set(PKG_VERSION "")
-    if(${USE_VERSION_IN_LICENSEDIR})
-        set(PKG_VERSION "-${SERENEDB_VERSION}")
-    endif()
     set(CRLFSTYLE "UNIX")
 
     install(
@@ -107,8 +99,3 @@ else()
         )
     endmacro()
 endif()
-
-macro(to_native_path sourceVarName)
-    string(REGEX REPLACE "//*" "/" "myVar" "${${sourceVarName}}")
-    set("INC_${sourceVarName}" ${myVar})
-endmacro()

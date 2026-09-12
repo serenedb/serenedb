@@ -20,13 +20,13 @@
 
 #pragma once
 
-#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {

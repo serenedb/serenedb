@@ -20,13 +20,13 @@
 
 #include "sdb_metrics.h"
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/down_cast.h>
+
 #include <array>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "server/utils/metrics.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -36,6 +36,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "server/utils/metrics.h"
 
 namespace sdb::pg {
 namespace {

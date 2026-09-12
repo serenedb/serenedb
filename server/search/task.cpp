@@ -23,6 +23,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/log.h>
 
 #include <algorithm>
 #include <chrono>
@@ -38,13 +39,12 @@
 #include <yaclib/coro/on.hpp>
 #include <yaclib/util/result.hpp>
 
-#include "server/utils/lifecycle.h"
-#include "iresearch/utils/log.h"
-#include "server/utils/metrics.h"
 #include "catalog/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/metrics.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {

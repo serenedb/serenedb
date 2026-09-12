@@ -23,6 +23,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/detail/term_set.hpp>
@@ -44,9 +46,6 @@
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
-
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {

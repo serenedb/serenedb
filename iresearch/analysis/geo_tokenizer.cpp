@@ -30,20 +30,18 @@
 #include <memory>
 #include <string>
 
+#include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/geo/geo_json.h"
 #include "iresearch/utils/geo/geo_params.h"
 #include "iresearch/utils/geo/wkb.h"
-#include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::analysis {
-
-using namespace sdb;
-using namespace irs::geo;
-
 namespace {
+
+using namespace irs::geo;
 
 IRS_FORCE_INLINE S2LatLng NormalizedLatLng(double lat_deg,
                                            double lng_deg) noexcept {

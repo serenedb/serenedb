@@ -35,8 +35,8 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace duckdb {

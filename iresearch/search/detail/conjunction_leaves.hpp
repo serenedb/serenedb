@@ -29,9 +29,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

@@ -23,6 +23,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -66,10 +72,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "functions/search.h"
@@ -77,8 +79,6 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace magic_enum {
 

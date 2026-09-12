@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <algorithm>
 #include <memory>
@@ -29,8 +31,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"

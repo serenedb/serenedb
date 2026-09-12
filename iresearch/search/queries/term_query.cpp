@@ -24,10 +24,10 @@
 
 #include <utility>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/memory.hpp"
 
 namespace irs {
 

@@ -25,10 +25,6 @@
 #include <cmath>
 #include <string_view>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -42,6 +38,10 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

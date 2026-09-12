@@ -24,6 +24,12 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/strings/escaping.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
@@ -32,17 +38,9 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/lifecycle.h"
-#include "iresearch/utils/log.h"
-#include "server/utils/number_of_cores.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -50,6 +48,8 @@
 #include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 

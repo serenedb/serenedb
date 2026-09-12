@@ -20,11 +20,12 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+
 #include <functional>
 #include <optional>
 #include <yaclib/async/future.hpp>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"

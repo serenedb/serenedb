@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/container/inlined_vector.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <cstddef>
@@ -30,9 +32,6 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::basics {
 

@@ -48,9 +48,9 @@ MIXED_DISALLOWED = {
 errors = 0
 for path in sys.argv[1:]:
     # Choose rule set based on path
-    if "libs/iresearch" in path:
+    if "iresearch" in path:
         disallowed = IRESEARCH_DISALLOWED
-    elif "libs/basics" in path or "server/connector" in path:
+    elif "server/connector" in path:
         disallowed = MIXED_DISALLOWED
     else:
         disallowed = DEFAULT_DISALLOWED

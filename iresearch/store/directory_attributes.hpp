@@ -23,9 +23,9 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/container_utils.hpp"
 #include "iresearch/utils/ref_counter.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

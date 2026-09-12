@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/string_utils.h>
+
 #include <boost/pfr.hpp>
 #include <boost/pfr/core.hpp>
 #include <boost/pfr/detail/core17_generated.hpp>
@@ -27,9 +30,7 @@
 #include <tuple>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
 #include "server/utils/identifier.h"
-#include "iresearch/utils/string_utils.h"
 
 namespace sdb::keyenc {
 namespace detail {

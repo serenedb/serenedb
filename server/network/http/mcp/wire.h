@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <cstdint>
@@ -28,9 +30,7 @@
 #include <string_view>
 #include <variant>
 
-#include "iresearch/utils/serializer.h"
 #include "server/utils/simdjson_sink.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::network::http::mcp {
 

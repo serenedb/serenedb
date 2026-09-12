@@ -23,6 +23,13 @@
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <atomic>
 #include <chrono>
@@ -67,12 +74,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/util/helper.hpp>
 
-#include "server/utils/asio_ns.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/message_buffer.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
@@ -93,12 +94,11 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
-#include "iresearch/utils/pg/sql_exception.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network::pg {
 

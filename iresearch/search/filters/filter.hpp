@@ -30,7 +30,6 @@
 #include <limits>
 #include <span>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
@@ -50,6 +49,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {

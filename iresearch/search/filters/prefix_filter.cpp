@@ -22,7 +22,6 @@
 
 #include "prefix_filter.hpp"
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -31,6 +30,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {

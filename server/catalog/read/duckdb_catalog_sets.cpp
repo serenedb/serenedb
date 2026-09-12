@@ -20,6 +20,12 @@
 
 #include "catalog/read/duckdb_catalog_sets.h"
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/string_utils.h>
+
 #include <array>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -33,10 +39,6 @@
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/string_utils.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -58,7 +60,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_storage_extension.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::catalog {

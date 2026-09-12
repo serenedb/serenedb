@@ -34,11 +34,11 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/async_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/column_info.hpp"
 
 namespace duckdb {
 

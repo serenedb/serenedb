@@ -28,9 +28,6 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
-#include "server/utils/file_utils.h"
-#include "server/utils/lifecycle.h"
-#include "server/utils/number_of_cores.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "connector/duckdb_copy_filesystem.h"
@@ -65,6 +62,9 @@
 #include "pg/system_table.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "server/utils/file_utils.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/number_of_cores.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {

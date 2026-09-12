@@ -24,12 +24,12 @@
 #include <bit>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

@@ -20,6 +20,8 @@
 
 #include "connector/optimizer/wrap_unsupported_types.h"
 
+#include <iresearch/utils/assert.h>
+
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -29,8 +31,6 @@
 #include <duckdb/planner/operator/logical_explain.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/planner_extension.hpp>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::optimizer {
 namespace {

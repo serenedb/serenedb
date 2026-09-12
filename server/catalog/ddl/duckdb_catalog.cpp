@@ -24,6 +24,11 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -91,9 +96,6 @@
 #include <ranges>
 #include <utility>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -129,8 +131,6 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

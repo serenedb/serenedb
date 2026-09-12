@@ -23,7 +23,6 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/ngram_all_slots.hpp"
 #include "iresearch/search/detail/ngram_slots.hpp"
@@ -39,6 +38,7 @@
 #include "iresearch/search/offsets/root.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
+#include "iresearch/utils/memory.hpp"
 
 namespace irs::detail {
 

@@ -20,9 +20,10 @@
 
 #pragma once
 
-#include <iresearch/analysis/token_batch.hpp>
-#include <iresearch/utils/numeric_utils.hpp>
 #include <span>
+
+#include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/numeric_utils.hpp"
 
 namespace irs {
 

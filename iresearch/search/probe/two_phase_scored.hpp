@@ -25,7 +25,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -35,6 +34,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

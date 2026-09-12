@@ -19,11 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "pg/pg_catalog/pg_attribute.h"
 
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
+
 #include <duckdb/parser/constraints/list.hpp>
 
-#include "server/utils/app_server.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -35,6 +35,7 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

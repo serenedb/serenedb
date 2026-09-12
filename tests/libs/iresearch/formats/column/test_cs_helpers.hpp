@@ -30,7 +30,6 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -41,6 +40,7 @@
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

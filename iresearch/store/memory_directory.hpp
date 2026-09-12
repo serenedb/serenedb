@@ -25,10 +25,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 

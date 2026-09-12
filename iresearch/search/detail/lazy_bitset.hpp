@@ -25,12 +25,12 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/window.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

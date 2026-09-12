@@ -29,8 +29,8 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

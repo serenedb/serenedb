@@ -31,14 +31,14 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

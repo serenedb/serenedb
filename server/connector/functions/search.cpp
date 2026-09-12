@@ -20,6 +20,9 @@
 
 #include "connector/functions/search.h"
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -57,8 +60,6 @@
 #include "connector/functions/ts_query_codec.h"
 #include "connector/functions/vector.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

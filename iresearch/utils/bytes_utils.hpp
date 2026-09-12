@@ -24,8 +24,8 @@
 
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/numeric_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

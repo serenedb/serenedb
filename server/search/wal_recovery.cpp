@@ -21,6 +21,11 @@
 #include "search/wal_recovery.h"
 
 #include <absl/time/time.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
 
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
@@ -38,11 +43,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"

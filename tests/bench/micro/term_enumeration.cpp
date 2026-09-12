@@ -48,8 +48,6 @@
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/duckdb_engine.h"
 #include "fst/arcsort.h"
 #include "fst/minimize.h"
 #include "insert_field.hpp"
@@ -63,6 +61,8 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 

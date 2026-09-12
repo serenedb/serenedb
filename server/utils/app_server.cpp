@@ -23,13 +23,13 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <iresearch/utils/log.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 
 #include "server/utils/lifecycle.h"
-#include "iresearch/utils/log.h"
 #include "server/utils/signals.h"
 
 namespace sdb::app {

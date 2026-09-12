@@ -24,11 +24,11 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {

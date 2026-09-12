@@ -20,11 +20,11 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+
 #include <cstdint>
 #include <utility>
-
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
 
 namespace sdb {
 

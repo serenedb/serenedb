@@ -21,14 +21,14 @@
 #include "network/http/es/common.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
 #include <simdjson.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <utility>
 
 #include "network/pg/wire_frames.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
 
 namespace sdb::network::http::es {
 

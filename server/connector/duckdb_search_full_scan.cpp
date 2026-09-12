@@ -21,6 +21,12 @@
 #include "connector/duckdb_search_full_scan.hpp"
 
 #include <absl/algorithm/container.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
 #include <array>
@@ -47,7 +53,9 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/hit_batcher.hpp>
 #include <iresearch/index/index_source.hpp>
+#include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/term_counts.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -75,10 +83,6 @@
 #include <span>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -91,11 +95,7 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "connector/view_fast_path.h"
-#include "iresearch/index/hit_batcher.hpp"
-#include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 

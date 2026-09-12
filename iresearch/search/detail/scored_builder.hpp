@@ -26,7 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
@@ -51,6 +50,7 @@
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::detail::builder {
 

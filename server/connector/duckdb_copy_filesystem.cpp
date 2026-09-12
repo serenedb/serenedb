@@ -21,6 +21,9 @@
 #include "connector/duckdb_copy_filesystem.h"
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
 #include <cstring>
@@ -29,14 +32,11 @@
 #include <optional>
 #include <span>
 
-#include "iresearch/utils/assert.h"
-#include "server/utils/message_buffer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/protocol.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {

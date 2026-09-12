@@ -20,6 +20,10 @@
 
 #include "connector/functions/vector.h"
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
+
 #include <cmath>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector.hpp>
@@ -33,10 +37,6 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/utils/vector.hpp>
 #include <vector>
-
-#include "iresearch/utils/system-compiler.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

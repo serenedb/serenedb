@@ -82,12 +82,6 @@ bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
     ::irs::FatalErrorExit();                                             \
   } while (0)
 
-#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)                            \
-  do {                                                                   \
-    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__); \
-    ::irs::FatalErrorExitCode(CODE);                                     \
-  } while (0)
-
 #define SDB_TRACE_IF(TOPIC, COND, ...) \
   SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_TRACE, TOPIC, COND, __VA_ARGS__)
 #define SDB_DEBUG_IF(TOPIC, COND, ...) \

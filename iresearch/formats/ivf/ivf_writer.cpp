@@ -31,8 +31,6 @@
 #include <utility>
 #include <yaclib/async/make.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -45,8 +43,10 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {

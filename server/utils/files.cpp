@@ -24,13 +24,12 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/escaping.h>
 #include <fcntl.h>
+#include <iresearch/utils/operating-system.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/string_utils.h>
 #include <openssl/evp.h>
 #include <unistd.h>
 #include <zlib.h>
-
-#include "iresearch/utils/operating-system.h"
-#include "iresearch/utils/string_utils.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb {
 

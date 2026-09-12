@@ -25,6 +25,8 @@
 #else
 #include <sys/eventfd.h>
 #endif
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/operating-system.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -32,9 +34,6 @@
 #include <filesystem>
 #include <string>
 #include <utility>
-
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/operating-system.h"
 
 namespace sdb::lifecycle {
 namespace {

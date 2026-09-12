@@ -23,6 +23,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <cassert>
 #include <magic_enum/magic_enum.hpp>
@@ -35,8 +37,6 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/system-compiler.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/sql_utils.h"
 

@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

@@ -23,9 +23,6 @@
 
 #include <gtest/gtest.h>
 
-#include "iresearch/utils/bit_packing.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -36,6 +33,9 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/bit_packing.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 

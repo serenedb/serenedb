@@ -22,9 +22,9 @@
 
 #include <unicode/locid.h>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {

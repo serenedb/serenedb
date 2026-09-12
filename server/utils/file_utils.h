@@ -21,14 +21,13 @@
 
 #pragma once
 
+#include <iresearch/utils/common.h>
+#include <iresearch/utils/operating-system.h>
 #include <stddef.h>
 
 #include <functional>
 #include <string>
 #include <vector>
-
-#include "iresearch/utils/common.h"
-#include "iresearch/utils/operating-system.h"
 
 namespace irs::utils::file_utils {
 

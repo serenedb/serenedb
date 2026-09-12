@@ -24,12 +24,12 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/prune_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
 

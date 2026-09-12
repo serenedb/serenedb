@@ -26,12 +26,12 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {

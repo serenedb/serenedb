@@ -24,9 +24,9 @@
 
 #include <fst/vector-fst.h>
 
+#include "iresearch/utils/fstext/fst_states_map.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/fstext/fst_states_map.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

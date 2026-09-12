@@ -23,11 +23,11 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace directory_utils {

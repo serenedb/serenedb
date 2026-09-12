@@ -23,6 +23,7 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
@@ -36,7 +37,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/search_table_options.h"
 #include "catalog/sequence.h"

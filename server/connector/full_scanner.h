@@ -24,15 +24,14 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/index/column_extract.hpp>
+#include <iresearch/index/table_filter_iterator.hpp>
 #include <memory>
 #include <span>
 #include <vector>
-
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/index/column_extract.hpp"
-#include "iresearch/index/table_filter_iterator.hpp"
 
 namespace sdb::connector {
 

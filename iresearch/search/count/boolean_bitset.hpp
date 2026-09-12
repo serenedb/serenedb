@@ -23,12 +23,12 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
 

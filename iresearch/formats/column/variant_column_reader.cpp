@@ -30,8 +30,8 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

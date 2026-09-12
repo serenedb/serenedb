@@ -38,10 +38,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "server/utils/files.h"
-#include "iresearch/utils/serializer.h"
-#include "server/utils/simdjson_sink.h"
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
@@ -54,7 +50,11 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/serializer.h"
 #include "search/filter_test_case_base.hpp"
+#include "server/utils/files.h"
+#include "server/utils/simdjson_sink.h"
 #include "tests_shared.hpp"
 
 namespace {

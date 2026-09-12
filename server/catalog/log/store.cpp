@@ -22,6 +22,14 @@
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
@@ -40,13 +48,6 @@
 #include <ranges>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/file_utils.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -59,8 +60,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
 #include "connector/inverted_store_index.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {

@@ -220,7 +220,7 @@ function(
     # Get commit hash
     execute_process(
         WORKING_DIRECTORY ${source_dir}
-        COMMAND ${GIT_EXE} rev-parse --short HEAD
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
         OUTPUT_VARIABLE COMMIT_RAW
     )
     if(NOT COMMIT_RAW)
@@ -235,7 +235,7 @@ function(
     if(NOT DEFINED BUILD_REPO_INFO OR BUILD_REPO_INFO STREQUAL "default")
         execute_process(
             WORKING_DIRECTORY ${source_dir}
-            COMMAND ${GIT_EXE} branch --show-current
+            COMMAND ${GIT_EXECUTABLE} branch --show-current
             OUTPUT_VARIABLE BRANCH_NAME_RAW
         )
         if(NOT BRANCH_NAME_RAW)
@@ -262,7 +262,8 @@ function(
         set(RELEASE_TAG "v${RELEASE_TAG}")
         execute_process(
             WORKING_DIRECTORY ${source_dir}
-            COMMAND ${GIT_EXE} describe --all --tags --match ${RELEASE_TAG}
+            COMMAND
+                ${GIT_EXECUTABLE} describe --all --tags --match ${RELEASE_TAG}
             OUTPUT_VARIABLE TAG_RAW
         )
         if(NOT TAG_RAW)
@@ -290,8 +291,7 @@ function(
     endif()
 endfunction()
 
-find_program(GIT_EXE git)
-if(DEFINED GIT_EXE AND IS_DIRECTORY "${CMAKE_SOURCE_DIR}/.git")
+if(GIT_EXECUTABLE AND IS_DIRECTORY "${CMAKE_SOURCE_DIR}/.git")
     determine_repository_version(${CMAKE_SOURCE_DIR} SERENEDB_BUILD_REPOSITORY HAVE_SERENEDB_BUILD_REPOSITORY)
 else()
     set(SERENEDB_BUILD_REPOSITORY "")
@@ -315,7 +315,6 @@ endif()
 find_package(Python3 REQUIRED)
 get_filename_component(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" REALPATH)
 
-set($ENV{PYTHON_EXECUTABLE} ${PYTHON_EXECUTABLE})
 execute_process(
     COMMAND ${PYTHON_EXECUTABLE} -c "from shutil import which"
     RESULT_VARIABLE EXIT_CODE
@@ -323,20 +322,6 @@ execute_process(
 )
 if(NOT "${EXIT_CODE}" EQUAL "0")
     message(FATAL_ERROR "python shutil.which package is required! ")
-endif()
-
-################################################################################
-## COMPILER FEATURES
-################################################################################
-
-if(
-    NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-    OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16.0"
-)
-    message(
-        FATAL_ERROR
-        "SereneDB requires clang 16.0 or newer, building with different compilers is unsupported"
-    )
 endif()
 
 set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
@@ -832,38 +817,6 @@ include(SereneDBInstall)
 
 # If "make clean" removes these files, afterwards neither "make" nor "cmake" work any more.
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
-
-set(EXIT_CODE_FILES server/utils/exitcodes.h js/common/bootstrap/exitcodes.js)
-
-set(EXIT_CODE_FILES_GEN)
-set(EXIT_CODES_DAT server/utils/exitcodes.dat)
-
-foreach(m IN LISTS EXIT_CODE_FILES)
-    get_filename_component(GEN_BASENAME "${m}" NAME)
-    add_custom_command(
-        OUTPUT ${CMAKE_BINARY_DIR}/${m}
-        COMMAND
-            ${PYTHON_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/generate_exit_codes.py
-            ${CMAKE_SOURCE_DIR}/${EXIT_CODES_DAT}
-            ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
-        COMMAND
-            ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp ${CMAKE_BINARY_DIR}/${m}
-        COMMAND
-            ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
-        DEPENDS
-            ${CMAKE_SOURCE_DIR}/${EXIT_CODES_DAT}
-            ${CMAKE_SOURCE_DIR}/scripts/generate_exit_codes.py
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-        COMMENT "Building exitcode file ${m}"
-        VERBATIM
-    )
-
-    list(APPEND EXIT_CODE_FILES_GEN ${CMAKE_BINARY_DIR}/${m})
-endforeach()
-
-add_custom_target(exitcodefiles ALL DEPENDS ${EXIT_CODE_FILES_GEN})
 
 ################################################################################
 ## SUB-PROJECTS

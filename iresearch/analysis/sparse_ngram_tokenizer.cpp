@@ -23,8 +23,8 @@
 #include <algorithm>
 #include <cstring>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs::analysis {
 namespace {

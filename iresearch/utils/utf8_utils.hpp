@@ -22,11 +22,11 @@
 
 #pragma once
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.h"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.h"
-#include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/system-compiler.h"
 
 namespace irs::utf8_utils {
 

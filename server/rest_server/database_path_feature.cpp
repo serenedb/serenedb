@@ -22,18 +22,17 @@
 #include "database_path_feature.h"
 
 #include <absl/flags/flag.h>
+#include <iresearch/utils/application-exit.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/operating-system.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <filesystem>
 #include <system_error>
 
-#include "iresearch/utils/application-exit.h"
-#include "server/utils/exitcodes.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/lockfile.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/operating-system.h"
-#include "iresearch/utils/string_utils.h"
 
 ABSL_FLAG(std::string, server_directory, "serenedb-data",
           "Path to the database directory. A positional argument, if given, "
@@ -43,8 +42,6 @@ ABSL_FLAG(std::string, hba_config, "",
           "Path to the host-based authentication config file. Empty (the "
           "default) uses <datadir>/pg_hba.conf; a relative path is resolved "
           "against the data directory.");
-
-using namespace sdb::basics;
 
 namespace sdb {
 
@@ -74,7 +71,7 @@ DatabasePathFeature::DatabasePathFeature()
 
   // Acquire the LOCK file in the data directory. The lockfile guards against
   // a second serened starting on the same data dir. No explicit shutdown hook
-  // needed: libs/basics/lockfile.cpp owns a LockfileRemover whose static dtor
+  // needed: server/utils/lockfile.cpp owns a LockfileRemover whose static dtor
   // runs on normal exit and releases / unlinks every lockfile we acquired.
   // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
   // remains is handled by VerifyLockFile on the next start.
@@ -87,30 +84,27 @@ DatabasePathFeature::DatabasePathFeature()
     } catch (...) {
     }
     if (other_pid.empty()) {
-      SDB_FATAL_EXIT_CODE(
-        GENERAL, EXIT_COULD_NOT_LOCK,
+      SDB_FATAL(
+        GENERAL,
         "failed to read/write lockfile, please check the file permissions "
         "of the lockfile '",
         lock_filename, "'");
     } else {
-      SDB_FATAL_EXIT_CODE(
-        GENERAL, EXIT_COULD_NOT_LOCK, "database is locked by process ",
-        other_pid, "; please stop it first and check that the lockfile '",
-        lock_filename, "' goes away.");
+      SDB_FATAL(GENERAL, "database is locked by process ", other_pid,
+                "; please stop it first and check that the lockfile '",
+                lock_filename, "' goes away.");
     }
   }
   if (std::filesystem::exists(lock_filename, ec) && !ec) {
     std::filesystem::remove(lock_filename, ec);
     if (ec) {
-      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-                          "failed to remove an abandoned lockfile '",
-                          lock_filename, "': ", ec.message());
+      SDB_FATAL(GENERAL, "failed to remove an abandoned lockfile '",
+                lock_filename, "': ", ec.message());
     }
   }
   if (!CreateLockFile(lock_filename.c_str())) {
-    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-                        "failed to lock the database directory using '",
-                        lock_filename, "'");
+    SDB_FATAL(GENERAL, "failed to lock the database directory using '",
+              lock_filename, "'");
   }
 
   gInstance = this;

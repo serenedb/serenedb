@@ -22,10 +22,10 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/simd_utils.hpp"
 
 namespace irs {

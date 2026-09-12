@@ -24,9 +24,6 @@
 #include <span>
 #include <type_traits>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -41,6 +38,9 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

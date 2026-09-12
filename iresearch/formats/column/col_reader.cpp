@@ -31,12 +31,12 @@
 #include <map>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {

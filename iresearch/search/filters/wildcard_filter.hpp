@@ -24,8 +24,8 @@
 
 #include <memory>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 

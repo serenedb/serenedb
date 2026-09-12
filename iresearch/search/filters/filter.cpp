@@ -22,9 +22,9 @@
 
 #include "filter.hpp"
 
-#include "iresearch/utils/singleton.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/singleton.hpp"
 
 namespace irs {
 

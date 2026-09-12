@@ -24,9 +24,9 @@
 
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {
 

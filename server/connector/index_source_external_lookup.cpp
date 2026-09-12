@@ -23,6 +23,10 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
@@ -45,11 +49,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

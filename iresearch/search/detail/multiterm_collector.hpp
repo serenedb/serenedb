@@ -27,9 +27,6 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -37,6 +34,9 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

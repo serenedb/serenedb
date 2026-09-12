@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/inlined_vector.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/log.h>
 
 #include <atomic>
 #include <deque>
@@ -50,9 +52,6 @@
 #include <thread>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
-#include "server/utils/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -70,6 +69,7 @@
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
+#include "server/utils/primary_key.hpp"
 
 namespace sdb::connector {
 namespace {

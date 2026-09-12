@@ -48,10 +48,10 @@
 #include <string>
 #include <vector>
 
-#include "server/utils/message_buffer.h"
 #include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "server/utils/message_buffer.h"
 
 namespace {
 

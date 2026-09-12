@@ -28,9 +28,9 @@
 #include <optional>
 #include <string_view>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::analysis {
 namespace {

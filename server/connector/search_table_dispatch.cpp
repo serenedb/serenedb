@@ -20,6 +20,11 @@
 
 #include "connector/search_table_dispatch.h"
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -27,14 +32,10 @@
 #include <optional>
 #include <string>
 
-#include "iresearch/utils/assert.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/search_table.h"
 

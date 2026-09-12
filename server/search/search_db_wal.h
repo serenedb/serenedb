@@ -22,6 +22,7 @@
 
 #include <absl/functional/any_invocable.h>
 #include <absl/synchronization/mutex.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <atomic>
 #include <cstdint>
@@ -32,7 +33,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace duckdb {

@@ -24,8 +24,8 @@
 
 #include <array>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {

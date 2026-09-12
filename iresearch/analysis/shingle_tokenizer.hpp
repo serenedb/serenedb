@@ -27,10 +27,10 @@
 #include <tuple>
 #include <vector>
 
-#include "iresearch/utils/serializer.h"
 #include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/serializer.h"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {

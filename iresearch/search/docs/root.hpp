@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {

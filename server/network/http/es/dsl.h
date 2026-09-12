@@ -20,11 +20,12 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "network/http/response_writer.h"
 
 namespace sdb::network::http::es {

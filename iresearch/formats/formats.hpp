@@ -24,10 +24,10 @@
 
 #include <absl/functional/function_ref.h>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace duckdb {

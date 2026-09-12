@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <algorithm>
 #include <array>
@@ -38,7 +39,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/role.h"

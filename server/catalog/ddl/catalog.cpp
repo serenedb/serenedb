@@ -28,6 +28,14 @@
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
 #include <array>
@@ -41,12 +49,6 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -68,8 +70,6 @@
 #include "connector/duckdb_storage_extension.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

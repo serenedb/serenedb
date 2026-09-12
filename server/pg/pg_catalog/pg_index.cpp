@@ -20,10 +20,10 @@
 
 #include "pg/pg_catalog/pg_index.h"
 
-#include "server/utils/app_server.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/down_cast.h"
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/down_cast.h>
+
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -33,6 +33,7 @@
 #include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

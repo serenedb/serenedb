@@ -28,9 +28,9 @@
 #include <limits>
 #include <utility>
 
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 namespace {

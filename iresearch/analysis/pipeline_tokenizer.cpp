@@ -25,10 +25,10 @@
 
 #include <cstring>
 
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::analysis {

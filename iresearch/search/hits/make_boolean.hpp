@@ -25,7 +25,6 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/hits/posting.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::hits {
 

@@ -31,9 +31,9 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.h"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs::analysis::classify {
 

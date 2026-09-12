@@ -34,12 +34,12 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"

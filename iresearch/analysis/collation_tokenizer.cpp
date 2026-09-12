@@ -28,8 +28,8 @@
 
 #include <algorithm>
 
-#include "iresearch/utils/log.h"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::analysis {

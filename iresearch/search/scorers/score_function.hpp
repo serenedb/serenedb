@@ -24,9 +24,9 @@
 
 #include <limits>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs {
 

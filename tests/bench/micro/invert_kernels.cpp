@@ -33,12 +33,12 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/containers/node_hash_map.h"
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
+#include "iresearch/utils/containers/node_hash_map.h"
 #include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 

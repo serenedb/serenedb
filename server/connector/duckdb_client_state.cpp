@@ -21,6 +21,12 @@
 #include "connector/duckdb_client_state.h"
 
 #include <absl/strings/match.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -31,16 +37,10 @@
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

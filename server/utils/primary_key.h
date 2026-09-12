@@ -20,11 +20,12 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+
 #include <span>
 #include <string>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
 #include "server/utils/key_concat.h"
 
 namespace sdb::connector::primary_key {

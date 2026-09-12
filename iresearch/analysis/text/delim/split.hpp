@@ -26,10 +26,10 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/delim/finders.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::analysis::delim {
 

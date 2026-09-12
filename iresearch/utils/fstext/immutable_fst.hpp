@@ -28,11 +28,11 @@
 #include <fst/expanded-fst.h>
 // clang-format on
 
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/store/store_utils.hpp"
 
 namespace fst {
 namespace fstext {

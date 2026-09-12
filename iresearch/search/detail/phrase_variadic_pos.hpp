@@ -27,9 +27,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

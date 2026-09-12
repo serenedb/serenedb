@@ -24,11 +24,11 @@
 
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "iresearch/index/composite_reader_impl.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/containers/flat_hash_map.h"
 
 namespace irs {
 

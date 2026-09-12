@@ -24,13 +24,15 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -43,9 +45,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/serialize.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 

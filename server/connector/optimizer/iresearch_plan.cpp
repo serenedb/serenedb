@@ -21,6 +21,9 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/algorithm/container.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -35,7 +38,9 @@
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
+#include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -46,7 +51,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -61,11 +65,7 @@
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/search_filter_builder.hpp"
-#include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/search/filters/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/search_table.h"
 

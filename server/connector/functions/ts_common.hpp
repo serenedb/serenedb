@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -38,13 +42,10 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "iresearch/utils/containers/node_hash_map.h"
 #include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {

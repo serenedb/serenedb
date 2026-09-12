@@ -21,6 +21,9 @@
 #include "connector/functions/ts_highlight.h"
 
 #include <absl/algorithm/container.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <unicode/brkiter.h>
 #include <unicode/locid.h>
 #include <unicode/ubrk.h>
@@ -43,14 +46,11 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <span>
 
-#include "iresearch/utils/assert.h"
 #include "connector/common.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/highlight/highlight_options.h"
 #include "connector/highlight/highlight_types.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

@@ -25,8 +25,6 @@
 
 #include <duckdb/storage/buffer_manager.hpp>
 
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/shared.hpp"
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -40,6 +38,8 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

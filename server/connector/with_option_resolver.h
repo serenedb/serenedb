@@ -20,13 +20,13 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+
 #include <cstdint>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <string>
 #include <string_view>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::connector {
 

@@ -24,8 +24,8 @@
 
 #include <memory>
 
-#include "iresearch/utils/object_pool.hpp"
 #include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/object_pool.hpp"
 
 namespace irs {
 

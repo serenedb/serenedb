@@ -29,11 +29,11 @@
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <ranges>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

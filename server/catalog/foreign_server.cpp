@@ -25,6 +25,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/serializer.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -45,8 +47,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/serializer.h"
 #include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {

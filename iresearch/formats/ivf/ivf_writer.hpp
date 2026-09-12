@@ -28,8 +28,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -39,6 +37,8 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {

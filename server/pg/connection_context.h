@@ -20,16 +20,17 @@
 
 #pragma once
 
+#include <iresearch/utils/pg/sql_error.h>
+
 #include <atomic>
 #include <memory>
 #include <string_view>
 
-#include "server/utils/message_buffer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
-#include "iresearch/utils/pg/sql_error.h"
 #include "query/transaction.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::pg {
 

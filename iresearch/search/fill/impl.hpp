@@ -23,13 +23,13 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/detail/erasure.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/fill/node.hpp"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

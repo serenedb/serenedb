@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/boolean_window.hpp"
 #include "iresearch/search/count/plan.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
 

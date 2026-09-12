@@ -27,10 +27,10 @@
 #include <cstring>
 #include <string_view>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 

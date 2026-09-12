@@ -26,7 +26,6 @@
 #include <thread>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/string.hpp"
 
 namespace {

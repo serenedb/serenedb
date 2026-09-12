@@ -20,8 +20,9 @@
 
 #include "server/utils/signals.h"
 
+#include <iresearch/utils/operating-system.h>
+
 #include "server/utils/lifecycle.h"
-#include "iresearch/utils/operating-system.h"
 
 #ifdef SERENEDB_HAVE_SIGNAL_H
 #include <signal.h>

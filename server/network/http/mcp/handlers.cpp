@@ -21,6 +21,7 @@
 #include "network/http/mcp/handlers.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <cstdint>
@@ -34,13 +35,12 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "server/utils/build.h"
-#include "iresearch/utils/serializer.h"
-#include "server/utils/simdjson_sink.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
 #include "network/http/mcp/tools.h"
 #include "network/http/mcp/wire.h"
+#include "server/utils/build.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::network::http::mcp {
 namespace {

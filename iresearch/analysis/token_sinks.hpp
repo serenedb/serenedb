@@ -28,9 +28,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs {
 

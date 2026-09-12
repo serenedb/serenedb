@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+
 #include <cstdint>
 #include <new>
 #include <span>
 #include <string_view>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::message {
 

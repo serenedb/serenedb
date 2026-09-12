@@ -24,6 +24,10 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -49,9 +53,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "server/utils/build.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -68,13 +69,12 @@
 #include "connector/pg_logical_types.h"
 #include "network/cancel_registry.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "server/utils/build.h"
 
 namespace sdb::catalog {
 namespace {

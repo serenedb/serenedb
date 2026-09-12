@@ -27,8 +27,8 @@
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <string>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "executor.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

@@ -34,18 +34,18 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/lead/node.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/iterator.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/system-compiler.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

@@ -24,11 +24,11 @@
 
 #include <memory>
 
+#include "iresearch/error/error.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
-#include "iresearch/error/error.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 
 namespace irs {
 

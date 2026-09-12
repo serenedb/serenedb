@@ -23,7 +23,6 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -34,6 +33,7 @@
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::probe {
 

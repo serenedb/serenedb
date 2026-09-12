@@ -23,6 +23,11 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
@@ -42,21 +47,16 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/lifecycle.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/scorer_options.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {

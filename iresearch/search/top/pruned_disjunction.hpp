@@ -31,8 +31,6 @@
 #include <immintrin.h>
 #endif
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
@@ -41,6 +39,8 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {

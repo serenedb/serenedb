@@ -20,14 +20,14 @@
 
 #include "raw_tf.hpp"
 
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {

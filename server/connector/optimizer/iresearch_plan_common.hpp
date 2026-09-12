@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -31,8 +33,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/fwd.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_table_function.h"

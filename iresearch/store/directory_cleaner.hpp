@@ -25,8 +25,8 @@
 
 #include <functional>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

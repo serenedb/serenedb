@@ -25,8 +25,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -39,6 +37,8 @@
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/walk.hpp"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::top {

@@ -21,6 +21,9 @@
 #pragma once
 
 #include <absl/hash/hash.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/serialization.h>
+#include <iresearch/utils/serializer.h>
 
 #include <algorithm>
 #include <duckdb/catalog/standard_entry.hpp>
@@ -36,12 +39,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "server/utils/identifier.h"
-#include "iresearch/utils/serialization.h"
-#include "iresearch/utils/serializer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
+#include "server/utils/identifier.h"
 
 namespace duckdb {
 

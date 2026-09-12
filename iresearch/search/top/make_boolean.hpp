@@ -25,8 +25,6 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
@@ -37,6 +35,8 @@
 #include "iresearch/search/top/boolean_window.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::top {

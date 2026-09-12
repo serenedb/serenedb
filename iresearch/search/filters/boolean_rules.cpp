@@ -37,8 +37,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
@@ -53,7 +51,9 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/regexp_utils.hpp"
+#include "iresearch/utils/system-compiler.h"
 
 namespace irs::optimizer {
 namespace {
@@ -287,8 +287,7 @@ bool NormalizeTerms(BooleanFilter& node, bool scored) {
 
 bool BooleanNormalizeTermsRule::Apply(Filter::ptr& slot,
                                       const OptimizeContext& ctx) {
-  return NormalizeTerms(irs::utils::downCast<BooleanFilter>(*slot),
-                        ctx.scored);
+  return NormalizeTerms(irs::utils::downCast<BooleanFilter>(*slot), ctx.scored);
 }
 
 bool BooleanMinShouldMatchRule::Apply(Filter::ptr& slot,

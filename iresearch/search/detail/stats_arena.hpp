@@ -24,8 +24,8 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

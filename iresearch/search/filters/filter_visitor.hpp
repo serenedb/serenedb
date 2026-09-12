@@ -22,10 +22,10 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

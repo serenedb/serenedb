@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <iresearch/utils/system-compiler.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/entry.h"
 #include "query/config.h"
 

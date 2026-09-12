@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/types.hpp>
@@ -29,7 +31,6 @@
 
 #include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {
 

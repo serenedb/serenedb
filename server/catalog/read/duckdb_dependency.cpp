@@ -20,6 +20,10 @@
 
 #include "catalog/read/duckdb_dependency.h"
 
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -35,10 +39,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
 #include "catalog/index.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

@@ -20,12 +20,13 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <span>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
 

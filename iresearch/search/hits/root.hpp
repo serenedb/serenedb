@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::hits {

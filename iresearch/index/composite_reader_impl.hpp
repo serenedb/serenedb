@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "index_reader.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

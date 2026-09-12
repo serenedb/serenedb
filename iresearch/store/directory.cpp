@@ -25,10 +25,10 @@
 #include <chrono>
 #include <thread>
 
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/shared.hpp"
 #include "data_input.hpp"
 #include "data_output.hpp"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

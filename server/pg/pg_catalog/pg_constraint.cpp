@@ -20,13 +20,14 @@
 
 #include "pg/pg_catalog/pg_constraint.h"
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+
 #include <deque>
 #include <duckdb/parser/constraints/list.hpp>
 #include <span>
 #include <string_view>
 #include <utility>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"

@@ -20,6 +20,11 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/log.h>
+
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -33,11 +38,6 @@
 #include <utility>
 #include <vector>
 
-#include "server/utils/app_server.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"
@@ -55,6 +55,7 @@
 #include "query/transaction.h"
 #include "search/search_table.h"
 #include "search/search_table_changes.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {

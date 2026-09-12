@@ -23,6 +23,9 @@
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
+#include <iresearch/utils/crash_handler.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/string_utils.h>
 #include <sys/resource.h>
 
 #include <algorithm>
@@ -34,11 +37,8 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
-#include "iresearch/utils/crash_handler.h"
 #include "server/utils/files.h"
-#include "iresearch/utils/log.h"
 #include "server/utils/random_generator.h"
-#include "iresearch/utils/string_utils.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 

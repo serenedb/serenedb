@@ -26,9 +26,9 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

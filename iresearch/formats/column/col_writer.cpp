@@ -30,14 +30,14 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/serialization.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/serialization.h"
 
 namespace irs {
 

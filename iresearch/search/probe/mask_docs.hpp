@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

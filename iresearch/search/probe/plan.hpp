@@ -22,7 +22,6 @@
 
 #include <span>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/single_posting.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::probe {
 

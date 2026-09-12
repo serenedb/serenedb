@@ -23,6 +23,8 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/serializer.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -31,12 +33,10 @@
 #include <string_view>
 
 #include "auth/acl.h"
-#include "iresearch/utils/serializer.h"
-#include "server/utils/simdjson_sink.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/persistence/role.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 

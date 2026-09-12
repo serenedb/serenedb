@@ -26,10 +26,10 @@
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
-#include "server/utils/asio_ns.h"
-#include "server/utils/number_of_cores.h"
 #include "network/io_context.h"
 #include "network/server.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(uint64_t, background_threads, 0,
           "Number of background worker threads (drop / cleanup / maintenance "

@@ -31,9 +31,9 @@
 #include <cstring>
 #include <limits>
 
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {

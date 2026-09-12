@@ -30,12 +30,12 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "gtest/gtest.h"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

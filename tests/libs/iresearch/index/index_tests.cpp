@@ -32,8 +32,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -46,6 +44,8 @@
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"

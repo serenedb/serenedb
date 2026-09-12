@@ -204,8 +204,7 @@ struct S2PointParser {
     const auto [r, tag] = irs::geo::DecodePoint(decoder, point);
     SDB_ASSERT(r);
     SDB_ASSERT(decoder.avail() == 0);
-    irs::utils::downCast<S2PointRegion>(*shape.region()) =
-      S2PointRegion{point};
+    irs::utils::downCast<S2PointRegion>(*shape.region()) = S2PointRegion{point};
     shape.setCoding(
       static_cast<irs::geo::coding::Options>(irs::geo::coding::ToPoint(tag)));
     return r;

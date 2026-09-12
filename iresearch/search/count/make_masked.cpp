@@ -20,13 +20,13 @@
 
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/probe/mask_docs.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
 

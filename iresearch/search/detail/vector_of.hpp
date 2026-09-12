@@ -30,11 +30,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -72,7 +67,12 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

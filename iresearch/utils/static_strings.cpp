@@ -21,7 +21,7 @@
 
 #include "static_strings.h"
 
-using namespace sdb;
+namespace irs {
 
 const std::string StaticStrings::kUserString("user");
 
@@ -96,3 +96,5 @@ const std::string StaticStrings::kMimeTypeTextNoEncoding("text/plain");
 const std::string StaticStrings::kEncodingSereneLz4("x-serene-lz4");
 const std::string StaticStrings::kEncodingDeflate("deflate");
 const std::string StaticStrings::kEncodingGzip("gzip");
+
+}  // namespace irs

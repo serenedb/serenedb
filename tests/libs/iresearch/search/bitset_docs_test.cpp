@@ -25,8 +25,6 @@
 #include <bit>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/docs/boolean_bitset.hpp"
@@ -36,6 +34,8 @@
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/bitset_docs.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "tests_shared.hpp"
 
 namespace {

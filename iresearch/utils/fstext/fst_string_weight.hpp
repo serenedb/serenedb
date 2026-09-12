@@ -28,9 +28,9 @@
 
 #include <string>
 
+#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace fst {

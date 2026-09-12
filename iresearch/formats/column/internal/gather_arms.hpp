@@ -24,8 +24,8 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs::column_internal {
 

@@ -24,6 +24,13 @@
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <chrono>
 #include <duckdb/main/attached_database.hpp>
@@ -45,21 +52,14 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/lifecycle.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/serializer.h"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/scorer_options.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {

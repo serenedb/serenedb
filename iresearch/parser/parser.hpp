@@ -38,10 +38,10 @@
 #include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "iresearch/utils/type_id.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {
 

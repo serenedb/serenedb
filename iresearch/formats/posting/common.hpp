@@ -26,12 +26,12 @@
 #include <span>
 #include <tuple>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

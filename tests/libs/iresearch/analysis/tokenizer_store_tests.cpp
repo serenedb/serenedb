@@ -22,10 +22,10 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/geo/coding.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/wildcard_tokenizer.hpp"
+#include "iresearch/utils/geo/coding.h"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

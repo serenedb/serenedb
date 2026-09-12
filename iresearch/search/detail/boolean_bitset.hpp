@@ -25,7 +25,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
@@ -35,6 +34,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/down_cast.h"
 
 namespace irs::detail {
 

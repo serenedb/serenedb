@@ -21,6 +21,9 @@
 #include "connector/functions/catalog_introspect.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
 
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -32,7 +35,6 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/serializer.h"
 #include "catalog/database.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -45,8 +47,6 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

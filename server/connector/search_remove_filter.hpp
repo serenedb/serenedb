@@ -21,16 +21,15 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <iresearch/utils/assert.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filters/filter.hpp>
+#include <iresearch/utils/memory.hpp>
 #include <memory>
 #include <optional>
 #include <vector>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/memory.hpp"
 
 namespace sdb::connector {
 

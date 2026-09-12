@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "iresearch/utils/math_utils.hpp"
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {
 

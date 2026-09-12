@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
@@ -40,6 +39,7 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

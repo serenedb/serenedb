@@ -18,14 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "connector/functions/ts_query_codec.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search.h"
 #include "ts_common.hpp"
 

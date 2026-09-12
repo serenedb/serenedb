@@ -26,10 +26,10 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/emit.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {

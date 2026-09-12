@@ -26,11 +26,11 @@
 #include <absl/hash/hash.h>
 
 #include "automaton_utils.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/containers/small_vector.h"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {

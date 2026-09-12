@@ -29,10 +29,10 @@
 #include <string_view>
 
 #include "absl/strings/match.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/char_traits.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

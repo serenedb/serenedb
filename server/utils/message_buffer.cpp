@@ -20,7 +20,7 @@
 
 #include "server/utils/message_buffer.h"
 
-#include "iresearch/utils/assert.h"
+#include <iresearch/utils/assert.h>
 
 namespace sdb::message {
 

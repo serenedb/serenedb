@@ -32,11 +32,11 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace duckdb {
 

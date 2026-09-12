@@ -27,9 +27,9 @@
 #include <tuple>
 #include <vector>
 
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/system-compiler.h"
 
 namespace irs {
 

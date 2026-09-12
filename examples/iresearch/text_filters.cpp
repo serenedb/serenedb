@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
@@ -38,8 +40,6 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
-
-#include "iresearch/utils/duckdb_engine.h"
 
 // This example shows direct construction of the advanced text filters:
 //   - ByPhrase            (positional, "quick brown fox")

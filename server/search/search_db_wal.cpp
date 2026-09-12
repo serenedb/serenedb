@@ -21,6 +21,11 @@
 #include "search/search_db_wal.h"
 
 #include <absl/strings/str_format.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serialization.h>
+#include <iresearch/utils/serializer.h>
 
 #include <algorithm>
 #include <cstring>
@@ -33,19 +38,13 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <iresearch/formats/formats.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/serialization.h"
-#include "iresearch/utils/serializer.h"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::search {
 namespace {

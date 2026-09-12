@@ -29,10 +29,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/geo/geo_params.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -47,6 +43,10 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/geo/geo_params.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/memory.hpp"
 
 namespace irs {
 namespace {

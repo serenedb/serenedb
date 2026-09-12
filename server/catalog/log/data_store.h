@@ -22,13 +22,13 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <atomic>
 #include <duckdb/main/connection.hpp>
 #include <span>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "catalog/log/store.h"
 
 namespace sdb {

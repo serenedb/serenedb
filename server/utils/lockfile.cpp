@@ -24,6 +24,8 @@
 #include <absl/synchronization/mutex.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/operating-system.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -35,9 +37,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/operating-system.h"
 
 namespace sdb {
 namespace {

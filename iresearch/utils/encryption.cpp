@@ -24,13 +24,13 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 

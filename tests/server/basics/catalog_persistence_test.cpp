@@ -44,7 +44,6 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/utils/serializer.h"
 #include "catalog/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
@@ -53,6 +52,7 @@
 #include "catalog/table.h"
 #include "catalog/tokenizer.h"
 #include "connector/file_manifest.h"
+#include "iresearch/utils/serializer.h"
 
 namespace sdb::catalog::persistence {
 namespace {

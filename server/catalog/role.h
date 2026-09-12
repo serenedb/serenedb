@@ -24,13 +24,13 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <iresearch/utils/bit_utils.hpp>
 #include <limits>
 #include <set>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 

@@ -20,11 +20,12 @@
 
 #include "pg/pg_catalog/pg_depend.h"
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/common/optional_ptr.hpp>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"

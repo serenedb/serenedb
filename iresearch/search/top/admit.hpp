@@ -26,9 +26,9 @@
 #include <cstring>
 #include <type_traits>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {

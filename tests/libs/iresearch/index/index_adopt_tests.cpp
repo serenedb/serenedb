@@ -27,7 +27,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "tests_shared.hpp"
 
 namespace {

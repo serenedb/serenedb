@@ -21,6 +21,8 @@
 #include "connector/functions/ts_offsets.h"
 
 #include <absl/algorithm/container.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -55,8 +57,6 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

@@ -26,13 +26,13 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {

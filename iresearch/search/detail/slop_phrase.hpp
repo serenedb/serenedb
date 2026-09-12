@@ -30,12 +30,12 @@
 #include <tuple>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs {
 namespace detail::slop {

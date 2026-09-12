@@ -20,6 +20,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <iresearch/utils/crash_handler.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -28,11 +31,6 @@
 #include <functional>
 #include <utility>
 
-#include "server/utils/app_server.h"
-#include "server/utils/init.h"
-#include "iresearch/utils/crash_handler.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/data_store.h"
 #include "catalog/log/duckdb_global_catalog.h"
@@ -44,6 +42,8 @@
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
+#include "server/utils/app_server.h"
+#include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
 namespace {

@@ -26,9 +26,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -42,6 +39,9 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {

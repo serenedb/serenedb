@@ -32,8 +32,8 @@
 
 #include "iresearch/analysis/text/delim/split.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
 

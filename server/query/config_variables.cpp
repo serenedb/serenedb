@@ -24,6 +24,11 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/common/assert.hpp>
@@ -31,6 +36,7 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
@@ -38,16 +44,10 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/serializer.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "iresearch/index/column_info.hpp"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 

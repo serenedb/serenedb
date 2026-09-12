@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/down_cast.h"
 
 namespace irs {
 

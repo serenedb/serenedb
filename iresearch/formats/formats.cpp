@@ -22,9 +22,9 @@
 
 #include "formats.hpp"
 
-#include "iresearch/utils/register.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/register.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

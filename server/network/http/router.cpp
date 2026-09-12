@@ -21,12 +21,11 @@
 #include "network/http/router.h"
 
 #include <ada.h>
+#include <iresearch/utils/assert.h>
 
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::network {
 

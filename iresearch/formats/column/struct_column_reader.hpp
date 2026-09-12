@@ -24,9 +24,9 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

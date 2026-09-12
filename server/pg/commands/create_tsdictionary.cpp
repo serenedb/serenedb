@@ -22,6 +22,8 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <unicode/locid.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
@@ -52,6 +54,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/icu_locale_serde.hpp>
+#include <iresearch/utils/misc.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
@@ -61,8 +64,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/misc.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -70,7 +71,6 @@
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 #include "search/search_analyzer_impl.h"

@@ -22,6 +22,8 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/containers/node_hash_map.h>
 #include <simdjson.h>
 
 #include <duckdb/common/enums/compression_type.hpp>
@@ -37,9 +39,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "server/utils/primary_key.hpp"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
@@ -48,6 +47,7 @@
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
 #include "search_remove_filter.hpp"
+#include "server/utils/primary_key.hpp"
 
 namespace duckdb {
 

@@ -35,11 +35,11 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/geo/coding.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/search/detail/geo_terms.hpp"
+#include "iresearch/utils/geo/coding.h"
 #include "search/geo_test_helpers.hpp"
 #include "token_sink_utils.hpp"
 

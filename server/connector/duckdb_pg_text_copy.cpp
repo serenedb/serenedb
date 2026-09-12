@@ -21,6 +21,9 @@
 #include "connector/duckdb_pg_text_copy.h"
 
 #include <fast_float/fast_float.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -40,16 +43,13 @@
 #include <string_view>
 #include <vector>
 
-#include "server/utils/message_buffer.h"
-#include "iresearch/utils/string_utils.h"
 #include "connector/copy_byte_source.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/serialize.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {

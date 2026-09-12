@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_physical_search_update.h"
 
+#include <iresearch/utils/assert.h>
+
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
@@ -29,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"

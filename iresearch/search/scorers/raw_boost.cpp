@@ -24,9 +24,9 @@
 
 #include <absl/container/inlined_vector.h>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/volatile_boost_score.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

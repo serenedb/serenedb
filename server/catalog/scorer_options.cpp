@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cmath>
 #include <duckdb/execution/expression_executor.hpp>
@@ -39,9 +41,6 @@
 #include <span>
 #include <string>
 #include <vector>
-
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

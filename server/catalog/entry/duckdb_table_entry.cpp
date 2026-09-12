@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -48,8 +50,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

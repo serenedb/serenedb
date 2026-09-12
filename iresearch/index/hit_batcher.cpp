@@ -28,8 +28,8 @@
 #include <duckdb/storage/table/column_segment.hpp>
 #include <limits>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 namespace {

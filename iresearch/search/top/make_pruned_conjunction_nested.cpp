@@ -27,8 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -49,6 +47,8 @@
 #include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
 namespace {

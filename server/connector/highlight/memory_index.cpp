@@ -20,9 +20,9 @@
 
 #include "connector/highlight/memory_index.h"
 
-#include <duckdb/main/database.hpp>
+#include <iresearch/utils/duckdb_engine.h>
 
-#include "iresearch/utils/duckdb_engine.h"
+#include <duckdb/main/database.hpp>
 
 namespace sdb::connector::highlight {
 

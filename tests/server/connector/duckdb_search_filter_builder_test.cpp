@@ -58,12 +58,12 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/duckdb_engine.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 
@@ -814,8 +814,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
             return "ByGranularRange(f=" +
-                   std::to_string(irs::utils::downCast<irs::ByGranularRange>(f)
-                                    .field_id()) +
+                   std::to_string(
+                     irs::utils::downCast<irs::ByGranularRange>(f).field_id()) +
                    ")";
           }
           return std::string{f.type()().name()};

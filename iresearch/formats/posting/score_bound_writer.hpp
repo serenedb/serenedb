@@ -24,8 +24,6 @@
 
 #include <algorithm>
 
-#include "iresearch/utils/containers/small_vector.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -34,6 +32,8 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/containers/small_vector.h"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/fixed_buffer.hpp"
 
 namespace irs {

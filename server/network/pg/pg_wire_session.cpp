@@ -22,6 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
 #include <array>
@@ -30,11 +33,6 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "server/utils/lifecycle.h"
-#include "server/utils/metrics.h"
-#include "iresearch/utils/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -44,6 +42,8 @@
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/metrics.h"
 
 namespace sdb::network::pg {
 namespace {

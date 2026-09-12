@@ -22,14 +22,14 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_posting.hpp"
+#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::top {

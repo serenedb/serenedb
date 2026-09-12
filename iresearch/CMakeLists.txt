@@ -502,10 +502,11 @@ set_source_files_properties(
             "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
 )
 
+target_include_directories(iresearch-static PUBLIC ${CMAKE_SOURCE_DIR})
+
 target_include_directories(
     iresearch-static
     SYSTEM
-    PUBLIC ${CMAKE_SOURCE_DIR}
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
     PUBLIC
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>

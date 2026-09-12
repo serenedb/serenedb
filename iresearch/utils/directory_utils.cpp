@@ -23,11 +23,11 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
-#include "iresearch/utils/log.h"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
+#include "iresearch/utils/log.h"
 
 namespace irs {
 namespace directory_utils {

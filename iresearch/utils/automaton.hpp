@@ -24,8 +24,8 @@
 
 #include <vector>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 
 // clang-format off
 #include <fst/fst.h>

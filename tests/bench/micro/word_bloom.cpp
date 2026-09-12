@@ -185,9 +185,9 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
 #include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
+#include "iresearch/utils/containers/flat_hash_set.h"
 
 namespace {
 

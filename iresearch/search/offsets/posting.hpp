@@ -22,11 +22,11 @@
 
 #include <span>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/offsets/root.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::offsets {

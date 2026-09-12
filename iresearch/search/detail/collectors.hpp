@@ -29,13 +29,13 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/stats_arena.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 

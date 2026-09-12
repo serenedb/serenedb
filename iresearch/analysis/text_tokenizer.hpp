@@ -34,10 +34,10 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/stopword_set.hpp"
 #include "iresearch/analysis/text/dict/stem_cache.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "tokenizer.hpp"
 

@@ -25,12 +25,12 @@
 
 #include <simdutf.h>
 
-#include "iresearch/utils/log.h"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {

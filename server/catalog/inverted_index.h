@@ -20,6 +20,11 @@
 
 #pragma once
 
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/down_cast.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -30,10 +35,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"

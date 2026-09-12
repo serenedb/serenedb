@@ -25,13 +25,13 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/utils/serializer.h"
 #include "classification_tokenizer.hpp"
 #include "collation_tokenizer.hpp"
 #include "delimited_tokenizer.hpp"
 #include "geo_tokenizer.hpp"
 #include "icu_text_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
+#include "iresearch/utils/serializer.h"
 #include "multi_delimited_tokenizer.hpp"
 #include "nearest_neighbors_tokenizer.hpp"
 #include "ngram_tokenizer.hpp"

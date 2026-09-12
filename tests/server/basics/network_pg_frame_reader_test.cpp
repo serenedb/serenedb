@@ -25,9 +25,9 @@
 #include <string>
 #include <string_view>
 
-#include "server/utils/message_buffer.h"
 #include "network/pg/frame_reader.h"
 #include "pg/protocol.h"
+#include "server/utils/message_buffer.h"
 
 using namespace sdb::network::pg;
 

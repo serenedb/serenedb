@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -33,8 +35,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/index.h"
 #include "catalog/scorer_options.h"

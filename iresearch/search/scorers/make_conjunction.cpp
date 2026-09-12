@@ -22,8 +22,8 @@
 
 #include <absl/base/optimization.h>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
 namespace {

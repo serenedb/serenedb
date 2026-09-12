@@ -24,13 +24,13 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/filters/lowering_rules.hpp"
 #include "iresearch/search/filters/range_rules.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/utils/down_cast.h"
 
 namespace irs {
 namespace {

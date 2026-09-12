@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/utils/duckdb_engine.h>
+
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -46,8 +48,6 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
-
-#include "iresearch/utils/duckdb_engine.h"
 
 // This example demonstrates the core iresearch workflow:
 //   1. Create a directory and index writer

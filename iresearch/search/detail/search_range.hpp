@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "iresearch/utils/type_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/type_utils.hpp"
 
 namespace irs {
 

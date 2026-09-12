@@ -32,9 +32,9 @@
 #include <utility>
 #include <vector>
 
+#include "network/asio_awaitable.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_sequence_view.h"
-#include "network/asio_awaitable.h"
 
 namespace sdb::network {
 

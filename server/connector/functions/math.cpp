@@ -21,6 +21,8 @@
 #include "connector/functions/math.h"
 
 #include <absl/strings/str_format.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cmath>
 #include <cstdint>
@@ -33,9 +35,6 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <limits>
 #include <random>
-
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

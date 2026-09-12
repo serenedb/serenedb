@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
@@ -29,7 +30,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "server/utils/random_generator.h"
 
 namespace sdb::network {

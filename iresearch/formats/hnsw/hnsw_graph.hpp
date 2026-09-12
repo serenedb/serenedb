@@ -31,9 +31,9 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.h"
 namespace irs {
 
 class DataOutput;

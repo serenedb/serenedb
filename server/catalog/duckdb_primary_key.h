@@ -21,6 +21,9 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <cmath>
 #include <concepts>
@@ -35,14 +38,11 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "server/utils/primary_key.hpp"
-#include "iresearch/utils/string_utils.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/key_encoding.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/primary_key.hpp"
 
 namespace sdb::catalog::duckdb_primary_key {
 

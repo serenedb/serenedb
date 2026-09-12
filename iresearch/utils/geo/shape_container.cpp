@@ -32,10 +32,10 @@
 
 #include "iresearch/utils/application-exit.h"
 #include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
 #include "iresearch/utils/geo/geo_params.h"
 #include "iresearch/utils/geo/s2/multi_point_region.h"
 #include "iresearch/utils/geo/s2/multi_polyline_region.h"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::geo {

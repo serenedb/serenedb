@@ -22,11 +22,11 @@
 
 #include <memory>
 
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/system-compiler.h"
 
 namespace irs {
 

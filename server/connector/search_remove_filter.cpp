@@ -21,9 +21,9 @@
 #include "search_remove_filter.hpp"
 
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/memory.hpp>
 #include <limits>
 
-#include "iresearch/utils/memory.hpp"
 #include "server/utils/primary_key.hpp"
 
 namespace sdb::connector {

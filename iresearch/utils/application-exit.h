@@ -23,8 +23,6 @@
 
 namespace irs {
 
-[[noreturn]] void FatalErrorExitCode(int code) noexcept;
-
 [[noreturn]] void FatalErrorExit() noexcept;
 
 }  // namespace irs

@@ -28,8 +28,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
@@ -38,7 +36,9 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/containers/flat_hash_map.h"
 #include "iresearch/utils/encryption.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {

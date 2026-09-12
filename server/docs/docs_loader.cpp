@@ -22,6 +22,9 @@
 
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <chrono>
@@ -38,9 +41,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"

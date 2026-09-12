@@ -37,8 +37,6 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "server/utils/asio_ns.h"
-#include "server/utils/message_buffer.h"
 #include "network/cancel_registry.h"
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
@@ -46,6 +44,8 @@
 #include "network/listen_spec.h"
 #include "network/proxy_protocol.h"
 #include "network/socket.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network {
 

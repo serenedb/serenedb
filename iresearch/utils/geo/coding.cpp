@@ -29,11 +29,11 @@
 
 #include <ranges>
 
+#include "geo_json.h"
 #include "iresearch/utils/application-exit.h"
 #include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
 #include "iresearch/utils/geo/shape_container.h"
-#include "geo_json.h"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::geo {

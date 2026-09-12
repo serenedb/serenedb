@@ -36,13 +36,13 @@
 #include <vector>
 
 #include "iresearch/utils/debugging.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/string_utils.h"
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/utils/geo/geo_params.h"
 #include "iresearch/utils/geo/s2/multi_point_region.h"
 #include "iresearch/utils/geo/s2/multi_polyline_region.h"
 #include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/string_utils.h"
+#include "iresearch/utils/system-compiler.h"
 
 namespace irs::geo::json {
 namespace {

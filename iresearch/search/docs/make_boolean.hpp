@@ -26,7 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
@@ -34,6 +33,7 @@
 #include "iresearch/search/docs/boolean_window.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::docs {
 

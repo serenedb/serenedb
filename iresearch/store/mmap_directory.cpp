@@ -22,8 +22,8 @@
 
 #include "iresearch/store/mmap_directory.hpp"
 
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
 
 namespace irs {

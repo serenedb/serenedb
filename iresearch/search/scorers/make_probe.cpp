@@ -25,10 +25,10 @@
 #include <bit>
 #include <ranges>
 
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs::detail {
 namespace {

@@ -23,9 +23,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/utils/memory.hpp"
 
 namespace irs::detail {
 

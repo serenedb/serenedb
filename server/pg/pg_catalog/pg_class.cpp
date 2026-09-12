@@ -21,6 +21,10 @@
 #include "pg/pg_catalog/pg_class.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <algorithm>
 #include <deque>
@@ -32,11 +36,6 @@
 #include <utility>
 #include <vector>
 
-#include "server/utils/app_server.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -53,6 +52,7 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

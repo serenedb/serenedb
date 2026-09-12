@@ -23,6 +23,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
@@ -63,9 +69,6 @@
 #include <iresearch/search/filters/all_filter.hpp>
 
 #include "auth/role_closure.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/entry.h"
@@ -86,9 +89,6 @@
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"

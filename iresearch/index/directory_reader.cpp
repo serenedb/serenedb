@@ -25,10 +25,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "iresearch/utils/singleton.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/singleton.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

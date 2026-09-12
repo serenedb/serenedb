@@ -21,8 +21,8 @@
 
 #include <cstdint>
 
-#include "server/utils/random_generator.h"
 #include "gtest/gtest.h"
+#include "server/utils/random_generator.h"
 
 using namespace sdb;
 

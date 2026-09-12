@@ -23,6 +23,10 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <atomic>
 #include <chrono>
@@ -42,11 +46,6 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "server/utils/asio_ns.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/message_buffer.h"
-#include "server/utils/metrics.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -63,8 +62,9 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
+#include "server/utils/metrics.h"
 
 namespace sdb::network {
 

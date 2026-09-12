@@ -23,8 +23,6 @@
 #include <algorithm>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
@@ -33,8 +31,10 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 

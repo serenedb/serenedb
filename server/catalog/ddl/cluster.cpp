@@ -21,6 +21,11 @@
 #include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/common/error_data.hpp>
@@ -33,9 +38,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
@@ -47,8 +49,6 @@
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

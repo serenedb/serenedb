@@ -21,15 +21,14 @@
 #include "connector/key_encoding.h"
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <cmath>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
-
-#include "iresearch/utils/string_utils.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector::key_encoding {
 namespace {

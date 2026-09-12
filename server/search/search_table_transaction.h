@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/node_hash_map.h>
 
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
@@ -31,8 +33,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"

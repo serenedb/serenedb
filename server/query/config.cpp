@@ -22,6 +22,8 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -37,12 +39,10 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "iresearch/utils/assert.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb {
 namespace {

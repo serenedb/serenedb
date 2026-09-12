@@ -23,6 +23,9 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <chrono>
@@ -30,10 +33,6 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/log.h"
-#include "server/utils/number_of_cores.h"
-#include "iresearch/utils/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
@@ -45,6 +44,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},

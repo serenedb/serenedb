@@ -21,11 +21,11 @@
 #include "connector/functions/embedding/provider.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/system-compiler.h>
 
-#include "iresearch/utils/system-compiler.h"
 #include "connector/functions/embedding/provider_openai.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector::embedding {
 

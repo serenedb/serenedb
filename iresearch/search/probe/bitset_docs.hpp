@@ -23,8 +23,8 @@
 #include <bit>
 #include <utility>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

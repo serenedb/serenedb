@@ -22,11 +22,11 @@
 
 #include <variant>
 
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/inverter/packed_column.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {
 

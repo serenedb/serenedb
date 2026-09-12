@@ -22,6 +22,8 @@
 
 #include <absl/strings/escaping.h>
 #include <fast_float/fast_float.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
@@ -33,10 +35,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

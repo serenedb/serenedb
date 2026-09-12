@@ -30,8 +30,6 @@
 #include <algorithm>
 #include <string_view>
 
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/string_utils.h"
 #include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/dict/stopwords_loader.hpp"
 #include "iresearch/analysis/text/normalize/icu.hpp"
@@ -39,9 +37,11 @@
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/snowball_stemmer.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
+#include "iresearch/utils/log.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/snowball_stemmer.hpp"
+#include "iresearch/utils/string_utils.h"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
 

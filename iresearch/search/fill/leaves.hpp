@@ -26,13 +26,13 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

@@ -26,8 +26,8 @@
 #include <string_view>
 #include <utility>
 
-#include "server/utils/message_buffer.h"
 #include "network/http/h1_codec.h"
+#include "server/utils/message_buffer.h"
 
 using namespace sdb::network;
 

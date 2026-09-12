@@ -139,7 +139,7 @@ struct StringSpan {
     FN_ORDERED = 295,              /* FN_ORDERED  */
     FN_MAXGAPS = 296,              /* FN_MAXGAPS  */
     FN_MAXWIDTH = 297,             /* FN_MAXWIDTH  */
-    FN_OTHER = 298                 /* FN_OTHER  */
+    FN_OTHER = 298,                 /* FN_OTHER  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif

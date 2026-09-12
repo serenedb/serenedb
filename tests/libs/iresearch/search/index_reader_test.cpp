@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
@@ -32,6 +31,7 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

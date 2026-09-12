@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -49,7 +51,6 @@
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
 
-#include "iresearch/utils/assert.h"
 #include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 

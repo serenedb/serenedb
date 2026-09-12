@@ -23,9 +23,9 @@
 #include <bit>
 #include <cstdint>
 
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

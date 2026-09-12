@@ -22,10 +22,6 @@
 
 #include <iterator>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -33,6 +29,10 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

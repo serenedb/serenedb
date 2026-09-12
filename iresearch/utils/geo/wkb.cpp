@@ -33,10 +33,10 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/geo/s2/multi_point_region.h"
 #include "iresearch/utils/geo/s2/multi_polyline_region.h"
 #include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs::geo {

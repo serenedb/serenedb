@@ -26,11 +26,11 @@
 
 #include <string_view>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/system-compiler.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

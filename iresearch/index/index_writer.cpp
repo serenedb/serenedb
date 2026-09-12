@@ -33,10 +33,6 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/resource_manager.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
@@ -48,11 +44,15 @@
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/async.hpp"
+#include "iresearch/utils/debugging.h"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/resource_manager.hpp"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {

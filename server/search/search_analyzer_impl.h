@@ -20,17 +20,17 @@
 
 #pragma once
 
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
+
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/object_pool.hpp>
 #include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
-
-#include "iresearch/utils/object_pool.hpp"
-#include "iresearch/utils/serializer.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::search {
 

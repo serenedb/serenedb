@@ -26,12 +26,11 @@
 #include <absl/strings/str_split.h>
 #include <ada.h>
 #include <fast_float/fast_float.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/string_utils.h>
 
 #include <charconv>
 #include <set>
-
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/string_utils.h"
 
 namespace sdb::network {
 namespace {

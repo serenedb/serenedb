@@ -25,10 +25,10 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "executor.h"
 #include "index_builder.h"
 #include "insert_field.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 
 int main(int argc, const char* argv[]) {
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.

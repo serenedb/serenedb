@@ -24,9 +24,9 @@
 #include <ranges>
 #include <utility>
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/utils/down_cast.h"
 
 namespace irs {
 namespace {

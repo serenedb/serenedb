@@ -25,9 +25,9 @@
 #include <absl/strings/str_cat.h>
 #include <liburing.h>
 
+#include "iresearch/error/error.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/error/error.hpp"
 
 namespace irs {
 namespace {

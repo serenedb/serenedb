@@ -21,7 +21,6 @@
 #include <algorithm>
 #include <vector>
 
-#include "iresearch/utils/down_cast.h"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
@@ -36,6 +35,7 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/down_cast.h"
 
 namespace {
 

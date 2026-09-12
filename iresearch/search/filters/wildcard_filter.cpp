@@ -26,8 +26,8 @@
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/wildcard_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
 

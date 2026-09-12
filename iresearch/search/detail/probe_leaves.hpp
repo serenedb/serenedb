@@ -26,8 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -38,6 +36,8 @@
 #include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
 

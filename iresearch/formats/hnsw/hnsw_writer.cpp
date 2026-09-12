@@ -34,11 +34,6 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/topic.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -47,9 +42,14 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/vector.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/topic.h"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {

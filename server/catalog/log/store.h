@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_permissions.hpp>
@@ -33,7 +34,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/log/store_op.h"

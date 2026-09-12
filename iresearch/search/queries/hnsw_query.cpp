@@ -23,8 +23,8 @@
 #include <algorithm>
 #include <span>
 
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {

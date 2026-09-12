@@ -52,7 +52,6 @@
 #include <optional>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -60,6 +59,7 @@
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace irs {

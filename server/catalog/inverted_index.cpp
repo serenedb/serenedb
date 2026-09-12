@@ -20,6 +20,13 @@
 
 #include "catalog/inverted_index.h"
 
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serializer.h>
+
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
@@ -28,18 +35,12 @@
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "absl/algorithm/container.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/serializer.h"
-#include "server/utils/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 

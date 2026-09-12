@@ -23,9 +23,9 @@
 #include <bit>
 #include <cstdint>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {

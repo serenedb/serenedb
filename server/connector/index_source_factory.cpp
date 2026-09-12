@@ -20,6 +20,9 @@
 
 #include "connector/index_source_factory.h"
 
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include "catalog/ddl/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/table.h"
@@ -30,8 +33,6 @@
 #include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {

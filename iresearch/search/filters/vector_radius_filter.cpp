@@ -20,9 +20,9 @@
 
 #include "iresearch/search/filters/vector_radius_filter.hpp"
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 

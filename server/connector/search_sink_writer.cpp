@@ -20,6 +20,10 @@
 
 #include "search_sink_writer.hpp"
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -28,15 +32,12 @@
 #include <iresearch/index/typed_terms.hpp>
 #include <iterator>
 
-#include "iresearch/utils/assert.h"
-#include "server/utils/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
+#include "server/utils/primary_key.hpp"
 
 namespace sdb::connector {
 namespace {

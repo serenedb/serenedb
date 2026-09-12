@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "iresearch/utils/assert.h"
 #include "fasttext.h"
+#include "iresearch/utils/assert.h"
 
 namespace fasttext {
 

@@ -23,8 +23,8 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/search/count/root.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs::count {
 

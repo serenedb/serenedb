@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {
 

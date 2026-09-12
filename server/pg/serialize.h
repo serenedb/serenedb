@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <iresearch/utils/containers/node_hash_map.h>
 #include <unicode/timezone.h>
 
 #include <duckdb/common/shared_ptr.hpp>
@@ -29,9 +30,8 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <memory>
 
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "server/utils/message_buffer.h"
 #include "query/config.h"
+#include "server/utils/message_buffer.h"
 
 namespace duckdb {
 

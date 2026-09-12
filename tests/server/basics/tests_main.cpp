@@ -20,8 +20,8 @@
 
 #include <gtest/gtest.h>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/entry.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

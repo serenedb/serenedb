@@ -23,9 +23,9 @@
 #include <memory>
 #include <span>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/containers/flat_hash_map.h"
 
 namespace irs {
 

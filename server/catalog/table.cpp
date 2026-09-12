@@ -24,6 +24,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -40,8 +42,6 @@
 #include <utility>
 
 #include "catalog/scorer_options.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::catalog {

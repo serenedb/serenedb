@@ -22,8 +22,6 @@
 
 #include <map>
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/misc.hpp"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -36,7 +34,9 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 
@@ -1173,9 +1173,8 @@ TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
       ADD_FAILURE() << "not a boolean query";
       return {};
     }
-    const auto& should =
-      irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
-        irs::Occur::Should);
+    const auto& should = irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
+      irs::Occur::Should);
     return {should.postings.size(), should.filters.size()};
   };
 

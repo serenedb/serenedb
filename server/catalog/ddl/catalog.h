@@ -22,6 +22,10 @@
 
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/containers/flat_hash_set.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/down_cast.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -33,10 +37,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/down_cast.h"
 #include "catalog/database.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"

@@ -4598,9 +4598,8 @@ TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
       ADD_FAILURE() << "not a boolean query";
       return {};
     }
-    const auto& should =
-      irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
-        irs::Occur::Should);
+    const auto& should = irs::utils::downCast<irs::BooleanQuery>(*query).Bucket(
+      irs::Occur::Should);
     return {should.postings.size(), should.filters.size()};
   };
   EXPECT_EQ(kept, prepared_should(*make(irs::ScoreMergeType::Max), &sort));

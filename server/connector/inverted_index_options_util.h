@@ -21,14 +21,14 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <array>
 #include <duckdb/common/types/value.hpp>
 #include <limits>
 #include <string_view>
 
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::connector {

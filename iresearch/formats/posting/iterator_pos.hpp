@@ -20,12 +20,12 @@
 
 #pragma once
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs {
 
@@ -216,8 +216,7 @@ class PositionImpl final : public PosAttr {
 
     _cookie.pos_file_pointer = state.term_state->pos_start;
     _cookie.pend_pos = state.term_state->pos_offset;
-    irs::utils::downCast<InputType>(*_pos_in).Seek(
-      state.term_state->pos_start);
+    irs::utils::downCast<InputType>(*_pos_in).Seek(state.term_state->pos_start);
     _enc_buf = state.enc_buf;
     _pend_pos = _cookie.pend_pos;
 

@@ -22,9 +22,9 @@
 
 #include <duckdb/common/types/string_type.hpp>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::analysis::words {
 

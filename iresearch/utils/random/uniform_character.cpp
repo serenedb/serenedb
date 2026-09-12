@@ -23,8 +23,8 @@
 
 #include <absl/algorithm/container.h>
 
-#include "server/utils/random_generator.h"
 #include "iresearch/utils/string_utils.h"
+#include "server/utils/random_generator.h"
 
 namespace irs::random {
 

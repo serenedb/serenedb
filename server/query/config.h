@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/node_hash_map.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
@@ -27,10 +31,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace duckdb {
 

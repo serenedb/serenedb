@@ -22,9 +22,9 @@
 
 #include <cmath>
 
-#include "iresearch/utils/assert.h"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/assert.h"
 
 namespace irs {
 namespace {

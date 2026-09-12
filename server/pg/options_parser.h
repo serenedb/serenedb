@@ -25,17 +25,17 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <algorithm>
 #include <duckdb/common/named_parameter_map.hpp>
 #include <functional>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/option_help.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 

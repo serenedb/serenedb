@@ -27,11 +27,11 @@
 // clang-format off
 #include "iresearch/utils/automaton.hpp"
 // clang-format on
+#include "fst/matcher.h"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/std.hpp"
-#include "fst/matcher.h"
 
 namespace fst {
 

@@ -30,8 +30,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "iresearch/utils/duckdb_engine.h"
-#include "iresearch/utils/resource_manager.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
@@ -45,6 +43,8 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 

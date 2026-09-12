@@ -26,12 +26,12 @@
 #include <array>
 #include <memory>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs::container_utils {
 

@@ -37,7 +37,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -60,6 +59,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "tests_shared.hpp"
 
 namespace {

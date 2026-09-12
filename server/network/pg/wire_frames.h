@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/sql_error.h>
+
 #include <cstdint>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/identifier.hpp>
@@ -29,11 +32,9 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/utils/assert.h"
-#include "server/utils/message_buffer.h"
 #include "pg/command_tag.h"
 #include "pg/serialize.h"
-#include "iresearch/utils/pg/sql_error.h"
+#include "server/utils/message_buffer.h"
 
 namespace duckdb {
 

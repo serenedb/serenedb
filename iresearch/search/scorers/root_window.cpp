@@ -22,8 +22,8 @@
 
 #include <bit>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 
 namespace irs::detail {
 namespace {

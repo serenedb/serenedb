@@ -37,12 +37,12 @@
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

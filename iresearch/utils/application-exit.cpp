@@ -27,10 +27,6 @@
 
 namespace irs {
 
-[[noreturn]] void FatalErrorExitCode(int code) noexcept { std::exit(code); }
-
-[[noreturn]] void FatalErrorExit() noexcept {
-  FatalErrorExitCode(EXIT_FAILURE);
-}
+[[noreturn]] void FatalErrorExit() noexcept { std::exit(EXIT_FAILURE); }
 
 }  // namespace irs

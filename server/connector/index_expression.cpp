@@ -22,6 +22,9 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/serialization.h>
 #include <simdjson.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -50,10 +53,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/serialization.h"
 #include "connector/common.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

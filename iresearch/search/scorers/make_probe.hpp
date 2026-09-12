@@ -24,8 +24,8 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
 

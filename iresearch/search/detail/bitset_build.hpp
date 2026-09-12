@@ -26,8 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
@@ -37,6 +35,8 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

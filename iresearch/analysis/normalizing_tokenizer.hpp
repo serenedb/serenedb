@@ -31,9 +31,9 @@
 #include <string>
 #include <tuple>
 
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "tokenizer.hpp"
 
 namespace irs {

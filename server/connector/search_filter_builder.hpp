@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/status/status.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -32,7 +33,6 @@
 #include <optional>
 #include <span>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 

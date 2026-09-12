@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/debugging.h>
 
 #include <cstdint>
 #include <optional>
@@ -29,9 +30,8 @@
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "iresearch/utils/debugging.h"
-#include "server/utils/message_buffer.h"
 #include "network/http/common.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network::http {
 

@@ -30,8 +30,6 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <unordered_set>
 
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -50,7 +48,9 @@
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"

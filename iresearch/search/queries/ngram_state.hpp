@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 

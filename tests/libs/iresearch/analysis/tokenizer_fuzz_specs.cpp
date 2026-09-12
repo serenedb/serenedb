@@ -27,8 +27,8 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/analysis/geo_tokenizer.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_corpus.hpp"

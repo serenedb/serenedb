@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/down_cast.h"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
@@ -27,6 +26,7 @@
 #include "iresearch/search/scorers/raw_tf.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/unscored.hpp"
+#include "iresearch/utils/down_cast.h"
 #include "tests_shared.hpp"
 
 namespace {

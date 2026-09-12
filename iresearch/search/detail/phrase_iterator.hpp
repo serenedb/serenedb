@@ -27,7 +27,6 @@
 #include <limits>
 #include <memory>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
@@ -37,6 +36,7 @@
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs {
 

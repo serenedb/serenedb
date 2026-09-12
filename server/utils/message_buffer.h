@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iresearch/utils/shared.hpp>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -31,7 +32,6 @@
 
 #include "server/utils/message_chunk.h"
 #include "server/utils/message_sequence_view.h"
-#include "iresearch/utils/shared.hpp"
 
 namespace sdb::message {
 

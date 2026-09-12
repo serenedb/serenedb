@@ -46,9 +46,9 @@
 #include <tuple>
 #include <vector>
 
+#include "index_builder.h"
 #include "iresearch/utils/duckdb_engine.h"
 #include "server/utils/wyhash.h"
-#include "index_builder.h"
 
 namespace bench {
 namespace {

@@ -23,11 +23,11 @@
 #include <cstdint>
 #include <duckdb/common/types/datetime.hpp>
 #include <duckdb/common/types/string_type.hpp>
+#include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
 #include <string_view>
 
-#include "iresearch/utils/bit_utils.hpp"
 #include "catalog/table_options.h"
 
 namespace sdb::connector {

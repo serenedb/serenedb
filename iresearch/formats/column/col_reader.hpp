@@ -30,12 +30,12 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.h"
 
 namespace duckdb {
 

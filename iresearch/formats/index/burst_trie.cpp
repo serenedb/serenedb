@@ -26,16 +26,8 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
 
-#include <iresearch/index/index_reader_options.hpp>
 #include <variant>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/containers/monotonic_buffer.hpp"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/string_utils.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -45,17 +37,25 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/assert.h"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/automaton.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/encryption.hpp"
 #include "iresearch/utils/hash_utils.hpp"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/log.h"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/string.hpp"
+#include "iresearch/utils/string_utils.h"
+#include "iresearch/utils/type_limits.hpp"
 
 // fstext includes don't remove them or comment!
 // clang-format off

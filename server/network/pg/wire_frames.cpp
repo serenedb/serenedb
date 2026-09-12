@@ -25,6 +25,8 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception.h>
 
 #include <array>
 #include <cstdint>
@@ -33,14 +35,12 @@
 #include <utility>
 #include <vector>
 
-#include "server/utils/dtoa.h"
 #include "pg/command_tag.h"
-#include "iresearch/utils/pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
-#include "iresearch/utils/pg/sql_exception.h"
 #include "pg/sql_utils.h"
 #include "query/utils.h"
+#include "server/utils/dtoa.h"
 
 namespace sdb::network::pg {
 namespace {

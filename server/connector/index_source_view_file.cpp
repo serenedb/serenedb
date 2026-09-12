@@ -20,11 +20,11 @@
 
 #include "connector/index_source_view_file.h"
 
+#include <iresearch/utils/assert.h>
+
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
-
-#include "iresearch/utils/assert.h"
 
 namespace sdb::connector {
 

@@ -20,14 +20,14 @@
 
 #include "catalog/log/store_op.h"
 
+#include <iresearch/utils/serialization.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <utility>
-
-#include "iresearch/utils/serialization.h"
 
 namespace sdb::catalog::store_op {
 

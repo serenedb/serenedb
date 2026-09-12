@@ -28,7 +28,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
@@ -39,6 +38,7 @@
 #include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {

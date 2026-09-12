@@ -28,12 +28,12 @@
 #include <duckdb/storage/arena_allocator.hpp>
 #include <span>
 
+#include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/utils/assert.h"
 #include "iresearch/utils/containers/flat_hash_set.h"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

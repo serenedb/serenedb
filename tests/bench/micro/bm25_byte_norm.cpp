@@ -71,10 +71,10 @@
 #include <cstdint>
 #include <random>
 
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace {
 

@@ -23,7 +23,6 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -32,6 +31,7 @@
 #include "iresearch/search/top/posting_pruned_lead.hpp"
 #include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
 namespace {

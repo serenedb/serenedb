@@ -22,6 +22,11 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/debugging.h>
+#include <iresearch/utils/duckdb_engine.h>
+#include <iresearch/utils/log.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -36,10 +41,6 @@
 #include <duckdb/transaction/transaction.hpp>
 #include <utility>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/duckdb_engine.h"
-#include "server/utils/file_utils.h"
-#include "iresearch/utils/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -47,8 +48,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/read/duckdb_dependency.h"
 #include "connector/duckdb_storage_extension.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "server/utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {

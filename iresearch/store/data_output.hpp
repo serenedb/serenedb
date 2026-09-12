@@ -24,9 +24,9 @@
 
 #include <duckdb/common/serializer/write_stream.hpp>
 
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/io_utils.hpp"
+#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

@@ -20,13 +20,13 @@
 
 #pragma once
 
-#include "iresearch/utils/debugging.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/debugging.h"
 
 namespace irs {
 

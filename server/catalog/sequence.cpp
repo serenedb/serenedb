@@ -22,11 +22,11 @@
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
 
 #include <string>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
 #include "catalog/log/store.h"
 
 namespace sdb::catalog {

@@ -21,6 +21,9 @@
 #include "connector/functions/embedding/embedding.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -38,10 +41,7 @@
 #include <string>
 #include <utility>
 
-#include "iresearch/utils/down_cast.h"
 #include "connector/functions/embedding/provider.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

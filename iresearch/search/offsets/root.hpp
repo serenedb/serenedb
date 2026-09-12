@@ -23,8 +23,8 @@
 #include <cstdint>
 #include <span>
 
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::offsets {

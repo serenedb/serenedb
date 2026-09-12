@@ -24,7 +24,6 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "iresearch/utils/system-compiler.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
@@ -43,9 +42,10 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/wildcard_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/regexp_utils.hpp"
+#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
 namespace {

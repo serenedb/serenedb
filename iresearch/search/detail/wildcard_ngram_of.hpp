@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -39,6 +37,8 @@
 #include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::detail {
 

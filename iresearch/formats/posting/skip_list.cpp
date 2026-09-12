@@ -22,11 +22,11 @@
 
 #include "skip_list.hpp"
 
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

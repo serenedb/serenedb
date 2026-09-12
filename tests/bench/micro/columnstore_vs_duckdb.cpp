@@ -50,7 +50,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/duckdb_engine.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -58,6 +57,7 @@
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/duckdb_engine.h"
 
 namespace {
 

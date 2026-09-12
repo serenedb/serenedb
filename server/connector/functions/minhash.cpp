@@ -21,6 +21,8 @@
 #include "connector/functions/minhash.h"
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -35,8 +37,6 @@
 #include <iterator>
 
 #include "server/utils/wyhash.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

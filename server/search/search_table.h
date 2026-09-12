@@ -23,6 +23,8 @@
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <atomic>
 #include <cstdint>
@@ -35,8 +37,6 @@
 #include <shared_mutex>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
 #include "catalog/column_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"

@@ -21,6 +21,9 @@
 #include "connector/functions/embedding/provider_openai.h"
 
 #include <absl/strings/str_cat.h>
+#include <iresearch/utils/assert.h>
+#include <iresearch/utils/pg/errcodes.h>
+#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <array>
@@ -30,10 +33,6 @@
 #include <duckdb/main/extension_helper.hpp>
 #include <span>
 #include <string_view>
-
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
 
 namespace sdb::connector::embedding {
 namespace {

@@ -24,8 +24,8 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/monotonic_buffer.hpp"
 
 namespace duckdb {
 

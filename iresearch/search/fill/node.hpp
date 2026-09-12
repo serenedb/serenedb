@@ -22,10 +22,10 @@
 
 #include <cstdint>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/system-compiler.h"
-#include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

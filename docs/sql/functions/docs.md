@@ -59,6 +59,23 @@ catalog says so.
 
 <SqlLogicTest id="sql/functions/docs/example_001" />
 
+Objects are read out of the documentation two ways. A heading whose text is a call
+signature — `#### ts_phrase(text, ...)` — becomes a row on its own. So does a row of any
+reference table whose first column is headed `Function`, `Aggregate` or `Name`, which is
+how the function tables, the data type table and the configuration reference are
+indexed. A table that also carries an `Aliases` or `Alias` column fills in the `aliases`
+column, so alternative spellings resolve to the same object:
+
+```sql
+SELECT name, signature, aliases
+FROM sdb_docs.objects()
+WHERE kind = 'type' AND name = 'BIGINT';
+```
+
+Because a single page can document one function in both a heading and a table, and a
+single table can list several overloads, a name repeats. The row is identified by
+`(kind, name, path, signature)`; group by `name` when you want one line per object.
+
 ## Reference
 
 #### `sdb_docs.objects()`

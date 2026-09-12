@@ -36,11 +36,13 @@ count
 0
 
 # A function's signature is its name applied to arguments, optionally qualified
-# by the schema the function lives in.
+# by the schema the function lives in. A niladic special form such as
+# current_timestamp carries the bare name instead.
 connection docs database=postgres
 query
 SELECT bool_and(starts_with(signature, name || '(')
-                OR strpos(signature, '.' || name || '(') > 0)
+                OR strpos(signature, '.' || name || '(') > 0
+                OR signature = name)
 FROM sdb_docs.objects() WHERE kind = 'function';
 ----
 bool_and
@@ -56,12 +58,14 @@ FROM sdb_docs.objects();
 count	?column?
 0	t
 
-# An object is identified by its kind, name and the doc row it came from.
-# Overloads legitimately repeat (kind, name), so the path is part of the key.
+# An object is identified by its kind, name, signature and the doc row it came
+# from. Overloads legitimately repeat (kind, name) and a single row can list
+# several of them, so both the path and the signature are part of the key.
 connection docs database=postgres
 query
 SELECT count(*) FROM (
-  SELECT kind, name, path FROM sdb_docs.objects() GROUP BY 1, 2, 3 HAVING count(*) > 1);
+  SELECT kind, name, path, signature FROM sdb_docs.objects()
+  GROUP BY 1, 2, 3, 4 HAVING count(*) > 1);
 ----
 count
 0

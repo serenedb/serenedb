@@ -170,10 +170,12 @@ yaclib::Task<ToolResult> ListObjects(RequestContext& ctx,
   const auto kind = args.kind.value_or("");
   auto result = co_await ctx.RunQuery(
     absl::StrCat(
-      "SELECT kind, signature, coalesce(summary, '') AS summary "
+      "SELECT kind, arg_min(signature, length(signature)) AS signature, "
+      "coalesce(arg_max(summary, length(coalesce(summary, ''))), '') AS "
+      "summary "
       "FROM sdb_docs.objects() ",
       kind.empty() ? "" : absl::StrCat("WHERE kind = ", SqlLiteral(kind), " "),
-      "ORDER BY kind, name, path"),
+      "GROUP BY kind, name ORDER BY kind, name"),
     /*writes=*/false);
   if (result->HasError()) {
     co_return Error(absl::StrCat("list_objects failed: ", result->GetError()));

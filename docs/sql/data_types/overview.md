@@ -12,31 +12,41 @@ The table below shows all the built-in general-purpose data types. The alternati
 
 | Name                       | Aliases                            | Description                                                                                                |
 | :------------------------- | :--------------------------------- | :--------------------------------------------------------------------------------------------------------- |
-| `BIGINT`                   | `INT8`, `LONG`                     | Signed eight-byte integer                                                                                  |
+| `BIGINT`                   | `INT8`, `LONG`, `INT64`, `BIGSERIAL`, `OID` | Signed eight-byte integer                                                                                  |
+| `BIGNUM`                   | `VARINT` | Variable-length integer                                                                                    |
 | `BIT`                      | `BITSTRING`                        | String of 1s and 0s                                                                                        |
 | `BLOB`                     | `BYTEA`, `BINARY`, `VARBINARY`     | Variable-length binary data                                                                                |
-| `BIGNUM`                   |                                    | Variable-length integer                                                                                    |
 | `BOOLEAN`                  | `BOOL`, `LOGICAL`                  | Logical Boolean (`true` / `false`)                                                                         |
 | `DATE`                     |                                    | Calendar date (year, month, day)                                                                           |
-| `DECIMAL(prec, scale)`     | `NUMERIC(prec, scale)`             | Fixed-precision number with the given width (precision) and scale, defaults to `prec = 18` and `scale = 3` |
+| `DECIMAL(prec, scale)`     | `NUMERIC(prec, scale)`, `DEC(prec, scale)` | Fixed-precision number with the given width (precision) and scale, defaults to `prec = 18` and `scale = 3` |
 | `DOUBLE`                   | `FLOAT8`                           | Double precision floating-point number (8 bytes)                                                           |
+| `ENUM` |  | Dictionary-encoded set of named values, declared with [`CREATE TYPE`](../statements/create_type/index.md) |
 | `FLOAT`                    | `FLOAT4`, `REAL`                   | Single precision floating-point number (4 bytes)                                                           |
-| `HUGEINT`                  |                                    | Signed sixteen-byte integer                                                                                |
-| `INTEGER`                  | `INT4`, `INT`, `SIGNED`            | Signed four-byte integer                                                                                   |
+| `GEOMETRY` |  | Planar geometry with an optional coordinate reference system, see [Geometry](./geometry.md) |
+| `HUGEINT`                  | `INT128` | Signed sixteen-byte integer                                                                                |
+| `INET` |  | IPv4 or IPv6 host address with an optional netmask |
+| `INTEGER`                  | `INT4`, `INT`, `SIGNED`, `INT32`, `SERIAL` | Signed four-byte integer                                                                                   |
 | `INTERVAL`                 |                                    | Date / time delta                                                                                          |
 | `JSON`                     |                                    | [JSON object](../../data_import_and_export/json/overview.md)                                               |
-| `SMALLINT`                 | `INT2`, `SHORT`                    | Signed two-byte integer                                                                                    |
+| `SMALLINT`                 | `INT2`, `SHORT`, `INT16`, `SMALLSERIAL` | Signed two-byte integer                                                                                    |
 | `TIME`                     |                                    | Time of day (no time zone)                                                                                 |
-| `TIMESTAMP WITH TIME ZONE` | `TIMESTAMPTZ`                      | Combination of time and date that uses the current time zone                                               |
-| `TIMESTAMP`                | `DATETIME`                         | Combination of time and date                                                                               |
+| `TIME WITH TIME ZONE` | `TIMETZ` | Time of day with a UTC offset |
+| `TIME_NS` |  | Time of day with nanosecond precision |
+| `TIMESTAMP`                | `DATETIME`, `TIMESTAMP_US` | Combination of time and date                                                                               |
+| `TIMESTAMP WITH TIME ZONE` | `TIMESTAMPTZ`, `TIME_STAMP` | Combination of time and date that uses the current time zone                                               |
+| `TIMESTAMP_MS` |  | Timestamp with millisecond precision |
+| `TIMESTAMP_NS` |  | Timestamp with nanosecond precision |
+| `TIMESTAMP_S` |  | Timestamp with second precision |
+| `TIMESTAMPTZ_NS` |  | Timestamp with a UTC offset and nanosecond precision |
 | `TINYINT`                  | `INT1`                             | Signed one-byte integer                                                                                    |
-| `UBIGINT`                  |                                    | Unsigned eight-byte integer                                                                                |
-| `UHUGEINT`                 |                                    | Unsigned sixteen-byte integer                                                                              |
-| `UINTEGER`                 |                                    | Unsigned four-byte integer                                                                                 |
-| `USMALLINT`                |                                    | Unsigned two-byte integer                                                                                  |
-| `UTINYINT`                 |                                    | Unsigned one-byte integer                                                                                  |
-| `UUID`                     |                                    | [UUID data type](../../sql/data_types/numeric.md#universally-unique-identifiers-uuids)                     |
-| `VARCHAR`                  | `CHAR`, `BPCHAR`, `TEXT`, `STRING` | Variable-length character string                                                                           |
+| `TSQUERY` |  | Parsed full-text query, see [Full-Text Search Functions](../functions/search/full-text.md) |
+| `UBIGINT`                  | `UINT64` | Unsigned eight-byte integer                                                                                |
+| `UHUGEINT`                 | `UINT128` | Unsigned sixteen-byte integer                                                                              |
+| `UINTEGER`                 | `UINT32` | Unsigned four-byte integer                                                                                 |
+| `USMALLINT`                | `UINT16` | Unsigned two-byte integer                                                                                  |
+| `UTINYINT`                 | `UINT8` | Unsigned one-byte integer                                                                                  |
+| `UUID`                     | `GUID` | [UUID data type](../../sql/data_types/numeric.md#universally-unique-identifiers-uuids)                     |
+| `VARCHAR`                  | `CHAR`, `BPCHAR`, `TEXT`, `STRING`, `NVARCHAR` | Variable-length character string                                                                           |
 
 Implicit and explicit typecasting is possible between numerous types, see the [Typecasting](../../sql/data_types/typecasting.md) page for details.
 

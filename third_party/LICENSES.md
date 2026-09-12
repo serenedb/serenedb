@@ -75,7 +75,7 @@
 * [re2](https://github.com/google/re2)
 * [simdcomp](https://github.com/fast-pack/simdcomp)
 * [snappy](https://github.com/google/snappy)
-* [snowball](https://github.com/snowballstem/snowball)
+* [snowball](https://github.com/snowballstem/snowball) (vendored as its generated C distribution, [serenedb/libstemmer_c](https://github.com/serenedb/libstemmer_c))
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
 * [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS)
 

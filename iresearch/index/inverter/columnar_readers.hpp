@@ -39,7 +39,7 @@ class ColumnarTermIterator final : public TermOnlyIterator {
   }
 
   bytes_view value() const noexcept final {
-    SDB_ENSURE(false, "columnar terms are batch-only");
+    SDB_ASSERT(false, "columnar terms are batch-only");
     return {};
   }
 

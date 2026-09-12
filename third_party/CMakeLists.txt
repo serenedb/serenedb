@@ -157,7 +157,6 @@ set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
 ## BOOST
 ################################################################################
 
-# TODO(mbkkt) make it submodule
 sdb_update_module(${GIT_EXECUTABLE} "boost" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(boost)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")

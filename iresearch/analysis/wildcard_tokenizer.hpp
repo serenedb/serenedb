@@ -29,7 +29,7 @@
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/serializer.hpp"
 
 namespace duckdb {
 

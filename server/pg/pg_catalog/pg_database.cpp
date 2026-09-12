@@ -20,9 +20,8 @@
 
 #include "pg/pg_catalog/pg_database.h"
 
-#include <iresearch/utils/assert.h>
-
 #include <deque>
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <vector>
 

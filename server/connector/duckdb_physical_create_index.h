@@ -20,12 +20,11 @@
 
 #pragma once
 
-#include <iresearch/utils/down_cast.h>
-
 #include <duckdb.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <optional>
 
 #include "catalog/ddl/catalog.h"

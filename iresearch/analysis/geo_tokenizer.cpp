@@ -32,11 +32,11 @@
 
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/geo/geo_json.h"
-#include "iresearch/utils/geo/geo_params.h"
-#include "iresearch/utils/geo/wkb.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/geo/geo_json.hpp"
+#include "iresearch/utils/geo/geo_params.hpp"
+#include "iresearch/utils/geo/wkb.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 namespace {

@@ -21,9 +21,6 @@
 #include "connector/functions/embedding/provider_openai.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <array>
@@ -31,6 +28,9 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension_helper.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
 #include <string_view>
 

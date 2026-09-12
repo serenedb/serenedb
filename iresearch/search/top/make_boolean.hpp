@@ -35,9 +35,9 @@
 #include "iresearch/search/top/boolean_window.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
-#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::top {
 

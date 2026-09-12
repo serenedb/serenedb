@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <iterator>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {

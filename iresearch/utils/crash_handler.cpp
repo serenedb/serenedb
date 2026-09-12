@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/crash_handler.h"
+#include "iresearch/utils/crash_handler.hpp"
 
 #include <absl/base/config.h>
 #include <absl/debugging/failure_signal_handler.h>
@@ -28,7 +28,7 @@
 #include <cstring>
 #include <string_view>
 
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 
 namespace irs {
 namespace {

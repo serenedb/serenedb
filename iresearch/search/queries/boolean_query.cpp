@@ -31,7 +31,7 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
 namespace {

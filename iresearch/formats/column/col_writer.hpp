@@ -37,8 +37,8 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 

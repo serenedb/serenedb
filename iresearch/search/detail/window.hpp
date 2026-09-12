@@ -27,7 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"

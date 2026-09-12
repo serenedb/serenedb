@@ -20,10 +20,9 @@
 
 #include "pg/pg_catalog/pg_description.h"
 
-#include <iresearch/utils/down_cast.h>
-
 #include <deque>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <vector>
 

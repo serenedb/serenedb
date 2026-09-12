@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <iresearch/utils/serializer.h>
-
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <optional>
 #include <span>
 #include <vector>

@@ -21,16 +21,16 @@
 #include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <filesystem>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

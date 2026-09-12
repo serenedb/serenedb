@@ -29,7 +29,7 @@
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 namespace {

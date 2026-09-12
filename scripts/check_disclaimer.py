@@ -6,11 +6,11 @@ BORDER = "/" * 80
 HEADER_EXTS = {".h", ".hpp", ".hh", ".ipp", ".tpp"}
 
 EXCEPTIONS = {
-    "libs/iresearch/include/iresearch/parser/lucene_parser.hpp",
-    "libs/iresearch/include/iresearch/parser/lucene_lexer.cpp",
-    "libs/iresearch/include/iresearch/parser/lucene_parser.cpp",
-    "libs/iresearch/include/iresearch/utils/fstext/fst_draw.hpp",
-    "libs/basics/wyhash.h",
+    "iresearch/parser/lucene_parser.hpp",
+    "iresearch/parser/lucene_lexer.cpp",
+    "iresearch/parser/lucene_parser.cpp",
+    "iresearch/utils/fstext/fst_draw.hpp",
+    "server/utils/wyhash.h",
     "server/pg/protocol.h",
     "server/pg/functions/interval.cpp",
     "tests/bench/micro/call_once.cpp",
@@ -19,10 +19,7 @@ EXCEPTIONS = {
     "tests/libs/fuerte/main.cpp",
 }
 
-PRAGMA_ONCE_EXCEPTIONS = {
-    "libs/basics/lru_cache.h",
-    "libs/build_id/include/build_id/build_id.h",
-}
+PRAGMA_ONCE_EXCEPTIONS: set[str] = set()
 
 
 def check(path: str) -> list[str]:

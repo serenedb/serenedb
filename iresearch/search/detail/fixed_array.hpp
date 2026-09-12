@@ -27,7 +27,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {

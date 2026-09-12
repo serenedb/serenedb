@@ -24,7 +24,7 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 #include <cstddef>
 #include <string_view>

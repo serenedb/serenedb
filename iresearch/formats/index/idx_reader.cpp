@@ -36,10 +36,10 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/encryption.hpp"
 #include "iresearch/utils/math_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {

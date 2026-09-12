@@ -27,7 +27,7 @@
 
 #include <cstdint>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 #if defined(__APPLE__)
 #include <sys/param.h>  // for MAXPATHLEN
@@ -53,7 +53,7 @@
 
 #endif  // _WIN32
 
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/network_utils.hpp"
 
 #ifdef _WIN32

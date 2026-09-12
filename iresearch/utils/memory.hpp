@@ -25,8 +25,8 @@
 
 #include <memory>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"

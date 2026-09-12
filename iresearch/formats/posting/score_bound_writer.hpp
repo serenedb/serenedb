@@ -32,7 +32,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/containers/small_vector.h"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/fixed_buffer.hpp"
 

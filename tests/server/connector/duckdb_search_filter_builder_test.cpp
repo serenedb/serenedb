@@ -19,9 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
 #include <s2/s2latlng.h>
 
 #include <algorithm>
@@ -54,6 +51,9 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <optional>
 #include <string>

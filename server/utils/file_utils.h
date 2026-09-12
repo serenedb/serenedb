@@ -21,11 +21,11 @@
 
 #pragma once
 
-#include <iresearch/utils/common.h>
-#include <iresearch/utils/operating-system.h>
 #include <stddef.h>
 
 #include <functional>
+#include <iresearch/utils/common.hpp>
+#include <iresearch/utils/operating-system.hpp>
 #include <string>
 #include <vector>
 

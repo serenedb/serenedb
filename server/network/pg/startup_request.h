@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-
 #include <cstdint>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <string>
 #include <string_view>
 #include <vector>

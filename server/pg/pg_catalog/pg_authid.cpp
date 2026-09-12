@@ -20,10 +20,9 @@
 
 #include "pg/pg_catalog/pg_authid.h"
 
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/static_strings.h>
-
 #include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/static_strings.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"

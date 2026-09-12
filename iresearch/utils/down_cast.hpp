@@ -25,7 +25,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/debugging.hpp"
 
 namespace irs::utils {
 

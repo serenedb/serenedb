@@ -22,11 +22,11 @@
 
 #include <absl/functional/any_invocable.h>
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>

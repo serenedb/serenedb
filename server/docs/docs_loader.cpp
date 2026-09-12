@@ -22,9 +22,6 @@
 
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <chrono>
@@ -36,6 +33,9 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <exception>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

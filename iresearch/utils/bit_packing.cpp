@@ -25,7 +25,7 @@
 
 #include <cstring>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace {
 

@@ -38,7 +38,7 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

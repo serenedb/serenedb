@@ -21,8 +21,6 @@
 #include "connector/functions/ts_offsets.h"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -40,6 +38,8 @@
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>

@@ -34,10 +34,10 @@
 #include "iresearch/index/inverter/posting_log.hpp"
 #include "iresearch/index/inverter/term_dictionary.hpp"
 #include "iresearch/index/typed_terms.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

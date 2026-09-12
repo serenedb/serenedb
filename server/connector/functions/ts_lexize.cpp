@@ -20,9 +20,6 @@
 
 #include "connector/functions/ts_lexize.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -33,6 +30,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
 #include <variant>

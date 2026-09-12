@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>

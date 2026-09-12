@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-
 #include <duckdb/common/types.hpp>
 #include <duckdb/inet/inet_type.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string_view>
 
 namespace sdb::pg {

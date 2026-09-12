@@ -33,12 +33,12 @@
 // (Box) so the document root is an object.
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <list>
 #include <map>

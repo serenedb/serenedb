@@ -36,7 +36,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

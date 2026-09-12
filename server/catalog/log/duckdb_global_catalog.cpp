@@ -22,11 +22,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -39,6 +34,11 @@
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "catalog/ddl/catalog.h"

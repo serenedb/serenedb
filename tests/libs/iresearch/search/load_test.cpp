@@ -25,7 +25,6 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <fcntl.h>
-#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -43,6 +42,7 @@
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <span>
 #include <string>

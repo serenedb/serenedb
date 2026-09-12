@@ -23,10 +23,10 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
-#include <iresearch/utils/log.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <iresearch/utils/log.hpp>
 #include <string>
 
 #include "server/utils/lifecycle.h"

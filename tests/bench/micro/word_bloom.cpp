@@ -168,7 +168,6 @@
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <algorithm>
 #include <array>
@@ -182,6 +181,7 @@
 #include <duckdb/storage/arena_allocator.hpp>
 #include <iresearch/analysis/text/dict/string_table.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <random>
 #include <string>

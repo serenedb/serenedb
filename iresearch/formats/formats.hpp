@@ -28,7 +28,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace duckdb {
 

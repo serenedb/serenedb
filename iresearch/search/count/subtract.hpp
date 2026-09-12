@@ -24,7 +24,7 @@
 #include <utility>
 
 #include "iresearch/search/count/root.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::count {
 

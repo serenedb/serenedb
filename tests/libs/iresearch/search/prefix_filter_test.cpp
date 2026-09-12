@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/geo/coding.h"
+#include "iresearch/utils/geo/coding.hpp"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
@@ -30,11 +30,11 @@
 #include <ranges>
 
 #include "geo_json.h"
-#include "iresearch/utils/application-exit.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/geo/shape_container.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/geo/shape_container.hpp"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
 

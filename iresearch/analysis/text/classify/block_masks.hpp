@@ -32,7 +32,7 @@
 #include <vector>
 
 #include "iresearch/types.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::analysis::classify {

@@ -35,9 +35,9 @@
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
-#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 

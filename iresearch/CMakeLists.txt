@@ -448,8 +448,7 @@ if(FLEX_FOUND AND BISON_FOUND)
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMAND
             ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
-            libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
-            libs/iresearch/include/iresearch/parser/lucene_lexer.l
+            iresearch/parser/lucene_lexer.cpp iresearch/parser/lucene_lexer.l
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
         VERBATIM
     )
@@ -459,8 +458,7 @@ if(FLEX_FOUND AND BISON_FOUND)
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMAND
             ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
-            libs/iresearch/include/iresearch/parser/lucene_parser.cpp
-            libs/iresearch/include/iresearch/parser/lucene_parser.y
+            iresearch/parser/lucene_parser.cpp iresearch/parser/lucene_parser.y
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
         VERBATIM
     )

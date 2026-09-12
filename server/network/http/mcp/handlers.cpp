@@ -21,11 +21,11 @@
 #include "network/http/mcp/handlers.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <cstdint>
 #include <exception>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <optional>
 #include <string>

@@ -27,7 +27,7 @@
 
 #include "absl/strings/str_cat.h"
 #include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 
 namespace irs::analysis::dict {
 namespace {

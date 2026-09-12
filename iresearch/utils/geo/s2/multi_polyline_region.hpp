@@ -26,7 +26,7 @@
 
 #include <vector>
 
-#include "iresearch/utils/geo/coding.h"
+#include "iresearch/utils/geo/coding.hpp"
 
 namespace irs::geo {
 

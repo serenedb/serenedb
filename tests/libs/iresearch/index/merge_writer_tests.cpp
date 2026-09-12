@@ -21,8 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/comparer.hpp>
@@ -33,6 +31,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_map>

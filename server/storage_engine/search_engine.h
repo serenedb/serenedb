@@ -21,13 +21,12 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 

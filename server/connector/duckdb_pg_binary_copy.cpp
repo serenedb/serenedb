@@ -21,8 +21,6 @@
 #include "connector/duckdb_pg_binary_copy.h"
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <array>
 #include <cstdint>
@@ -35,6 +33,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <string>
 #include <vector>

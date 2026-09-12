@@ -20,12 +20,6 @@
 
 #include "catalog/read/duckdb_catalog_sets.h"
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/string_utils.h>
-
 #include <array>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -34,6 +28,11 @@
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <memory>
 #include <optional>
 #include <utility>

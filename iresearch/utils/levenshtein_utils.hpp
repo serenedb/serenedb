@@ -27,7 +27,7 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/automaton_decl.hpp"
 #include "iresearch/utils/string.hpp"
 

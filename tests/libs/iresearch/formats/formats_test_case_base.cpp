@@ -23,8 +23,6 @@
 
 #include "formats_test_case_base.hpp"
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <duckdb/common/types/vector.hpp>
@@ -41,6 +39,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_map>

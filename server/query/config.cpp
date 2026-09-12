@@ -22,8 +22,6 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -36,6 +34,8 @@
 #include <duckdb/main/valid_checker.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 

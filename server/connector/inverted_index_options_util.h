@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <array>
 #include <duckdb/common/types/value.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string_view>
 

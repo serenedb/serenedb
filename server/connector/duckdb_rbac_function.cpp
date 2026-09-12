@@ -20,12 +20,11 @@
 
 #include "connector/duckdb_rbac_function.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 
 #include "connector/duckdb_client_state.h"

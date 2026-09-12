@@ -33,7 +33,7 @@
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 namespace irs {
 
 class DataOutput;

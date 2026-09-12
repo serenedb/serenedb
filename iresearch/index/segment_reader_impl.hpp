@@ -31,7 +31,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 

@@ -21,12 +21,12 @@
 #include "server/utils/dtoa.h"
 
 #include <absl/strings/numbers.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/number_utils.h>
 
 #include <charconv>
 #include <cstdbool>
 #include <cstring>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/number_utils.hpp>
 
 namespace sdb::basics {
 

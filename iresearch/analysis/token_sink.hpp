@@ -37,7 +37,7 @@
 #include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"

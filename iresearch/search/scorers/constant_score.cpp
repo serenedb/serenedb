@@ -23,7 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include "iresearch/search/detail/volatile_boost_score.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
 

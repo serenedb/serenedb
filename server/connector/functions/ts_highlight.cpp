@@ -21,9 +21,6 @@
 #include "connector/functions/ts_highlight.h"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <unicode/brkiter.h>
 #include <unicode/locid.h>
 #include <unicode/ubrk.h>
@@ -44,6 +41,9 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
 
 #include "connector/common.h"

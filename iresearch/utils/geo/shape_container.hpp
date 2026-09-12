@@ -28,7 +28,7 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/utils/geo/coding.h"
+#include "iresearch/utils/geo/coding.hpp"
 
 class S2Polyline;
 class S2LatLngRect;

@@ -21,11 +21,6 @@
 #include "search/wal_recovery.h"
 
 #include <absl/time/time.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
 
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
@@ -37,6 +32,11 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
 #include <ranges>

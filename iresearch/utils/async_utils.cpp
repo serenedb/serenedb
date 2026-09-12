@@ -25,8 +25,8 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
 
 using namespace std::chrono_literals;
 

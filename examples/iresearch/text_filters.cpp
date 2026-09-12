@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
@@ -38,6 +36,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 

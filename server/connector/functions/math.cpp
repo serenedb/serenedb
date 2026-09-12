@@ -21,8 +21,6 @@
 #include "connector/functions/math.h"
 
 #include <absl/strings/str_format.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cmath>
 #include <cstdint>
@@ -33,6 +31,8 @@
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <random>
 

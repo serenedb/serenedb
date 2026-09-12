@@ -23,13 +23,13 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <chrono>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 

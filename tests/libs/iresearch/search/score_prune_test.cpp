@@ -20,8 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/norm.hpp>
@@ -34,6 +32,7 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 

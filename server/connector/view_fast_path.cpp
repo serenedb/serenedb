@@ -24,9 +24,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -48,6 +45,9 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <ranges>
 
 #include "catalog/entry/duckdb_table_entry.h"

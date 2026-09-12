@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/serializer.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "tokenizer.hpp"
 

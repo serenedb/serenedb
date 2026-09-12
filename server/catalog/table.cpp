@@ -24,8 +24,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -35,6 +33,8 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <ranges>
 #include <span>

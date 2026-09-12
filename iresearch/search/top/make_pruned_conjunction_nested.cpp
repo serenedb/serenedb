@@ -47,7 +47,7 @@
 #include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::top {

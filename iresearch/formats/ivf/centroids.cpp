@@ -39,7 +39,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {

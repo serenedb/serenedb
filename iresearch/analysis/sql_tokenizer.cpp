@@ -43,7 +43,7 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 namespace {

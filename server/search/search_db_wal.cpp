@@ -21,11 +21,6 @@
 #include "search/search_db_wal.h"
 
 #include <absl/strings/str_format.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serialization.h>
-#include <iresearch/utils/serializer.h>
 
 #include <algorithm>
 #include <cstring>
@@ -39,6 +34,11 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/formats/formats.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serialization.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <string>
 #include <string_view>

@@ -23,13 +23,13 @@
 #include <absl/strings/str_split.h>
 #include <absl/strings/string_view.h>
 #include <fast_float/fast_float.h>
-#include <iresearch/utils/operating-system.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iresearch/utils/operating-system.hpp>
 #include <optional>
 #include <string>
 #include <string_view>

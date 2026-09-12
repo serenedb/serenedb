@@ -27,7 +27,7 @@
 
 #include "data_input.hpp"
 #include "data_output.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {

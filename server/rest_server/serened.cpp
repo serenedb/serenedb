@@ -20,15 +20,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
-#include <iresearch/utils/crash_handler.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
 #include <functional>
+#include <iresearch/utils/crash_handler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <utility>
 
 #include "catalog/ddl/catalog.h"

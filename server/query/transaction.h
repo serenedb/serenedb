@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-
 #include <functional>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <yaclib/async/future.hpp>
 

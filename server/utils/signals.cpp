@@ -20,7 +20,7 @@
 
 #include "server/utils/signals.h"
 
-#include <iresearch/utils/operating-system.h>
+#include <iresearch/utils/operating-system.hpp>
 
 #include "server/utils/lifecycle.h"
 

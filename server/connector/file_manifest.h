@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-
 #include <cstdint>
 #include <duckdb/common/open_file_info.hpp>
 #include <iresearch/search/filters/filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>

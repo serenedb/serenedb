@@ -30,8 +30,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
   return os << "(" << p.first << ", " << p.second << ")";
 }
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -59,6 +57,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"

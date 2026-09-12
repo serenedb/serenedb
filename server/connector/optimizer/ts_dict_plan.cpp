@@ -22,11 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <algorithm>
 #include <array>
@@ -59,6 +54,11 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <numeric>
 #include <optional>

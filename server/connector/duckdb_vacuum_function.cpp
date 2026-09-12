@@ -23,17 +23,17 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/ddl/catalog.h"

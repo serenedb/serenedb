@@ -23,13 +23,13 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/log.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>
 #include <yaclib/async/make.hpp>

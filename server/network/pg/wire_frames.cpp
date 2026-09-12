@@ -25,13 +25,13 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
 
 #include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <utility>
 #include <vector>
 

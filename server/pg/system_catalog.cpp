@@ -21,13 +21,6 @@
 #include "pg/system_catalog.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/serializer.h>
-#include <iresearch/utils/static_strings.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <boost/pfr.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -35,6 +28,13 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 
 #include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"

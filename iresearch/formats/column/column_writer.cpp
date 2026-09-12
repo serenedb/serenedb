@@ -42,8 +42,8 @@
 #include <utility>
 
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {

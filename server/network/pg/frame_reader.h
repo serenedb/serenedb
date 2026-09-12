@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/string_utils.h>
 
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <iresearch/utils/string_utils.hpp>
 #include <optional>
 #include <string>
 #include <string_view>

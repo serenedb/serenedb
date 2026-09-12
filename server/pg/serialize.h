@@ -21,13 +21,13 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 #include <unicode/timezone.h>
 
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 
 #include "query/config.h"

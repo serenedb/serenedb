@@ -24,7 +24,6 @@
 #include "assert_format.hpp"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/down_cast.h>
 
 #include <algorithm>
 #include <iostream>
@@ -48,6 +47,7 @@
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>

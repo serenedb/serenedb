@@ -23,11 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -46,6 +41,11 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"

@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-
 #include <cstdint>
+#include <iresearch/utils/assert.hpp>
 #include <new>
 #include <span>
 #include <string_view>

@@ -21,9 +21,9 @@
 #pragma once
 
 #include "absl/strings/str_cat.h"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/errcodes.h"
-#include "iresearch/utils/pg/sql_exception.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception.hpp"
 
 // Postgres style error. The carrier variable has a collision-proof name so
 // expressions inside ERR_MSG(...) can safely reference a caller-side `error`.

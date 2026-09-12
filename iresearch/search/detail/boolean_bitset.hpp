@@ -34,7 +34,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs::detail {
 

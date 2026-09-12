@@ -20,11 +20,6 @@
 
 #include "search/search_analyzer_impl.h"
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serializer.h>
-
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
@@ -35,6 +30,10 @@
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 
 #include "catalog/entry.h"
 

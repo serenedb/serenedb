@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -29,6 +28,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
 #include <string>

@@ -23,12 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -65,8 +59,14 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>

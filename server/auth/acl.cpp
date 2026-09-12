@@ -23,11 +23,11 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <optional>
 #include <string>
 

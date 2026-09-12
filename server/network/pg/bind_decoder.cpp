@@ -21,10 +21,10 @@
 #include "network/pg/bind_decoder.h"
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::network::pg {
 

@@ -24,7 +24,7 @@
 #include <source_location>
 #include <string>
 
-#include "iresearch/utils/pg/sql_error.h"
+#include "iresearch/utils/pg/sql_error.hpp"
 
 namespace irs {
 

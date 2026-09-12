@@ -20,10 +20,6 @@
 
 #include "catalog/read/duckdb_dependency.h"
 
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -35,6 +31,9 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 #include <utility>
 #include <vector>

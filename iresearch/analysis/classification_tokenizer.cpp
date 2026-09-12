@@ -30,7 +30,7 @@
 #include "iresearch/analysis/fast_text_model.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 

@@ -33,8 +33,8 @@
 #include <tuple>
 
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/geo/coding.h"
-#include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/geo/coding.hpp"
+#include "iresearch/utils/geo/shape_container.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {

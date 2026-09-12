@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/down_cast.h>
-
 #include <algorithm>
 #include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -32,6 +30,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/queries/multiterm_query.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <vector>
 
 #include "filter_test_case_base.hpp"

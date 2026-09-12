@@ -24,14 +24,14 @@
 #include <absl/synchronization/mutex.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/operating-system.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <filesystem>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/operating-system.hpp>
 #include <string>
 #include <system_error>
 #include <tuple>

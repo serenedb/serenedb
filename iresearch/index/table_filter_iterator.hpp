@@ -36,7 +36,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
 

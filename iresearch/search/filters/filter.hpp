@@ -49,7 +49,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/search/top/root.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {

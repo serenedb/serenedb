@@ -38,7 +38,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"

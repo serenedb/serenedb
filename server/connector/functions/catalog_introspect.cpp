@@ -21,13 +21,13 @@
 #include "connector/functions/catalog_introspect.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serializer.h>
 
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <string>

@@ -28,7 +28,7 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/store/directory_attributes.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 

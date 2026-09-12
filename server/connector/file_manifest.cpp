@@ -22,8 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/serializer.h>
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
@@ -33,6 +31,8 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/serializer.hpp>
 
 #include "core/deletes/iceberg_deletion_vector.hpp"
 #include "core/deletes/iceberg_positional_delete.hpp"

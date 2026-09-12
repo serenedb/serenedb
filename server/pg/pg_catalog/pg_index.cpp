@@ -20,9 +20,9 @@
 
 #include "pg/pg_catalog/pg_index.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/down_cast.h>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"

@@ -21,12 +21,12 @@
 #include "pg/commands/create_server.h"
 
 #include <absl/strings/ascii.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <string>
 #include <utility>

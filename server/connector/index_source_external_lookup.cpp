@@ -23,10 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
@@ -45,6 +41,10 @@
 #include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

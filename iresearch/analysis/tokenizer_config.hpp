@@ -31,7 +31,7 @@
 #include "geo_tokenizer.hpp"
 #include "icu_text_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/serializer.hpp"
 #include "multi_delimited_tokenizer.hpp"
 #include "nearest_neighbors_tokenizer.hpp"
 #include "ngram_tokenizer.hpp"

@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/hash/hash.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <optional>
 #include <string>
 #include <string_view>

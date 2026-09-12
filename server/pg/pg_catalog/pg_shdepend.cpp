@@ -20,11 +20,10 @@
 
 #include "pg/pg_catalog/pg_shdepend.h"
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/common/optional_ptr.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <vector>
 
 #include "catalog/ddl/catalog.h"

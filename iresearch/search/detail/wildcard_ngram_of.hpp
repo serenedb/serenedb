@@ -37,7 +37,7 @@
 #include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::detail {

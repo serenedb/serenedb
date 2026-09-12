@@ -18,12 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>

@@ -23,8 +23,6 @@
 // ColumnReader / ColumnOutput interfaces are gone from production; ported
 // tests use BLOB-typed cs columns through this thin layer.
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <atomic>
 #include <duckdb/common/types/vector.hpp>
 #include <functional>
@@ -38,6 +36,7 @@
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>

@@ -39,7 +39,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"

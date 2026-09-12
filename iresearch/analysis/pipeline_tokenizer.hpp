@@ -31,8 +31,8 @@
 
 #include "iresearch/analysis/expand_tokens.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/serializer.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace duckdb {

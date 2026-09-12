@@ -26,7 +26,7 @@
 
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 namespace {

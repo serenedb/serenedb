@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <array>
+#include <iresearch/utils/serializer.hpp>
 #include <map>
 #include <optional>
 #include <string>

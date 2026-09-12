@@ -28,7 +28,7 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

@@ -28,7 +28,7 @@
 #include <map>
 #include <mutex>
 
-#include "iresearch/utils/containers/node_hash_map.h"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/singleton.hpp"
 
 namespace irs::timer_utils {

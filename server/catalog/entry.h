@@ -21,9 +21,6 @@
 #pragma once
 
 #include <absl/hash/hash.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/serialization.h>
-#include <iresearch/utils/serializer.h>
 
 #include <algorithm>
 #include <duckdb/catalog/standard_entry.hpp>
@@ -32,6 +29,9 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/serialization.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <span>
 #include <string>

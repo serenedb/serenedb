@@ -35,8 +35,8 @@
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/encryption.hpp"
 #include "iresearch/utils/math_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
-#include "iresearch/utils/serialization.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 namespace {

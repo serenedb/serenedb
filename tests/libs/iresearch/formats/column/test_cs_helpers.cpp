@@ -19,8 +19,6 @@
 #include "formats/column/test_cs_helpers.hpp"
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -28,6 +26,8 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 namespace irs::tests {

@@ -20,8 +20,7 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-
+#include <iresearch/utils/assert.hpp>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>

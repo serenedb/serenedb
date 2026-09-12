@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include <iresearch/utils/down_cast.h>
 #include <unicode/locid.h>
 
 #include <atomic>
@@ -36,6 +35,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/iterator.hpp>
 #include <iresearch/utils/type_limits.hpp>
 

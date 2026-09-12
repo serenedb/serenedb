@@ -19,10 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "pg/pg_catalog/pg_attribute.h"
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/down_cast.h>
-
 #include <duckdb/parser/constraints/list.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"

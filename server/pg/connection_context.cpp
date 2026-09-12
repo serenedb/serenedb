@@ -20,8 +20,8 @@
 
 #include "pg/connection_context.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/database.h"

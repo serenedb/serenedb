@@ -20,7 +20,6 @@
 
 #include <absl/strings/str_format.h>
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <atomic>
@@ -46,6 +45,7 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>

@@ -29,7 +29,7 @@
 #include <memory>
 #include <mutex>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 

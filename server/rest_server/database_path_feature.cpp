@@ -22,12 +22,12 @@
 #include "database_path_feature.h"
 
 #include <absl/flags/flag.h>
-#include <iresearch/utils/application-exit.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/operating-system.h>
-#include <iresearch/utils/string_utils.h>
 
 #include <filesystem>
+#include <iresearch/utils/application-exit.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <system_error>
 
 #include "server/utils/file_utils.h"

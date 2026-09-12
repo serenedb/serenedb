@@ -59,9 +59,9 @@ static_assert(BOOST_PFR_ENABLED);
 
 #include <duckdb/common/types/string_type.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::utils {
 namespace detail {

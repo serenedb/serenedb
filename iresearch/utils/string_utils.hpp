@@ -36,9 +36,9 @@
 #include <system_error>
 #include <vector>
 
-#include "iresearch/utils/common.h"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/common.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::utils {

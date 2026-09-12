@@ -20,10 +20,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 #include <unicode/locid.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
@@ -42,7 +38,11 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <type_traits>
 #include <utility>
 

@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>

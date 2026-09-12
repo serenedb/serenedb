@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <atomic>
 #include <duckdb/main/connection.hpp>
@@ -27,6 +26,7 @@
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <thread>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/coro.hpp>

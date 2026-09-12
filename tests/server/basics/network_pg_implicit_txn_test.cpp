@@ -19,9 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <duckdb/main/connection.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 
 #include "network/pg/protocol_state.h"
 

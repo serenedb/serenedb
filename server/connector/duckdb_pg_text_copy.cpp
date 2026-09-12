@@ -21,9 +21,6 @@
 #include "connector/duckdb_pg_text_copy.h"
 
 #include <fast_float/fast_float.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/string_utils.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -38,6 +35,9 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

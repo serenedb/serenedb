@@ -21,8 +21,7 @@
 
 #pragma once
 
-#include <iresearch/utils/common.h>
-
+#include <iresearch/utils/common.hpp>
 #include <string>
 
 struct IcuInitializer {

@@ -26,7 +26,7 @@
 #include <string_view>
 
 #include "iresearch/utils/fasttext_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::fast_text {
 

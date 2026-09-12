@@ -37,8 +37,8 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {

@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/status/status.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -30,6 +29,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <span>
 

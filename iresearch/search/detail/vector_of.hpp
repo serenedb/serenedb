@@ -67,7 +67,7 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/empty.hpp"

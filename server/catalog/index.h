@@ -21,13 +21,13 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/down_cast.h>
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <optional>
 #include <span>

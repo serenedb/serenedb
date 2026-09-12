@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/geo/s2/multi_polyline_region.h"
+#include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
 
 #include <s2/s2cap.h>
 #include <s2/s2latlng.h>
@@ -27,7 +27,7 @@
 #include <s2/s2latlng_rect_bounder.h>
 #include <s2/s2polyline_measures.h>
 
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
 

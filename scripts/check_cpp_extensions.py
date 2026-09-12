@@ -4,8 +4,8 @@
 Three rule sets exist:
 - Default (most of the codebase): .h is allowed, .hpp is disallowed
   (transition period; TODO: add .h once rename is complete).
-- libs/iresearch: .hpp is allowed, .h is disallowed.
-- Mixed directories (libs/basics, server/connector): both .h and .hpp are allowed,
+- iresearch: .hpp is allowed, .h is disallowed.
+- Mixed directories (server/connector): both .h and .hpp are allowed,
   while other unwanted extensions remain forbidden.
 """
 
@@ -23,7 +23,7 @@ DEFAULT_DISALLOWED = {
     ".hpp": "use .h",   # .hpp not allowed in the main code (transition period)
 }
 
-# Disallowed extensions for libs/iresearch
+# Disallowed extensions for iresearch
 IRESEARCH_DISALLOWED = {
     ".cc": "use .cpp",
     ".ipp": "use .tpp",

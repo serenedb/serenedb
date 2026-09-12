@@ -20,12 +20,11 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-
 #include <duckdb/common/types.hpp>
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/offsets/root.hpp>
 #include <iresearch/search/queries/prepared_state_visitor.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <span>
 #include <variant>
 #include <vector>

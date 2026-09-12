@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/geo/shape_container.hpp"
 
 #include <s2/s1angle.h>
 #include <s2/s2latlng.h>
@@ -30,13 +30,13 @@
 #include <bit>
 #include <cmath>
 
-#include "iresearch/utils/application-exit.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/geo/geo_params.h"
-#include "iresearch/utils/geo/s2/multi_point_region.h"
-#include "iresearch/utils/geo/s2/multi_polyline_region.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/geo/geo_params.hpp"
+#include "iresearch/utils/geo/s2/multi_point_region.hpp"
+#include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
 namespace {

@@ -41,7 +41,6 @@
 
 #include <absl/algorithm/container.h>
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/duckdb_engine.h>
 #include <simdutf.h>
 
 #include <algorithm>
@@ -64,6 +63,7 @@
 #include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>

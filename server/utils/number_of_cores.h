@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-
 #include <cstdint>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <utility>
 
 namespace sdb {

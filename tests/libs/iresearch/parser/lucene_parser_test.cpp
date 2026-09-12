@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/down_cast.h>
 
 #include <array>
 #include <cstdint>
@@ -32,6 +31,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
 #include <thread>

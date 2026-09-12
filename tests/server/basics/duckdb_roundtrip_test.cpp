@@ -21,14 +21,14 @@
 // Struct round-trips through the duckdb-binary serializer/deserializer.
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/serialization.h>
-#include <iresearch/utils/serializer.h>
 
 #include <array>
 #include <cstdint>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <iresearch/utils/serialization.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <list>
 #include <magic_enum/magic_enum.hpp>
 #include <map>

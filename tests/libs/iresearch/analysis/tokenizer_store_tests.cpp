@@ -18,11 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/geo/coding.h>
-
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
+#include <iresearch/utils/geo/coding.hpp>
 #include <optional>
 #include <string>
 #include <vector>

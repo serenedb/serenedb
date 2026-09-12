@@ -31,8 +31,8 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

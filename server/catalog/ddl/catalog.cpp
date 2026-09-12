@@ -28,14 +28,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
 #include <array>
@@ -43,6 +35,14 @@
 #include <cstdlib>
 #include <duckdb/main/database_manager.hpp>
 #include <filesystem>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <memory>
 #include <string_view>
 #include <utility>

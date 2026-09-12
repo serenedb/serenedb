@@ -24,13 +24,6 @@
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serializer.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <chrono>
 #include <duckdb/main/attached_database.hpp>
@@ -46,7 +39,14 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <memory>
 #include <system_error>
 #include <yaclib/coro/await.hpp>

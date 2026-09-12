@@ -23,8 +23,8 @@
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
-#include <iresearch/utils/application-exit.h>
 
+#include <iresearch/utils/application-exit.hpp>
 #include <type_traits>
 #include <utility>
 
@@ -33,8 +33,6 @@
 #endif
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
 #include <signal.h>          // for signal(...)/raise(...)
 #include <unicode/uclean.h>  // for u_cleanup
 #include <unicode/udata.h>
@@ -46,7 +44,9 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/attributes.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/mmap_utils.hpp>
 #include <iresearch/utils/network_utils.hpp>
 #include <vector>

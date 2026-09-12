@@ -36,7 +36,7 @@
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 #include "iresearch/utils/utf8_utils.hpp"

@@ -21,9 +21,6 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -41,6 +38,9 @@
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
 #include <optional>

@@ -27,11 +27,11 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/geo/coding.h"
-#include "iresearch/utils/geo/shape_container.h"
-#include "iresearch/utils/geo/wkb.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/geo/coding.hpp"
+#include "iresearch/utils/geo/shape_container.hpp"
+#include "iresearch/utils/geo/wkb.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

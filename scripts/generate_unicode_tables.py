@@ -3,12 +3,12 @@
 
 Emits two checked-in headers consumed by the segmentation tokenizer:
 
-  libs/iresearch/include/iresearch/analysis/text/words/tables.hpp
+  iresearch/analysis/text/words/tables.hpp
     WbProp enum (19 classes), Extended_Pictographic flag, and a shift-8
     two-level lookup table (kWbStage1 u16 block ids over cp>>8, kWbStage2
     deduplicated 256-byte blocks). WbLookup(cp) is two dependent loads.
 
-  libs/iresearch/include/iresearch/utils/utf8_case_tables.hpp
+  iresearch/utils/utf8_case_tables.hpp
     Sorted {cp, to} pairs for simple (1:1, context-free) lower/upper case
     mappings from UnicodeData.txt fields 13/12, plus the generator-verified
     kSimpleCaseMaxUtf8Growth bound (UTF-8 byte growth per mapped codepoint).

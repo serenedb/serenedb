@@ -21,10 +21,10 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <atomic>
 #include <cstdint>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

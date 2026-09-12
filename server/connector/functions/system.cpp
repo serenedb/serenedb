@@ -24,10 +24,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -48,6 +44,10 @@
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <ranges>
 

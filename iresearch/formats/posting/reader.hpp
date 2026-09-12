@@ -26,7 +26,7 @@
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/debugging.hpp"
 
 namespace irs {
 

@@ -20,19 +20,18 @@
 
 #include "catalog/inverted_index.h"
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serializer.h>
-
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 
 #include "absl/algorithm/container.h"
 #include "catalog/ddl/catalog.h"

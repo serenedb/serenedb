@@ -25,7 +25,6 @@
 
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/field_meta.hpp>
@@ -37,6 +36,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/index_utils.hpp>

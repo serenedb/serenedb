@@ -29,8 +29,8 @@
 #include <algorithm>
 
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 namespace {

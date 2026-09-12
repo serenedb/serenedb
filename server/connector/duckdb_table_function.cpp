@@ -22,8 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -46,6 +44,8 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
 #include <span>
 

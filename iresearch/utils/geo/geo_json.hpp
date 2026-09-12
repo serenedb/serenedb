@@ -28,8 +28,8 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/geo/coding.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/geo/coding.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 class S2LatLng;
 class S2Loop;

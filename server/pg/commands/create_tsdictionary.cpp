@@ -22,8 +22,6 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <unicode/locid.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
@@ -52,9 +50,11 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/icu_locale_serde.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>

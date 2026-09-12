@@ -21,10 +21,10 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <algorithm>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <span>
 #include <string>

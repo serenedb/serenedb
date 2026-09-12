@@ -23,13 +23,13 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>

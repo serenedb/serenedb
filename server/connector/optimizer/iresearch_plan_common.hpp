@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
 
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <optional>
 #include <span>

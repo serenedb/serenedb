@@ -21,9 +21,9 @@
 #pragma once
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/debugging.h>
 
 #include <cstdint>
+#include <iresearch/utils/debugging.hpp>
 #include <optional>
 #include <string_view>
 #include <utility>

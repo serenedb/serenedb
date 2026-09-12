@@ -20,10 +20,9 @@
 
 #include "pg/geo_tokenizer_options.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "magic_enum/magic_enum.hpp"
 

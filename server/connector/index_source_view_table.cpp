@@ -20,11 +20,6 @@
 
 #include "connector/index_source_view_table.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_column_type.hpp>
@@ -33,6 +28,10 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
 
 #include "catalog/log/store.h"

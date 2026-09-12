@@ -23,7 +23,7 @@
 #pragma once
 
 #include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
 

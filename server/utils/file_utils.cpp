@@ -43,12 +43,13 @@
 #ifdef SERENEDB_HAVE_DIRECT_H
 #include <direct.h>
 #endif
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/string_utils.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 
 namespace irs::utils::file_utils {
 

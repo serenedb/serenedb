@@ -20,11 +20,6 @@
 
 #include "connector/functions/sequence.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
-
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
@@ -35,6 +30,10 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

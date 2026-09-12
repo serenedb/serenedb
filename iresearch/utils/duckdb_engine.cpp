@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/duckdb_engine.h"
+#include "iresearch/utils/duckdb_engine.hpp"
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
@@ -31,8 +31,8 @@
 #include <duckdb/logging/logging.hpp>
 #include <duckdb/main/database_manager.hpp>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
 
 ABSL_DECLARE_FLAG(std::string, log_storage);
 ABSL_DECLARE_FLAG(std::string, log_path);

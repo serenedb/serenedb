@@ -20,10 +20,6 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/system-compiler.h>
-
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -32,8 +28,11 @@
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>

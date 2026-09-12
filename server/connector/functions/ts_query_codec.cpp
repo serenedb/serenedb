@@ -25,7 +25,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/utils/assert.h>
 
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extra_type_info.hpp>
@@ -44,6 +43,7 @@
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/assert.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"

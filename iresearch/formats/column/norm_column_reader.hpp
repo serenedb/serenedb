@@ -28,7 +28,7 @@
 
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 

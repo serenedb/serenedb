@@ -51,9 +51,9 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs::optimizer {
 namespace {

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 
 #include <unistd.h>
 

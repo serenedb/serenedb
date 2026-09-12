@@ -20,16 +20,15 @@
 
 #include "search_sink_writer.hpp"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 
 #include "catalog/ddl/catalog.h"

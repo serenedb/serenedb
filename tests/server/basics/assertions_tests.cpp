@@ -20,7 +20,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/assert.h>
+
+#include <iresearch/utils/assert.hpp>
 
 using namespace sdb;
 

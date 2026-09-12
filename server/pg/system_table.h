@@ -24,7 +24,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
-#include <iresearch/utils/down_cast.h>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +32,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <optional>
 #include <span>
 #include <type_traits>

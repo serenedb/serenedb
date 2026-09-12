@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -32,6 +30,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <span>
 #include <string_view>
 #include <vector>

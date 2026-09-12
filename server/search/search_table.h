@@ -23,8 +23,6 @@
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <atomic>
 #include <cstdint>
@@ -32,6 +30,8 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>

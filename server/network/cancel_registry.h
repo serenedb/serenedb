@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <utility>
 #include <vector>

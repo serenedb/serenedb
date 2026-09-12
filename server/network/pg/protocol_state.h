@@ -21,10 +21,6 @@
 #pragma once
 
 #include <absl/container/node_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -37,6 +33,10 @@
 #include <duckdb/parser/sql_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>

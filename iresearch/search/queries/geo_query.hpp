@@ -31,7 +31,7 @@
 #include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 
 namespace irs {
 

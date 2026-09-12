@@ -29,7 +29,6 @@
 //     --gtest_filter='CatalogPersistence.*'
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/serializer.h>
 
 #include <cstdlib>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -39,6 +38,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/utils/serializer.hpp>
 #include <iterator>
 #include <string>
 #include <type_traits>

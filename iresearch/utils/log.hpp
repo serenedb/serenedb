@@ -26,10 +26,10 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/utils/application-exit.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
+#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/topic.h"
+#include "iresearch/utils/topic.hpp"
 
 namespace duckdb {
 

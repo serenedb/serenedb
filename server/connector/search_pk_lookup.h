@@ -20,16 +20,15 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <memory>

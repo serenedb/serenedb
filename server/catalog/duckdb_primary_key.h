@@ -21,9 +21,6 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/string_utils.h>
 
 #include <cmath>
 #include <concepts>
@@ -31,7 +28,10 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <ranges>
 #include <span>
 #include <string>

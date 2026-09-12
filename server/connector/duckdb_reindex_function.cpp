@@ -23,12 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
@@ -67,6 +61,12 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/ddl/duckdb_catalog.h"

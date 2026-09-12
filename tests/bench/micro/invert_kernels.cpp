@@ -21,7 +21,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +32,7 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/index/inverter/columnar_flush.hpp>
 #include <iresearch/index/inverter/columnar_readers.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <map>
 #include <memory>
 #include <random>

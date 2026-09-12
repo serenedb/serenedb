@@ -22,8 +22,8 @@
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
 
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <utility>
 

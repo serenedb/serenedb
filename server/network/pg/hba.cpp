@@ -22,8 +22,6 @@
 
 #include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/static_strings.h>
 #include <sys/socket.h>
 
 #include <algorithm>
@@ -31,6 +29,8 @@
 #include <charconv>
 #include <exception>
 #include <filesystem>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <iterator>
 #include <memory>
 #include <ranges>

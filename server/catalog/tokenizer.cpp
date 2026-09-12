@@ -21,9 +21,6 @@
 #include "catalog/tokenizer.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/serializer.h>
 
 #include <cstdint>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -34,6 +31,9 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <utility>
 
 #include "server/utils/simdjson_sink.h"

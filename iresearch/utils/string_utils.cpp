@@ -41,11 +41,11 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
-#include "iresearch/utils/static_strings.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/debugging.hpp"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/static_strings.hpp"
 
 namespace {
 

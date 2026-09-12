@@ -20,9 +20,6 @@
 
 #include "connector/functions/search.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -43,6 +40,8 @@
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 

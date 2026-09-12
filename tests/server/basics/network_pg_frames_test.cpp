@@ -20,10 +20,10 @@
 
 #include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/types.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <vector>
 

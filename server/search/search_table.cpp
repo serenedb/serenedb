@@ -23,11 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
@@ -38,8 +33,13 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <mutex>
 #include <shared_mutex>

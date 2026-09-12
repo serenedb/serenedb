@@ -21,8 +21,6 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/pg/sql_exception.h>
-
 #include <cstring>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -41,6 +39,7 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"

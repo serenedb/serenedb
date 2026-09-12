@@ -20,15 +20,14 @@
 
 #include "connector/index_source_view.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <numeric>
 
 namespace sdb::connector {

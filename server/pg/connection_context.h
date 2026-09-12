@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <iresearch/utils/pg/sql_error.h>
-
 #include <atomic>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
 #include <string_view>
 

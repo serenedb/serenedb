@@ -20,15 +20,14 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/log.h>
-
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/log.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>

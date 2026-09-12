@@ -20,11 +20,10 @@
 
 #include "connector/duckdb_physical_search_update.h"
 
-#include <iresearch/utils/assert.h>
-
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>

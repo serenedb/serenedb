@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/geo/wkb.h"
+#include "iresearch/utils/geo/wkb.hpp"
 
 #include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
@@ -33,11 +33,11 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/utils/geo/s2/multi_point_region.h"
-#include "iresearch/utils/geo/s2/multi_polyline_region.h"
-#include "iresearch/utils/geo/shape_container.h"
+#include "iresearch/utils/geo/s2/multi_point_region.hpp"
+#include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
+#include "iresearch/utils/geo/shape_container.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
 namespace {

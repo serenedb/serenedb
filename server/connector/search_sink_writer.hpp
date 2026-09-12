@@ -22,8 +22,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 #include <simdjson.h>
 
 #include <duckdb/common/enums/compression_type.hpp>
@@ -33,6 +31,8 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <optional>
 #include <span>

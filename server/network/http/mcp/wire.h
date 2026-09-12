@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/serializer.h>
 #include <simdjson.h>
 
 #include <cstdint>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <map>
 #include <string>
 #include <string_view>

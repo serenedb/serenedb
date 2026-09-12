@@ -21,12 +21,6 @@
 #include "connector/duckdb_search_full_scan.hpp"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <algorithm>
 #include <array>
@@ -76,7 +70,13 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/search/top/make.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <mutex>
 #include <optional>
 #include <ranges>

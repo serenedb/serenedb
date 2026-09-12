@@ -27,9 +27,9 @@
 #include <memory>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs {
 

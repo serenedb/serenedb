@@ -23,10 +23,10 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/system-compiler.h>
 
 #include <cassert>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <ranges>

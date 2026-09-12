@@ -24,9 +24,9 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::mmap_utils {

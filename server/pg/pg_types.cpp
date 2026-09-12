@@ -24,14 +24,14 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"

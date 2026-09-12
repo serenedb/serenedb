@@ -24,18 +24,18 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/strings/escaping.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
 #include "catalog/ddl/catalog.h"

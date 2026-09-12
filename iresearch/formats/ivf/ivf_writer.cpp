@@ -43,9 +43,9 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

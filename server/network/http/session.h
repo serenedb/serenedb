@@ -23,10 +23,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <atomic>
 #include <chrono>
@@ -36,6 +32,10 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <limits>
 #include <memory>
 #include <optional>

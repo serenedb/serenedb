@@ -25,13 +25,13 @@
 #else
 #include <sys/eventfd.h>
 #endif
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/operating-system.h>
 #include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
 #include <filesystem>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/operating-system.hpp>
 #include <string>
 #include <utility>
 

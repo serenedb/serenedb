@@ -20,13 +20,6 @@
 
 #include "geo_filter_builder.hpp"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/geo/coding.h>
-#include <iresearch/utils/geo/geo_json.h>
-#include <iresearch/utils/geo/shape_container.h>
-#include <iresearch/utils/geo/wkb.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <duckdb/common/types/geometry_crs.hpp>
@@ -34,6 +27,13 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/geo/coding.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/geo/shape_container.hpp>
+#include <iresearch/utils/geo/wkb.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "catalog/geo_validate.h"
 #include "functions/search.h"

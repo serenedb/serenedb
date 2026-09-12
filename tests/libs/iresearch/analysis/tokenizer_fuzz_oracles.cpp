@@ -20,12 +20,11 @@
 
 #include "tokenizer_fuzz_oracles.hpp"
 
-#include <iresearch/utils/duckdb_engine.h>
-
 #include <algorithm>
 #include <cctype>
 #include <duckdb.hpp>
 #include <format>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <unordered_map>
 
 #include "pipeline_reference.hpp"

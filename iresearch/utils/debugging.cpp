@@ -29,9 +29,9 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/containers/flat_hash_set.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/log.hpp"
 
 #ifdef SDB_FAULT_INJECTION
 namespace irs {

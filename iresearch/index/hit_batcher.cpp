@@ -29,7 +29,7 @@
 #include <limits>
 
 #include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 namespace {

@@ -23,10 +23,10 @@
 #pragma once
 
 #include "iresearch/types.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs::utf8_utils {
 

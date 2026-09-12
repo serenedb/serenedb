@@ -36,8 +36,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
-# define YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
+#ifndef YY_YY_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
+# define YY_YY_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -46,12 +46,12 @@
 extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
-#line 23 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 23 "iresearch/parser/lucene_parser.y"
 
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 
 #include <cstddef>
 #include <string_view>
@@ -88,7 +88,7 @@ struct StringSpan {
     operator std::string_view() const { return {data, len}; }
 };
 
-#line 91 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 91 "iresearch/parser/lucene_parser.hpp"
 
 /* Token kinds.  */
 #ifndef YYTOKENTYPE
@@ -139,7 +139,7 @@ struct StringSpan {
     FN_ORDERED = 295,              /* FN_ORDERED  */
     FN_MAXGAPS = 296,              /* FN_MAXGAPS  */
     FN_MAXWIDTH = 297,             /* FN_MAXWIDTH  */
-    FN_OTHER = 298,                 /* FN_OTHER  */
+    FN_OTHER = 298                 /* FN_OTHER  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -148,7 +148,7 @@ struct StringSpan {
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 79 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 79 "iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
     // A number is a count where one is asked for and a term everywhere else,
@@ -162,7 +162,7 @@ union YYSTYPE
     struct { int min; int max; } gap;
     irs::Filter* filter;
 
-#line 165 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 165 "iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -176,4 +176,4 @@ typedef union YYSTYPE YYSTYPE;
 int yyparse (irs::ParserContext& ctx, yyscan_t yyscanner);
 
 
-#endif /* !YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED  */
+#endif /* !YY_YY_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED  */

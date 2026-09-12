@@ -20,12 +20,6 @@
 
 #include "connector/optimizer/rbac.h"
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
-
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -33,6 +27,11 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 #include <vector>

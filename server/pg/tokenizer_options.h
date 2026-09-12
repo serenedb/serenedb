@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -48,6 +46,7 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
 

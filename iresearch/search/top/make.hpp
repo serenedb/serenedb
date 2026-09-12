@@ -37,9 +37,9 @@
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/walk.hpp"
-#include "iresearch/utils/debugging.h"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::top {
 

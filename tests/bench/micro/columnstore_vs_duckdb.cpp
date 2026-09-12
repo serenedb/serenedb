@@ -37,7 +37,6 @@
 // absolute numbers under the `bench` preset before publishing a claim.
 
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <cstdint>
@@ -54,6 +53,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
 #include <vector>

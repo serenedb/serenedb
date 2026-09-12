@@ -24,7 +24,7 @@
 
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/volatile_boost_score.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 

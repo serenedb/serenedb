@@ -27,7 +27,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 
 namespace irs {
 namespace directory_utils {

@@ -20,10 +20,6 @@
 
 #include "connector/functions/vector.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
-
 #include <cmath>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector.hpp>
@@ -35,6 +31,9 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 

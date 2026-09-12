@@ -21,11 +21,6 @@
 #include "query/transaction.h"
 
 #include <absl/cleanup/cleanup.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <chrono>
 #include <duckdb/main/client_context.hpp>
@@ -33,6 +28,11 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <random>
 #include <thread>
 

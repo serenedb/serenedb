@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {

@@ -35,7 +35,7 @@
 #include <duckdb/storage/table/column_segment.hpp>
 
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 

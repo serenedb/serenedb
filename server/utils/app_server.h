@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::app {
 

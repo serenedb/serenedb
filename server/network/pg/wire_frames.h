@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/sql_error.h>
-
 #include <cstdint>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <span>
 #include <string>
 #include <string_view>

@@ -22,7 +22,6 @@
 
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <algorithm>
 #include <charconv>
@@ -43,6 +42,7 @@
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <stdexcept>
 #include <tuple>
 #include <vector>

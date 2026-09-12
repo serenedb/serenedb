@@ -42,9 +42,9 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {

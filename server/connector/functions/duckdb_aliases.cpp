@@ -21,7 +21,6 @@
 #include "connector/functions/duckdb_aliases.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/assert.h>
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
@@ -35,6 +34,7 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parser_options.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

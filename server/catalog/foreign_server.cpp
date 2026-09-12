@@ -25,8 +25,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/serializer.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -42,6 +40,8 @@
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

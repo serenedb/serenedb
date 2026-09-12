@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>

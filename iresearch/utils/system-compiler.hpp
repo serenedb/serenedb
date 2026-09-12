@@ -21,8 +21,8 @@
 
 #pragma once
 
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/operating-system.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/operating-system.hpp"
 
 #ifdef SDB_DEV
 #define SDB_UNREACHABLE()                          \

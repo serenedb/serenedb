@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string_view>
 
 #include "catalog/entry.h"

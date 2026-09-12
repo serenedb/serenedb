@@ -43,9 +43,9 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/geo/geo_params.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/geo/geo_params.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
 
 namespace irs {

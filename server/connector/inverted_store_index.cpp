@@ -23,8 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/inlined_vector.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/log.h>
 
 #include <atomic>
 #include <deque>
@@ -46,6 +44,8 @@
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iterator>
 #include <mutex>
 #include <string>

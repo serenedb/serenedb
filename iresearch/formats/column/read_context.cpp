@@ -33,7 +33,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {

@@ -18,8 +18,6 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/geo/geo_json.h>
-
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -30,6 +28,7 @@
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"

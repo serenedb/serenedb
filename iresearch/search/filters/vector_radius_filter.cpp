@@ -22,7 +22,7 @@
 
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 

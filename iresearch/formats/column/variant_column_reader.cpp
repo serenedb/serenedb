@@ -31,7 +31,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/internal/gather_arms.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 

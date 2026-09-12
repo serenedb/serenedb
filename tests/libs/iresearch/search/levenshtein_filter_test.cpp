@@ -20,8 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/down_cast.h>
-
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -32,6 +30,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <map>

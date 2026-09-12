@@ -30,7 +30,7 @@
 
 #include "absl/strings/match.h"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/char_traits.hpp"
 #include "iresearch/utils/shared.hpp"
 

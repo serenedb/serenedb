@@ -21,7 +21,8 @@
 #include "connector/duckdb_index_utils.h"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/assert.h>
+
+#include <iresearch/utils/assert.hpp>
 
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"

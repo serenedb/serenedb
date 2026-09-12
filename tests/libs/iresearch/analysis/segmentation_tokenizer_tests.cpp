@@ -20,7 +20,6 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/pg/sql_exception.h>
 #include <unicode/brkiter.h>
 #include <unicode/ubrk.h>
 #include <unicode/utext.h>
@@ -30,6 +29,7 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/text/words/ascii.hpp>
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/utf8_character_tables.hpp>
 #include <memory>
 #include <vector>

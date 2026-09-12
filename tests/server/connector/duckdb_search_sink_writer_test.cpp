@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <array>
 #include <duckdb.hpp>
@@ -36,6 +35,7 @@
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "catalog/table_options.h"

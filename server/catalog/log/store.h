@@ -22,12 +22,12 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_permissions.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <span>
 #include <string>

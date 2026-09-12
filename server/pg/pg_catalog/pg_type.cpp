@@ -20,10 +20,9 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
-#include <iresearch/utils/containers/flat_hash_set.h>
-#include <iresearch/utils/down_cast.h>
-
 #include <deque>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <vector>
 

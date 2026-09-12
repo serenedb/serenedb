@@ -29,7 +29,7 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/containers/small_vector.h"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 

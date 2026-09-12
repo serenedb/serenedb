@@ -22,8 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -34,6 +32,8 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/bit_packing.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"

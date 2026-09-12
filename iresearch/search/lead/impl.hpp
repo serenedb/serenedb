@@ -27,7 +27,7 @@
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"

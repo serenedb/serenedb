@@ -40,7 +40,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.h"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

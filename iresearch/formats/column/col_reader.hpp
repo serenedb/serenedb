@@ -35,7 +35,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/containers/flat_hash_map.h"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace duckdb {
 

@@ -21,8 +21,6 @@
 #include "connector/functions/minhash.h"
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -34,6 +32,8 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/minhash_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 
 #include "server/utils/wyhash.h"

@@ -42,13 +42,13 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/down_cast.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
-#include "iresearch/utils/topic.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/topic.hpp"
 #include "iresearch/utils/vector.hpp"
 
 namespace irs {

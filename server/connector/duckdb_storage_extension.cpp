@@ -20,18 +20,17 @@
 
 #include "connector/duckdb_storage_extension.h"
 
-#include <iresearch/utils/debugging.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
-
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"

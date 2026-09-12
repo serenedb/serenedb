@@ -22,7 +22,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 namespace {

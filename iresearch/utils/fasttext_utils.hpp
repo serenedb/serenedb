@@ -23,7 +23,7 @@
 #pragma once
 
 #include "fasttext.h"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace fasttext {
 

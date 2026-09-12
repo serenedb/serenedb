@@ -20,11 +20,10 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
-#include <iresearch/utils/down_cast.h>
-
 #include <deque>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <vector>
 

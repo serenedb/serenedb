@@ -22,8 +22,6 @@
 
 #include <absl/strings/escaping.h>
 #include <fast_float/fast_float.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
@@ -31,6 +29,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"

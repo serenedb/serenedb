@@ -23,10 +23,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/log.h>
 
 #include <algorithm>
 #include <chrono>
@@ -34,6 +30,10 @@
 #include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
 #include <span>

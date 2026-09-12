@@ -58,13 +58,12 @@
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/log.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/system-compiler.h>
-
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system-compiler.hpp>
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"

@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/geo/geo_json.h"
+#include "iresearch/utils/geo/geo_json.hpp"
 
 #include <absl/strings/match.h>
 #include <s2/s2loop.h>
@@ -35,14 +35,14 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/debugging.h"
-#include "iresearch/utils/geo/geo_params.h"
-#include "iresearch/utils/geo/s2/multi_point_region.h"
-#include "iresearch/utils/geo/s2/multi_polyline_region.h"
-#include "iresearch/utils/geo/shape_container.h"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/string_utils.h"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/debugging.hpp"
+#include "iresearch/utils/geo/geo_params.hpp"
+#include "iresearch/utils/geo/s2/multi_point_region.hpp"
+#include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
+#include "iresearch/utils/geo/shape_container.hpp"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/string_utils.hpp"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs::geo::json {
 namespace {

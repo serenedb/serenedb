@@ -21,9 +21,6 @@
 #include "connector/functions/embedding/embedding.h"
 
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/down_cast.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -38,6 +35,9 @@
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <utility>
 

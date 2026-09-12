@@ -31,7 +31,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/containers/small_vector.h"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

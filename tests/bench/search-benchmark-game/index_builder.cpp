@@ -21,13 +21,13 @@
 #include "index_builder.h"
 
 #include <absl/strings/str_format.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <istream>
 #include <memory>

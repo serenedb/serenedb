@@ -23,11 +23,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/serializer.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <algorithm>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <map>
 #include <ranges>
 #include <string_view>

@@ -31,8 +31,8 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/utils/containers/node_hash_map.h"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/containers/node_hash_map.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/singleton.hpp"
 
 namespace irs {

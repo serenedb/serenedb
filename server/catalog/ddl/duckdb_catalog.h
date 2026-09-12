@@ -22,8 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog.hpp>
@@ -32,6 +30,8 @@
 #include <duckdb/parser/parsed_data/alter_schema_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

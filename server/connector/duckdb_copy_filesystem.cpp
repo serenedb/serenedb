@@ -21,14 +21,14 @@
 #include "connector/duckdb_copy_filesystem.h"
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/file_opener.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <span>
 

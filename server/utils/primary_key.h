@@ -20,8 +20,7 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.h>
-
+#include <iresearch/utils/assert.hpp>
 #include <span>
 #include <string>
 #include <type_traits>

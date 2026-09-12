@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/container/inlined_vector.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
 #include <simdjson.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>

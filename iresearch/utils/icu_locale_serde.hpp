@@ -26,7 +26,7 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/utils/serializer.h"
+#include "iresearch/utils/serializer.hpp"
 
 namespace irs {
 

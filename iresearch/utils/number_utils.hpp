@@ -25,8 +25,8 @@
 #include <limits>
 #include <type_traits>
 
-#include "iresearch/utils/common.h"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/common.hpp"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs {
 namespace number_utils {

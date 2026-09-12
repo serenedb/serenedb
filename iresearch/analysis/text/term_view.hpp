@@ -31,7 +31,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <string_view>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 

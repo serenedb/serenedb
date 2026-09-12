@@ -20,15 +20,14 @@
 
 #include "connector/search_table_dispatch.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <string>
 

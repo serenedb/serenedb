@@ -21,9 +21,6 @@
 #include "catalog/entry/duckdb_schema_entry.h"
 
 #include <absl/algorithm/container.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/extension_type_info.hpp>
@@ -45,6 +42,9 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/ddl/catalog.h"

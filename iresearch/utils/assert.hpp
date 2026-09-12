@@ -24,7 +24,7 @@
 
 #include <source_location>
 
-#include "iresearch/utils/crash_handler.h"
+#include "iresearch/utils/crash_handler.hpp"
 
 #define SDB_VERIFY(expr, ...)                                                \
   do {                                                                       \

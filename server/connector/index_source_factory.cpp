@@ -20,8 +20,8 @@
 
 #include "connector/index_source_factory.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/pk_spec.h"

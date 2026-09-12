@@ -37,10 +37,10 @@
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/log.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
-#include "iresearch/utils/string_utils.h"
+#include "iresearch/utils/string_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {

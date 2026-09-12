@@ -30,10 +30,10 @@
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 
 #ifdef _WIN32
 #include <Windows.h>  // for GetLastError()

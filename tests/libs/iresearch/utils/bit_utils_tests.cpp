@@ -21,11 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/number_utils.h>
-
 #include <climits>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/number_utils.hpp>
 
 #include "tests_shared.hpp"
 

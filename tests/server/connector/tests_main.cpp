@@ -19,7 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/utils/duckdb_engine.h>
+
+#include <iresearch/utils/duckdb_engine.hpp>
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

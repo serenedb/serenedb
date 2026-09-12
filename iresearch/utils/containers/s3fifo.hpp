@@ -35,7 +35,7 @@
 #include <limits>
 #include <type_traits>
 
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::containers::s3fifo {
 

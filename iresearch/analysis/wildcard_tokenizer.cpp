@@ -30,7 +30,7 @@
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/log.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {

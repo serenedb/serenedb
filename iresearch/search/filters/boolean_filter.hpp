@@ -29,7 +29,7 @@
 
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/system-compiler.h"
+#include "iresearch/utils/system-compiler.hpp"
 
 namespace irs {
 

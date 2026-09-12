@@ -51,7 +51,7 @@
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/assert.h"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/vector.hpp"
 

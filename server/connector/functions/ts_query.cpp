@@ -20,9 +20,6 @@
 
 #include "connector/functions/ts_query.h"
 
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -44,6 +41,8 @@
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"

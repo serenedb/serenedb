@@ -20,7 +20,7 @@
 
 #include "sql_utils.h"
 
-#include <iresearch/utils/pg/sql_exception_macro.h>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::pg {
 

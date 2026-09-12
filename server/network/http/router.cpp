@@ -21,8 +21,8 @@
 #include "network/http/router.h"
 
 #include <ada.h>
-#include <iresearch/utils/assert.h>
 
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

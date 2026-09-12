@@ -20,12 +20,11 @@
 
 #include "sdb_metrics.h"
 
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/down_cast.h>
-
 #include <array>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"

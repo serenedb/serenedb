@@ -24,7 +24,7 @@
 
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 

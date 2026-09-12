@@ -58,8 +58,6 @@
 // directly.
 
 #include <benchmark/benchmark.h>
-#include <iresearch/utils/assert.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <bit>
 #include <cmath>
@@ -81,6 +79,8 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>

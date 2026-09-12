@@ -36,8 +36,8 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/assert.h"
-#include "iresearch/utils/pg/sql_exception_macro.h"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {

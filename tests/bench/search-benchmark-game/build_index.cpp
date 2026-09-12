@@ -19,11 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_format.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <cstdio>
 #include <iostream>  // std::cin
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
 #include "executor.h"

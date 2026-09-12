@@ -23,13 +23,6 @@
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
-#include <iresearch/utils/duckdb_engine.h>
-#include <iresearch/utils/pg/errcodes.h>
-#include <iresearch/utils/pg/sql_exception.h>
-#include <iresearch/utils/pg/sql_exception_macro.h>
-#include <iresearch/utils/static_strings.h>
 
 #include <atomic>
 #include <chrono>
@@ -57,6 +50,13 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <optional>
 #include <source_location>

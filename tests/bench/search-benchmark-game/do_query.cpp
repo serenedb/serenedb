@@ -20,11 +20,11 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_format.h>
-#include <iresearch/utils/duckdb_engine.h>
 
 #include <cstdio>
 #include <iostream>  // std::cin
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <string>
 

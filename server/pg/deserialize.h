@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <iresearch/utils/containers/flat_hash_map.h>
-#include <iresearch/utils/containers/node_hash_map.h>
 #include <unicode/calendar.h>
 
 #include <duckdb/common/operator/cast_operators.hpp>
@@ -29,6 +27,8 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>

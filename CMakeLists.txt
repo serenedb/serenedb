@@ -626,6 +626,8 @@ include(SereneDBInstall)
 ## SUB-PROJECTS
 ################################################################################
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
+
 add_subdirectory(iresearch)
 add_subdirectory(server/utils)
 add_subdirectory(server)

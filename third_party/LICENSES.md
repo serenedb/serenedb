@@ -127,6 +127,14 @@
 * Project Home: https://cmake.org/
 * License: BSD 3-clause "New" or "Revised" License
 
+## Fonts
+
+Used only to generate the logo SVGs in `resources/images/`, not shipped in the
+distribution. The generated SVGs carry outline paths, so the font is not needed
+to display them.
+
+* [DM Sans](https://github.com/googlefonts/dm-fonts) -- [SIL Open Font License 1.1](../resources/fonts/OFL.txt)
+
 ## Tests
 
 Libraries used only by the test suite, not shipped in the distribution.

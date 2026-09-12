@@ -1,9 +1,9 @@
 <div align=center>
 
 <picture align=center>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/43caf356-43d3-40e9-9295-712d3755a49e">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/4a6afd91-012d-48e6-b268-1efdae5916a6">
-    <img alt="The SereneDB company logo." src="https://github.com/user-attachments/assets/43caf356-43d3-40e9-9295-712d3755a49e">
+    <source media="(prefers-color-scheme: dark)" srcset="resources/images/serenedb-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="resources/images/serenedb-light.svg">
+    <img alt="The SereneDB company logo." src="resources/images/serenedb-light.svg">
 </picture>
 
 <h2>The First Real-Time Search Analytics Database</h2>

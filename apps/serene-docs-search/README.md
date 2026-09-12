@@ -1,7 +1,7 @@
 <picture align=left>
-    <source media="(prefers-color-scheme: dark)" width="592" srcset="https://github.com/user-attachments/assets/7bcd81a5-df10-4bd3-be01-d9eaa9fd7eff">
-    <source media="(prefers-color-scheme: light)" width="592" srcset="https://github.com/user-attachments/assets/3e416648-011b-44a6-b3cc-fad0ebbbbd2f">
-    <img alt="serenedb+sereneui" width="592" src="https://github.com/user-attachments/assets/7bcd81a5-df10-4bd3-be01-d9eaa9fd7eff" />
+    <source media="(prefers-color-scheme: dark)" width="592" srcset="../../resources/images/serene-docs-search-dark.svg">
+    <source media="(prefers-color-scheme: light)" width="592" srcset="../../resources/images/serene-docs-search-light.svg">
+    <img alt="The SereneDB DocsSearch logo." width="592" src="../../resources/images/serene-docs-search-light.svg" />
 </picture>
 
 [![Star Us](https://img.shields.io/badge/Star%20Us-9865e8?style=for-the-badge&logo=github&logoColor=white)](https://github.com/serenedb/serenedb)

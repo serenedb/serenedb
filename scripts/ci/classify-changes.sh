@@ -64,7 +64,7 @@ declare -a pg_files=()
 while IFS= read -r f; do
 	[[ -z "$f" ]] && continue
 	case "$f" in
-	libs/iresearch/* | third_party/iresearch.build/* | tests/iresearch/* | resources/tests/iresearch/*)
+	iresearch/* | third_party/iresearch.build/* | tests/iresearch/* | resources/tests/iresearch/*)
 		iresearch=true
 		continue
 		;;

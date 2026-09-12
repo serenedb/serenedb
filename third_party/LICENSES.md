@@ -7,7 +7,6 @@
 * [Abseil - C++ Common Libraries](https://abseil.io)
 * [S2 Geometry Library](https://s2geometry.io)
 * [OpenFST](https://www.openfst.org/)
-* [frozen](https://github.com/serge-sans-paille/frozen)
 * [Kaldi](https://github.com/kaldi-asr/kaldi)
 * [LLVM](https://github.com/llvm/llvm-project)
 * [Google Benchmark](https://github.com/google/benchmark)
@@ -32,11 +31,12 @@
 * [aws-checksums](https://github.com/awslabs/aws-checksums)
 * [aws-crt-cpp](https://github.com/awslabs/aws-crt-cpp)
 * [aws-sdk-cpp](https://github.com/aws/aws-sdk-cpp)
+* [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp)
+* [StringZilla](https://github.com/ashvardanian/StringZilla)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
 * [Boost](http://www.boost.org)
-* [Boost::Text](https://github.com/tzlaine/text)
 
 ### [MIT license](https://opensource.org/licenses/MIT)
 
@@ -61,6 +61,8 @@
 * [fmt](https://github.com/fmtlib/fmt)
 * [jansson](https://github.com/akheron/jansson)
 * [CRoaring](https://github.com/RoaringBitmap/CRoaring)
+* [duckdb-inet](https://github.com/duckdb/duckdb-inet)
+* [brotli](https://github.com/google/brotli)
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
@@ -75,6 +77,7 @@
 * [snappy](https://github.com/google/snappy)
 * [snowball](https://github.com/snowballstem/snowball)
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
+* [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS)
 
 ### Other licenses
 

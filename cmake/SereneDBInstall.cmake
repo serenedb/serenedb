@@ -13,7 +13,11 @@ file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/var/log/${CMAKE_PROJECT_NAME}")
 include(InstallMacros)
 
 # install ----------------------------------------------------------------------
-install_readme(LICENSE LICENSE.txt)
+install(
+    FILES "${CMAKE_SOURCE_DIR}/LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+    RENAME LICENSE.txt
+)
 
 # glibc license files (required for static linking, see glibc LICENSES file)
 install(

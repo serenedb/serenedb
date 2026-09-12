@@ -29,15 +29,3 @@ macro(install_config name path)
         DESTINATION ${CMAKE_INSTALL_SYSCONFDIR_SERENE}
     )
 endmacro()
-
-# installs a readme file converting EOL ----------------------------------------
-macro(install_readme input output)
-    install(
-        CODE
-            "configure_file(${PROJECT_SOURCE_DIR}/${input} \"${PROJECT_BINARY_DIR}/${output}\" NEWLINE_STYLE UNIX)"
-    )
-    install(
-        FILES "${PROJECT_BINARY_DIR}/${output}"
-        DESTINATION "${CMAKE_INSTALL_DOCDIR}"
-    )
-endmacro()

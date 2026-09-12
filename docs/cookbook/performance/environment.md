@@ -119,7 +119,7 @@ ulimit -n 131072
 A limit that is too low surfaces as `Too many open files` errors under load. See the [installation notes](../../installation/index.md) for more.
 
 **Memory maps (`vm.max_map_count`).**
-Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/libs/iresearch), which memory-maps every index segment. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
+Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch), which memory-maps every index segment. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
 
 ```sh
 sudo sysctl -w vm.max_map_count=262144

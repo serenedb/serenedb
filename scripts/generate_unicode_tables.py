@@ -314,13 +314,12 @@ def main():
 
     ucd_version = parse_ucd_version(
         os.path.join(ucd_dir, "WordBreakProperty.txt"))
-    utils_dir = os.path.join(args.repo_root, "libs", "iresearch", "include",
-                             "iresearch", "utils")
+    utils_dir = os.path.join(args.repo_root, "iresearch", "utils")
 
     props = build_wb_props(ucd_dir)
     stage1, stage2 = dedup_blocks(props)
-    words_dir = os.path.join(args.repo_root, "libs", "iresearch", "include",
-                             "iresearch", "analysis", "text", "words")
+    words_dir = os.path.join(args.repo_root, "iresearch", "analysis", "text",
+                             "words")
     os.makedirs(words_dir, exist_ok=True)
     wb_bytes = emit_word_break_tables(
         os.path.join(words_dir, "tables.hpp"), stage1, stage2, ucd_version)

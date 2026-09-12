@@ -14,7 +14,7 @@ CHECKER = REPO / "scripts" / "check_fault_points.py"
 @pytest.fixture(scope="module")
 def defined():
     found = faults.source_defined_faults(REPO)
-    assert found, "no fault points found in server/ or libs/"
+    assert found, "no fault points found in server/ or iresearch/"
     return found
 
 
@@ -32,7 +32,7 @@ def test_every_declared_fault_exists_in_source(defined):
     missing = sorted(f for f in faults.ALL_FAULTS if f not in defined)
     assert not missing, (
         "declared faults with no SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE literal in "
-        f"server/ or libs/: {missing}. SET sdb_faults accepts any string and would "
+        f"server/ or iresearch/: {missing}. SET sdb_faults accepts any string and would "
         "arm nothing, so this would silently disable the scenario."
     )
 

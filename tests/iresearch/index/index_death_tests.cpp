@@ -1363,7 +1363,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 // Failure-injection coverage for the `.col` columnstore. The
 // `irs::ColWriter` emits one `<segment>.col` file per segment
 // (see `kColFormatExt` in
-// libs/iresearch/include/iresearch/formats/column/col_reader.hpp), so
+// iresearch/formats/column/col_reader.hpp), so
 // per-segment columnstore failures register against `_N.col`.
 // =======================================================================
 

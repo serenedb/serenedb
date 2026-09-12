@@ -56,7 +56,7 @@ _SOURCE_LITERAL = re.compile(
     r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|WaitWhileFailurePointDebugging)'
     r'\s*\(\s*"([^"]+)"'
 )
-_SOURCE_DIRS = ("server", "libs")
+_SOURCE_DIRS = ("server", "iresearch")
 _SOURCE_EXTS = (".cpp", ".cc", ".hpp", ".hh", ".h", ".ipp", ".tpp")
 
 
@@ -117,7 +117,7 @@ class FaultBroker:
     def _check_known(self, name):
         if self._defined is not None and name not in self._defined:
             raise FaultUnavailable(
-                f"fault '{name}' is not defined in server/ or libs/; "
+                f"fault '{name}' is not defined in server/ or iresearch/; "
                 "SET sdb_faults would accept it and arm nothing"
             )
 

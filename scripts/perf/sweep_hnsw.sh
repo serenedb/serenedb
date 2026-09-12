@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO=/home/mironov/projects/serenedb/serenedb
-HNSW="$REPO/libs/iresearch/include/iresearch/columnstore/hnsw.cpp"
+HNSW="$REPO/iresearch/columnstore/hnsw.cpp"
 BUILDDIR="$REPO/build_perf"
 TEST='tests/sqllogic/sdb/pg/index/vector_search.test_slow'
 

@@ -15,19 +15,16 @@ fi
 if [[ -n $* ]]; then
 	files=("$@")
 else
-	files=(server/ clients/ libs/)
+	files=(server/ iresearch/)
 fi
 
 echo "cppcheck version: $(cppcheck --version)"
 cppcheck "$@" \
 	-j $threads \
 	--xml --xml-version=2 \
+	-I . \
 	-I server \
-	-I clients \
-	-I build/serened \
-	-I build/clients \
-	-I build/libs \
-	-I libs \
+	-I build \
 	-D DEFINE_FACTORY_DEFAULT \
 	--std=c++20 \
 	--enable=warning,performance,portability,missingInclude \
@@ -38,8 +35,6 @@ cppcheck "$@" \
 	--suppress="*:grammar.cpp" \
 	--suppress="*:tokens.cpp" \
 	--suppress="*:tokens.ll" \
-	--suppress="*:libs/basics/endian.h" \
-	--suppress="*:libs/basics/fpconv.cpp" \
 	--suppress="constStatement" \
 	--suppress="cppcheckError" \
 	--suppress="duplicateCondition" \

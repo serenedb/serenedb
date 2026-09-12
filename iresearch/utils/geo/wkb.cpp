@@ -249,11 +249,11 @@ void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
 // outer; remaining rings are holes. S2Loop expects open rings (no duplicate
 // closing vertex) -- WKB always includes it, so we drop the last vertex.
 //
-// Orientation strategy mirrors libs/geo/geo_json.cpp ParseLoopImpl so WKB and
-// GeoJSON ingest produce the same S2Polygon for equivalent coordinates:
-// the outer loop is left as-given (so polygons whose intended interior covers
-// more than half the earth survive), and subsequent loops are inverted only
-// when they aren't already contained in the outer.
+// Orientation strategy mirrors iresearch/utils/geo/geo_json.cpp ParseLoopImpl
+// so WKB and GeoJSON ingest produce the same S2Polygon for equivalent
+// coordinates: the outer loop is left as-given (so polygons whose intended
+// interior covers more than half the earth survive), and subsequent loops are
+// inverted only when they aren't already contained in the outer.
 template<class R>
 void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;

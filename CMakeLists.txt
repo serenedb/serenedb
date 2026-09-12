@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-message(
-    STATUS
-    "CMake version: ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}.${CMAKE_PATCH_VERSION}"
-)
+message(STATUS "CMake version: ${CMAKE_VERSION}")
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON)
 
@@ -93,7 +90,7 @@ set(SDB_GEN_CS_PGO
 )
 set(SDB_USE_PGO "" CACHE PATH "PGO profile to optimize with")
 
-find_package(Git 1.5.3 REQUIRED)
+find_package(Git REQUIRED)
 
 # ------------------------------------------------------------------------------
 # VERSION information
@@ -115,7 +112,6 @@ find_package(Git 1.5.3 REQUIRED)
 # SERENEDB_VERSION_MINOR        = MINOR
 # SERENEDB_VERSION_PATCH        = PATCH
 # SERENEDB_VERSION_RELEASE_TYPE = "lts" or empty
-#
 
 # Derive MAJOR and MINOR from the UTC clock at configure time
 string(TIMESTAMP SERENEDB_VERSION_MAJOR "%y" UTC)
@@ -158,8 +154,6 @@ project(
     LANGUAGES CXX C ASM
     VERSION ${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}
 )
-
-# Options
 
 enable_testing()
 
@@ -235,9 +229,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
-
-# need threads
-find_package(Threads REQUIRED)
 
 ################################################################################
 ## TARGET ARCHITECTURE
@@ -359,7 +350,6 @@ set(EXTRA_CXX_FLAGS
     "${EXTRA_CXX_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
 )
 if(IPO_ENABLED)
-    add_definitions("-DSERENEDB_USE_IPO=1")
     # TODO(mbkkt) Try to apply -fsplit-lto-unit, -flo=full -fbasic-block-sections=all
     # -fexperimental-relative-c++-abi-vtables, -fassume-unique-vtables -fvirtual-function-elimination
     # -fassume-nothrow-exception-dtor -fasync-exceptions -fasynchronous-unwind-tables
@@ -633,17 +623,8 @@ endif()
 include(SereneDBInstall)
 
 ################################################################################
-## GENERATED FILES
-################################################################################
-
-# If "make clean" removes these files, afterwards neither "make" nor "cmake" work any more.
-set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
-
-################################################################################
 ## SUB-PROJECTS
 ################################################################################
-
-list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
 add_subdirectory(iresearch)
 add_subdirectory(server/utils)

@@ -501,7 +501,8 @@ target_link_libraries(
     PUBLIC yaclib
     PUBLIC zlib
     PUBLIC zstd::zstd
-    PUBLIC ${SYSTEM_LIBRARIES}
+    PUBLIC OpenSSL::Crypto
+    PUBLIC OpenSSL::SSL
     PRIVATE absl::failure_signal_handler
     PRIVATE absl::stacktrace
     PRIVATE absl::symbolize

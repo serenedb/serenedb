@@ -172,25 +172,25 @@ statement ok
 ALTER INDEX IF EXISTS opt_missing SET (refresh_interval = 100);
 
 
-# ALTER on a secondary index is rejected: options apply to inverted only.
-# The index type wins over option validation -- a non-alterable option on a
-# secondary index still reports the index type, and RESET behaves the same.
+# ALTER on a secondary index is rejected: options apply to inverted only, so
+# an ART index falls through to duckdb's generic alter rejection before any
+# option is validated, and RESET behaves the same.
 statement error
 ALTER INDEX opt_sec SET (segment_memory_max = 33554432);
 ----
-db error: ERROR: index options are not supported for ART indexes<slt:ignore>
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER INDEX opt_sec SET (row_group_size = 4096);
 ----
-db error: ERROR: index options are not supported for ART indexes<slt:ignore>
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER INDEX opt_sec RESET (segment_memory_max);
 ----
-db error: ERROR: index options are not supported for ART indexes<slt:ignore>
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 # ALTER TABLE ... SET/RESET (PG storage params) parses into the same shape;

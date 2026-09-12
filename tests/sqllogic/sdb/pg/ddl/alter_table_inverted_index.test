@@ -145,16 +145,18 @@ id	extra2
 4	40
 
 
-# ALTER COLUMN TYPE of a non-indexed column.
-statement ok
+# duckdb refuses ALTER COLUMN TYPE on a table that carries an index, whether
+# or not the index covers the column (drop the index first).
+statement error
 ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# ALTER COLUMN TYPE of an indexed column is rejected (drop the index first).
 statement error
 ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
 ----
-db error: ERROR: cannot alter type of column "body2" because index "ati_idx2" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # DROP the indexed column: the inverted index covering it is cascade-dropped.

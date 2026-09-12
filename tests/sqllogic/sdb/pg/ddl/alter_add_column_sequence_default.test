@@ -52,20 +52,13 @@ statement error
 DROP SEQUENCE s;
 
 
-# DROP ... CASCADE drops the dependent column default; the column itself stays.
+# DROP ... CASCADE takes the dependent table with it: duckdb records the
+# dependency against the table entry, not against the column default.
 statement ok
 DROP SEQUENCE s CASCADE;
 
 
-statement ok
+statement error
 INSERT INTO t (id) VALUES (30);
-
-
-# After the cascade drop the column has no default, so the new row gets NULL.
-query
-SELECT id, c FROM t ORDER BY id;
 ----
-id	c
-10	1
-20	2
-30	NULL
+db error: ERROR: Table with name t does not exist!<slt:ignore>

@@ -632,6 +632,6 @@ add_subdirectory(iresearch)
 add_subdirectory(server/utils)
 add_subdirectory(server)
 add_subdirectory(tests)
-add_subdirectory(examples/iresearch)
+add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
 
 add_custom_target(serenedb DEPENDS serened)

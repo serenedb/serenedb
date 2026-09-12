@@ -131,6 +131,12 @@ class RawVectorReader {
     _dist = ResolveScoringDistance(metric);
   }
 
+  template<VectorMetric M>
+  score_t ComputeOne(doc_id_t doc) {
+    return ComputeDistance<M>(reinterpret_cast<const byte_type*>(_query.data()),
+                              Read(doc, 1), static_cast<uint16_t>(_d));
+  }
+
   void ComputeDistances(std::span<const doc_id_t> docs,
                         std::span<score_t> out) {
     SDB_ASSERT(_dist);

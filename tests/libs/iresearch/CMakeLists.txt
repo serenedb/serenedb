@@ -47,6 +47,7 @@ set(iresearch-tests_sources
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
+    ./formats/docs_slack_test.cpp
     ./formats/posting_alloc_test.cpp
     ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp

@@ -38,7 +38,7 @@ struct VectorFilterOptions {
   VectorQuantization quant = VectorQuantization::None;
   uint32_t max_search_fanout = 16;
   uint32_t ef_search = 0;
-  uint32_t min_ef = 0;
+  float rerank_factor = 0.f;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;

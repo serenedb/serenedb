@@ -44,7 +44,7 @@ class VectorQueryBase {
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
   bool Rescored() const noexcept {
-    return _state.quant != VectorQuantization::None &&
+    return _state.rescore && _state.quant != VectorQuantization::None &&
            _state.vector_column != nullptr && _state.col_reader != nullptr;
   }
 
@@ -114,10 +114,5 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   score_t _boost;
   bool _inclusive;
 };
-
-void RerankExactDistances(const SubReader& segment,
-                          const ColumnReader& vector_column, uint32_t d,
-                          std::span<const float> query, VectorMetric metric,
-                          std::span<ScoreDoc> hits);
 
 }  // namespace irs

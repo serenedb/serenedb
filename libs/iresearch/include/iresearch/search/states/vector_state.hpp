@@ -51,6 +51,7 @@ struct VectorState {
   uint64_t estimation = 0;
 
   VectorQuantization quant = VectorQuantization::None;
+  bool rescore = false;
   uint32_t d = 0;
   ManagedVector<uint64_t> pay_starts;
   ManagedVector<uint32_t> pay_lanes;

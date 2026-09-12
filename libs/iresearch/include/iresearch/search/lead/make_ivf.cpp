@@ -66,9 +66,12 @@ Node::ptr Make(const KnnVectorQuery& query, const ScoredCtx& ctx) {
                                 .stats = record.stats,
                                 .fetcher = ctx.fetcher,
                                 .boost = query.Boost()};
-  return search::MakeVectorScored<Impl, Node::ptr, search::AcceptAll, false,
-                                  lead::TwoPhaseScored>(
-    query, *query.State().reader, score, search::Unbounded(), std::move(inner));
+  return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
+    return search::MakeVectorScored<Impl, Node::ptr, search::AcceptAll, Rescore,
+                                    lead::TwoPhaseScored>(
+      query, *query.State().reader, score, search::Unbounded(),
+      std::move(inner));
+  });
 }
 
 }  // namespace irs::lead

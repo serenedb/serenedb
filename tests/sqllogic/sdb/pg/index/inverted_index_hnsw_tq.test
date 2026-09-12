@@ -126,7 +126,7 @@ VACUUM (REFRESH_TABLE) hnsw_tq;
 
 query
 SELECT pk FROM hnsw_tq_idx
-  ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+  ORDER BY emb <-> [0, 0, 0, 55, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
 ----
 pk
 35

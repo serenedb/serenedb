@@ -392,6 +392,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     o->postings_id = vs.postings_id;
     o->metric = vs.metric;
     o->quant = vs.quant;
+    o->rerank_factor = vs.rerank_factor;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     o->inner = std::move(inner);
@@ -408,7 +409,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->nprobe = vs.nprobe;
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
-  o->min_ef = vs.min_ef;
+  o->rerank_factor = vs.rerank_factor;
   o->inner = std::move(inner);
   return f;
 }

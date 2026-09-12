@@ -125,6 +125,7 @@ inline bool PrepareVectorState(
   state.vector_column = segment.Column(opts.centroids_id);
   state.col_reader = segment.GetColReader();
   state.quant = opts.quant;
+  state.rescore = opts.rerank_factor != 0.f;
   state.d = d;
   state.codebook = std::move(codebook);
 

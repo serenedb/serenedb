@@ -20,14 +20,18 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <random>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
+#include "iresearch/search/vector_similarity_scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
@@ -274,7 +278,7 @@ TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
   }
 }
 
-class RerankExactDistancesTest
+class RawVectorReaderTest
   : public ::testing::TestWithParam<duckdb::CompressionType> {
  protected:
   static constexpr uint32_t kRowGroup = 64;
@@ -297,26 +301,192 @@ class RerankExactDistancesTest
   irs::DirectoryReader _reader;
 };
 
-TEST_P(RerankExactDistancesTest, Rerank) {
+TEST_P(RawVectorReaderTest, ExactDistances) {
   Build(300);
   const auto& segment = (*_reader)[0];
   const std::vector<float> query(kDim, 0.f);
-  std::vector<irs::ScoreDoc> hits;
-  for (irs::doc_id_t doc :
-       {1u, 2u, 3u, 40u, 64u, 65u, 66u, 128u, 129u, 200u, 299u, 300u}) {
-    hits.push_back({.doc = doc});
+  const std::vector<irs::doc_id_t> docs{1u,  2u,   3u,   40u,  64u,  65u,
+                                        66u, 128u, 129u, 200u, 299u, 300u};
+  irs::search::RawVectorReader reader{*segment.Column(kVec),
+                                      *segment.GetColReader(), kDim};
+  reader.SetQuery(query, irs::VectorMetric::L2Sqr);
+  std::vector<irs::score_t> scores(docs.size());
+  reader.ComputeDistances(docs, scores);
+  for (size_t i = 0; i != docs.size(); ++i) {
+    const auto x = static_cast<float>(docs[i]);
+    ASSERT_EQ(-x * x, scores[i]);
   }
-  irs::RerankExactDistances(segment, *segment.Column(kVec), kDim, query,
-                            irs::VectorMetric::L2Sqr, hits);
-  for (const auto& hit : hits) {
-    const auto x = static_cast<float>(hit.doc);
-    ASSERT_EQ(-x * x, hit.score);
+  for (size_t i = 0; i != docs.size(); ++i) {
+    const auto x = static_cast<float>(docs[i]);
+    ASSERT_EQ(-x * x, reader.ComputeOne<irs::VectorMetric::L2Sqr>(docs[i]));
   }
 }
 
 INSTANTIATE_TEST_SUITE_P(
-  Codec, RerankExactDistancesTest,
+  Codec, RawVectorReaderTest,
   ::testing::Values(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
                     duckdb::CompressionType::COMPRESSION_ALP));
+
+constexpr uint32_t kWideDim = 16;
+
+irs::IndexWriterOptions MakeWideOptions(irs::VectorQuantization quant) {
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
+    irs::ColumnOptions col;
+    if (id == kVec) {
+      col.ann_info = irs::AnnInfo{
+        .centroids_id = kVec,
+        .postings_id = kVec,
+        .d = kWideDim,
+        .metric = irs::VectorMetric::L2Sqr,
+        .quant = {.kind = quant},
+        .sample_factor = 1.f,
+        .posting_size = 4096,
+      };
+    }
+    return col;
+  };
+  return opts;
+}
+
+std::vector<std::vector<float>> MakeWideVectors(size_t n, uint32_t seed) {
+  std::mt19937 rng{seed};
+  std::uniform_real_distribution<float> dist{-1.f, 1.f};
+  std::vector<std::vector<float>> out;
+  out.reserve(n);
+  for (size_t i = 0; i != n; ++i) {
+    std::vector<float> v(kWideDim);
+    for (auto& x : v) {
+      x = dist(rng);
+    }
+    out.push_back(std::move(v));
+  }
+  return out;
+}
+
+irs::DirectoryReader BuildWideIndex(irs::Directory& dir,
+                                    const std::vector<std::vector<float>>& vecs,
+                                    irs::VectorQuantization quant) {
+  auto codec = irs::formats::Get("1_5simd");
+  EXPECT_NE(nullptr, codec);
+  auto writer =
+    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, MakeWideOptions(quant));
+  EXPECT_NE(nullptr, writer);
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kWideDim);
+  {
+    auto trx = writer->GetBatch();
+    for (const auto& vec : vecs) {
+      auto doc = trx.Insert();
+      auto& cw = doc.GetColWriter()->OpenColumn(kVec, vtype);
+      duckdb::Vector v{vtype, 1};
+      auto& child = duckdb::ArrayVector::GetChildMutable(v);
+      std::ranges::copy(vec, duckdb::FlatVector::GetDataMutable<float>(child));
+      duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
+      duckdb::FlatVector::ValidityMutable(child).SetAllValid(kWideDim);
+      duckdb::FlatVector::SetSize(v, 1);
+      cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
+                /*count=*/1);
+    }
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+  return writer->GetSnapshot();
+}
+
+std::vector<irs::doc_id_t> WideBruteForce(
+  const std::vector<std::vector<float>>& vecs, const std::vector<float>& query,
+  size_t k) {
+  std::vector<std::pair<float, irs::doc_id_t>> scored;
+  scored.reserve(vecs.size());
+  for (size_t i = 0; i != vecs.size(); ++i) {
+    scored.emplace_back(
+      irs::ComputeDistance<irs::VectorMetric::L2Sqr>(
+        query.data(), vecs[i].data(), static_cast<uint16_t>(kWideDim)),
+      static_cast<irs::doc_id_t>(i) + irs::doc_limits::min());
+  }
+  std::ranges::sort(
+    scored, [](const auto& l, const auto& r) { return l.first > r.first; });
+  std::vector<irs::doc_id_t> out;
+  for (size_t i = 0; i != std::min(k, scored.size()); ++i) {
+    out.push_back(scored[i].second);
+  }
+  return out;
+}
+
+// Mirrors what the connector does: sdb_rerank_factor sizes the candidate pool
+// and switches exact grading on, and the pool is trimmed to k afterwards.
+std::vector<irs::doc_id_t> RunWideKnn(const irs::DirectoryReader& reader,
+                                      const std::vector<float>& query,
+                                      irs::VectorQuantization quant,
+                                      float rerank_factor, size_t k) {
+  irs::ByVectorSimilarity filter;
+  *filter.mutable_field_id() = kVec;
+  auto& opts = *filter.mutable_options();
+  opts.query = query;
+  opts.centroids_id = kVec;
+  opts.postings_id = kVec;
+  opts.metric = irs::VectorMetric::L2Sqr;
+  opts.quant = quant;
+  opts.nprobe = 1000;
+  opts.rerank_factor = rerank_factor;
+
+  const auto pool = rerank_factor == 0.f
+                      ? k
+                      : static_cast<size_t>(std::ceil(rerank_factor * k));
+  irs::VectorSimilarityScorer scorer;
+  std::vector<irs::ScoreDoc> hits(pool);
+  const auto count =
+    irs::ExecuteTopK(reader, filter, scorer, pool, false, std::span{hits});
+  auto found = std::span{hits}.subspan(0, std::min<size_t>(count, pool));
+  std::ranges::sort(found, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return l.score > r.score;
+  });
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0, n = std::min(k, found.size()); i != n; ++i) {
+    docs.push_back(found[i].doc);
+  }
+  return docs;
+}
+
+class IvfRescoreTest
+  : public ::testing::TestWithParam<irs::VectorQuantization> {};
+
+TEST_P(IvfRescoreTest, ExactRescoreBeatsQuantizedRanking) {
+  constexpr size_t kRows = 2000;
+  constexpr size_t kK = 10;
+
+  const auto vecs = MakeWideVectors(kRows, 11);
+  irs::MemoryDirectory dir;
+  auto reader = BuildWideIndex(dir, vecs, GetParam());
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(kRows, reader->docs_count());
+
+  size_t total = 0;
+  size_t matched_quantized = 0;
+  size_t matched_exact = 0;
+  for (const auto& q : MakeWideVectors(40, 5)) {
+    const auto want = WideBruteForce(vecs, q, kK);
+    total += want.size();
+    for (const float factor : {0.f, 4.f}) {
+      const auto got = RunWideKnn(reader, q, GetParam(), factor, kK);
+      auto& matched = factor == 0.f ? matched_quantized : matched_exact;
+      for (const auto doc : want) {
+        matched += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+      }
+    }
+  }
+  const auto recall = [total](size_t matched) {
+    return static_cast<double>(matched) / static_cast<double>(total);
+  };
+  EXPECT_GT(recall(matched_exact), recall(matched_quantized))
+    << "exact " << recall(matched_exact) << " quantized "
+    << recall(matched_quantized);
+  EXPECT_GE(recall(matched_exact), 0.75);
+}
+
+INSTANTIATE_TEST_SUITE_P(Quant, IvfRescoreTest,
+                         ::testing::Values(irs::VectorQuantization::SQ4,
+                                           irs::VectorQuantization::PQ));
 
 }  // namespace

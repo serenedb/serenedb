@@ -21,10 +21,12 @@
 #include "iresearch/search/hnsw_query.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <span>
 
 #include "basics/misc.hpp"
 #include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/search/common/vector_of.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -56,10 +58,12 @@ struct HnswQueryDist {
   }
 };
 
+template<VectorMetric M>
 struct HnswCodeDist {
   const byte_type* codes;
   uint32_t record_size;
   QuantizerReader* qr;
+  search::RawVectorReader* raw;
 
   const byte_type* Row(uint32_t id) const noexcept {
     return codes + static_cast<size_t>(id) * record_size;
@@ -79,28 +83,36 @@ struct HnswCodeDist {
   void Prefetch(uint32_t id) const noexcept {
     __builtin_prefetch(Row(id), 0, 3);
   }
+
+  score_t Exact(uint32_t id) {
+    return raw->ComputeOne<M>(static_cast<doc_id_t>(id) + doc_limits::min());
+  }
 };
 
 template<typename Fn>
 void WithHnswDist(const HnswData& data, std::span<const float> query,
                   const std::shared_ptr<const QuantizerCodebook>& codebook,
                   VectorMetric metric, uint32_t d, uint32_t record_size,
-                  Fn&& fn) {
+                  search::RawVectorReader* raw, Fn&& fn) {
   if (codebook) {
     auto reader = MakeQuantizerReader(codebook);
     reader->StartCluster(data.centroid.empty() ? nullptr
                                                : data.centroid.data());
-    HnswCodeDist dist{.codes = data.codes.data(),
-                      .record_size = record_size,
-                      .qr = reader.get()};
-    fn(dist);
+    ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M>() {
+      HnswCodeDist<M> dist{.codes = data.codes.data(),
+                           .record_size = record_size,
+                           .qr = reader.get(),
+                           .raw = raw};
+      ResolveBool(raw != nullptr,
+                  [&]<bool Exact>() { fn.template operator()<Exact>(dist); });
+    });
     return;
   }
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
       HnswQueryDist<M> dist{
         .base = data.vectors.data(), .d = d, .q = query.data()};
-      fn(dist);
+      fn.template operator()<false>(dist);
     });
 }
 
@@ -140,10 +152,15 @@ void HnswRefuseFilter(const search::TableFilter* table) {
 
 std::vector<ScoreDoc> HnswQuery::RunSearch() const {
   auto& scratch = ThreadScratch();
+  std::optional<search::RawVectorReader> raw;
+  if (_exact_column != nullptr) {
+    raw.emplace(*_exact_column, *Segment().GetColReader(), _d);
+    raw->SetQuery(_query, _metric);
+  }
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
-               [&](auto& dist) {
+               raw ? &*raw : nullptr, [&]<bool Exact>(auto& dist) {
                  if (_ef != 0) {
-                   HnswSearchTopK(_data->graph, dist, _ef, scratch);
+                   HnswSearchTopK<Exact>(_data->graph, dist, _ef, scratch);
                    return;
                  }
                  ResolveBool(_inclusive, [&]<bool Inclusive>() {

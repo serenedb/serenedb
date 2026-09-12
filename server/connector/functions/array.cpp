@@ -22,7 +22,9 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/optional.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -68,30 +70,15 @@ void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& bind_data = state.expr.Cast<duckdb::BoundFunctionExpression>()
                       .BindInfo()
                       ->Cast<SimpleIntBindData>();
-  auto count = args.size();
-  auto& input = args.data[0];
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-
-  duckdb::UnifiedVectorFormat input_data;
-  input.ToUnifiedFormat(count, input_data);
-
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto idx = input_data.sel->get_index(i);
-    if (!input_data.validity.RowIsValid(idx)) {
-      result_validity.SetInvalid(i);
-    } else {
+  duckdb::UnaryExecutor::Execute<duckdb::list_entry_t, int32_t>(
+    args.data[0], result, args.size(),
+    [&](duckdb::list_entry_t list) -> duckdb::optional<int32_t> {
       // PG: empty array returns NULL
-      auto list_size = input_data.GetData<duckdb::list_entry_t>()[idx].length;
-      if (list_size == 0) {
-        result_validity.SetInvalid(i);
-      } else {
-        result_data[i] = bind_data.ndims;
+      if (list.length == 0) {
+        return duckdb::nullopt;
       }
-    }
-  }
+      return bind_data.ndims;
+    });
 }
 
 // --- array_dims ---

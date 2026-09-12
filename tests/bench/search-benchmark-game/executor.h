@@ -54,7 +54,7 @@ struct Report {
   bool print = false;
 };
 
-// What a line asks of its query, spelled as `count`, `docs`, `scored` or
+// What a line asks of its query, spelled as `count`, `docs`, `hits` or
 // `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
 // and anything that is not a bare count may end in `_hash` for a checksum
 // over what it found and `_print` for all of it -- either, both, in either

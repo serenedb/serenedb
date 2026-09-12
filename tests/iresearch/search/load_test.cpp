@@ -1313,7 +1313,7 @@ TEST(LoadTestCommands, CountSuffixTurnsPruningOff) {
 
 TEST(LoadTestCommands, HashAndPrintEitherOrBoth) {
   for (const auto* name :
-       {"docs_hash", "scored_hash", "top_10_hash", "top_10_count_hash"}) {
+       {"docs_hash", "hits_hash", "top_10_hash", "top_10_count_hash"}) {
     const auto cmd = bench::ParseCommand(name);
     EXPECT_NE(bench::Kind::Unsupported, cmd.kind) << name;
     EXPECT_TRUE(cmd.report.hash) << name;
@@ -1326,7 +1326,7 @@ TEST(LoadTestCommands, HashAndPrintEitherOrBoth) {
   EXPECT_TRUE(printed.report.print);
 
   for (const auto* name : {"docs_hash_print", "docs_print_hash",
-                           "top_3_print_hash", "scored_hash_print"}) {
+                           "top_3_print_hash", "hits_hash_print"}) {
     const auto cmd = bench::ParseCommand(name);
     EXPECT_NE(bench::Kind::Unsupported, cmd.kind) << name;
     EXPECT_TRUE(cmd.report.hash) << name;

@@ -224,7 +224,7 @@ void InitClusterCatalogWal() {
   // write finding no log is what keeps it from re-recording itself.
   auto wal = duckdb::WriteAheadLog::Replay(
     duckdb::QueryContext{}, *gClusterWalStorage,
-    basics::file_utils::BuildFilename(
+    utils::file_utils::BuildFilename(
       std::string{GetCatalogStore().WalDirectory()}, "catalog.wal"));
   const auto lock = LockClusterCatalogWal();
   gClusterWal = std::move(wal);

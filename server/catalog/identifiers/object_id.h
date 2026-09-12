@@ -24,7 +24,7 @@
 
 namespace sdb {
 
-class ObjectId : public basics::Identifier {
+class ObjectId : public utils::Identifier {
  public:
   using Identifier::Identifier;
 

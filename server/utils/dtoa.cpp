@@ -28,7 +28,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/number_utils.hpp>
 
-namespace sdb::basics {
+namespace sdb::utils {
 
 template<typename Float>
 char* dtoa_fast(Float d, char* buf) {  // NOLINT
@@ -53,4 +53,4 @@ char* dtoa_fast(Float d, char* buf) {  // NOLINT
 template char* dtoa_fast(float, char* buf);
 template char* dtoa_fast(double, char* buf);
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils

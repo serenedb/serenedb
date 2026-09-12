@@ -2,8 +2,8 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 
-for path in (HERE, os.path.join(REPO, "tests", "harness", "python")):
+for path in (HERE, os.path.join(os.path.dirname(HERE), "harness")):
     if path not in sys.path:
         sys.path.insert(0, path)

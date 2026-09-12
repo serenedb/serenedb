@@ -8,7 +8,7 @@
 # That is why it is a standalone launcher, not a --host client like the driver
 # tests.
 #
-# Local:  tests/network/run.sh
+# Local:  tests/drivers/network/run.sh
 # CI:     invoked by scripts/ci/steps/049-ci-in-docker-run-network-tests.bash
 # RTA:    invoked by scripts/ci/steps/08-ci-{docker,deb,tarball}-rta.bash with
 #         SERENED pointing at the released binary

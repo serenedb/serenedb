@@ -27,7 +27,7 @@
 #include <iosfwd>
 #include <utility>
 
-namespace sdb::basics {
+namespace sdb::utils {
 
 class Identifier {
  public:
@@ -69,4 +69,4 @@ void SerdeRead(Context ctx, Identifier& id) {
   id = Identifier{ctx.io().ReadUnsignedInt64()};
 }
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils

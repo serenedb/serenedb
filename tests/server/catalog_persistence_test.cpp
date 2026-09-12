@@ -25,7 +25,7 @@
 // identically -- so any change to a persistent struct's layout is caught.
 //
 // Regenerate fixtures after an intended format change:
-//   SDB_REGEN_FIXTURES=1 ./build/bin/serenedb-tests_basics \
+//   SDB_REGEN_FIXTURES=1 ./build/bin/serenedb-tests \
 //     --gtest_filter='CatalogPersistence.*'
 
 #include <gtest/gtest.h>

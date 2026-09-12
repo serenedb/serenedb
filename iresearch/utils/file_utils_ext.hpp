@@ -95,7 +95,6 @@ namespace irs {
 using path_char_t = std::filesystem::path::value_type;
 
 // pid_t glue used by the lockfile primitives below + iresearch tests.
-// Inlined here so basics/process_utils.{hpp,cpp} can disappear.
 pid_t GetPid();
 bool IsRunning(pid_t pid);
 bool IsValidPid(const char* buf);

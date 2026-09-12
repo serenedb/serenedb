@@ -24,7 +24,7 @@
 
 #include <cstring>
 
-namespace sdb::basics {
+namespace sdb::utils {
 
 // 22 is enough for int64_t plus trailing '\0'
 inline constexpr size_t kIntStrMaxLen = 22;
@@ -79,4 +79,4 @@ char* dtoa_literals(Float d, char* buf) {  // NOLINT
 template<typename Float>
 char* dtoa_fast(Float d, char* buf);  // NOLINT
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils

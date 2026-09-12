@@ -7,7 +7,7 @@ returns: the base table row-executes three-valued logic, so any divergence
 is a claim soundness bug (a filter that readmits or drops NULL rows).
 
 Usage:
-  ./tests/fuzz/null_semantics_fuzz.py --port 7895 [--queries 500] [--seed N]
+  ./tests/drivers/fuzz/null_semantics_fuzz.py --port 7895 [--queries 500] [--seed N]
 
 Requires a running serened on the given port. Prints the seed on start;
 on failure prints the offending predicate plus both result sets and exits

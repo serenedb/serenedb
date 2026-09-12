@@ -200,7 +200,7 @@ persistence::InvertedIndexData InvertedIndex::ToData() const {
   return data;
 }
 
-void InvertedIndex::WriteJson(basics::JsonSink& sink) const {
+void InvertedIndex::WriteJson(utils::JsonSink& sink) const {
   irs::utils::WriteObject(sink, ToData());
 }
 

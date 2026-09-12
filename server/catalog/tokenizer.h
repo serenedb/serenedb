@@ -49,11 +49,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
-namespace sdb::basics {
+namespace sdb::utils {
 
 class JsonSink;
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils
 namespace sdb::catalog {
 
 // One tokenizer as everything but the catalog log sees it: the analyzer config
@@ -114,7 +114,7 @@ class CreateTokenizerInfo final : public duckdb::CreateInfo {
 
   void Serialize(duckdb::Serializer& sink) const final;
   // The analyzer config is an option structure, not a statement.
-  void WriteJson(basics::JsonSink& sink) const;
+  void WriteJson(utils::JsonSink& sink) const;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
 
   static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(

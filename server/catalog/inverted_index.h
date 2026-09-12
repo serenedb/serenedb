@@ -276,7 +276,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // The wider layout: every column paired with its allocated term field_id.
   persistence::SearchInvertedIndexData ToSearchData() const;
   void SerializePayload(duckdb::Serializer& sink) const final;
-  void WriteJson(basics::JsonSink& sink) const final;
+  void WriteJson(utils::JsonSink& sink) const final;
 
   // `column_term_fields` says which layout the payload holds -- it cannot be
   // derived here, since the map it would come from is what is being read. It

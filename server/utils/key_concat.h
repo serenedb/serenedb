@@ -39,7 +39,7 @@ constexpr size_t GetByteSizeImpl(T v) noexcept {
   if constexpr (std::is_same_v<T, std::string_view>) {
     return v.size();
   } else if constexpr (std::is_integral_v<T> || std::is_enum_v<T> ||
-                       std::is_base_of_v<basics::Identifier, T>) {
+                       std::is_base_of_v<utils::Identifier, T>) {
     return sizeof(T);
   } else {
     static_assert(false);
@@ -52,7 +52,7 @@ size_t WriteImpl(char* p, const T& v) noexcept {
     static_assert(sizeof(T) == 1);
     *p = std::to_underlying(v);
     return sizeof(T);
-  } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
+  } else if constexpr (std::is_base_of_v<utils::Identifier, T>) {
     absl::big_endian::Store64(p, v.id());
     return sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {

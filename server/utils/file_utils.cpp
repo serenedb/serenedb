@@ -51,7 +51,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>
 
-namespace sdb::basics::file_utils {
+namespace sdb::utils::file_utils {
 
 ////////////////////////////////////////////////////////////////////////////////
 /// removes trailing path separators from path
@@ -211,4 +211,4 @@ void Spit(const char* filename, std::string_view s, bool sync) {
   }
 }
 
-}  // namespace sdb::basics::file_utils
+}  // namespace sdb::utils::file_utils

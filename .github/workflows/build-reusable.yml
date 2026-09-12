@@ -42,7 +42,7 @@ on:
         required: false
         default: false
       STRESS:
-        description: "also run the catalog stress suite (tests/stress)"
+        description: "also run the catalog stress suite (tests/drivers/stress)"
         type: boolean
         required: false
         default: false
@@ -67,17 +67,17 @@ on:
         required: false
         default: ""
       STRESS_PROFILE:
-        description: "tests/stress profile: smoke | soak | soak-tsan (empty = runner default)"
+        description: "tests/drivers/stress profile: smoke | soak | soak-tsan (empty = runner default)"
         type: string
         required: false
         default: ""
       STRESS_SECONDS:
-        description: "tests/stress duration override (empty = profile default)"
+        description: "tests/drivers/stress duration override (empty = profile default)"
         type: string
         required: false
         default: ""
       STRESS_WORKERS:
-        description: "tests/stress concurrent sessions (empty = profile default)"
+        description: "tests/drivers/stress concurrent sessions (empty = profile default)"
         type: string
         required: false
         default: ""
@@ -124,7 +124,7 @@ on:
         required: false
         default: false
       STRESS:
-        description: "also run the catalog stress suite (tests/stress)"
+        description: "also run the catalog stress suite (tests/drivers/stress)"
         type: boolean
         required: false
         default: false
@@ -280,7 +280,7 @@ jobs:
           # core-only diff doesn't build them.
           TARGETS=(serened iresearch-examples serenedb-bench-micro search-benchmark-game)
           if [[ "${{ inputs.CONFIG }}" != "perf" ]]; then
-            TARGETS+=(serenedb-tests_basics serenedb-tests_connector)
+            TARGETS+=(serenedb-tests)
             [[ "$RUN_IRESEARCH" == "true" ]] && TARGETS+=(iresearch-tests iresearch-load-tests)
             if [[ -n "$DUCKDB_SUITES" ]]; then
               TARGETS+=(unittest)

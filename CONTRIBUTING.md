@@ -86,8 +86,8 @@ C++ unit tests:
 
 ```bash
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
-./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
-./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
+./build/bin/serenedb-tests "--gtest_filter=*VPackLoadInspectorTest*"
+./build/bin/serenedb-tests "--gtest_filter=*DataSourceWithSearchTest*"
 ```
 
 ### Testing CI workflows locally
@@ -345,7 +345,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Logging
 
-- Use `SDB_LOG(level, topic, ...)` macros from `basics/log.h`
+- Use `SDB_LOG(level, topic, ...)` macros from `iresearch/utils/log.hpp`
 - Shortcuts: `SDB_ERROR(topic, ...)`, `SDB_INFO(topic, ...)`
 
 ### Integer Types

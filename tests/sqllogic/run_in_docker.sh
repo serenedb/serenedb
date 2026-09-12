@@ -125,8 +125,8 @@ if ! test -f "$SQLLOGIC_DIR/$COMPOSE_FILE"; then
 fi
 
 # Reap orphans from earlier interrupted runs before bringing the stack up.
-# See tests/scripts/reap_stale_docker_orphans.sh for the full rationale.
-source "$SQLLOGIC_DIR/../scripts/reap_stale_docker_orphans.sh"
+# See scripts/reap_stale_docker_orphans.sh for the full rationale.
+source "$SQLLOGIC_DIR/../../scripts/reap_stale_docker_orphans.sh"
 reap_stale_docker_orphans
 
 cleanup() {

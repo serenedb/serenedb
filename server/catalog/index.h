@@ -46,11 +46,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
-namespace sdb::basics {
+namespace sdb::utils {
 
 class JsonSink;
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils
 namespace sdb {
 namespace catalog {
 
@@ -140,7 +140,7 @@ class Index {
 
   std::string_view Comment() const noexcept { return _comment; }
 
-  virtual void WriteJson(basics::JsonSink& sink) const = 0;
+  virtual void WriteJson(utils::JsonSink& sink) const = 0;
 
   // What the kind reads back on its own, inside the record's payload.
   virtual void SerializePayload(duckdb::Serializer& sink) const = 0;

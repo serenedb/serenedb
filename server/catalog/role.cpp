@@ -94,7 +94,7 @@ void CreateRoleInfo::SerializePayload(duckdb::Serializer& sink) const {
   sink.WritePropertyWithDefault(203, "valid_until", _valid_until);
   sink.WritePropertyWithDefault(204, "password", _password);
   // Session config, membership edges and default ACLs are std::vector of our
-  // own types: the basics framework is the only serializer they have, so they
+  // own types: the utils framework is the only serializer they have, so they
   // ride inside one property.
   sink.OnPropertyBegin(205, "grants");
   irs::utils::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));

@@ -217,7 +217,7 @@ def emit_word_break_tables(path, stage1, stage2, ucd_version):
     out.append("#pragma once\n")
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
-    out.append('#include "basics/shared.hpp"\n')
+    out.append('#include "iresearch/utils/shared.hpp"\n')
     out.append("namespace irs::analysis::words {\n")
     out.append(f"enum WbProp : uint8_t {{\n{enum_body}\n}};\n")
     out.append(f"inline constexpr uint8_t kWbPropMask = 0x1F;\n"
@@ -255,7 +255,7 @@ def emit_case_tables(path, lower, upper, growth, ucd_version):
     out.append("#pragma once\n")
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
-    out.append('#include "basics/shared.hpp"\n')
+    out.append('#include "iresearch/utils/shared.hpp"\n')
     out.append("namespace irs::utf8_utils {\n")
     out.append(
         "struct CaseMap {\n"

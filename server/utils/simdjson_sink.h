@@ -33,7 +33,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace sdb::basics {
+namespace sdb::utils {
 
 class JsonSink {
   using StringBuilder = simdjson::builder::string_builder;
@@ -169,4 +169,4 @@ class JsonSource {
   absl::InlinedVector<ArrayRange, 4> _frames;
 };
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils

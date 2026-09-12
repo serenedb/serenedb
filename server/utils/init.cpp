@@ -95,7 +95,7 @@ void CheckMaxMapCount() {
 void InitProcess(const char* argv0) {
   // Order matters:
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
-  //   * random::Reset             seeds the PRNGs the basics layer holds
+  //   * random::Reset             seeds the PRNGs the utils layer holds
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us

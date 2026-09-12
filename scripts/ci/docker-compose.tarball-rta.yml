@@ -52,7 +52,7 @@ services:
       sh -c '
         mkdir -p /tmp/serenedb &&
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
-        SERENED=/tmp/serenedb/usr/bin/serened /workspace/tests/network/run.sh
+        SERENED=/tmp/serenedb/usr/bin/serened /workspace/tests/drivers/network/run.sh
       '
 
   tests:

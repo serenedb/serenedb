@@ -56,7 +56,7 @@ namespace {
 template<typename T>
 size_t HashBatch(size_t hash, const T* data, size_t size) {
   for (size_t i = 0; i != size; ++i) {
-    hash = sdb::basics::WyHash(data + i, sizeof(T), hash);
+    hash = sdb::utils::WyHash(data + i, sizeof(T), hash);
   }
   return hash;
 }
@@ -64,8 +64,8 @@ size_t HashBatch(size_t hash, const T* data, size_t size) {
 template<typename T, typename U>
 size_t HashPairs(size_t hash, const T* docs, const U* scores, size_t size) {
   for (size_t i = 0; i != size; ++i) {
-    hash = sdb::basics::WyHash(docs + i, sizeof(T), hash);
-    hash = sdb::basics::WyHash(scores + i, sizeof(U), hash);
+    hash = sdb::utils::WyHash(docs + i, sizeof(T), hash);
+    hash = sdb::utils::WyHash(scores + i, sizeof(U), hash);
   }
   return hash;
 }

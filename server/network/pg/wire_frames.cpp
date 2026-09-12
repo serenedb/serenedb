@@ -445,7 +445,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
   if (tag.rowcount) {
     // PG appends the affected/returned count straight into the frame: " 0 <n>"
     // for INSERT (the legacy oid field, always 0), " <n>" for the rest.
-    w.Write(basics::kIntStrMaxLen + 3, [&](auto* data) {
+    w.Write(utils::kIntStrMaxLen + 3, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = buf;
       *ptr++ = ' ';

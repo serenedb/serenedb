@@ -270,7 +270,7 @@ CatalogStore::~CatalogStore() {
 }
 
 std::string CatalogStore::DatabaseFilePath(ObjectId database_id) {
-  return basics::file_utils::BuildFilename(
+  return utils::file_utils::BuildFilename(
     std::string{GetCatalogStore().DataDirectory()},
     absl::StrCat(database_id.id(), ".db"));
 }
@@ -298,10 +298,10 @@ std::vector<ObjectId> CatalogStore::DatabaseFileIds() {
 }
 
 void CatalogStore::Initialize(std::string_view database_directory) {
-  _directory = basics::file_utils::BuildFilename(
+  _directory = utils::file_utils::BuildFilename(
     std::string{database_directory},
     std::string{irs::StaticStrings::kCatalogRoot});
-  _data_directory = basics::file_utils::BuildFilename(
+  _data_directory = utils::file_utils::BuildFilename(
     std::string{database_directory},
     std::string{irs::StaticStrings::kDataStoreRoot});
   for (const auto* directory : {&_directory, &_data_directory}) {

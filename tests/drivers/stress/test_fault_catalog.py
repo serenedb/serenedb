@@ -7,7 +7,7 @@ import pytest
 import faults
 
 REPO = pathlib.Path(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))))
+    os.path.dirname(os.path.abspath(__file__))))))
 CHECKER = REPO / "scripts" / "check_fault_points.py"
 
 

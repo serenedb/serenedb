@@ -238,7 +238,7 @@ void CreateForeignServerInfo::Serialize(duckdb::Serializer& sink) const {
   sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
                                                     qualified_name.Name());
   sink.WritePropertyWithDefault(201, "fdw_name", _fdw_name);
-  // Option lists are std::vector, not duckdb's; the basics framework is what
+  // Option lists are std::vector, not duckdb's; the utils framework is what
   // writes them, so they ride inside one property.
   sink.OnPropertyBegin(202, "options");
   irs::utils::WriteTuple(sink, std::tie(_option_keys, _option_values));

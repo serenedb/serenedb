@@ -130,8 +130,7 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
         continue;
       }
       const auto& token = tokens[token_idx];
-      sketch.Insert(
-        basics::WyHash(token.GetData(), token.GetSize(), kHashSeed));
+      sketch.Insert(utils::WyHash(token.GetData(), token.GetSize(), kHashSeed));
     }
     const auto row_offset = offset;
     const auto produced =

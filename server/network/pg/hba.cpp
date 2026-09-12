@@ -945,7 +945,7 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
   }
   const std::string tmp = target.string() + ".tmp";
   try {
-    basics::file_utils::Spit(tmp, text, /*sync=*/true);
+    utils::file_utils::Spit(tmp, text, /*sync=*/true);
   } catch (const std::exception& e) {
     return absl::StrCat("could not write hba config file '", tmp,
                         "': ", e.what());
@@ -1105,7 +1105,7 @@ void LoadPersistedHba() {
   }
   std::string text;
   try {
-    text = basics::file_utils::Slurp(path);
+    text = utils::file_utils::Slurp(path);
   } catch (const std::exception& e) {
     SDB_ERROR(GENERAL, "hba config file '", path,
               "' could not be read: ", e.what(), " -- keeping default");

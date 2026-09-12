@@ -11,7 +11,7 @@ pg-wire startup directly over a source-bound socket and classifies the server's
 first auth reply as TRUST / AUTH_REQUESTED / REJECTED.
 
 Runnable standalone:
-    python3 tests/network/hba_mask_test.py --serened ./build/bin/serened
+    python3 tests/drivers/network/hba_mask_test.py --serened ./build/bin/serened
 It starts its own serened on a free port with --listen=0.0.0.0, sets the HBA
 ruleset over a superuser (loopback) connection, then runs the source-IP matrix.
 """
@@ -86,8 +86,7 @@ def _recvn(s: socket.socket, n: int) -> bytes:
 # --- server lifecycle -------------------------------------------------------
 
 sys.path.insert(0, os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "tests", "harness", "python"))
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "harness"))
 
 from serened import Serened as _Serened, free_port  # noqa: E402
 

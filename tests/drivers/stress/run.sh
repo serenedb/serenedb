@@ -5,9 +5,9 @@
 #
 # It starts and kills its own server (and, in chaos profiles, crashes it), so it
 # cannot run against a shared docker-compose serened the way the driver tests do.
-# That is why it is a standalone launcher, like tests/network/run.sh.
+# That is why it is a standalone launcher, like tests/drivers/network/run.sh.
 #
-# Local:  tests/stress/run.sh --profile smoke
+# Local:  tests/drivers/stress/run.sh --profile smoke
 # CI:     invoked by scripts/ci/steps/051-ci-in-docker-run-stress-tests.bash
 #
 set -o pipefail

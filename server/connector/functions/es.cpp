@@ -191,7 +191,7 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
                             "]: ", simdjson::error_message(ec)));
   }
   try {
-    basics::JsonSource source{doc};
+    utils::JsonSource source{doc};
     irs::utils::ReadObject(source, request);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(

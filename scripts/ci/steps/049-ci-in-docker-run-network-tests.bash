@@ -18,7 +18,7 @@ if ! docker run --rm \
 	bash -c '
     set -o pipefail
     cd /serenedb
-    WORKSPACE=/serenedb BUILD_DIR="${BUILD_DIR}" ./tests/network/run.sh 2>&1 | tee -a /serenedb/out/logs/network-tests.log
+    WORKSPACE=/serenedb BUILD_DIR="${BUILD_DIR}" ./tests/drivers/network/run.sh 2>&1 | tee -a /serenedb/out/logs/network-tests.log
   '; then
 	echo "NETWORK_TESTS=FAILED"
 	exit 123

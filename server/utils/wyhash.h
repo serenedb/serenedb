@@ -256,7 +256,7 @@ For more information, please refer to <http://unlicense.org/>
 #include <cstddef>
 #include <cstdint>
 
-namespace sdb::basics {
+namespace sdb::utils {
 
 inline constexpr uint64_t kWyp[4] = {
   0x2d358dccaa6c78a5ull,
@@ -269,4 +269,4 @@ inline uint64_t WyHash(const void* data, size_t size, uint64_t seed) {
   return wyhash(data, size, seed, kWyp);
 }
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils

@@ -117,7 +117,7 @@ jobs:
             -DSDB_SANITIZE=
 
       - name: Build
-        run: ninja -C build serened serenedb-tests_basics serenedb-tests_connector
+        run: ninja -C build serened serenedb-tests
 
       - name: ccache stats
         if: always()
@@ -126,8 +126,7 @@ jobs:
       - name: Google Test
         run: |
           set -euo pipefail
-          ./build/bin/serenedb-tests_basics
-          ./build/bin/serenedb-tests_connector
+          ./build/bin/serenedb-tests
 
       # Fast sqllogic: *.test only (no .test_slow), serenedb's own tests (sqlite
       # subtree skipped), both pg-wire engines. No Docker -- start serened

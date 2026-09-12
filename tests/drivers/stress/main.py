@@ -9,8 +9,8 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
-for _p in (HERE, os.path.join(REPO, "tests", "harness", "python")):
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+for _p in (HERE, os.path.join(os.path.dirname(HERE), "harness")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -85,7 +85,7 @@ def preflight(dsn):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="tests/stress")
+    ap = argparse.ArgumentParser(prog="tests/drivers/stress")
     ap.add_argument("--profile", default="smoke")
     ap.add_argument("--scenario")
     ap.add_argument("--seconds", type=int)
@@ -132,7 +132,7 @@ def main(argv=None):
     raise_open_files(16384)
     reaped = reap_orphans(ORPHAN_PATTERNS)
 
-    repro = (f"python3 tests/stress/main.py --profile {profile.name} "
+    repro = (f"python3 tests/drivers/stress/main.py --profile {profile.name} "
              f"--scenario {profile.scenario} --seconds {profile.seconds} "
              f"--workers {profile.workers} --restarts {profile.restarts} "
              f"--seed {seed} "

@@ -79,7 +79,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Deserialize(
   duckdb::Deserializer& src) {
   auto result = duckdb::make_uniq<CreateTokenizerInfo>();
   result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
-  // Analyzer config and feature set are iresearch types: the basics framework
+  // Analyzer config and feature set are iresearch types: the utils framework
   // is the only serializer they have, so they ride inside one property.
   src.OnPropertyBegin(202, "analyzer");
   auto refs = std::tie(result->_config, result->_features);
@@ -88,7 +88,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Deserialize(
   return std::move(result);
 }
 
-void CreateTokenizerInfo::WriteJson(basics::JsonSink& sink) const {
+void CreateTokenizerInfo::WriteJson(utils::JsonSink& sink) const {
   sink.OnObjectBegin();
   sink.OnPropertyBegin("config");
   irs::utils::WriteObject(sink, _config);

@@ -22,9 +22,12 @@
 
 #include <iresearch/utils/duckdb_engine.hpp>
 
+#include "catalog/entry.h"
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   irs::DuckDBEngine::Instance().Initialize();
+  sdb::catalog::RegisterForeignCreateInfoDeserializer();
   const int rc = RUN_ALL_TESTS();
   irs::DuckDBEngine::Instance().CloseDatabases();
   irs::DuckDBEngine::Instance().Shutdown();

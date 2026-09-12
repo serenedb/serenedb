@@ -471,7 +471,7 @@ TEST(SlopOverlapMatcher, n3_distinct_terms_share_position) {
                       /*early_exit=*/false, groups);
     EXPECT_FALSE(r.any);
   }
-  // slop >= 1: foo@0 -> bar@0 (delta 0, cost 1) -> qux@1 (delta 1, cost 0) = 1.
+  // slop >= 1: shifts {0, -1, -1} -> cost 1.
   for (const irs::PosAttr::value_t slop : {1u, 2u, 5u}) {
     auto r = spm::Run(slot_pos, slop, expected_steps, scratch,
                       /*early_exit=*/false, groups);

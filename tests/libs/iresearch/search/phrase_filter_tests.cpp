@@ -7931,7 +7931,25 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_three_terms) {
     ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
   }
 
-  // "brown quick fox" slop=2: no match (min d=3 for all docs).
+  // "brown quick fox" slop=1: no match, the transposed pair alone costs 2.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->set_slop(1);
+
+    tests::PreparedFilter prepared{q, rdr};
+    auto docs = prepared.Execute(0);
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
+  }
+
+  // "brown quick fox" slop=2: A,G,I d=2 (shifts {1,-1,0}). L,S d=3. T d=4.
   {
     irs::ByPhrase q;
     *q.mutable_field_id() = kPhraseAnl;
@@ -7944,12 +7962,22 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_three_terms) {
     q.mutable_options()->set_slop(2);
 
     tests::PreparedFilter prepared{q, rdr};
+    auto sub = rdr.begin();
+    const auto* column = sub->Column(kName);
+    irs::tests::BlobPointReader values{*sub, *column};
+
     auto docs = prepared.Execute(0);
+
+    for (auto expected : {"A", "G", "I"}) {
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_EQ(expected, irs::tests::ReadStoredStr<std::string_view>(
+                            values, docs->Value()));
+    }
     ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
   }
 
-  // "brown quick fox" slop=4: A,G,I,L d=3.
+  // "brown quick fox" slop=4: A,G,I d=2. L,S d=3. T d=4.
   {
     irs::ByPhrase q;
     *q.mutable_field_id() = kPhraseAnl;
@@ -7968,7 +7996,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_three_terms) {
 
     auto docs = prepared.Execute(0);
 
-    for (auto expected : {"A", "G", "I", "L"}) {
+    for (auto expected : {"A", "G", "I", "L", "S", "T"}) {
       ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
       ASSERT_EQ(expected, irs::tests::ReadStoredStr<std::string_view>(
                             values, docs->Value()));

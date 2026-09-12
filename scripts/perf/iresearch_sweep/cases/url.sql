@@ -4,9 +4,8 @@
 DROP TABLE IF EXISTS sweep_t;
 DROP TEXT SEARCH DICTIONARY IF EXISTS sweep_verbatim;
 
-CREATE TEXT SEARCH DICTIONARY sweep_verbatim(
-  template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY sweep_verbatim AS
+    keyword();
 
 CREATE TABLE sweep_t (
   pk INTEGER PRIMARY KEY,

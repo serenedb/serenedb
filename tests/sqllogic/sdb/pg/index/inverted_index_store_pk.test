@@ -14,15 +14,9 @@ COPY (SELECT 1 AS id, 'pudge goes mid' AS body
 TO '${__TEST_DIR__}/store_pk.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY store_pk_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY store_pk_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW spk_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/store_pk.parquet');

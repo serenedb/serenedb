@@ -1835,7 +1835,7 @@ SELECT set_masklen(inet '192.168.1.5/24', 16);
 
 # op_net: text
 statement error
-SELECT text(inet '192.168.1.5');
+SELECT split_text(inet '192.168.1.5');
 
 # op_tsearch: <->
 statement error
@@ -1923,7 +1923,8 @@ SELECT ts_debug('english', 'a fat cat');
 
 # op_tsearch: ts_lexize
 statement ok
-CREATE TEXT SEARCH DICTIONARY op_tsearch_lx (template='text', locale='en_US.UTF-8', case='lower', stemming=true);
+CREATE TEXT SEARCH DICTIONARY op_tsearch_lx AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 statement ok
 SELECT ts_lexize('op_tsearch_lx', 'running cats');

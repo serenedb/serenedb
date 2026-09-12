@@ -3,11 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_dict (
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng'
-);
+CREATE TEXT SEARCH DICTIONARY geopoint_dict AS
+    encode_geopoint('lat', 'lng');
 
 # DOCS_TEST: example_002
 

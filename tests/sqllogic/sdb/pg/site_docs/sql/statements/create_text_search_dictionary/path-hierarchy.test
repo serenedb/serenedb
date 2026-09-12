@@ -3,10 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY path_dict (
-    template = 'path_hierarchy',
-    delimiter = '/'
-);
+CREATE TEXT SEARCH DICTIONARY path_dict AS
+    expand_path('/');
 
 query
 SELECT ts_lexize('path_dict', '/usr/local/bin');
@@ -19,11 +17,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY domain_dict (
-    template = 'path_hierarchy',
-    delimiter = '.',
-    reverse = true
-);
+CREATE TEXT SEARCH DICTIONARY domain_dict AS
+    expand_path('.', reverse := true);
 
 query
 SELECT ts_lexize('domain_dict', 'docs.serenedb.com');
@@ -36,11 +31,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY path_skip (
-    template = 'path_hierarchy',
-    delimiter = '/',
-    skip = 1
-);
+CREATE TEXT SEARCH DICTIONARY path_skip AS
+    expand_path('/', skip := 1);
 
 query
 SELECT ts_lexize('path_skip', '/usr/local/bin');

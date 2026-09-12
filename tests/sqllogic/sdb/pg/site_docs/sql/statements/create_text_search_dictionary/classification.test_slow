@@ -3,19 +3,11 @@ control substitution on
 # DOCS_TEST: example_001
 
 # DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY classifier (
-#|     template = 'classification',
-#|     MODELLOCATION = '/models/cooking.bin',
-#|     TOPK = 3,
-#|     THRESHOLD = 0.5
-#| );
+#| CREATE TEXT SEARCH DICTIONARY classifier AS
+#|     classification(model_location := '/models/cooking.bin', top_k := 3, threshold := 0.5);
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY classifier (
-    template = 'classification',
-    MODELLOCATION = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    TOPK = 3,
-    THRESHOLD = 0.5
-);
+CREATE TEXT SEARCH DICTIONARY classifier AS
+    classification(model_location := '${RESOURCES}/tests/iresearch/model_cooking.bin', top_k := 3, threshold := 0.5);

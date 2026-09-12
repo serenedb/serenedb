@@ -7,15 +7,9 @@ statement ok
 INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog', 'value a');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX foo_idx ON foo USING inverted(a, b test_english, c test_english);
@@ -577,16 +571,9 @@ CREATE VIEW score_parquet_ext AS
   SELECT * FROM read_parquet('${__TEST_DIR__}/score_parquet.parquet');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY score_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY score_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en);
@@ -1192,7 +1179,7 @@ word is bad: 1
 # slot, leaving stored data unsearchable by the dropped tokenizer.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_kw(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY tok_kw AS keyword();
 
 statement ok
 CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);

@@ -38,7 +38,7 @@ class PathHierarchyTokenizer {
   };
 
   static constexpr std::string_view type_name() noexcept {
-    return "path_hierarchy";
+    return "expand_path";
   }
 
   static Tokenizer::ptr Make(Options opts);

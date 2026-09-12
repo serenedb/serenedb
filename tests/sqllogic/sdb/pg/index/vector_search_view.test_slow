@@ -38,7 +38,9 @@ INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok

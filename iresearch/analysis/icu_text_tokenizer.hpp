@@ -31,7 +31,9 @@ namespace irs::analysis {
 
 class IcuTextTokenizer : private util::Noncopyable {
  public:
-  static constexpr std::string_view type_name() noexcept { return "icu_text"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "split_text_icu";
+  }
 
   struct Options {
     using Owner = IcuTextTokenizer;

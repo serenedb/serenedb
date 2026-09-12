@@ -3,10 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY icu_words (
-    template = 'icu_text',
-    locale = 'en_US.UTF-8'
-);
+CREATE TEXT SEARCH DICTIONARY icu_words AS
+    split_text_icu('en_US.UTF-8');
 
 query
 SELECT ts_lexize('icu_words', '中文测试 hello');
@@ -19,11 +17,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY icu_sentences (
-    template = 'icu_text',
-    locale = 'en_US.UTF-8',
-    BREAK = 'sentence'
-);
+CREATE TEXT SEARCH DICTIONARY icu_sentences AS
+    split_text_icu('en_US.UTF-8', break := 'sentence');
 
 query
 SELECT ts_lexize('icu_sentences', 'Hello world. Second sentence!');

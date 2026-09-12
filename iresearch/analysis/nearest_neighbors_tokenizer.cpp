@@ -38,10 +38,10 @@ namespace irs::analysis {
 Tokenizer::ptr NearestNeighborsTokenizer::Make(
   Options opts, duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: empty model location"));
+    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: top_k must be positive"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::ImmutableFastText>(
     cache, opts.model_location);

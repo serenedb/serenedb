@@ -26,8 +26,8 @@
 
 #include <functional>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/text/words/ascii.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/utf8_character_tables.hpp>
@@ -287,23 +287,23 @@ void AssertStream(irs::analysis::Tokenizer* pipe, std::string_view data,
 }
 
 using namespace irs::analysis;
-using Options = SegmentationTokenizer::Options;
+using Options = TextTokenizer::Options;
 
-class SegmentationTokenizerTest : public testing::TestWithParam<bool> {};
+class TextTokenizerTest : public testing::TestWithParam<bool> {};
 
-TEST(SegmentationTokenizerTest, consts) {
-  static_assert("segmentation" == irs::Type<SegmentationTokenizer>::name());
+TEST(TextTokenizerTest, consts) {
+  static_assert("split_text" == irs::Type<TextTokenizer>::name());
   EXPECT_TRUE(std::is_sorted(irs::utf8_utils::kSmallCategoryTable.begin(),
                              irs::utf8_utils::kSmallCategoryTable.end()));
   EXPECT_TRUE(std::is_sorted(irs::utf8_utils::kLargeCategoryTable.begin(),
                              irs::utf8_utils::kLargeCategoryTable.end()));
 }
 
-TEST_P(SegmentationTokenizerTest, alpha_no_case_test) {
+TEST_P(TextTokenizerTest, alpha_no_case_test) {
   Options opt{
     .convert = irs::Case::None,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -320,9 +320,9 @@ TEST_P(SegmentationTokenizerTest, alpha_no_case_test) {
   AssertStream(stream.get(), kData, expected);
 }
 
-TEST_P(SegmentationTokenizerTest, alpha_lower_case_test) {
+TEST_P(TextTokenizerTest, alpha_lower_case_test) {
   Options opt{};  // Lower is default
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -339,11 +339,11 @@ TEST_P(SegmentationTokenizerTest, alpha_lower_case_test) {
   AssertStream(stream.get(), kData, expected);
 }
 
-TEST_P(SegmentationTokenizerTest, alpha_upper_case_test) {
+TEST_P(TextTokenizerTest, alpha_upper_case_test) {
   Options opt{
     .convert = irs::Case::Upper,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
 
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
@@ -361,12 +361,12 @@ TEST_P(SegmentationTokenizerTest, alpha_upper_case_test) {
   AssertStream(stream.get(), kData, expected);
 }
 
-TEST_P(SegmentationTokenizerTest, graphic_upper_case_test) {
+TEST_P(TextTokenizerTest, graphic_upper_case_test) {
   Options opt{
     .accept = Options::Accept::Graphic,
     .convert = irs::Case::Upper,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -389,12 +389,12 @@ TEST_P(SegmentationTokenizerTest, graphic_upper_case_test) {
   AssertStream(stream.get(), kData, expected);
 }
 
-TEST_P(SegmentationTokenizerTest, all_lower_case_test) {
+TEST_P(TextTokenizerTest, all_lower_case_test) {
   Options opt{
     .accept = Options::Accept::Any,
     .convert = irs::Case::Lower,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -425,11 +425,11 @@ TEST_P(SegmentationTokenizerTest, all_lower_case_test) {
   AssertStream(stream.get(), kData, expected);
 }
 
-TEST_P(SegmentationTokenizerTest, chinese_glyphs_test) {
+TEST_P(TextTokenizerTest, chinese_glyphs_test) {
   constexpr std::u8string_view kData =
     u8"\u4ECA\u5929\u4E0B\u5348\u7684\u592A\u9633\u5F88\u6E29\u6696\u3002";
   Options opt{};
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
 
   const auto glyph = [&](size_t i) {
     return std::string_view{reinterpret_cast<const char*>(kData.data()) + i * 3,
@@ -442,26 +442,26 @@ TEST_P(SegmentationTokenizerTest, chinese_glyphs_test) {
   AssertStream(stream.get(), irs::ViewCast<char>(kData), expected);
 }
 
-TEST_P(SegmentationTokenizerTest, crlf_merges_wb3) {
+TEST_P(TextTokenizerTest, crlf_merges_wb3) {
   Options opt{
     .accept = Options::Accept::Any,
     .convert = irs::Case::None,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   const AnalyzerTokens expected{
     {"line1", 0, 5, 0}, {"\r\n", 5, 7, 1}, {"line2", 7, 12, 2}};
   AssertStream(stream.get(), "line1\r\nline2", expected);
 }
 
-TEST_P(SegmentationTokenizerTest, simple_case_semantics) {
+TEST_P(TextTokenizerTest, simple_case_semantics) {
   {
     Options opt{};
-    auto stream = SegmentationTokenizer::Make(std::move(opt));
+    auto stream = TextTokenizer::Make(std::move(opt));
     AssertStream(stream.get(), "\xC4\xB0", {{"i", 0, 2, 0}});
   }
   {
     Options opt{};
-    auto stream = SegmentationTokenizer::Make(std::move(opt));
+    auto stream = TextTokenizer::Make(std::move(opt));
     AssertStream(stream.get(), "\xCE\x9F\xCE\x94\xCE\x9F\xCE\xA3",
                  {{"\xCE\xBF\xCE\xB4\xCE\xBF\xCF\x83", 0, 8, 0}});
   }
@@ -469,7 +469,7 @@ TEST_P(SegmentationTokenizerTest, simple_case_semantics) {
     Options opt{
       .convert = irs::Case::Upper,
     };
-    auto stream = SegmentationTokenizer::Make(std::move(opt));
+    auto stream = TextTokenizer::Make(std::move(opt));
     AssertStream(stream.get(),
                  "stra\xC3\x9F"
                  "e",
@@ -479,20 +479,20 @@ TEST_P(SegmentationTokenizerTest, simple_case_semantics) {
   }
   {
     Options opt{};
-    auto stream = SegmentationTokenizer::Make(std::move(opt));
+    auto stream = TextTokenizer::Make(std::move(opt));
     AssertStream(stream.get(), "\xC8\xBAx", {{"\xE2\xB1\xA5x", 0, 3, 0}});
   }
   {
     Options opt{};
-    auto stream = SegmentationTokenizer::Make(std::move(opt));
+    auto stream = TextTokenizer::Make(std::move(opt));
     AssertStream(stream.get(), "\xE4\xBB\x8A\xE5\xA4\xA9",
                  {{"\xE4\xBB\x8A", 0, 3, 0}, {"\xE5\xA4\xA9", 3, 6, 1}});
   }
 }
 
-TEST_P(SegmentationTokenizerTest, mixed_value_run_switching) {
+TEST_P(TextTokenizerTest, mixed_value_run_switching) {
   Options opt{};
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   const AnalyzerTokens expected{{"caf\xC3\xA9", 0, 5, 0},
                                 {"men\xC3\xBA", 6, 11, 1},
                                 {"society", 12, 19, 2},
@@ -500,54 +500,51 @@ TEST_P(SegmentationTokenizerTest, mixed_value_run_switching) {
   AssertStream(stream.get(), "caf\xC3\xA9 MEN\xC3\x9A society 123", expected);
 }
 
-TEST_P(SegmentationTokenizerTest, non_ascii_alpha_accept) {
+TEST_P(TextTokenizerTest, non_ascii_alpha_accept) {
   Options opt{
     .accept = Options::Accept::Alpha,
     .convert = irs::Case::None,
   };
-  auto stream = SegmentationTokenizer::Make(std::move(opt));
+  auto stream = TextTokenizer::Make(std::move(opt));
   const AnalyzerTokens expected{
     {"\xE5\x8C\x97", 0, 3, 0}, {"\xE4\xBA\xAC", 3, 6, 1}, {"x", 7, 8, 2}};
   AssertStream(stream.get(), "\xE5\x8C\x97\xE4\xBA\xAC x", expected);
 }
 
-TEST(SegmentationTokenizerTest, make_empty_object) {
-  auto stream = SegmentationTokenizer::Make(Options{});
+TEST(TextTokenizerTest, make_empty_object) {
+  auto stream = TextTokenizer::Make(Options{});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"test", 0, 4, 0}, {"retest", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_lowercase) {
-  auto stream =
-    SegmentationTokenizer::Make(Options{.convert = irs::Case::Lower});
+TEST(TextTokenizerTest, make_lowercase) {
+  auto stream = TextTokenizer::Make(Options{.convert = irs::Case::Lower});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"test", 0, 4, 0}, {"retest", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_nonecase) {
-  auto stream =
-    SegmentationTokenizer::Make(Options{.convert = irs::Case::None});
+TEST(TextTokenizerTest, make_nonecase) {
+  auto stream = TextTokenizer::Make(Options{.convert = irs::Case::None});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"Test", 0, 4, 0}, {"ReTeSt", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_uppercase) {
-  auto stream =
-    SegmentationTokenizer::Make(Options{.convert = irs::Case::Upper});
+TEST(TextTokenizerTest, make_uppercase) {
+  auto stream = TextTokenizer::Make(Options{.convert = irs::Case::Upper});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0}, {"RETEST", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
-  auto stream = SegmentationTokenizer::Make(Options{
+TEST(TextTokenizerTest, make_uppercase_alphabreak) {
+  auto stream = TextTokenizer::Make(Options{
     .accept = Options::Accept::Alpha,
     .convert = irs::Case::Upper,
   });
@@ -557,8 +554,8 @@ TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
-  auto stream = SegmentationTokenizer::Make(Options{
+TEST(TextTokenizerTest, make_uppercase_all_break) {
+  auto stream = TextTokenizer::Make(Options{
     .accept = Options::Accept::Any,
     .convert = irs::Case::Upper,
   });
@@ -572,8 +569,8 @@ TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
-  auto stream = SegmentationTokenizer::Make(Options{
+TEST(TextTokenizerTest, make_uppercase_graphic_break) {
+  auto stream = TextTokenizer::Make(Options{
     .accept = Options::Accept::Graphic,
     .convert = irs::Case::Upper,
   });
@@ -592,20 +589,19 @@ TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
 // strongly-typed enums (`irs::Case`, `Options::Accept`) so these
 // assertions are now compile-time impossibilities and collapse to the
 // happy-path enum-driven `make_*` cases above.
-TEST(SegmentationTokenizerTest, make_default_smoke) {
+TEST(TextTokenizerTest, make_default_smoke) {
   // Default-initialized Options must produce a usable analyzer.
-  auto stream = SegmentationTokenizer::Make(Options{});
+  auto stream = TextTokenizer::Make(Options{});
   ASSERT_NE(nullptr, stream);
 }
 
-INSTANTIATE_TEST_SUITE_P(SegmentationWithAsciiOptimization,
-                         SegmentationTokenizerTest,
+INSTANTIATE_TEST_SUITE_P(SegmentationWithAsciiOptimization, TextTokenizerTest,
                          testing::Values(false, true));
 
 namespace {
 
-std::vector<tests::AnalyzerToken> PullSegmentation(
-  irs::analysis::Tokenizer& stream, std::string_view data) {
+std::vector<tests::AnalyzerToken> PullText(irs::analysis::Tokenizer& stream,
+                                           std::string_view data) {
   auto tokens = tests::Analyze(stream, data);
   EXPECT_TRUE(tokens.has_value());
   return tokens ? std::move(*tokens) : std::vector<tests::AnalyzerToken>{};
@@ -613,7 +609,7 @@ std::vector<tests::AnalyzerToken> PullSegmentation(
 
 }  // namespace
 
-TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
+TEST_P(TextTokenizerTest, native_fills_match_pull) {
   std::string huge;
   for (size_t i = 0; i < 1500; ++i) {
     huge += "word" + std::to_string(i) + " ";
@@ -640,13 +636,13 @@ TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
     for (const auto convert :
          {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
-      auto pull_stream = SegmentationTokenizer::Make(Options{opts});
-      auto fill_stream = SegmentationTokenizer::Make(Options{opts});
+      auto pull_stream = TextTokenizer::Make(Options{opts});
+      auto fill_stream = TextTokenizer::Make(Options{opts});
       for (const auto& v : values) {
         SCOPED_TRACE(testing::Message()
                      << "accept=" << int(accept) << " convert=" << int(convert)
                      << " value.size=" << v.size());
-        const auto pulled = PullSegmentation(*pull_stream, v);
+        const auto pulled = PullText(*pull_stream, v);
 
         std::vector<irs::bstring> terms;
         std::vector<uint32_t> starts;
@@ -681,8 +677,8 @@ TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
   }
 }
 
-TEST_P(SegmentationTokenizerTest, column_fill_runs) {
-  auto stream = SegmentationTokenizer::Make(Options{});
+TEST_P(TextTokenizerTest, column_fill_runs) {
+  auto stream = TextTokenizer::Make(Options{});
   auto* analyzer = dynamic_cast<irs::analysis::Tokenizer*>(stream.get());
   ASSERT_NE(nullptr, analyzer);
 
@@ -699,7 +695,7 @@ TEST_P(SegmentationTokenizerTest, column_fill_runs) {
 
   std::vector<std::vector<irs::bstring>> expected(values.size());
   for (size_t v = 0; v < values.size(); ++v) {
-    for (const auto& t : PullSegmentation(*analyzer, values[v])) {
+    for (const auto& t : PullText(*analyzer, values[v])) {
       expected[v].emplace_back(
         irs::ViewCast<irs::byte_type>(std::string_view{t.term}));
     }
@@ -740,7 +736,7 @@ TEST_P(SegmentationTokenizerTest, column_fill_runs) {
 namespace {
 
 void AssertAsciiMatchesUnicode(const Options& opts, std::string_view value) {
-  auto stream = SegmentationTokenizer::Make(Options{opts});
+  auto stream = TextTokenizer::Make(Options{opts});
   tests::AssertAsciiMatchesUnicode(*stream, value);
 }
 
@@ -863,10 +859,10 @@ TEST(SegmentationTokenizerAsciiFastPath, non_ascii_takes_unicode_path) {
 
 namespace {
 
-irs::analysis::SegmentationTokenizer::Options ModeOpts(
-  irs::analysis::SegmentationTokenizer::Options::Separate separate,
+irs::analysis::TextTokenizer::Options ModeOpts(
+  irs::analysis::TextTokenizer::Options::Separate separate,
   irs::Case convert = irs::Case::None) {
-  using Opts = irs::analysis::SegmentationTokenizer::Options;
+  using Opts = irs::analysis::TextTokenizer::Options;
   Opts opts;
   opts.separate = separate;
   opts.accept = Opts::Accept::Any;
@@ -874,14 +870,14 @@ irs::analysis::SegmentationTokenizer::Options ModeOpts(
   return opts;
 }
 
-using ModeSeparate = irs::analysis::SegmentationTokenizer::Options::Separate;
+using ModeSeparate = irs::analysis::TextTokenizer::Options::Separate;
 using ModeConvert = irs::Case;
 
 }  // namespace
 
 TEST(sentence_tokenizer_test, goldens) {
-  auto stream = irs::analysis::SegmentationTokenizer::Make(
-    ModeOpts(ModeSeparate::Sentence));
+  auto stream =
+    irs::analysis::TextTokenizer::Make(ModeOpts(ModeSeparate::Sentence));
   ASSERT_TRUE(stream->Traits().offsets);
   {
     const auto tokens =
@@ -925,7 +921,7 @@ TEST(sentence_tokenizer_test, goldens) {
 }
 
 TEST(sentence_tokenizer_test, case_conversion) {
-  auto stream = irs::analysis::SegmentationTokenizer::Make(
+  auto stream = irs::analysis::TextTokenizer::Make(
     ModeOpts(ModeSeparate::Sentence, ModeConvert::Lower));
   const auto tokens = tests::Analyze(*stream, "Hello World. CAF\xC3\x89 Time!");
   ASSERT_TRUE(tokens.has_value());
@@ -936,7 +932,7 @@ TEST(sentence_tokenizer_test, case_conversion) {
 
 TEST(line_tokenizer_test, goldens) {
   auto stream =
-    irs::analysis::SegmentationTokenizer::Make(ModeOpts(ModeSeparate::Line));
+    irs::analysis::TextTokenizer::Make(ModeOpts(ModeSeparate::Line));
   {
     const auto tokens =
       tests::Analyze(*stream, "first line\r\nsecond line\nthird");
@@ -966,8 +962,8 @@ TEST(line_tokenizer_test, goldens) {
 }
 
 TEST(paragraph_tokenizer_test, goldens) {
-  auto stream = irs::analysis::SegmentationTokenizer::Make(
-    ModeOpts(ModeSeparate::Paragraph));
+  auto stream =
+    irs::analysis::TextTokenizer::Make(ModeOpts(ModeSeparate::Paragraph));
   {
     const auto tokens = tests::Analyze(
       *stream, "para one line1\npara one line2\n\npara two\n\n\n\npara three");
@@ -1001,8 +997,8 @@ TEST(paragraph_tokenizer_test, goldens) {
 }
 
 TEST(paragraph_tokenizer_test, spaced_blank_line_is_not_a_boundary) {
-  auto stream = irs::analysis::SegmentationTokenizer::Make(
-    ModeOpts(ModeSeparate::Paragraph));
+  auto stream =
+    irs::analysis::TextTokenizer::Make(ModeOpts(ModeSeparate::Paragraph));
   const auto tokens = tests::Analyze(*stream, "a\n \nb");
   ASSERT_TRUE(tokens.has_value());
   ASSERT_EQ(1, tokens->size());
@@ -1019,8 +1015,7 @@ TEST(sentence_tokenizer_test, native_fills_match_pull) {
        {ModeSeparate::Sentence, ModeSeparate::Line, ModeSeparate::Paragraph}) {
     SCOPED_TRACE(testing::Message()
                  << "separate=" << static_cast<int>(separate));
-    auto stream =
-      irs::analysis::SegmentationTokenizer::Make(ModeOpts(separate));
+    auto stream = irs::analysis::TextTokenizer::Make(ModeOpts(separate));
     for (const auto& value : values) {
       const auto pulled = tests::Analyze(*stream, value);
       ASSERT_TRUE(pulled.has_value());
@@ -1046,7 +1041,7 @@ TEST(sentence_tokenizer_test, native_fills_match_pull) {
 }
 
 TEST(SegmentationTextAdoptedTest, number_grouping) {
-  auto stream = SegmentationTokenizer::Make(Options{});
+  auto stream = TextTokenizer::Make(Options{});
   const auto tokens = tests::Analyze(*stream, "1,24 prosenttia");
   ASSERT_TRUE(tokens.has_value());
   const std::vector<tests::AnalyzerToken> expected{{"1,24", 1, 0, 4},
@@ -1055,7 +1050,7 @@ TEST(SegmentationTextAdoptedTest, number_grouping) {
 }
 
 TEST(SegmentationTextAdoptedTest, whitespace_word_stream) {
-  auto stream = SegmentationTokenizer::Make(Options{});
+  auto stream = TextTokenizer::Make(Options{});
   const auto tokens = tests::Analyze(
     *stream,
     " A  hErd of   quIck brown  foXes ran    and Jumped over  a     "
@@ -1073,24 +1068,21 @@ TEST(SegmentationTextAdoptedTest, whitespace_word_stream) {
 TEST(SegmentationTextAdoptedTest, case_modes) {
   const std::string_view data = "A qUiCk brOwn FoX";
   {
-    auto stream =
-      SegmentationTokenizer::Make(Options{.convert = irs::Case::Lower});
+    auto stream = TextTokenizer::Make(Options{.convert = irs::Case::Lower});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"a", "quick", "brown", "fox"};
     ASSERT_EQ(expected, *tokens);
   }
   {
-    auto stream =
-      SegmentationTokenizer::Make(Options{.convert = irs::Case::Upper});
+    auto stream = TextTokenizer::Make(Options{.convert = irs::Case::Upper});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"A", "QUICK", "BROWN", "FOX"};
     ASSERT_EQ(expected, *tokens);
   }
   {
-    auto stream =
-      SegmentationTokenizer::Make(Options{.convert = irs::Case::None});
+    auto stream = TextTokenizer::Make(Options{.convert = irs::Case::None});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"A", "qUiCk", "brOwn", "FoX"};
@@ -1106,7 +1098,7 @@ TEST(SegmentationTextAdoptedTest, russian_stream_both_engines) {
     {"ходил", 4, 29, 39},   {"к", 5, 40, 42},      {"медвежонку", 6, 43, 63},
     {"считать", 7, 64, 78}, {"звезды", 8, 79, 91}};
   {
-    auto stream = SegmentationTokenizer::Make(Options{});
+    auto stream = TextTokenizer::Make(Options{});
     const auto tokens = tests::Analyze(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(expected, *tokens);

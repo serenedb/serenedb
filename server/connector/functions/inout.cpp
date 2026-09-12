@@ -202,22 +202,18 @@ struct RegCastData : public duckdb::BoundCastData {
 template<typename InFn>
 bool PgVarcharToOidCast(duckdb::Vector& source, duckdb::Vector& result,
                         duckdb::idx_t count, InFn&& in_fn) {
-  duckdb::UnifiedVectorFormat src_fmt;
-  source.ToUnifiedFormat(count, src_fmt);
-  auto* src_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
+  auto src = source.Values<duckdb::string_t>();
   auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto src_idx = src_fmt.sel->get_index(i);
-    if (!src_fmt.validity.RowIsValid(src_idx)) {
+    auto value = src[i];
+    if (!value.IsValid()) {
       dst_validity.SetInvalid(i);
       continue;
     }
-    std::string_view name{src_data[src_idx].GetData(),
-                          src_data[src_idx].GetSize()};
-    dst_data[i] = in_fn(name);
+    const auto& name = value.GetValue();
+    dst_data[i] = in_fn(std::string_view{name.GetData(), name.GetSize()});
   }
   return true;
 }
@@ -294,18 +290,16 @@ duckdb::BoundCastInfo PgVarcharToRegtypeBind(duckdb::BindCastInput&,
 template<typename OutFn>
 bool PgOidToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                         duckdb::idx_t count, OutFn&& out_fn) {
-  duckdb::UnifiedVectorFormat src_fmt;
-  source.ToUnifiedFormat(count, src_fmt);
-  auto* src_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(src_fmt);
+  auto src = source.Values<int64_t>();
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto src_idx = src_fmt.sel->get_index(i);
-    if (!src_fmt.validity.RowIsValid(src_idx)) {
+    auto value = src[i];
+    if (!value.IsValid()) {
       dst_validity.SetInvalid(i);
       continue;
     }
-    auto name = out_fn(static_cast<uint64_t>(src_data[src_idx]));
+    auto name = out_fn(static_cast<uint64_t>(value.GetValue()));
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
       duckdb::StringVector::AddString(result, name);
   }

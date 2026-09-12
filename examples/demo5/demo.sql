@@ -2,16 +2,9 @@
 DROP INDEX IF EXISTS arxiv_idx;
 DROP TEXT SEARCH DICTIONARY IF EXISTS arxiv_en;
 
-CREATE TEXT SEARCH DICTIONARY arxiv_en(
-    template  = 'text',
-    locale    = 'en_US.UTF-8',
-    case      = 'lower',
-    stemming  = false,
-    accent    = false,
-    frequency = true,
-    position  = true,
-    norm      = true
-);
+CREATE TEXT SEARCH DICTIONARY arxiv_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 CREATE INDEX arxiv_idx ON arxiv USING inverted(
   abstract   arxiv_en,

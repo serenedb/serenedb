@@ -46,6 +46,8 @@ Tokenizer::ptr WildcardTokenizer::Make(Options opts,
 
 namespace {
 
+constexpr byte_type kBoundary = WildcardTokenizer::kBoundary;
+
 void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
   const size_t size = term.GetSize();
   if (size > std::numeric_limits<int32_t>::max()) {
@@ -58,9 +60,9 @@ void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
     idx + vlen + 1 + size + 1, [&](byte_type* p, size_t n) {
       auto* data = p + idx;
       WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
-      *data++ = byte_type{0xFF};
+      *data++ = kBoundary;
       std::memcpy(data, term.GetData(), size);
-      data[size] = byte_type{0xFF};
+      data[size] = kBoundary;
       return n;
     });
 }

@@ -7,15 +7,9 @@
 hash-threshold 100
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY src_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY src_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 # --- 1. INCLUDE-only projection: all columns served from index ----------
 # pk + body are INCLUDE'd so SELECT pk, body FROM idx pulls everything

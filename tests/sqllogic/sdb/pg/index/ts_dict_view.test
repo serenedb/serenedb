@@ -15,16 +15,16 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY vkw(template = 'keyword', frequency = true)
+CREATE TEXT SEARCH DICTIONARY vkw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY vtx(template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY vtx AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 # brand is nullable; status is NOT NULL in the base but a view cannot carry that
 # proof; tags is a VARCHAR[] keyword facet; body feeds a tokenized field and an
-# indexed ts_split_by_non_alpha expression.
+# indexed split_by_non_alpha expression.
 statement ok
 CREATE TABLE vbase(id INTEGER PRIMARY KEY, brand VARCHAR, status VARCHAR NOT NULL,
                    tags VARCHAR[], body VARCHAR NOT NULL)
@@ -45,7 +45,7 @@ FROM vbase
 statement ok
 CREATE INDEX vlog_idx ON vlog USING inverted(
     Brand vkw, Status vkw, Tags vkw, Body vtx,
-    (ts_split_by_non_alpha(Body, true)) vkw)
+    (split_by_non_alpha(Body, case := 'lower')) vkw)
     WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
@@ -172,7 +172,7 @@ QUERY PLAN
 # --- Filtered facet with an indexed-expression @@ (multi-term ts_any).
 query TI
 SELECT Status AS s, count(*) AS n FROM vlog_idx
-WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['alpha', 'beta'])
+WHERE split_by_non_alpha(Body, case := 'lower') @@ ts_any(['alpha', 'beta'])
 GROUP BY Status ORDER BY n DESC, s
 ----
 s	n
@@ -181,36 +181,37 @@ open	1
 
 query
 EXPLAIN SELECT Status, count(*) FROM vlog_idx
-WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['alpha', 'beta'])
+WHERE split_by_non_alpha(Body, case := 'lower') @@ ts_any(['alpha', 'beta'])
 GROUP BY Status
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────╮
-│ Projections:                                 │
-│ sdb_inverted_index_term$status,              │
-│ CAST(#1 AS BIGINT)                           │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ HASH_GROUP_BY ───────┴──────────────────────╮
-│ Groups: #0                                   │
-│ Aggregates: sum(#1)                          │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
-│ Index: vlog_idx                              │
-│ Index Filter:                                │
-│ ╭─ Or ─────────────────────────────────────╮ │
-│ ╰─────────────────────┬────────────────────╯ │
-│ ╭─ Terms ─────────────┴────────────────────╮ │
-│ │ Field: ts_split_by_non_alpha(body, true) │ │
-│ │ Values: 'alpha', 'beta'                  │ │
-│ ╰──────────────────────────────────────────╯ │
-│ TsDict: status                               │
-│ Projections:                                 │
-│ sdb_inverted_index_term$status,              │
-│ sdb_inverted_index_term_count$status         │
-│ ~2 rows                                      │
-╰──────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ sdb_inverted_index_term$status,                 │
+│ CAST(#1 AS BIGINT)                              │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ────────┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: sum(#1)                             │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: vlog_idx                                 │
+│ Index Filter:                                   │
+│ ╭─ Or ────────────────────────────────────────╮ │
+│ ╰──────────────────────┬──────────────────────╯ │
+│ ╭─ Terms ──────────────┴──────────────────────╮ │
+│ │ Field:                                      │ │
+│ │ split_by_non_alpha(body, "case" := 'lower') │ │
+│ │ Values: 'alpha', 'beta'                     │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ TsDict: status                                  │
+│ Projections:                                    │
+│ sdb_inverted_index_term$status,                 │
+│ sdb_inverted_index_term_count$status            │
+│ ~2 rows                                         │
+╰─────────────────────────────────────────────────╯
 
 # --- GROUPING SETS over two view keys: marginal counts for each dimension in
 # --- one query.

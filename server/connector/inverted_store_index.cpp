@@ -196,12 +196,11 @@ duckdb::idx_t SelectRows(duckdb::Vector* predicate, duckdb::idx_t total,
     return total;
   }
   duckdb::UnifiedVectorFormat fmt;
-  predicate->ToUnifiedFormat(total, fmt);
-  const auto* values = duckdb::UnifiedVectorFormat::GetData<bool>(fmt);
+  auto values = predicate->Values<bool>();
   duckdb::idx_t kept = 0;
   for (duckdb::idx_t i = 0; i < total; ++i) {
-    const auto idx = fmt.sel->get_index(i);
-    if (fmt.validity.RowIsValid(idx) && values[idx]) {
+    auto value = values[i];
+    if (value.IsValid() && value.GetValueUnsafe()) {
       scratch.sel.set_index(kept++, i);
     }
   }
@@ -241,14 +240,12 @@ duckdb::idx_t FeedFilteredChunk(
   }
 
   duckdb::UnifiedVectorFormat row_fmt;
-  feed_rows->ToUnifiedFormat(count, row_fmt);
-  const auto* row_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
+  auto feed_row_ids = feed_rows->Values<duckdb::row_t>();
   auto& key_terms = scratch.key_terms;
   key_terms.resize(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     key_terms[i] = catalog::duckdb_primary_key::SignedKeyTerm(
-      row_data[row_fmt.sel->get_index(i)]);
+      feed_row_ids[i].GetValueUnsafe());
   }
 
   // Expression values were computed over the unfiltered batch, so a filtered
@@ -1100,12 +1097,11 @@ namespace {
 std::vector<int64_t> ExtractRowIds(duckdb::Vector& row_ids,
                                    duckdb::idx_t count) {
   duckdb::UnifiedVectorFormat fmt;
-  row_ids.ToUnifiedFormat(count, fmt);
-  const auto* rows = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
+  auto rows = row_ids.Values<duckdb::row_t>();
   std::vector<int64_t> out;
   out.reserve(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    out.push_back(static_cast<int64_t>(rows[fmt.sel->get_index(i)]));
+    out.push_back(static_cast<int64_t>(rows[i].GetValueUnsafe()));
   }
   return out;
 }
@@ -1555,9 +1551,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   }
   conn->EngageInvertedFeed(_index_id, engaged);
   const auto& storage = session.pool.storage;
-  duckdb::UnifiedVectorFormat fmt;
-  row_ids.ToUnifiedFormat(count, fmt);
-  const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
+  auto rows = row_ids.Values<duckdb::row_t>();
   if (storage->IsDeleteLogOpen()) {
     const auto log_begin = storage->DeleteLogRowidBegin();
     const auto log_end = storage->DeleteLogRowidEnd();
@@ -1566,7 +1560,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     native.reserve(count);
     logged.reserve(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      const int64_t row = data[fmt.sel->get_index(i)];
+      const int64_t row = rows[i].GetValueUnsafe();
       (row < log_begin || row >= log_end ? native : logged).push_back(row);
     }
     // Reads like a use-after-move and is not: AppendDeleteLog only takes the
@@ -1582,7 +1576,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     return;
   }
   session.live.FeedDeletesInline(
-    count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
+    count, [&](size_t i) { return rows[i].GetValueUnsafe(); });
 }
 
 idx_t InvertedStoreIndex::TryDelete(

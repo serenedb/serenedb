@@ -2,7 +2,7 @@
 # base columns with varchar, boolean and numeric return types.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword();
 
 
 # --- 1 column, numeric return ----------------------------------------------
@@ -1560,7 +1560,7 @@ CREATE INDEX kostya_ok_idx ON kostya_ok USING inverted(id, (a + b));
 # with the same error that a non-JSON/non-GEOMETRY column would produce.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_expr_dict(template = 'geojson');
+CREATE TEXT SEARCH DICTIONARY geo_expr_dict AS encode_geojson();
 
 statement ok
 CREATE TABLE geo_expr_bad(id INT PRIMARY KEY, s VARCHAR);

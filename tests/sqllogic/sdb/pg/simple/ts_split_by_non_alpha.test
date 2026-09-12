@@ -1,97 +1,97 @@
 control substitution on
 
 
-# ts_split_by_non_alpha(text [, to_lower]) -- splits on runs of non-alphanumeric
+# split_by_non_alpha(text, case := 'lower') -- splits on runs of non-alphanumeric
 # characters, equivalent to a `[^A-Za-z0-9]+` split.
 
 
 # --- Basic split (default: keep case) ---
 
 query
-SELECT ts_split_by_non_alpha('Hello, World! 123_abc');
+SELECT split_by_non_alpha('Hello, World! 123_abc');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {Hello,World,123,abc}
 
 
-# --- Lowercasing each token: to_lower = true ---
+# --- Lowercasing each token: case := 'lower' ---
 
 query
-SELECT ts_split_by_non_alpha('Hello, World! 123_abc', true);
+SELECT split_by_non_alpha('Hello, World! 123_abc', case := 'lower');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {hello,world,123,abc}
 
 
-# --- to_lower = false is the default behaviour explicitly ---
+# --- The default case keeps each token as written ---
 
 query
-SELECT ts_split_by_non_alpha('MixedCase WORDS', false);
+SELECT split_by_non_alpha('MixedCase WORDS');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {MixedCase,WORDS}
 
 
 # --- Alphanumeric runs are kept intact (digits are not separators) ---
 
 query
-SELECT ts_split_by_non_alpha('a1b2c3');
+SELECT split_by_non_alpha('a1b2c3');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {a1b2c3}
 
 
 # --- Leading, trailing and repeated separators emit no empty tokens ---
 
 query
-SELECT ts_split_by_non_alpha('  ...foo--bar..  ');
+SELECT split_by_non_alpha('  ...foo--bar..  ');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {foo,bar}
 
 
 # --- Underscores split (only [A-Za-z0-9] is kept) ---
 
 query
-SELECT ts_split_by_non_alpha('snake_case_Name', true);
+SELECT split_by_non_alpha('snake_case_Name', case := 'lower');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {snake,case,name}
 
 
 # --- Non-ASCII bytes act as separators (matches [^A-Za-z0-9]+) ---
 
 query
-SELECT ts_split_by_non_alpha('café déjà');
+SELECT split_by_non_alpha('café déjà');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {caf,d,j}
 
 
 # --- All-separator input yields an empty array ---
 
 query
-SELECT ts_split_by_non_alpha('---!!!   ');
+SELECT split_by_non_alpha('---!!!   ');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {}
 
 
 # --- Empty input yields an empty array ---
 
 query
-SELECT ts_split_by_non_alpha('');
+SELECT split_by_non_alpha('');
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {}
 
 
 # --- NULL input yields NULL ---
 
 query
-SELECT ts_split_by_non_alpha(NULL);
+SELECT split_by_non_alpha(NULL);
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 NULL
 
 
@@ -106,9 +106,9 @@ INSERT INTO docs VALUES (1, 'The Quick-Brown FOX'), (2, '42 widgets!'), (3, NULL
 
 
 query
-SELECT ts_split_by_non_alpha(body, true) FROM docs ORDER BY id;
+SELECT split_by_non_alpha(body, case := 'lower') FROM docs ORDER BY id;
 ----
-ts_split_by_non_alpha
+split_by_non_alpha
 {the,quick,brown,fox}
 {42,widgets}
 NULL

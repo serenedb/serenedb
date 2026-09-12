@@ -52,7 +52,11 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr std::string_view type_name() noexcept { return "wildcard"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "generate_wildcard_ngrams";
+  }
+
+  static constexpr byte_type kBoundary{0x1F};
 
   explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
   ~WildcardTokenizer() override;

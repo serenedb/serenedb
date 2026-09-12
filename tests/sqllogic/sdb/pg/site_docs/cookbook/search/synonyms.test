@@ -3,18 +3,11 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY syn (
-    template = 'pipeline',
-    step1_template = 'text',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower',
-    step1_stemming = false,
-    step2_template = 'solr_synonyms',
-    step2_synonyms = 'tv, television, telly
-laptop => notebook',
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY syn AS
+    split_text(case := 'lower')
+    | expand_solr_synonyms('tv, television, telly
+laptop => notebook')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE catalog (id INTEGER PRIMARY KEY, name VARCHAR);
@@ -77,19 +70,12 @@ telly	laptop
 # DOCS_TEST: example_005
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wn (
-    template = 'pipeline',
-    step1_template = 'text',
-    step1_locale = 'en_US.UTF-8',
-    step1_case = 'lower',
-    step1_stemming = false,
-    step2_template = 'wordnet_synonyms',
-    step2_synonyms = 's(100000001,1,''couch'',n,1,0).
+CREATE TEXT SEARCH DICTIONARY wn AS
+    split_text(case := 'lower')
+    | expand_wordnet_synonyms('s(100000001,1,''couch'',n,1,0).
 s(100000001,2,''sofa'',n,1,0).
-s(100000001,3,''divan'',n,1,0).',
-    frequency = true,
-    position = true
-);
+s(100000001,3,''divan'',n,1,0).')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE furniture (id INTEGER PRIMARY KEY, name VARCHAR);

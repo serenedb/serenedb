@@ -11,15 +11,9 @@ SET refresh_interval = 0
 # doc set per segment (postings intersection, delete-aware).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY dr(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY dr AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 
 statement ok
@@ -178,18 +172,12 @@ DROP TEXT SEARCH DICTIONARY dr
 # hold an accepted term next to the rejected one. Counts must not change when
 # an unrelated document conjunct joins the WHERE.
 statement ok
-CREATE TEXT SEARCH DICTIONARY drtx(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY drtx AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY drkw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY drkw AS keyword()
 
 statement ok
 CREATE TABLE drf(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL, scope VARCHAR NOT NULL)

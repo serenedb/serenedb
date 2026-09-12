@@ -5,7 +5,7 @@ control substitution on
 # must be replayed into the inverted index on restart.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY json_crash_vd(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY json_crash_vd AS keyword();
 
 statement ok
 CREATE TABLE jc_t(id INTEGER PRIMARY KEY, content JSON);

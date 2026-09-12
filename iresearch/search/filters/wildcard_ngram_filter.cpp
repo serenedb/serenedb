@@ -91,7 +91,8 @@ WildcardNGramKind ClassifyKind(const ByWildcardNGramOptions& opts) {
   const auto size = opts.parts.size();
   if (size == 0) {
     bytes_view token = opts.token;
-    if (token.size() != 1 && token.back() == 0xFF) {
+    if (token.size() != 1 &&
+        token.back() == analysis::WildcardTokenizer::kBoundary) {
       return WildcardNGramKind::Term;
     }
     return WildcardNGramKind::Prefix;
@@ -157,7 +158,7 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
         ByTerm::PrepareSegment(segment, sub_ctx, field_id(), opts.token));
     case WildcardNGramKind::Prefix: {
       bytes_view token = opts.token;
-      if (token.back() == 0xFF) {
+      if (token.back() == analysis::WildcardTokenizer::kBoundary) {
         token = kEmptyStringView<byte_type>;
       }
       return wrap(
@@ -233,7 +234,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   pattern_str.resize(2 + pattern.size());
   auto* pattern_first = pattern_str.data();
   auto* pattern_last = pattern_first;
-  *pattern_last++ = '\xFF';
+  *pattern_last++ = static_cast<char>(analysis::WildcardTokenizer::kBoundary);
   auto* pattern_curr = pattern.data();
   auto* pattern_end = pattern_curr + pattern.size();
   bool needs_matcher = false;
@@ -256,7 +257,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     }
   }
   if (pattern_first != pattern_last) {
-    *pattern_last++ = '\xFF';
+    *pattern_last++ = static_cast<char>(analysis::WildcardTokenizer::kBoundary);
     make_parts(pattern_first, pattern_last);
   }
   if (parts.empty()) {

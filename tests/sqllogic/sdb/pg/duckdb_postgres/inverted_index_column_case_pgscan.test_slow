@@ -32,7 +32,7 @@ INSERT INTO pg_${__DATABASE__}.iipgcase_docs.articles VALUES
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY iipgcase_en(template = 'keyword', frequency = true, norm = true, position = true);
+CREATE TEXT SEARCH DICTIONARY iipgcase_en AS keyword() WITH (frequency, position, norm);
 
 
 statement ok
@@ -40,7 +40,7 @@ CREATE VIEW iipgcase_v AS SELECT id AS I, body AS Body, tag AS Tag FROM pg_${__D
 
 
 statement ok
-CREATE INDEX iipgcase_idx ON iipgcase_v USING inverted ((ts_split_by_non_alpha(Body, true)) iipgcase_en) INCLUDE (Tag);
+CREATE INDEX iipgcase_idx ON iipgcase_v USING inverted ((split_by_non_alpha(Body, case := 'lower')) iipgcase_en) INCLUDE (Tag);
 
 
 query
@@ -52,7 +52,7 @@ anchin reads manga every weekend
 pudge plays again in a ranked match
 
 query
-SELECT I, Tag, Body FROM iipgcase_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'pudge' ORDER BY I;
+SELECT I, Tag, Body FROM iipgcase_idx WHERE split_by_non_alpha(Body, case := 'lower') @@ 'pudge' ORDER BY I;
 ----
 i	tag	body
 1	gameplay	pudge goes mid and dominates the lane

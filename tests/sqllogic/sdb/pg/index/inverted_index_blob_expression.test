@@ -7,7 +7,7 @@
 # expression carrying the same logical value must both be searchable.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY blob_kw(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY blob_kw AS keyword();
 
 
 # --- BLOB column-side index (works today) ---------------------------------

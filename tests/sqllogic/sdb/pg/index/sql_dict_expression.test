@@ -5,9 +5,9 @@ control substitution on
 # expression tokenizes the result. Updates to any referenced column reindex.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY row_sql(template = 'sql',
-    expression = 'regexp_split_to_array(lower(input), ''\W+'')',
-    frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY row_sql AS
+    regexp_split_to_array(lower($1), '\W+')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE articles(pk INTEGER PRIMARY KEY, title TEXT, body TEXT);
@@ -206,12 +206,12 @@ pk
 statement ok
 DROP TABLE nullcat CASCADE;
 
-# the dictionary expression itself sees only the pseudo-column `input`;
+# the dictionary expression itself sees only its input $1;
 # referencing a table column there is rejected at dictionary creation
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sql_badcol(template = 'sql',
-    expression = 'lower(name) || input');
+CREATE TEXT SEARCH DICTIONARY sql_badcol AS
+    sql('lower(name) || $1');
 
 statement ok
 DROP TEXT SEARCH DICTIONARY row_sql;

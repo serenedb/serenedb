@@ -9,7 +9,7 @@ control substitution on
 # remains blocked and CASCADE still drops the index.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY clickclack_dict AS keyword();
 
 
 statement ok

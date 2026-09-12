@@ -50,12 +50,15 @@ class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr std::string_view type_name() noexcept { return "stopwords"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "remove_stopwords";
+  }
 
   explicit StopwordsTokenizer(
     duckdb::shared_ptr<const StopwordSet> stopwords) noexcept;
   TokenTraits Traits() const noexcept final {
-    return {.unique = true, .offsets = true, .stable = true};
+    return {
+      .unique = true, .offsets = true, .stable = true, .keeps_ascii = true};
   }
 
   template<TokenLayout Layout, typename Sink>

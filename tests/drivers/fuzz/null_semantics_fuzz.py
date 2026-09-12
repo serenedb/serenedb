@@ -41,7 +41,7 @@ def setup(port, rng):
     ddl = f"""
 DROP TABLE IF EXISTS fz;
 DROP TEXT SEARCH DICTIONARY IF EXISTS fz_kw;
-CREATE TEXT SEARCH DICTIONARY fz_kw(template='keyword');
+CREATE TEXT SEARCH DICTIONARY fz_kw AS keyword();
 CREATE TABLE fz(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
                 pad VARCHAR NOT NULL);
 CREATE INDEX fz_idx ON fz USING inverted(id, kw fz_kw, num, pad fz_kw)

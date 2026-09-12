@@ -7,12 +7,12 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wd_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY wd_kw AS keyword()
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wd_tx(template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY wd_tx AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)

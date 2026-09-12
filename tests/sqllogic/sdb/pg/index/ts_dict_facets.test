@@ -31,7 +31,7 @@ SET refresh_interval = 0
 # VACUUM (REFRESH_TABLE).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fct_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY fct_kw AS keyword()
 
 statement ok
 CREATE TABLE ft(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
@@ -573,13 +573,9 @@ z	1
 # IsKeywordField gate forces the document-scan fallback; groups are whole
 # column values with row-exact counts.
 statement ok
-CREATE TEXT SEARCH DICTIONARY fct_tx(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY fct_tx AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE ftx(id INTEGER PRIMARY KEY, descr VARCHAR NOT NULL)
@@ -634,13 +630,9 @@ QUERY PLAN
 # is counted against the matched doc set, so the facet stays filter-exact
 # without materializing rows.
 statement ok
-CREATE TEXT SEARCH DICTIONARY fct_body(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY fct_body AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE ffw(id INTEGER PRIMARY KEY, scope VARCHAR NOT NULL, body VARCHAR NOT NULL)
@@ -1347,7 +1339,7 @@ statement ok
 CREATE TABLE fex(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR NOT NULL)
 
 statement ok
-CREATE INDEX fex_idx ON fex USING inverted((lower(cat)) fct_kw, (ts_split_by_non_alpha(body, true)) fct_body)
+CREATE INDEX fex_idx ON fex USING inverted((lower(cat)) fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
     WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
@@ -1361,7 +1353,7 @@ VACUUM (REFRESH_TABLE) fex;
 
 query TI
 SELECT lower(cat) AS lc, count(*) AS n FROM fex_idx
-WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+WHERE split_by_non_alpha(body, case := 'lower') @@ 'alpha'
 GROUP BY lower(cat) ORDER BY lc
 ----
 lc	n
@@ -1369,34 +1361,35 @@ red	2
 
 query
 EXPLAIN SELECT lower(cat) AS lc, count(*) AS n FROM fex_idx
-WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+WHERE split_by_non_alpha(body, case := 'lower') @@ 'alpha'
 GROUP BY lower(cat)
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────╮
-│ Projections:                                 │
-│ sdb_inverted_index_term$lower(cat),          │
-│ CAST(#1 AS BIGINT)                           │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ HASH_GROUP_BY ───────┴──────────────────────╮
-│ Groups: #0                                   │
-│ Aggregates: sum(#1)                          │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
-│ Index: fex_idx                               │
-│ Index Filter:                                │
-│ ╭─ Term ───────────────────────────────────╮ │
-│ │ Field: ts_split_by_non_alpha(body, true) │ │
-│ │ Value: alpha                             │ │
-│ ╰──────────────────────────────────────────╯ │
-│ TsDict: lower(cat)                           │
-│ Projections:                                 │
-│ sdb_inverted_index_term$lower(cat),          │
-│ sdb_inverted_index_term_count$lower(cat)     │
-│ ~2 rows                                      │
-╰──────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ sdb_inverted_index_term$lower(cat),             │
+│ CAST(#1 AS BIGINT)                              │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ────────┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: sum(#1)                             │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: fex_idx                                  │
+│ Index Filter:                                   │
+│ ╭─ Term ──────────────────────────────────────╮ │
+│ │ Field:                                      │ │
+│ │ split_by_non_alpha(body, "case" := 'lower') │ │
+│ │ Value: alpha                                │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ TsDict: lower(cat)                              │
+│ Projections:                                    │
+│ sdb_inverted_index_term$lower(cat),             │
+│ sdb_inverted_index_term_count$lower(cat)        │
+│ ~2 rows                                         │
+╰─────────────────────────────────────────────────╯
 
 # The indexed expression projected by a subquery directly over the scan
 # (no WHERE in between) converts too.
@@ -1441,7 +1434,7 @@ CREATE TABLE fes(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
                  body VARCHAR NOT NULL)
 
 statement ok
-CREATE INDEX fes_idx ON fes USING inverted(lc fct_kw, (ts_split_by_non_alpha(body, true)) fct_body)
+CREATE INDEX fes_idx ON fes USING inverted(lc fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
     WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
@@ -1455,7 +1448,7 @@ VACUUM (REFRESH_TABLE) fes;
 
 query TI
 SELECT lc, count(*) AS n FROM fes_idx
-WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+WHERE split_by_non_alpha(body, case := 'lower') @@ 'alpha'
 GROUP BY lc ORDER BY lc
 ----
 lc	n
@@ -1463,33 +1456,34 @@ red	2
 
 query
 EXPLAIN SELECT lc, count(*) AS n FROM fes_idx
-WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+WHERE split_by_non_alpha(body, case := 'lower') @@ 'alpha'
 GROUP BY lc
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────╮
-│ Projections: sdb_inverted_index_term$lc,     │
-│              CAST(#1 AS BIGINT)              │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ HASH_GROUP_BY ───────┴──────────────────────╮
-│ Groups: #0                                   │
-│ Aggregates: sum(#1)                          │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
-│ Index: fes_idx                               │
-│ Index Filter:                                │
-│ ╭─ Term ───────────────────────────────────╮ │
-│ │ Field: ts_split_by_non_alpha(body, true) │ │
-│ │ Value: alpha                             │ │
-│ ╰──────────────────────────────────────────╯ │
-│ TsDict: lc                                   │
-│ Projections:                                 │
-│ sdb_inverted_index_term$lc,                  │
-│ sdb_inverted_index_term_count$lc             │
-│ ~2 rows                                      │
-╰──────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections: sdb_inverted_index_term$lc,        │
+│              CAST(#1 AS BIGINT)                 │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ────────┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: sum(#1)                             │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: fes_idx                                  │
+│ Index Filter:                                   │
+│ ╭─ Term ──────────────────────────────────────╮ │
+│ │ Field:                                      │ │
+│ │ split_by_non_alpha(body, "case" := 'lower') │ │
+│ │ Value: alpha                                │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ TsDict: lc                                      │
+│ Projections:                                    │
+│ sdb_inverted_index_term$lc,                     │
+│ sdb_inverted_index_term_count$lc                │
+│ ~2 rows                                         │
+╰─────────────────────────────────────────────────╯
 
 # Expression keys join grouping sets as the single nullable key.
 statement ok
@@ -1667,7 +1661,7 @@ QUERY PLAN
 # converts to a term-dictionary scan, and an indexed-expression WHERE claims
 # into the document filter exactly as for a table-backed index.
 statement ok
-CREATE TEXT SEARCH DICTIONARY fvw_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY fvw_kw AS keyword()
 
 statement ok
 CREATE TABLE fvw_base(id INTEGER PRIMARY KEY, sev VARCHAR, body VARCHAR NOT NULL)
@@ -1683,7 +1677,7 @@ statement ok
 CREATE VIEW fvw AS SELECT id, sev AS SeverityText, body AS Body FROM fvw_base
 
 statement ok
-CREATE INDEX fvw_idx ON fvw USING inverted((ts_split_by_non_alpha(Body, true)) fvw_kw, SeverityText fvw_kw)
+CREATE INDEX fvw_idx ON fvw USING inverted((split_by_non_alpha(Body, case := 'lower')) fvw_kw, SeverityText fvw_kw)
     WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
@@ -1691,7 +1685,7 @@ VACUUM (REFRESH_TABLE) fvw_base;
 
 query TI
 SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
-WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+WHERE split_by_non_alpha(Body, case := 'lower') @@ ts_any(['error', 'failed'])
 GROUP BY SeverityText ORDER BY n DESC, sev
 ----
 sev	n
@@ -1701,36 +1695,37 @@ NULL	1
 
 query
 EXPLAIN SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
-WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+WHERE split_by_non_alpha(Body, case := 'lower') @@ ts_any(['error', 'failed'])
 GROUP BY SeverityText
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────╮
-│ Projections:                                 │
-│ sdb_inverted_index_term$severitytext,        │
-│ CAST(#1 AS BIGINT)                           │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ HASH_GROUP_BY ───────┴──────────────────────╮
-│ Groups: #0                                   │
-│ Aggregates: sum(#1)                          │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
-│ Index: fvw_idx                               │
-│ Index Filter:                                │
-│ ╭─ Or ─────────────────────────────────────╮ │
-│ ╰─────────────────────┬────────────────────╯ │
-│ ╭─ Terms ─────────────┴────────────────────╮ │
-│ │ Field: ts_split_by_non_alpha(body, true) │ │
-│ │ Values: 'error', 'failed'                │ │
-│ ╰──────────────────────────────────────────╯ │
-│ TsDict: severitytext                         │
-│ Projections:                                 │
-│ sdb_inverted_index_term$severitytext,        │
-│ sdb_inverted_index_term_count$severitytext   │
-│ ~2 rows                                      │
-╰──────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ sdb_inverted_index_term$severitytext,           │
+│ CAST(#1 AS BIGINT)                              │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ────────┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: sum(#1)                             │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: fvw_idx                                  │
+│ Index Filter:                                   │
+│ ╭─ Or ────────────────────────────────────────╮ │
+│ ╰──────────────────────┬──────────────────────╯ │
+│ ╭─ Terms ──────────────┴──────────────────────╮ │
+│ │ Field:                                      │ │
+│ │ split_by_non_alpha(body, "case" := 'lower') │ │
+│ │ Values: 'error', 'failed'                   │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ TsDict: severitytext                            │
+│ Projections:                                    │
+│ sdb_inverted_index_term$severitytext,           │
+│ sdb_inverted_index_term_count$severitytext      │
+│ ~2 rows                                         │
+╰─────────────────────────────────────────────────╯
 
 query TI
 SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx

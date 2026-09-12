@@ -626,7 +626,9 @@ bench_server() {
 	# Seed the shared fixtures. The text-search dictionary is created EARLY so
 	# the indexed-write group below can build its inverted index on it.
 	"${PSQL[@]}" \
-		-c "CREATE TEXT SEARCH DICTIONARY bench_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);" \
+		-c "CREATE TEXT SEARCH DICTIONARY bench_dict AS
+		    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+		    WITH (frequency, position);" \
 		-c "CREATE TABLE bench_ins (id BIGINT PRIMARY KEY, v BIGINT, pad TEXT);" \
 		-c "CREATE TABLE bench_upd (id INTEGER PRIMARY KEY, v BIGINT);" \
 		-c "INSERT INTO bench_upd SELECT x, 0 FROM generate_series(1, 100000) t(x);" \

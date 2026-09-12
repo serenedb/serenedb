@@ -57,7 +57,9 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "norm"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "normalize_tokens";
+  }
 
   explicit NormalizingTokenizer(Options options);
 
@@ -65,6 +67,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     return {
       .unique = true,
       .offsets = true,
+      .keeps_ascii = _case_path != CasePath::Icu,
     };
   }
 

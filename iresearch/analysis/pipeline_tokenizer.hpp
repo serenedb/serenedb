@@ -157,6 +157,9 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
 
     void SetAscii(bool ascii) noexcept { _ascii = ascii; }
 
+    // Whether ascii-ness survives the head and this link's filters.
+    void SetAsciiPreservation(bool keeps) noexcept { _keeps_ascii = keeps; }
+
     void BindColumn(const duckdb::UnifiedVectorFormat& fmt,
                     const duckdb::string_t* data, doc_id_t first_doc) noexcept {
       _sel = fmt.sel;
@@ -265,6 +268,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     uint32_t _src_run = 0;
     uint32_t _src_run_end = 0;
     bool _ascii = false;
+    bool _keeps_ascii = false;
     bool _in_dense;
     bool _child_dense;
     bool _stable;

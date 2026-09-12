@@ -37,7 +37,9 @@ class PatternTokenizer : private util::Noncopyable {
     int group = -1;
   };
 
-  static constexpr std::string_view type_name() noexcept { return "pattern"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "split_by_pattern";
+  }
   static Tokenizer::ptr Make(Options opts);
   static delim::Finder Detect(std::string_view pattern, int group = -1);
 };

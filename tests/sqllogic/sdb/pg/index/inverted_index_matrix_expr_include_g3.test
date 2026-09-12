@@ -1,11 +1,11 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY kw_dict AS keyword();
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
-    coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict AS
+    encode_geojson(coding := 's2point');
 
 
 # ============================================================================

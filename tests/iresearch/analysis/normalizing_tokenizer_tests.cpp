@@ -41,7 +41,7 @@ class NormalizingTokenizerTests : public ::testing::Test {};
 }  // namespace
 
 TEST_F(NormalizingTokenizerTests, consts) {
-  static_assert("norm" ==
+  static_assert("normalize_tokens" ==
                 irs::Type<irs::analysis::NormalizingTokenizer>::name());
 }
 

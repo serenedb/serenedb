@@ -8,13 +8,8 @@ statement ok
 CREATE TABLE test_levenshtein (a INTEGER PRIMARY KEY, b VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
 CREATE INDEX test_levenshtein_idx ON test_levenshtein USING inverted(a, b test_english);

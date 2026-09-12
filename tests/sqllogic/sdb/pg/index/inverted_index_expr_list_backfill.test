@@ -4,9 +4,8 @@
 # dependent column and tokenize each element of the evaluated list).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict(
-    template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS
+    keyword();
 
 statement ok
 CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);

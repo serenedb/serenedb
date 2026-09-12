@@ -1,33 +1,33 @@
 ---
-title: "wildcard"
+title: "generate_wildcard_ngrams"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# wildcard
+# generate_wildcard_ngrams
 
-The `wildcard` template indexes text for wildcard and prefix matching.
+The `generate_wildcard_ngrams` template indexes text for wildcard and prefix matching.
 
-It wraps an inner tokenizer to split the input into terms, then emits boundary-marked character n-grams of each term so that `LIKE`-style patterns can be answered from the index instead of by a full scan. Each term is wrapped in one marker byte at each end before the grams are cut, so a leading-anchored prefix and a trailing-anchored suffix stay distinguishable from a match in the middle of a term. The template also stores the terms it saw, and a candidate the grams select is re-checked against that stored copy whenever the grams alone cannot decide the pattern, so a match is exact rather than gram-approximate. For plain substring search over code and logs, [`sparse_ngram`](./sparse-ngram.md) is usually the better fit.
+It wraps an inner tokenizer to split the input into terms, then emits boundary-marked character n-grams of each term so that `LIKE`-style patterns can be answered from the index instead of by a full scan. Each term is wrapped in one marker byte at each end before the grams are cut, so a leading-anchored prefix and a trailing-anchored suffix stay distinguishable from a match in the middle of a term. The template also stores the terms it saw, and a candidate the grams select is re-checked against that stored copy whenever the grams alone cannot decide the pattern, so a match is exact rather than gram-approximate. For plain substring search over code and logs, [`generate_sparse_ngrams`](./sparse-ngram.md) is usually the better fit.
 
 ## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `NGRAMSIZE` | integer | `3` | Gram length in codepoints, measured over the marker-wrapped term. Minimum `2` |
-| `TOKENIZER_TEMPLATE` | string | **required** | Template of the nested tokenizer that produces the terms |
-| `TOKENIZER_*` | — | — | Options for the nested tokenizer, each prefixed with `TOKENIZER_` |
+| `NGRAM_SIZE` | integer | `3` | Gram length in codepoints, measured over the marker-wrapped term. Minimum `2` |
 
-An `NGRAMSIZE` below `2` is rejected with `"ngramsize" must be at least 2`; there is no upper bound. `TOKENIZER_TEMPLATE` is required for a new dictionary — omitting it gives `required parameter "template" was not found` — but [`copy_from`](./copy-from.md) inherits `NGRAMSIZE` and the whole nested tokenizer from the source dictionary. The template supports the `FREQUENCY` and `POSITION` [feature flags](./index.md#feature-flags), with `POSITION` requiring `FREQUENCY`; `NORM` and `OFFSET` are rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: <mask>`.
+The nested tokenizer is the first argument and `NGRAM_SIZE` the second: `generate_wildcard_ngrams(split_text_csv(' '), 3)`.
+
+An `NGRAM_SIZE` below `2` is rejected with `"ngram_size" must be at least 2`; there is no upper bound. The nested tokenizer is required for a new dictionary — `generate_wildcard_ngrams(3)` fails with `generate_wildcard_ngrams() requires a nested analyzer as its first argument`. The template supports the `FREQUENCY` and `POSITION` [feature flags](./index.md#feature-flags), with `POSITION` requiring `FREQUENCY`; `NORM` and `OFFSET` are rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: <mask>`.
 
 ## Tokenization
 
-The nested tokenizer (selected with `TOKENIZER_TEMPLATE` and configured through its `TOKENIZER_`-prefixed options) first splits the input into terms. Every term is then wrapped in a single marker byte (`0xFF`) at each end, and windows of `NGRAMSIZE` codepoints slide across the wrapped term one codepoint at a time. Each window spans `NGRAMSIZE` codepoints or stops at the trailing marker, whichever comes first, so the last gram of a term is two symbols long. A term yields exactly one gram more than it has codepoints.
+The nested tokenizer, the first argument, first splits the input into terms. Every term is then wrapped in a single marker byte (`0xFF`) at each end, and windows of `NGRAM_SIZE` codepoints slide across the wrapped term one codepoint at a time. Each window spans `NGRAM_SIZE` codepoints or stops at the trailing marker, whichever comes first, so the last gram of a term is two symbols long. A term yields exactly one gram more than it has codepoints.
 
-Writing the marker as `⟨M⟩`, with `NGRAMSIZE = 3` the term `search` yields `⟨M⟩se`, `sea`, `ear`, `arc`, `rch`, `ch⟨M⟩` and `h⟨M⟩`, and `cat` yields `⟨M⟩ca`, `cat`, `at⟨M⟩` and `t⟨M⟩`. The marker byte is part of the gram text, so the boundary grams of a term are not valid UTF-8 — these grams are an internal representation rather than something you inspect with `ts_lexize`, and you query them indirectly through `LIKE`-style patterns.
+Writing the marker as `⟨M⟩`, with `NGRAM_SIZE = 3` the term `search` yields `⟨M⟩se`, `sea`, `ear`, `arc`, `rch`, `ch⟨M⟩` and `h⟨M⟩`, and `cat` yields `⟨M⟩ca`, `cat`, `at⟨M⟩` and `t⟨M⟩`. The marker byte is part of the gram text, so the boundary grams of a term are not valid UTF-8 — these grams are an internal representation rather than something you inspect with `ts_lexize`, and you query them indirectly through `LIKE`-style patterns.
 
-Gram lengths always count codepoints, whatever the nested tokenizer is; there is no `INPUTTYPE` option here. Input that is not valid UTF-8 is not rejected: symbol boundaries fall back to a lead-byte walk. The wildcard layer changes no bytes of its own, so all case, accent and normalization behaviour belongs to the nested tokenizer. Alongside the grams the template stores the encoded term stream of the value; a value whose nested tokenizer produced no terms emits no tokens and stores nothing.
+Gram lengths always count codepoints, whatever the nested tokenizer is; there is no `INPUT_TYPE` option here. Input that is not valid UTF-8 is not rejected: symbol boundaries fall back to a lead-byte walk. The wildcard layer changes no bytes of its own, so all case, accent and normalization behaviour belongs to the nested tokenizer. Alongside the grams the template stores the encoded term stream of the value; a value whose nested tokenizer produced no terms emits no tokens and stores nothing.
 
 ## Searching
 
@@ -41,8 +41,13 @@ A **prefix** pattern is anchored to the start of a term:
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/wildcard/example_002" />
 
+The same dictionary in the expression form, indexing a second table:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/wildcard/example_003" />
+
 ## See also
 
 - [sparse_ngram](./sparse-ngram.md) — compact substring search over code and logs
 - [ngram](./ngram.md) — fixed-length character n-grams
+- [`generate_wildcard_ngrams()`](../../functions/search/tokenizers.md#generate_wildcard_ngrams) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

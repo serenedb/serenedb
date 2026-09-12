@@ -248,9 +248,10 @@ fi
 # Console reporter, not `-r junit`: Catch2 v2 allows exactly one reporter, and
 # the junit one both suppresses the per-failure detail that makes this log
 # worth reading and counts every skipped test as a failure. Nothing in CI
-# parses the XML, so the log is the artifact.
-"$UNITTEST" "${args[@]}" "$spec" >"$log" 2>&1
-rc=$?
+# parses the XML, so the log is the artifact. Streamed through tee so the
+# per-test progress shows up while the suites run, not 6000 lines at the end.
+"$UNITTEST" "${args[@]}" "$spec" 2>&1 | tee "$log"
+rc=${PIPESTATUS[0]}
 
 # A spec that matches nothing exits 0, which would turn a typo'd filter (or an
 # extension whose tests stopped being registered) into a silent pass.
@@ -259,7 +260,6 @@ if grep -qE '^No tests ran|No test cases matched' "$log"; then
 	rc=1
 fi
 
-cat "$log"
 echo "===== [duckdb] END (rc=$rc) ====="
 
 echo

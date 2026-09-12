@@ -1,0 +1,133 @@
+# Overlay results whose dimension is not the dimension of either input, verified
+# identical on SereneDB and reference PostgreSQL + PostGIS 3.6.
+#
+# spatial_geometry_ops.test checks that each overlay function works. This file
+# checks the cases where the answer drops a dimension -- two crossing lines meet
+# in a point, two polygons sharing an edge meet in a line -- plus the degenerate
+# envelopes and boundaries that go with them.
+#
+# Results are compared with ST_Equals or a numeric property, never ST_AsText:
+# WKT spacing and ST_GeometryType spelling both diverge.
+
+# --- intersection drops to a lower dimension ---
+
+query
+SELECT ST_Equals(ST_Intersection('LINESTRING(0 0,4 4)'::geometry, 'LINESTRING(0 4,4 0)'::geometry),
+                 'POINT(2 2)'::geometry) AS crossing_lines,
+       ST_Equals(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((4 0,8 0,8 4,4 4,4 0))'::geometry),
+                 'LINESTRING(4 0,4 4)'::geometry) AS shared_edge,
+       ST_Equals(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'LINESTRING(-1 2,5 2)'::geometry),
+                 'LINESTRING(0 2,4 2)'::geometry) AS polygon_clips_line,
+       ST_Equals(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry),
+                 'POINT(1 1)'::geometry) AS polygon_keeps_point;
+----
+crossing_lines	shared_edge	polygon_clips_line	polygon_keeps_point
+t	t	t	t
+
+query
+SELECT ST_Area(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry)) AS overlap_area,
+       ST_IsEmpty(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((9 9,10 9,10 10,9 10,9 9))'::geometry)) AS disjoint_is_empty;
+----
+overlap_area	disjoint_is_empty
+4	t
+
+# --- union, difference, symmetric difference ---
+#
+# Subtracting a line from a polygon removes no area, so the polygon comes back
+# whole rather than sliced.
+
+query
+SELECT ST_Area(ST_Union('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry)) AS union_area,
+       ST_NumGeometries(ST_Union('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((9 9,11 9,11 11,9 11,9 9))'::geometry)) AS disjoint_parts,
+       ST_Area(ST_Difference('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry)) AS difference_area,
+       ST_Area(ST_Difference('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'LINESTRING(0 2,4 2)'::geometry)) AS minus_line_area,
+       ST_Area(ST_SymDifference('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry)) AS symdifference_area;
+----
+union_area	disjoint_parts	difference_area	minus_line_area	symdifference_area
+28	2	12	16	24
+
+# --- distance and the geometries that carry it ---
+
+query
+SELECT ST_Distance('POINT(0 0)'::geometry, 'POINT(3 4)'::geometry) AS between_points,
+       ST_Distance('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS point_inside,
+       ST_Distance('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(6 0)'::geometry) AS point_outside,
+       ST_DWithin('POINT(0 0)'::geometry, 'POINT(3 4)'::geometry, 5) AS within_5,
+       ST_DWithin('POINT(0 0)'::geometry, 'POINT(3 4)'::geometry, 4.9) AS within_4_9;
+----
+between_points	point_inside	point_outside	within_5	within_4_9
+5	0	2	t	f
+
+query
+SELECT ST_Equals(ST_ClosestPoint('LINESTRING(0 0,4 0)'::geometry, 'POINT(2 5)'::geometry),
+                 'POINT(2 0)'::geometry) AS closest,
+       ST_Equals(ST_ShortestLine('LINESTRING(0 0,4 0)'::geometry, 'POINT(2 5)'::geometry),
+                 'LINESTRING(2 0,2 5)'::geometry) AS shortest,
+       ST_Length(ST_ShortestLine('LINESTRING(0 0,4 0)'::geometry, 'POINT(2 5)'::geometry)) AS shortest_length;
+----
+closest	shortest	shortest_length
+t	t	5
+
+# --- envelopes collapse when the extent is degenerate ---
+#
+# A point has no width or height and a vertical line has no width, so neither
+# envelope is a polygon.
+
+query
+SELECT ST_Equals(ST_Envelope('LINESTRING(0 0,4 4)'::geometry), 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS diagonal_line,
+       ST_NPoints(ST_Envelope('POINT(1 1)'::geometry)) AS point_envelope,
+       ST_NPoints(ST_Envelope('LINESTRING(0 0,0 4)'::geometry)) AS vertical_envelope;
+----
+diagonal_line	point_envelope	vertical_envelope
+t	1	2
+
+# --- boundary ---
+#
+# A polygon with a hole has two boundary rings, an open line has two endpoints,
+# and a closed line has no boundary at all.
+
+query
+SELECT ST_NumGeometries(ST_Boundary('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'::geometry)) AS ring_count,
+       ST_NPoints(ST_Boundary('LINESTRING(0 0,4 4)'::geometry)) AS line_endpoints,
+       ST_IsEmpty(ST_Boundary('LINESTRING(0 0,4 0,4 4,0 0)'::geometry)) AS closed_line;
+----
+ring_count	line_endpoints	closed_line
+2	2	t
+
+# --- hull, buffer, simplify, repeated points ---
+#
+# ST_Buffer counts segments per quarter circle, so a coarser count gives a
+# visibly smaller area: at 2 the unit circle is an inscribed octagon. The areas
+# are compared against a tolerance rather than rounded, because casting to
+# `numeric` does not carry the same scale on both engines.
+
+query
+SELECT ST_Area(ST_ConvexHull('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::geometry)) AS hull_area,
+       ST_Equals(ST_ConvexHull('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::geometry), 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS hull_shape,
+       abs(ST_Area(ST_Buffer('POINT(0 0)'::geometry, 1, 8)) - 3.121445) < 0.000001 AS buffer_8,
+       abs(ST_Area(ST_Buffer('POINT(0 0)'::geometry, 1, 2)) - 2.828427) < 0.000001 AS buffer_2;
+----
+hull_area	hull_shape	buffer_8	buffer_2
+16	t	t	t
+
+query
+SELECT ST_NPoints(ST_Simplify('LINESTRING(0 0,1 0.01,2 0,3 0.01,4 0)'::geometry, 0.5)) AS coarse,
+       ST_NPoints(ST_Simplify('LINESTRING(0 0,1 0.01,2 0,3 0.01,4 0)'::geometry, 0.001)) AS fine,
+       ST_NPoints(ST_RemoveRepeatedPoints('LINESTRING(0 0,0 0,1 1,1 1,2 2)'::geometry)) AS deduped,
+       ST_Intersects('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, ST_PointOnSurface('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry)) AS on_surface;
+----
+coarse	fine	deduped	on_surface
+2	5	3	t
+
+# --- validity ---
+
+query
+SELECT ST_IsValid('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS valid_square,
+       ST_IsValid('POLYGON((0 0,4 4,4 0,0 4,0 0))'::geometry) AS bowtie,
+       ST_IsSimple('LINESTRING(0 0,4 4)'::geometry) AS simple_line,
+       ST_IsSimple('LINESTRING(0 0,4 4,0 4,4 0)'::geometry) AS self_crossing,
+       ST_IsRing('LINESTRING(0 0,4 0,4 4,0 0)'::geometry) AS closed_ring,
+       ST_IsRing('LINESTRING(0 0,4 4)'::geometry) AS open_line;
+----
+valid_square	bowtie	simple_line	self_crossing	closed_ring	open_line
+t	f	t	f	t	f

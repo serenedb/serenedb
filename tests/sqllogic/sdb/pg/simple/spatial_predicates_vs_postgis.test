@@ -1,0 +1,29 @@
+# Where SereneDB's spatial predicates do NOT match PostGIS. Everything portable
+# lives in any/pg/geometry/ instead -- this file is the short list of gaps.
+#
+# 1. ST_WithinProperly does not exist in PostGIS at all. It is duckdb-spatial's
+#    name for the argument-swapped ST_ContainsProperly.
+#
+# The gaps that come with the Boost.Geometry backend -- GEOMETRYCOLLECTION
+# arguments, dropped Z/M, and mixed-dimension set operations -- live in
+# spatial_boost_divergence.test instead, because they only appear once
+# SPATIAL_USE_BOOST is on.
+
+# --- ST_WithinProperly: ours only ---
+#
+# Same answers as ST_ContainsProperly with the arguments swapped.
+
+query
+SELECT ST_WithinProperly('POINT(1 1)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS inside,
+       ST_WithinProperly('POINT(0 0)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS on_boundary,
+       ST_WithinProperly('POINT(9 9)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS outside;
+----
+inside	on_boundary	outside
+t	f	f
+
+query
+SELECT ST_WithinProperly('POLYGON((1 1,3 1,3 3,1 3,1 1))'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS nested,
+       ST_WithinProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS itself;
+----
+nested	itself
+t	f

@@ -1,0 +1,138 @@
+# Boundary cases for the spatial predicates, verified identical on SereneDB and
+# reference PostgreSQL + PostGIS 3.6.
+#
+# spatial_predicates.test asserts one clear-cut answer per predicate. This file
+# covers the cases where predicates disagree with each other -- a point on a
+# boundary, a shared edge, a shape against itself -- because those are what a
+# wrong DE-9IM mask gets wrong while the obvious cases still pass.
+
+# --- point on the boundary vs point in the interior ---
+#
+# The whole difference between Contains and Covers lives here: the corner point
+# is "in" the polygon for Covers/CoveredBy but not for Contains/Within.
+
+query
+SELECT ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(0 0)'::geometry) AS contains,
+       ST_Covers('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(0 0)'::geometry) AS covers,
+       ST_Within('POINT(0 0)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS within,
+       ST_CoveredBy('POINT(0 0)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS coveredby,
+       ST_Touches('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(0 0)'::geometry) AS touches,
+       ST_ContainsProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(0 0)'::geometry) AS properly;
+----
+contains	covers	within	coveredby	touches	properly
+f	t	f	t	t	f
+
+query
+SELECT ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS contains,
+       ST_Covers('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS covers,
+       ST_Touches('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS touches,
+       ST_ContainsProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS properly;
+----
+contains	covers	touches	properly
+t	t	f	t
+
+# --- a shape against itself ---
+#
+# Contains is reflexive, ContainsProperly is not: the shared boundary disqualifies it.
+
+query
+SELECT ST_Equals('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS equals,
+       ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS contains,
+       ST_ContainsProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS properly,
+       ST_Overlaps('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS overlaps;
+----
+equals	contains	properly	overlaps
+t	t	f	f
+
+# --- polygons sharing only an edge ---
+#
+# Touching is not overlapping: the shared edge has no interior in common.
+
+query
+SELECT ST_Touches('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((4 0,8 0,8 4,4 4,4 0))'::geometry) AS touches,
+       ST_Overlaps('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((4 0,8 0,8 4,4 4,4 0))'::geometry) AS overlaps,
+       ST_Intersects('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((4 0,8 0,8 4,4 4,4 0))'::geometry) AS intersects,
+       ST_Disjoint('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((4 0,8 0,8 4,4 4,4 0))'::geometry) AS disjoint;
+----
+touches	overlaps	intersects	disjoint
+t	f	t	f
+
+# --- genuinely overlapping polygons ---
+
+query
+SELECT ST_Overlaps('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry) AS overlaps,
+       ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry) AS contains,
+       ST_Touches('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry) AS touches;
+----
+overlaps	contains	touches
+t	f	f
+
+# --- a hole is not inside ---
+
+query
+SELECT ST_Intersects('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,6 2,6 6,2 6,2 2))'::geometry, 'POINT(4 4)'::geometry) AS intersects,
+       ST_Contains('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,6 2,6 6,2 6,2 2))'::geometry, 'POINT(4 4)'::geometry) AS contains,
+       ST_Disjoint('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,6 2,6 6,2 6,2 2))'::geometry, 'POINT(4 4)'::geometry) AS disjoint,
+       ST_Contains('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,6 2,6 6,2 6,2 2))'::geometry, 'POINT(1 1)'::geometry) AS contains_ring;
+----
+intersects	contains	disjoint	contains_ring
+f	f	t	t
+
+# --- lines: crossing, touching, contained ---
+#
+# Two lines meeting at a single point cross but do not overlap: overlapping
+# needs a shared piece of the same dimension as the inputs.
+
+query
+SELECT ST_Crosses('LINESTRING(0 0,4 4)'::geometry, 'LINESTRING(0 4,4 0)'::geometry) AS crosses,
+       ST_Overlaps('LINESTRING(0 0,4 4)'::geometry, 'LINESTRING(0 4,4 0)'::geometry) AS overlaps,
+       ST_Intersects('LINESTRING(0 0,4 4)'::geometry, 'LINESTRING(0 4,4 0)'::geometry) AS intersects;
+----
+crosses	overlaps	intersects
+t	f	t
+
+query
+SELECT ST_Crosses('LINESTRING(1 1,3 3)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS inside,
+       ST_Crosses('LINESTRING(2 2,9 9)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS leaving,
+       ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'LINESTRING(1 1,3 3)'::geometry) AS contains_line;
+----
+inside	leaving	contains_line
+f	t	t
+
+# --- multi-part geometries ---
+#
+# Containment is answered against the whole geometry, not the first part.
+
+query
+SELECT ST_Contains('MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((5 5,9 5,9 9,5 9,5 5)))'::geometry, 'POINT(7 7)'::geometry) AS second_part,
+       ST_Within('MULTIPOINT(1 1,7 7)'::geometry, 'MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((5 5,9 5,9 9,5 9,5 5)))'::geometry) AS both_parts,
+       ST_Within('MULTIPOINT(1 1,20 20)'::geometry, 'MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((5 5,9 5,9 9,5 9,5 5)))'::geometry) AS one_outside;
+----
+second_part	both_parts	one_outside
+t	t	f
+
+# --- empty geometries ---
+#
+# An empty geometry intersects nothing, including itself, but is equal to
+# another empty of the same type.
+
+query
+SELECT ST_Intersects('POLYGON EMPTY'::geometry, 'POINT(1 1)'::geometry) AS intersects,
+       ST_Disjoint('POLYGON EMPTY'::geometry, 'POINT(1 1)'::geometry) AS disjoint,
+       ST_Contains('POLYGON EMPTY'::geometry, 'POINT(1 1)'::geometry) AS contains,
+       ST_Intersects('LINESTRING EMPTY'::geometry, 'POINT(1 1)'::geometry) AS empty_line,
+       ST_Equals('POLYGON EMPTY'::geometry, 'POLYGON EMPTY'::geometry) AS equals_empty;
+----
+intersects	disjoint	contains	empty_line	equals_empty
+f	t	f	f	t
+
+# --- disjoint shapes ---
+
+query
+SELECT ST_Disjoint('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(9 9)'::geometry) AS disjoint,
+       ST_Intersects('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(9 9)'::geometry) AS intersects,
+       ST_Touches('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(9 9)'::geometry) AS touches,
+       ST_Equals('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(9 9)'::geometry) AS equals;
+----
+disjoint	intersects	touches	equals
+t	f	f	f

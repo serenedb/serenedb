@@ -45,13 +45,13 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 
-#include "basics/system-compiler.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
 namespace duckdb {

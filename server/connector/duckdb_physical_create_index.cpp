@@ -41,11 +41,12 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/primary_key.hpp"
-#include "basics/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -65,12 +66,11 @@
 #include "connector/view_fast_path.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -633,7 +633,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
       &catalog::InvertedInfo(*gstate.index_for_providers)});
   if (!TableOrNull()) {
     lstate->search_trx->SetTickSource([](uint64_t count) {
-      return search::TickDomain::Instance().Advance(count);
+      return search::TickDomain::Instance().Next(count);
     });
   }
 
@@ -821,7 +821,7 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
       auto& trx = *lstate->search_trx;
       trx.RegisterFlush();
       committed = trx.FlushAndCommit(
-        search::TickDomain::Instance().Advance(trx.GetQueries() + 1));
+        search::TickDomain::Instance().Next(trx.GetQueries() + 1));
     }
     lstate->search_trx.reset();
     if (committed) {
@@ -866,7 +866,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
                   [&](size_t i) { return delete_log[i]; });
       trx.RegisterFlush();
       const auto last_tick =
-        search::TickDomain::Instance().Advance(delete_log.size() + 1);
+        search::TickDomain::Instance().Next(delete_log.size() + 1);
       if (!trx.Commit(last_tick)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),

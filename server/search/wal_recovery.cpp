@@ -32,17 +32,17 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
 #include <ranges>
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -112,7 +112,7 @@ void InitInvertedIndexes() {
   // since the last checkpoint. No table rebuild -- recovery cost is O(WAL),
   // not O(table).
   std::vector<std::pair<ObjectId, ObjectId>> tables_to_finish;
-  containers::FlatHashSet<ObjectId> seen_tables;
+  irs::containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 
@@ -185,7 +185,7 @@ void InitInvertedIndexes() {
   // One scratch connection resolves the store entries; FinishReplay commits
   // each index's streamed delta into the storage. Entry resolution goes
   // through the connection's transaction, so an explicit one must be active.
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally end_txn = [&] noexcept {
     try {
@@ -200,7 +200,7 @@ void InitInvertedIndexes() {
   // The replay commits each delta into the storage's writer, but the query
   // snapshot only advances on a refresh -- force one per index so recovered
   // rows are searchable the instant the server accepts queries.
-  containers::FlatHashMap<ObjectId, std::shared_ptr<InvertedIndexStorage>>
+  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<InvertedIndexStorage>>
     storage_by_index;
   storage_by_index.reserve(recovering_storages.size());
   for (const auto& storage : recovering_storages) {

@@ -29,20 +29,18 @@
 #include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/number_of_cores.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -50,6 +48,8 @@
 #include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
@@ -141,7 +141,7 @@ template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= sdb::StaticStrings::kSearchRoot;
+  path /= irs::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }
@@ -153,7 +153,7 @@ SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
     // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
     // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
     auto& fs = duckdb::FileSystem::GetFileSystem(
-      sdb::DuckDBEngine::Instance().instance());
+      irs::DuckDBEngine::Instance().instance());
     auto wal_dir = GetPersistedPath(database_id) / "wal";
     it = _db_wals
            .emplace(database_id,

@@ -30,12 +30,12 @@
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/serializer.h"
 #include "catalog/entry.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 
@@ -118,7 +118,7 @@ void Features::Validate(std::string_view type) const {
 }
 
 bool IsGeoTokenizer(std::string_view type) noexcept {
-  static const containers::FlatHashSet<std::string_view> kGeoTokenizers = {
+  static const irs::containers::FlatHashSet<std::string_view> kGeoTokenizers = {
     irs::analysis::GeoJsonTokenizer::type_name(),
     irs::analysis::GeoPointTokenizer::type_name(),
   };

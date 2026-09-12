@@ -73,7 +73,7 @@
 // comparable with the older ones, only ratios within one run are.
 //
 // boost is a bench-side experiment only -- it is deliberately not linked into
-// libs/iresearch. Adopting boost::unordered in dict/ would need a CMake change.
+// iresearch. Adopting boost::unordered in dict/ would need a CMake change.
 //
 // Pin to one core on a quiet box:
 //   taskset -c N ./build_perf/bin/serenedb-bench-micro-word_bloom \
@@ -179,15 +179,14 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <iresearch/analysis/text/dict/string_table.hpp>
+#include <iresearch/analysis/text/term_view.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <random>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "basics/containers/flat_hash_set.h"
-#include "iresearch/analysis/text/dict/string_table.hpp"
-#include "iresearch/analysis/text/term_view.hpp"
 
 namespace {
 
@@ -958,7 +957,7 @@ class RefTable {
 
   duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
   std::vector<Entry> _entries;
-  sdb::containers::FlatHashSet<Ref, RefHashEq<Entry>, RefHashEq<Entry>> _map;
+  irs::containers::FlatHashSet<Ref, RefHashEq<Entry>, RefHashEq<Entry>> _map;
 };
 
 struct LongKey {

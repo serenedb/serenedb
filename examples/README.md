@@ -1,9 +1,9 @@
 <div>
 
 <picture align=left>
-    <source media="(prefers-color-scheme: dark)" srcset="../resources/images/sdb-examples-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="../resources/images/sdb-examples-light.svg">
-    <img alt="The SereneDB Examples logo." src="../resources/images/sdb-examples-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="../resources/images/examples-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../resources/images/examples-light.svg">
+    <img alt="The SereneDB Examples logo." src="../resources/images/examples-light.svg">
 </picture>
 
 [![Star Us](https://img.shields.io/badge/⭐-Star%20Us-9865e8?style=for-the-badge)](https://github.com/serenedb/serenedb)
@@ -41,3 +41,24 @@ psql -h <host> -p <port> -U serenedb -d postgres -f <demo>/demo.sql
 >
 
 If you don't have a SereneDB server running yet, check the [downloads page](https://serenedb.com/download).
+
+## IResearch C++ examples
+
+[IResearch](../iresearch) is the search engine behind every demo above. These
+programs drive it directly through its C++ API -- they build an in-memory index
+and query it in-process, so no server and no dataset are needed.
+
+| | What it shows |
+|---|---|
+| [basic.cpp](iresearch/basic.cpp) | The core workflow end to end: open a directory and index writer, define fields, index documents into both the inverted index and columnstore, then parse Lucene-syntax queries and run them as a count and as a BM25 top-K |
+| [text_filters.cpp](iresearch/text_filters.cpp) | The advanced text filters built by hand rather than through the parser -- `ByPhrase`, `ByNGramSimilarity`, `ByRegexp`, `ByWildcard`, `ByEditDistance` -- each against the same corpus so you can compare what they match |
+| [geo.cpp](iresearch/geo.cpp) | S2-based geospatial search: index GeoJSON points with the geojson analyzer, then run a shape `Intersects` filter against a polygon and a distance filter against a center and radius |
+
+Build them with the aggregate target and run from the build directory:
+
+```bash
+cd build && ninja iresearch-examples
+./bin/iresearch-example-basic
+./bin/iresearch-example-text-filters
+./bin/iresearch-example-geo
+```

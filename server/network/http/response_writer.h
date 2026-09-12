@@ -23,15 +23,15 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <iresearch/utils/debugging.hpp>
 #include <optional>
 #include <string_view>
 #include <utility>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "basics/debugging.h"
-#include "basics/message_buffer.h"
 #include "network/http/common.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network::http {
 

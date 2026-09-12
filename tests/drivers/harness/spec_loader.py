@@ -116,7 +116,7 @@ def conn_kwargs() -> dict[str, Any]:
         "host": os.environ.get("SDB_DRV_HOST", "localhost"),
         "port": int(os.environ.get("SDB_DRV_PORT", "5432")),
         # Default DB/user match the SereneDB defaults (postgres/postgres,
-        # see libs/basics/static_strings.h kDefaultDatabase/kDefaultUser).
+        # see iresearch/utils/static_strings.hpp kDefaultDatabase/kDefaultUser).
         "dbname": os.environ.get("SDB_DRV_DATABASE", "postgres"),
         "user": os.environ.get("SDB_DRV_USER", "postgres"),
     }

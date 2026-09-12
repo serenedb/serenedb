@@ -21,16 +21,16 @@
 #include "pg/pg_catalog/pg_authid.h"
 
 #include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/static_strings.hpp>
 
-#include "app/app_server.h"
-#include "basics/down_cast.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {

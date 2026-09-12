@@ -26,6 +26,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -33,8 +35,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/index.h"
 #include "catalog/scorer_options.h"
@@ -46,11 +46,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
-namespace sdb::basics {
+namespace sdb::utils {
 
 class JsonSink;
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils
 namespace sdb {
 namespace catalog {
 
@@ -136,11 +136,11 @@ class Index {
     return _referenced_columns_set.contains(id);
   }
 
-  virtual containers::FlatHashSet<ObjectId> GetTokenizers() const = 0;
+  virtual irs::containers::FlatHashSet<ObjectId> GetTokenizers() const = 0;
 
   std::string_view Comment() const noexcept { return _comment; }
 
-  virtual void WriteJson(basics::JsonSink& sink) const = 0;
+  virtual void WriteJson(utils::JsonSink& sink) const = 0;
 
   // What the kind reads back on its own, inside the record's payload.
   virtual void SerializePayload(duckdb::Serializer& sink) const = 0;
@@ -149,13 +149,14 @@ class Index {
   struct DerivedColumnIds {
     std::vector<ColumnId> columns;
     std::vector<ColumnId> referenced_columns;
-    containers::FlatHashSet<ColumnId> referenced_columns_set;
+    irs::containers::FlatHashSet<ColumnId> referenced_columns_set;
   };
 
   Index(ObjectId schema_id, ObjectId id, ObjectId relation_id,
         std::string_view name, std::string comment, DerivedColumnIds derived);
 
-  static std::pair<std::vector<ColumnId>, containers::FlatHashSet<ColumnId>>
+  static std::pair<std::vector<ColumnId>,
+                   irs::containers::FlatHashSet<ColumnId>>
   DedupColumns(std::span<const ColumnId> columns);
 
   // `extra_deps` are columns referenced by the index beyond its keys and
@@ -185,7 +186,7 @@ class Index {
 
   std::vector<ColumnId> _columns;
   std::vector<ColumnId> _referenced_columns;
-  containers::FlatHashSet<ColumnId> _referenced_columns_set;
+  irs::containers::FlatHashSet<ColumnId> _referenced_columns_set;
   std::string _name;
   std::string _comment;
   ObjectId _id;

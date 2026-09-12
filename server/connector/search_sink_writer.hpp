@@ -31,15 +31,14 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/primary_key.hpp"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
@@ -48,6 +47,7 @@
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
 #include "search_remove_filter.hpp"
+#include "server/utils/primary_key.h"
 
 namespace duckdb {
 
@@ -293,7 +293,7 @@ class SearchSinkInsertBaseImpl {
 
   TokenizerProvider _tokenizer_provider;
   EntryInfoProvider _entry_info_provider;
-  containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
+  irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
   Field _pk_field;
   Field _field;
@@ -301,7 +301,8 @@ class SearchSinkInsertBaseImpl {
   irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
-  containers::FlatHashMap<irs::field_id, irs::ColumnWriter*> _column_writers;
+  irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
+    _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
   PkPolicy _pk_policy;
   std::vector<IndexedExpression> _indexed_expressions;
@@ -398,7 +399,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 
  private:
-  containers::FlatHashSet<catalog::ColumnId> _indexed;
+  irs::containers::FlatHashSet<catalog::ColumnId> _indexed;
 };
 
 class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,

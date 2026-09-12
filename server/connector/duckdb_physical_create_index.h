@@ -24,9 +24,9 @@
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <optional>
 
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
@@ -192,7 +192,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // carry them by construction. The bind hook upgrades every create to the
   // subclass, so this never fails.
   const SereneDBCreateIndexInfo& Info() const noexcept {
-    return basics::downCast<const SereneDBCreateIndexInfo>(*_info);
+    return irs::utils::downCast<const SereneDBCreateIndexInfo>(*_info);
   }
   using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
   bool IsReindexPass() const noexcept {

@@ -1,0 +1,85 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/store/store_utils.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
+namespace irs::tests {
+
+struct StringField final {
+  std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
+
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
+
+  bool Write(irs::DataOutput& out) const {
+    irs::WriteStr(out, value);
+    return true;
+  }
+
+  irs::IndexFeatures GetIndexFeatures() const noexcept {
+    return irs::IndexFeatures::None;
+  }
+
+  mutable irs::KeywordTokenizer stream;
+  std::string_view value;
+  std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
+};
+
+struct GeoField final {
+  std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
+
+  irs::analysis::Tokenizer& GetTokens() const { return *stream; }
+
+  std::string_view Value() const noexcept { return value; }
+
+  // Source coding force-includes the indexed source column, so the stored
+  // value is the original GeoJSON text the filter re-parses at query time.
+  bool Write(irs::DataOutput& out) const {
+    if (!value.empty()) {
+      out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
+                    value.size());
+    }
+    return true;
+  }
+
+  irs::IndexFeatures GetIndexFeatures() const noexcept {
+    return irs::IndexFeatures::None;
+  }
+
+  mutable irs::analysis::Tokenizer::ptr stream{
+    irs::analysis::GeoJsonTokenizer::Make(
+      irs::analysis::GeoJsonTokenizer::Options{})};
+  std::string_view value;
+  std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
+};
+
+}  // namespace irs::tests

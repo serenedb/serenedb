@@ -24,13 +24,12 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>
-
-#include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "pg/sql_exception_macro.h"
 
 namespace duckdb {
 
@@ -161,7 +160,7 @@ class Config {
   // native DuckDB setting names forwarded from PhysicalSet), so we cannot
   // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
-  containers::NodeHashMap<std::string, TxnVariable> _transaction;
+  irs::containers::NodeHashMap<std::string, TxnVariable> _transaction;
   duckdb::ClientContext& _client_ctx;
 };
 

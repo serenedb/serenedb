@@ -33,8 +33,13 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <mutex>
 #include <shared_mutex>
@@ -42,21 +47,16 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
-#include "basics/log.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/scorer_options.h"
-#include "pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -341,7 +341,7 @@ void SearchTable::OpenWriter() {
   // TODO(Dronplane): for now we rely on rocksdb (still present) lock
   // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;
-  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
+  writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   if (_topk_scorer) {
     writer_options.reader_options.scorer = _topk_scorer.get();

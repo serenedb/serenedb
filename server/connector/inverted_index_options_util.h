@@ -24,11 +24,11 @@
 
 #include <array>
 #include <duckdb/common/types/value.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string_view>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::connector {

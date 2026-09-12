@@ -3,7 +3,7 @@
 WORKDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/..
 cd "$WORKDIR"
 
-BUILD_H="${WORKDIR}/build/libs/basics/build.h"
+BUILD_H="${WORKDIR}/build/server/utils/build.h"
 
 if [[ ! -f "$BUILD_H" ]]; then
 	echo "Error: $BUILD_H not found. Run cmake build first." >&2

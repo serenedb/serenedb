@@ -38,12 +38,14 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <type_traits>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -53,8 +55,6 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/search_analyzer_impl.h"
 
@@ -80,7 +80,7 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto if_not_exists = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
+  auto name = pg::ParseObjectName(dict_name, irs::StaticStrings::kPublic);
   pg::CreateTokenizer(conn_ctx, name.relation, name.schema, if_not_exists,
                       params.named_parameters);
 }
@@ -103,7 +103,7 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
 
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
+  auto name = pg::ParseObjectName(dict_name, irs::StaticStrings::kPublic);
 
   catalog::JoinStoreTransaction(&context);
   const auto database_id =

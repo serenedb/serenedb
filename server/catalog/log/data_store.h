@@ -25,10 +25,10 @@
 
 #include <atomic>
 #include <duckdb/main/connection.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/log/store.h"
 
 namespace sdb {
@@ -182,14 +182,14 @@ class DataStore {
   // its index builds run on, and an inverted-index injection asking for a bind
   // context -- and those do not share a lock, so the map needs its own.
   absl::Mutex _bind_mutex;
-  containers::FlatHashMap<ObjectId, BindContext> _bind_contexts
+  irs::containers::FlatHashMap<ObjectId, BindContext> _bind_contexts
     ABSL_GUARDED_BY(_bind_mutex);
   // The routing of _conn onto the statement's transaction, while a statement's
   // batch runs. Null on the boot / background path.
   StatementTransaction* _statement = nullptr;
   // The columns the running batch drops, for IsColumnDropInFlight. Filled for
   // the length of ExecuteStoreOps; empty outside one.
-  containers::FlatHashSet<ObjectId> _dropping_columns;
+  irs::containers::FlatHashSet<ObjectId> _dropping_columns;
   std::atomic<bool> _ready = false;
 };
 

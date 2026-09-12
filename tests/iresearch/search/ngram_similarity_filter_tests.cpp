@@ -1,0 +1,1496 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+///
+/// @author Andrei Lobov
+////////////////////////////////////////////////////////////////////////////////
+
+#include <functional>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/utils/ngram_match_utils.hpp>
+
+#include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
+#include "tests_shared.hpp"
+
+namespace tests {
+namespace {
+
+// Stable field id for the "field" column used by the fixtures throughout the
+// file. Sourced from `tests::FieldIdFor` so the shared JSON factories and
+// these tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kFieldFieldId =
+  tests::FieldIdFor("field");
+
+irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
+                                  const std::vector<std::string_view>& ngrams,
+                                  float_t threshold = 1.f,
+                                  bool allow_phrase = true) {
+  irs::ByNGramSimilarity filter;
+  *filter.mutable_field_id() = field_id;
+  auto* opts = filter.mutable_options();
+  for (auto& ngram : ngrams) {
+    opts->ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
+  }
+  opts->threshold = threshold;
+  opts->allow_phrase = allow_phrase;
+  return filter;
+}
+
+class CustomNGramScorer : public sort::CustomSort {
+ public:
+  using CustomSort::CustomSort;
+
+  irs::IndexFeatures GetIndexFeatures() const final {
+    return irs::IndexFeatures::Freq;
+  }
+};
+
+struct NGramAttrs {
+  const irs::FreqBlockAttr* freq = nullptr;
+  const irs::BoostBlockAttr* boost = nullptr;
+};
+
+void CaptureNGramAttrs(sort::CustomSort& scorer, NGramAttrs& attrs) {
+  scorer.prepare_scorer =
+    [&attrs](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    attrs.freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    attrs.boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    return irs::ScoreFunction::Constant(0.f);
+  };
+}
+
+irs::score_t GetFilterBoost(const NGramAttrs& attrs, tests::LeadCursor& doc) {
+  if (attrs.boost == nullptr) {
+    return irs::kNoBoost;
+  }
+  doc.FetchScoreArgs(0);
+  return attrs.boost->value[0];
+}
+
+}  // namespace
+
+TEST(ngram_similarity_base_test, options) {
+  irs::ByNGramSimilarityOptions opts;
+  ASSERT_TRUE(opts.ngrams.empty());
+  ASSERT_EQ(1.f, opts.threshold);
+}
+
+TEST(ngram_similarity_base_test, ctor) {
+  irs::ByNGramSimilarity q;
+  ASSERT_EQ(irs::Type<irs::ByNGramSimilarity>::id(), q.type());
+  ASSERT_EQ(irs::ByNGramSimilarityOptions{}, q.options());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
+
+  static_assert((irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) ==
+                irs::NGramSimilarityQuery::kRequiredFeatures);
+}
+
+TEST(ngram_similarity_base_test, equal) {
+  ASSERT_EQ(irs::ByNGramSimilarity(), irs::ByNGramSimilarity());
+
+  {
+    constexpr irs::field_id kFieldA = 1;
+    constexpr irs::field_id kFieldB = 2;
+    irs::ByNGramSimilarity q0 = MakeFilter(kFieldA, {"1", "2"}, 0.5f);
+    irs::ByNGramSimilarity q1 = MakeFilter(kFieldA, {"1", "2"}, 0.5f);
+    ASSERT_EQ(q0, q1);
+
+    // different threshold
+    irs::ByNGramSimilarity q2 = MakeFilter(kFieldA, {"1", "2"}, 0.25f);
+    ASSERT_NE(q0, q2);
+
+    // different terms
+    irs::ByNGramSimilarity q3 = MakeFilter(kFieldA, {"1", "3"}, 0.5f);
+    ASSERT_NE(q0, q3);
+
+    // different terms count (less)
+    irs::ByNGramSimilarity q4 = MakeFilter(kFieldA, {"1"}, 0.5f);
+    ASSERT_NE(q0, q4);
+
+    // different terms count (more)
+    irs::ByNGramSimilarity q5 = MakeFilter(kFieldA, {"1", "2", "2"}, 0.5f);
+    ASSERT_NE(q0, q5);
+
+    // different field
+    irs::ByNGramSimilarity q6 = MakeFilter(kFieldB, {"1", "2"}, 0.5f);
+    ASSERT_NE(q0, q6);
+  }
+}
+
+class NGramSimilarityFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(NGramSimilarityFilterTestCase, boost) {
+  // no boost
+  {
+    tests::JsonDocGenerator gen(
+      R"([{ "field": [ "1", "3", "4", "5", "6", "7", "2"] }])",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, rdr.size());
+  auto& segment = rdr[0];
+
+  {
+    MaxMemoryCounter counter;
+
+    // no terms no field
+    {
+      irs::ByNGramSimilarity q;
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_EQ(counter.max, 0);
+    counter.Reset();
+
+    // simple disjunction
+    {
+      irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+
+    // multiple terms
+    {
+      irs::ByNGramSimilarity q =
+        MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+  }
+
+  // with boost
+  {
+    MaxMemoryCounter counter;
+
+    irs::score_t boost = 1.5f;
+
+    // no terms, return empty query
+    {
+      irs::ByNGramSimilarity q;
+      q.SetBoost(boost);
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_EQ(counter.max, 0);
+    counter.Reset();
+
+    // simple disjunction
+    {
+      irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
+      q.SetBoost(boost);
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+
+    // multiple terms
+    {
+      irs::ByNGramSimilarity q =
+        MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+      q.SetBoost(boost);
+
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
+      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    }
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+  }
+}
+
+TEST_P(NGramSimilarityFilterTestCase, scored_one_ngram_present) {
+  // The query spells two ngrams and the segment holds one of them: a run of
+  // one, which is that term. Scored, so no lowering rule reaches it.
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"5\" ] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "9"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  tests::PreparedFilter prepared{filter, rdr, &sort};
+  irs::ColumnArgsFetcher fetcher;
+  auto docs = prepared.ExecuteScored(0, fetcher);
+  ASSERT_NE(nullptr, docs);
+  auto score_function = docs->PrepareScore();
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+  docs->FetchScoreArgs(0);
+  fetcher.Fetch(docs->Value());
+  irs::score_t value = 0;
+  score_function.Score(&value, 1);
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
+  // sequence 1 3 4 ______ 2 -> longest is 134 not 12
+  // add segment
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"3\", \"4\", \"5\", \"6\", "
+      "\"7\", \"2\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.75, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "134";
+      const std::string_view lhs = "1234";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
+  // sequence 1 1 2 2 3 3 4 4 -> longest is 1234  and freq should be 1 not 2 as
+  // this sequence could not be built twice one after another but only
+  // intereaved
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"1\", \"2\", \"2\", \"3\", "
+      "\"3\", \"4\", \"4\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "11223344";
+      const std::string_view lhs = "1234";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
+  // sequence 1 2 1 1 3 4 -> longest is 1234  not 134!
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"2\", \"1\", \"1\", \"3\", "
+      "\"4\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "121134";
+      const std::string_view lhs = "1234";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
+  // sequence 1 2 1 1 1 1 pattern 1 1 -> longest is 1 1 and frequency is 2
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"2\", \"1\", \"1\", \"1\", "
+      "\"1\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "121111";
+      const std::string_view lhs = "11";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(2, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
+  // sequence 1 2 1 2 1 2 1 2 1 2 1 2 1 2 1 pattern 1 2 1 -> longest is 1 2 1
+  // and frequency is 4
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"2\", \"1\", \"2\", \"1\", "
+      " \"2\", \"1\", \"2\", \"1\", \"2\", \"1\", \"2\", \"1\", \"2\", "
+      "\"1\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "1"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "121212121212121";
+      const std::string_view lhs = "121";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(4, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
+  // sequence 1 1 pattern 1 1 -> longest is 1 1 and frequency is 1
+  // checks seek for second term does not  skips it at all
+  {
+    tests::JsonDocGenerator gen("[{ \"seq\" : 1, \"field\": [ \"1\", \"1\"] }]",
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 1.0f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "11";
+      const std::string_view lhs = "11";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
+  // sequence 2 4 2 4 1 3 1 3 pattern 1 2 3 4-> longest is 1 3  and 2 4 but
+  // frequency is 2 as only first longest counted
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"2\", \"4\", \"2\", \"4\", \"1\", "
+      "\"3\", \"1\", \"3\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "24241313";
+      const std::string_view lhs = "1234";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(2, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
+  // sequence 1 2 3 4 pattern 1 5 6 2 -> longest is 1 2  and  boost 0.5
+  // as only first longest counted
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"2\", \"3\", \"4\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "5", "6", "2"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(attrs, *docs));
+      const std::string_view lhs = "1234";
+      const std::string_view rhs = "1562";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
+  // bulk pos read check (for future optimization)
+  // sequence 1 1 2 3 4 5 1  pattern 1 2 3 4 5 1 -> longest is 1 2 3 4 5 1   and
+  // boost 1 and frequency 1
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"1\", \"2\", \"3\", \"4\", "
+      "\"5\", \"1\"] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"1", "2", "3", "4", "5", "1"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      ASSERT_TRUE(bool(frequency));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "1123451";
+      const std::string_view lhs = "123451";
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(1, frequency->value[0]);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
+  // bulk pos read check (for future optimization)
+  // sequence '' pattern '' -> longest is ''   and  boost 1 and frequency 1
+  {
+    tests::JsonDocGenerator gen("[{ \"seq\" : 1, \"field\": [ \"\"] }]",
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  {
+    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      // ensure all iterators contain  attributes
+      EXPECT_TRUE(bool(frequency));
+      EXPECT_TRUE(!irs::doc_limits::eof(docs->Next()));
+      EXPECT_FALSE(irs::doc_limits::eof(docs->Value()));
+      EXPECT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
+      const std::string_view rhs = "";
+      const std::string_view lhs = "";
+      EXPECT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
+                       (irs::ngram_similarity<char, true>(
+                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      docs->FetchScoreArgs(0);
+      EXPECT_EQ(1, frequency->value[0]);
+      EXPECT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ++i;
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"ee", "we", "qq", "rr", "ff", "never_match"}, 0.1f);
+
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"ee", "ss", "pa", "rr"}, 0.5f);
+
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
+    }
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"ee", "ss", "qq", "rr", "ff", "never_match"}, 0.1f);
+
+  Docs expected{1, 3, 5, 6, 7, 8, 9, 10, 12};
+  const size_t expected_size = expected.size();
+  {
+    tests::PreparedFilter prepared{*tests::Optimized(std::move(filter)), rdr,
+                                   nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"at", "tl", "la", "as", "ll", "never_match"}, 0.5f);
+
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  const size_t expected_size = expected.size();
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  const size_t expected_size = expected.size();
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"at", "tl", "la", "as", "ll", "never_match"}, 0.33f);
+
+  Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+  const size_t expected_size = expected.size();
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId, {"at", "never_match", "la", "as", "ll"}, 0.333f);
+
+  Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14};
+  const size_t expected_size = expected.size();
+
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter =
+    MakeFilter(kFieldFieldId,
+               {"at", "never_match", "never_match2", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  const size_t expected_size = expected.size();
+
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId,
+    {"at", "never_match", "tl", "never_match2", "la", "as", "ll"}, 0.28f);
+
+  Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+  const size_t expected_size = expected.size();
+
+  {
+    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    size_t count = 0;
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+
+      while (!irs::doc_limits::eof(docs->Next())) {
+        expected.erase(
+          std::remove(expected.begin(), expected.end(), docs->Value()),
+          expected.end());
+        ++count;
+      }
+    }
+    ASSERT_EQ(expected_size, count);
+    ASSERT_EQ(0, expected.size());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+struct TestScoreFunctionImpl : public irs::ScoreOperator {
+  TestScoreFunctionImpl(std::vector<size_t>* f, const irs::FreqBlockAttr* p,
+                        std::vector<irs::score_t>* b,
+                        const irs::BoostBlockAttr* fb) noexcept
+    : freq(f), filter_boost(b), freq_from_filter(p), boost_from_filter(fb) {}
+
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
+    freq->push_back(freq_from_filter->value[0]);
+    filter_boost->push_back(boost_from_filter->value[0]);
+    std::memset(res, 0, n * sizeof(irs::score_t));
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+  }
+
+  std::vector<size_t>* freq;
+  std::vector<irs::score_t>* filter_boost;
+  const irs::FreqBlockAttr* freq_from_filter;
+  const irs::BoostBlockAttr* boost_from_filter;
+};
+
+TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"at", "tl", "la", "as", "ll", "never_match"}, 0.5f);
+
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
+  std::vector<size_t> frequency;
+  std::vector<irs::score_t> filter_boost;
+
+  irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
+  auto& scorer = static_cast<CustomNGramScorer&>(*order);
+
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
+  };
+  scorer.prepare_scorer =
+    [&frequency,
+     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
+  };
+  std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
+  std::vector<irs::score_t> expected_filter_boost{
+    4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
+  CheckQuery(*tests::Optimized(std::move(filter), order.get()),
+             std::span{&order, 1}, expected, rdr);
+  ASSERT_EQ(expected_frequency, frequency);
+  ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
+  for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
+    SCOPED_TRACE(testing::Message("i=") << i);
+    ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
+  }
+  ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
+  std::vector<size_t> frequency;
+  std::vector<irs::score_t> filter_boost;
+
+  irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
+  auto& scorer = static_cast<CustomNGramScorer&>(*order);
+
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
+  };
+  scorer.prepare_scorer =
+    [&frequency,
+     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
+  };
+  std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
+  std::vector<irs::score_t> expected_filter_boost{
+    4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
+  CheckQuery(*tests::Optimized(std::move(filter), order.get()),
+             std::span{&order, 1}, expected, rdr);
+  ASSERT_EQ(expected_frequency, frequency);
+  ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
+  for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
+    SCOPED_TRACE(testing::Message("i=") << i);
+    ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
+  }
+  ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::NormalizedStringJsonFieldFactory);
+
+    add_segment(gen, irs::kOmCreate, opts);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{11, 12, 8, 13, 5, 1, 2};
+
+  irs::Scorer::ptr scorer{std::make_unique<irs::TFIDF>(true)};
+
+  CheckQuery(filter, std::span{&scorer, 1}, expected, rdr);
+}
+
+TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::NormalizedStringJsonFieldFactory);
+
+    add_segment(gen, irs::kOmCreate, opts);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::Scorer::ptr scorers[] = {
+    std::make_unique<irs::TFIDF>(false),
+    std::make_unique<irs::TFIDF>(true),
+    std::make_unique<irs::BM25>(),
+    std::make_unique<irs::BM25>(0.F),                  // BM1
+    std::make_unique<irs::BM25>(irs::BM25::K(), 1.F),  // BM11
+    std::make_unique<irs::BM25>(irs::BM25::K(), 0.F),  // BM15
+  };
+
+  std::vector<irs::doc_id_t> ngram;
+  std::vector<irs::doc_id_t> phrase;
+  for (auto& scorer : scorers) {
+    irs::ByNGramSimilarity ngram_filter =
+      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, false);
+    irs::ByNGramSimilarity phrase_filter =
+      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, true);
+
+    MakeResult(ngram_filter, std::span{&scorer, 1}, rdr, ngram);
+    MakeResult(phrase_filter, std::span{&scorer, 1}, rdr, phrase);
+    EXPECT_EQ(ngram, phrase);
+  }
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::NormalizedStringJsonFieldFactory);
+
+    add_segment(gen, irs::kOmCreate, opts);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{11, 12, 13, 1, 2, 8, 5};
+
+  irs::Scorer::ptr scorer{std::make_unique<irs::TFIDF>(false)};
+
+  CheckQuery(filter, std::span{&scorer, 1}, expected, rdr);
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::NormalizedStringJsonFieldFactory);
+
+    add_segment(gen, irs::kOmCreate, opts);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{11, 12, 8, 13, 1, 5, 2};
+
+  irs::Scorer::ptr scorer{std::make_unique<irs::BM25>()};
+
+  CheckQuery(filter, std::span{&scorer, 1}, expected, rdr);
+}
+
+TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::NormalizedStringJsonFieldFactory);
+
+    add_segment(gen, irs::kOmCreate, opts);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+
+  Docs expected{11, 12, 13, 1, 2, 8, 5};
+
+  irs::Scorer::ptr bm15{std::make_unique<irs::BM25>(irs::BM25::K(), 0.f)};
+
+  CheckQuery(filter, std::span{&bm15, 1}, expected, rdr);
+}
+
+TEST_P(NGramSimilarityFilterTestCase, seek_next) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+  Docs expected{1, 2, 5, 8, 11, 12, 13};
+  auto expected_it = std::begin(expected);
+  {
+    tests::PreparedFilter prepared_filter{filter, rdr, nullptr, counter};
+    for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
+      auto docs = prepared_filter.Execute(i);
+      ASSERT_EQ(irs::doc_limits::invalid(), docs->Value());
+      while (!irs::doc_limits::eof(docs->Next())) {
+        ASSERT_EQ(docs->Value(), *expected_it);
+        // seek same
+        ASSERT_EQ(*expected_it, docs->Seek(*expected_it));
+        // seek backward
+        ASSERT_EQ(*expected_it, docs->Seek((*expected_it) - 1));
+        ++expected_it;
+        if (expected_it != std::end(expected)) {
+          // seek forward
+          ASSERT_EQ(*expected_it, docs->Seek(*expected_it));
+          ++expected_it;
+        }
+      }
+      ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
+      ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
+    }
+    ASSERT_EQ(expected_it, std::end(expected));
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, seek) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  MaxMemoryCounter counter;
+
+  irs::ByNGramSimilarity filter = MakeFilter(
+    kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
+  Docs seek_tagrets{2, 5, 8, 13};
+  auto seek_it = std::begin(seek_tagrets);
+  {
+    tests::PreparedFilter prepared_filter{filter, rdr, nullptr, counter};
+    for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
+      while (std::end(seek_tagrets) != seek_it) {
+        auto docs = prepared_filter.Execute(i);
+        ASSERT_EQ(irs::doc_limits::invalid(), docs->Value());
+        auto actual_seeked = docs->Seek(*seek_it);
+        if (actual_seeked == *seek_it) {
+          ASSERT_EQ(docs->Seek(*seek_it), *seek_it);
+          ASSERT_EQ(docs->Seek((*seek_it) - 1), *seek_it);
+          ++seek_it;
+        }
+        if (actual_seeked == irs::doc_limits::eof()) {
+          // go try next subreader
+          break;
+        }
+      }
+    }
+    ASSERT_EQ(std::end(seek_tagrets), seek_it);
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::ByNGramSimilarity ngram =
+    MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 0.5f);
+
+  auto collect = [&](const irs::Filter& filter) {
+    std::vector<irs::doc_id_t> out;
+    tests::PreparedFilter prepared{filter, rdr};
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
+      while (!irs::doc_limits::eof(docs->Next())) {
+        out.push_back(docs->Value());
+      }
+    }
+    return out;
+  };
+
+  const auto ngram_hits = collect(*tests::Optimized(ngram));
+  ASSERT_FALSE(ngram_hits.empty());
+
+  // Excluding needs something to exclude from: a node holding nothing but a
+  // negation has no include side and so matches nothing.
+  irs::BooleanFilter not_ngram;
+  not_ngram.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+  not_ngram.Add(std::make_unique<irs::ByNGramSimilarity>(ngram),
+                irs::Occur::MustNot);
+  auto not_ngram_opt = tests::Optimized(std::move(not_ngram));
+  const auto not_hits = collect(*not_ngram_opt);
+
+  // Complement must be non-empty and disjoint from the positive hits.
+  ASSERT_FALSE(not_hits.empty());
+  for (auto doc : ngram_hits) {
+    EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
+  }
+
+  tests::PreparedFilter prepared{*not_ngram_opt, rdr};
+  for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+    auto docs = prepared.Execute(i);
+    for (auto doc : ngram_hits) {
+      const auto target = doc + 1;
+      const auto landed = docs->Seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
+    }
+  }
+}
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NGramSimilarityFilterTestCase::to_string);
+
+}  // namespace tests

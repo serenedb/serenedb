@@ -27,13 +27,12 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/number_of_cores.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
@@ -45,6 +44,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -195,7 +195,7 @@ void Server::SetupAuth() {
 
   // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
   // they authenticate as the bootstrap superuser.
-  const std::string token_user{StaticStrings::kDefaultUser};
+  const std::string token_user{irs::StaticStrings::kDefaultUser};
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');
     if (colon == std::string::npos) {

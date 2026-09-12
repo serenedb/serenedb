@@ -36,8 +36,10 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -55,8 +57,6 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

@@ -1,0 +1,732 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+///
+/// @author Andrey Abramov
+////////////////////////////////////////////////////////////////////////////////
+
+#include <algorithm>
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
+#include <iresearch/search/detail/term_predicate.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/raw_boost.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/regexp_utils.hpp>
+
+#include "filter_test_case_base.hpp"
+#include "index/doc_generator.hpp"
+#include "tests_shared.hpp"
+
+namespace {
+
+// Stable field ids for the test fixtures. Field ids for real on-disk
+// columns must match `tests::FieldIdFor(<name>)` so writer (which routes
+// JSON factories via `FieldIdFor`) and reader (this file's lookups) agree.
+inline constexpr irs::field_id kFieldId = tests::FieldIdFor("field");
+inline constexpr irs::field_id kField1Id = tests::FieldIdFor("field1");
+inline constexpr irs::field_id kPrefixId = tests::FieldIdFor("prefix");
+inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
+inline constexpr irs::field_id kDuplicatedId = tests::FieldIdFor("duplicated");
+inline constexpr irs::field_id kFieldsSchemaId = tests::FieldIdFor("Fields");
+inline constexpr irs::field_id kInvalidFieldId = tests::FieldIdFor("invalid");
+inline constexpr irs::field_id kEmptyFieldId = irs::field_limits::invalid();
+
+irs::TermSetOptions MakeOptions(
+  const std::vector<std::pair<std::string_view, irs::score_t>>& terms,
+  size_t min_match = 1) {
+  irs::TermSetOptions options;
+  options.min_match = min_match;
+  for (auto& term : terms) {
+    options.terms.emplace(irs::ViewCast<irs::byte_type>(term.first),
+                          term.second);
+  }
+  return options;
+}
+
+irs::BooleanFilter MakeFilter(irs::field_id field,
+                              const irs::TermSetOptions& options) {
+  irs::BooleanFilter q;
+  q.SetMergeType(options.merge_type);
+  for (auto& term : options.terms) {
+    q.Add(
+      irs::TermClause{.field = field, .term = term.term, .boost = term.boost},
+      irs::Occur::Should);
+  }
+  // A threshold larger than the bucket can never be met, and `BooleanFilter`
+  // cannot hold one -- `SetMinShouldMatch` rejects it -- so what the caller
+  // asked for is the query that matches nothing.
+  if (options.min_match > options.terms.size()) {
+    q.Add(std::make_unique<irs::Empty>(), irs::Occur::Must);
+    return q;
+  }
+  // A threshold of none demands nothing of the optional bucket: its clauses
+  // only score, so the matching side has to say what it matches.
+  if (options.min_match == 0 && !options.terms.empty()) {
+    auto all = std::make_unique<irs::All>();
+    // It says what matches, not what anything is worth: the terms carry the
+    // whole score.
+    all->SetScorer(&irs::Unscored::Instance());
+    q.Add(std::move(all), irs::Occur::Must);
+  }
+  q.SetMinShouldMatch(static_cast<uint32_t>(options.min_match));
+  return q;
+}
+
+irs::BooleanFilter MakeFilter(
+  irs::field_id field,
+  const std::vector<std::pair<std::string_view, irs::score_t>>& terms,
+  size_t min_match = 1) {
+  return MakeFilter(field, MakeOptions(terms, min_match));
+}
+
+}  // namespace
+
+TEST(by_terms_test, options) {
+  irs::TermSetOptions opts;
+  ASSERT_TRUE(opts.terms.empty());
+}
+
+TEST(by_terms_test, ctor) {
+  irs::BooleanFilter q;
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), q.type());
+  ASSERT_EQ(0, q.Size(irs::Occur::Must));
+  ASSERT_EQ(0, q.Size(irs::Occur::Should));
+  ASSERT_EQ(0, q.Size(irs::Occur::MustNot));
+  ASSERT_EQ(0, q.MinShouldMatch());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
+}
+
+TEST(by_terms_test, equal) {
+  const irs::BooleanFilter q0 =
+    MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
+  const irs::BooleanFilter q1 =
+    MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
+  ASSERT_EQ(q0, q1);
+
+  const irs::BooleanFilter q2 =
+    MakeFilter(kField1Id, {{"bar", 0.5f}, {"baz", 0.25f}});
+  ASSERT_NE(q0, q2);
+
+  const irs::BooleanFilter q3 =
+    MakeFilter(kFieldId, {{"bar1", 0.5f}, {"baz", 0.25f}});
+  ASSERT_NE(q0, q3);
+
+  const irs::BooleanFilter q4 =
+    MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.5f}});
+  ASSERT_NE(q0, q4);
+
+  const irs::BooleanFilter q5 =
+    MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}}, 2);
+  ASSERT_NE(q0, q5);
+}
+
+class TermsFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(TermsFilterTestCase, boost) {
+  MaxMemoryCounter counter;
+
+  // no boost
+  {
+    irs::BooleanFilter q =
+      MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
+
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+  }
+  EXPECT_EQ(counter.current, 0);
+  counter.Reset();
+
+  // with boost
+  {
+    irs::score_t boost = 1.5f;
+
+    irs::BooleanFilter q =
+      MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
+    q.SetBoost(boost);
+    ASSERT_EQ(boost, q.GetBoost());
+
+    // A segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists.
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+  }
+  EXPECT_EQ(counter.current, 0);
+  counter.Reset();
+
+  // with boost
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+
+    auto rdr = open_reader();
+    ASSERT_EQ(1, rdr.size());
+
+    irs::score_t boost = 1.5f;
+
+    irs::BooleanFilter q =
+      MakeFilter(kDuplicatedId, {{"abcd", 0.5f}, {"vczc", 0.25f}});
+    q.SetBoost(boost);
+
+    tests::PreparedFilter prepared{q, *rdr, nullptr, counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+}
+
+TEST_P(TermsFilterTestCase, simple_sequential_order) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+
+  // empty prefix test collector call count for field/term/finish
+  {
+    const Docs docs{1, 21, 31, 32};
+    Costs costs{docs.size()};
+    size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
+
+    irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
+    auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
+
+    scorer->collectors_collect = [&](irs::byte_type*,
+                                     const irs::FieldCollector* field,
+                                     const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
+
+    const auto filter = MakeFilter(
+      kPrefixId, {{"abcd", 1.f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
+
+    CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, docs, rdr);
+    ASSERT_EQ(3, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
+  }
+
+  // check boost
+  {
+    const Docs docs{21, 31, 32, 1};
+    const Costs costs{docs.size()};
+    const auto filter = MakeFilter(
+      kPrefixId, {{"abcd", 0.5f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
+
+    irs::Scorer::ptr impl{std::make_unique<irs::RawBoost>()};
+    CheckQuery(filter, std::span{&impl, 1}, docs, rdr, true, true);
+  }
+
+  // check negative boost
+  {
+    const Docs docs{21, 31, 32, 1};
+    const Costs costs{docs.size()};
+
+    const auto filter = MakeFilter(
+      kPrefixId,
+      {{"abcd", -1.f}, {"abcd", 0.5f}, {"abc", 0.65}, {"abcy", 0.5f}});
+
+    irs::Scorer::ptr impl{std::make_unique<irs::RawBoost>()};
+    CheckQuery(filter, std::span{&impl, 1}, docs, rdr, true, true);
+  }
+}
+
+TEST_P(TermsFilterTestCase, simple_sequential) {
+  // add segment
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+  auto& segment = rdr[0];
+
+  // No terms at all is not a boolean with an unmeetable threshold, it is the
+  // empty query.
+  CheckQuery(irs::Empty{}, Docs{}, Costs{0}, rdr);
+
+  // empty field
+  CheckQuery(*tests::Optimized(MakeFilter(kEmptyFieldId, {{"xyz", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
+
+  // invalid field
+  CheckQuery(*tests::Optimized(MakeFilter(kInvalidFieldId, {{"xyz", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
+
+  // invalid term
+  CheckQuery(*tests::Optimized(MakeFilter(kSameId, {{"invalid_term", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
+
+  // no value requested to match -- which is the empty query, not a boolean
+  // holding a threshold no bucket can meet
+  CheckQuery(irs::Empty{}, Docs{}, Costs{0}, rdr);
+
+  // match all
+  {
+    Docs result(32);
+    std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
+    Costs costs{result.size()};
+    const auto options = MakeOptions({{"xyz", 1.f}});
+    CheckQuery(*tests::Optimized(MakeFilter(kSameId, options)), result, costs,
+               rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kSameId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(1, visitor.visit_calls_counter());
+    ASSERT_EQ(
+      (std::vector<std::pair<std::string_view, irs::score_t>>{{"xyz", 1.f}}),
+      visitor.term_refs<char>());
+  }
+
+  // match all
+  {
+    Docs result(32);
+    std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
+    Costs costs{result.size()};
+    const auto options = MakeOptions({{"invalid", 1.f}}, 0);
+    CheckQuery(*tests::Optimized(MakeFilter(kSameId, options)), result, costs,
+               rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kSameId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(0, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{}),
+              visitor.term_refs<char>());
+  }
+
+  // match all
+  {
+    Docs result(32);
+    std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
+    Costs costs{result.size()};
+    const auto options = MakeOptions({{"xyz", 1.f}, {"invalid_term", 0.5f}});
+    const auto filter = MakeFilter(kSameId, options);
+    CheckQuery(filter, result, costs, rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kSameId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(1, visitor.visit_calls_counter());
+    ASSERT_EQ(
+      (std::vector<std::pair<std::string_view, irs::score_t>>{{"xyz", 1.f}}),
+      visitor.term_refs<char>());
+  }
+
+  // match something
+  {
+    const Docs result{1, 21, 31, 32};
+    const Costs costs{result.size()};
+    const auto options =
+      MakeOptions({{"abcd", 1.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto filter = MakeFilter(kPrefixId, options);
+    CheckQuery(filter, result, costs, rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kPrefixId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(3, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+              visitor.term_refs<char>());
+  }
+
+  // duplicate terms are not allowed
+  {
+    const Docs result{1, 21, 31, 32};
+    const Costs costs{result.size()};
+    const auto options = MakeOptions(
+      {{"abcd", 1.f}, {"abcd", 0.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto filter = MakeFilter(kPrefixId, options);
+    CheckQuery(filter, result, costs, rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kPrefixId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(3, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+              visitor.term_refs<char>());
+  }
+
+  // test non existing term
+  {
+    const Docs result{1, 21, 31, 32};
+    const Costs costs{result.size()};
+    const auto options = MakeOptions(
+      {{"abcd", 1.f}, {"invalid_term", 0.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto filter = MakeFilter(kPrefixId, options);
+    CheckQuery(filter, result, costs, rdr);
+
+    // test visit
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kPrefixId);
+    ASSERT_NE(nullptr, reader);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(3, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+              visitor.term_refs<char>());
+  }
+}
+
+struct ScoreOperator : public irs::ScoreOperator {
+  ScoreOperator(const tests::DocBlockAttr* doc, irs::score_t boost) noexcept
+    : doc{doc}, boost{boost} {}
+
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    for (size_t i = 0; i < n; ++i) {
+      irs::Merge<MergeType>(res[i],
+                            static_cast<irs::score_t>(doc->value[i]) * boost);
+    }
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+  }
+  const tests::DocBlockAttr* doc;
+  irs::score_t boost;
+};
+
+TEST_P(TermsFilterTestCase, min_match) {
+  // write segments
+  auto writer = open_writer(irs::kOmCreate);
+
+  {
+    tests::JsonDocGenerator gen{resource("AdventureWorks2014.json"),
+                                &tests::GenericJsonFieldFactory};
+    add_segment(*writer, gen);
+  }
+  {
+    tests::JsonDocGenerator gen{resource("AdventureWorks2014Edges.json"),
+                                &tests::GenericJsonFieldFactory};
+    add_segment(*writer, gen);
+  }
+  {
+    tests::JsonDocGenerator gen{resource("Northwnd.json"),
+                                &tests::GenericJsonFieldFactory};
+    add_segment(*writer, gen);
+  }
+  {
+    tests::JsonDocGenerator gen{resource("NorthwndEdges.json"),
+                                &tests::GenericJsonFieldFactory};
+    add_segment(*writer, gen);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(4, rdr.size());
+
+  {
+    const auto& segment = rdr[0];
+    tests::EmptyFilterVisitor visitor;
+    const auto* reader = segment.field(kFieldsSchemaId);
+    ASSERT_NE(nullptr, reader);
+    const auto options =
+      MakeOptions({{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 1);
+    irs::VisitTermSet(segment, *reader, options, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(2, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"BusinessEntityID", 1.f}, {"StartDate", 1.f}}),
+              visitor.term_refs<char>());
+  }
+
+  {
+    const Docs result{4,  5,  6,  7,  19, 20, 21, 22, 25, 27, 28, 29,
+                      30, 34, 38, 46, 52, 53, 57, 62, 65, 69, 70};
+    const Costs costs{25, 0, 0, 0};
+    const auto filter = MakeFilter(
+      kFieldsSchemaId, {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 1);
+    CheckQuery(filter, result, costs, rdr);
+  }
+
+  {
+    const Docs result{21, 57};
+    // FIXME(gnusi): fix estimation, it's not accurate
+    const Costs costs{7, 0, 0, 0};
+    const auto filter = MakeFilter(
+      kFieldsSchemaId, {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 2);
+    CheckQuery(filter, result, costs, rdr);
+  }
+
+  {
+    const Docs result{21, 57};
+    // FIXME(gnusi): fix estimation, it's not accurate
+    const Costs costs{7, 0, 0, 0};
+    const auto filter = MakeFilter(
+      kFieldsSchemaId,
+      {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}, {"InvalidValue", 1.f}},
+      2);
+    CheckQuery(filter, result, costs, rdr);
+  }
+
+  {
+    const Docs result{};
+    const Costs costs{0, 0, 0, 0};
+    CheckQuery(
+      *tests::Optimized(MakeFilter(
+        kFieldsSchemaId, {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 3)),
+      result, costs, rdr);
+  }
+
+  {
+    const Docs result{};
+    const Costs costs{0, 0, 0, 0};
+    const auto filter = MakeFilter(kFieldsSchemaId,
+                                   {{"BusinessEntityID", 1.f},
+                                    {"StartDate", 1.f},
+                                    {"InvalidValue0", 1.f},
+                                    {"InvalidValue0", 1.f}},
+                                   3);
+    CheckQuery(filter, result, costs, rdr);
+  }
+
+  // empty prefix test collector call count for field/term/finish
+  {
+    ScoredDocs result(71);
+    for (irs::doc_id_t i = 0; auto& [doc, scores] : result) {
+      doc = ++i;
+      scores = {0.f};
+    }
+    for (const auto doc : {4,  5,  6,  7,  19, 20, 21, 22, 25, 27, 28, 29,
+                           30, 34, 38, 46, 52, 53, 57, 62, 65, 69, 70}) {
+      result[doc - 1].second = {1.f};
+    }
+    for (const auto doc : {21, 57}) {
+      result[doc - 1].second = {2.f};
+    }
+
+    const Costs costs{25, 0, 0, 0};
+    size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
+
+    irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
+    auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
+
+    scorer->collectors_collect = [&](irs::byte_type*,
+                                     const irs::FieldCollector* field,
+                                     const irs::TermCollector* term) -> void {
+      ++finish_count;
+      if (field) {
+        finish_docs_with_field += field->docs_with_field;
+      }
+      if (term) {
+        finish_docs_with_term += term->docs_with_term;
+      }
+    };
+    scorer->prepare_scorer =
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+      auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
+      if (!doc) {
+        return irs::ScoreFunction::Constant(ctx.boost);
+      }
+      return irs::ScoreFunction::Make<ScoreOperator>(doc, ctx.boost);
+    };
+
+    CheckQuery(*tests::Optimized(
+                 MakeFilter(kFieldsSchemaId,
+                            {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 0),
+                 impl.get()),
+               std::span{&impl, 1}, result, rdr[0]);
+    // The two terms, and nothing for the clause that says what matches: it
+    // is unscored, and an unscored node has no statistics to collect.
+    ASSERT_EQ(2, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
+  }
+}
+
+irs::bytes_view B(std::string_view value) {
+  return irs::ViewCast<irs::byte_type>(value);
+}
+
+std::vector<irs::bstring> DrainTerms(irs::TermIterator& it) {
+  std::vector<irs::bstring> terms;
+  while (it.next()) {
+    terms.emplace_back(it.value());
+  }
+  return terms;
+}
+
+std::vector<irs::bstring> AcceptedTerms(const irs::TermReader& reader,
+                                        const irs::TermPredicate& pred) {
+  std::vector<irs::bstring> terms;
+  auto it = reader.iterator();
+  while (it->next()) {
+    if (pred.Accepts(it->value())) {
+      terms.emplace_back(it->value());
+    }
+  }
+  return terms;
+}
+
+TEST_P(TermsFilterTestCase, compile_term_iterator_matches_predicate) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+  add_segment(gen);
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+  const auto* reader = rdr[0].field(kDuplicatedId);
+  ASSERT_NE(nullptr, reader);
+
+  const auto check = [&](const irs::Filter& filter, bool expect_nonempty) {
+    const auto pred = filter.CompileTermPredicate();
+    ASSERT_NE(nullptr, pred);
+    const auto expected = AcceptedTerms(*reader, *pred);
+    auto cursor = filter.CompileTermIterator(*reader);
+    ASSERT_NE(nullptr, cursor);
+    EXPECT_EQ(expected, DrainTerms(*cursor));
+    if (expect_nonempty) {
+      EXPECT_FALSE(expected.empty());
+    }
+  };
+
+  {
+    irs::ByTerm f;
+    *f.mutable_field_id() = kDuplicatedId;
+    f.mutable_options()->term = irs::bstring{B("abcd")};
+    check(f, true);
+    f.mutable_options()->term = irs::bstring{B("missing_term")};
+    check(f, false);
+  }
+  {
+    check(MakeFilter(kDuplicatedId,
+                     {{"abcd", 1.f}, {"vczc", 1.f}, {"missing_term", 1.f}}),
+          true);
+  }
+  {
+    irs::ByPrefix f;
+    *f.mutable_field_id() = kDuplicatedId;
+    f.mutable_options()->term = irs::bstring{B("a")};
+    check(f, true);
+  }
+  {
+    irs::ByRange f;
+    *f.mutable_field_id() = kDuplicatedId;
+    f.mutable_options()->range.min = irs::bstring{B("a")};
+    f.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+    f.mutable_options()->range.max = irs::bstring{B("w")};
+    f.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+    check(f, true);
+  }
+  {
+    auto dfa = irs::FromRegexp(std::string_view{"a.*|v.*"});
+    ASSERT_NE(0, dfa.NumStates());
+    irs::AutomatonFilter f;
+    *f.mutable_field_id() = kDuplicatedId;
+    *f.mutable_options() = irs::AutomatonOptions{std::move(dfa), B("a.*|v.*")};
+    check(f, true);
+  }
+}
+
+TEST_P(TermsFilterTestCase, levenshtein_iterator_boosts) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+  add_segment(gen);
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+  const auto* reader = rdr[0].field(kDuplicatedId);
+  ASSERT_NE(nullptr, reader);
+
+  irs::ByEditDistanceOptions options;
+  options.term = irs::bstring{B("abcd")};
+  options.max_distance = 1;
+  const auto lowered = irs::LowerLevenshtein(kDuplicatedId, options, 2.f);
+  ASSERT_NE(nullptr, lowered);
+
+  const auto pred = lowered->CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  const auto expected = AcceptedTerms(*reader, *pred);
+  EXPECT_FALSE(expected.empty());
+
+  auto cursor = lowered->CompileTermIterator(*reader);
+  ASSERT_NE(nullptr, cursor);
+  const auto* boost = irs::get<irs::TermBoost>(*cursor);
+  ASSERT_NE(nullptr, boost);
+  std::vector<irs::bstring> actual;
+  bool exact_scored_highest = false;
+  while (cursor->next()) {
+    actual.emplace_back(cursor->value());
+    EXPECT_GT(boost->value, 0.f);
+    EXPECT_LE(boost->value, 1.f);
+    if (cursor->value() == B("abcd")) {
+      exact_scored_highest = boost->value == 1.f;
+    }
+  }
+  EXPECT_EQ(expected, actual);
+  EXPECT_TRUE(exact_scored_highest);
+}
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(terms_filter_test, TermsFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         TermsFilterTestCase::to_string);

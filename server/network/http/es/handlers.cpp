@@ -710,7 +710,7 @@ class SearchHandler final : public HttpHandler {
     const auto rows = result->RowCount();
 
     // Fetch _source for just this page, by PK -- point lookups, not a scan.
-    containers::FlatHashMap<std::string, std::string> source_by_id;
+    irs::containers::FlatHashMap<std::string, std::string> source_by_id;
     if (spec.include_source && rows > 0) {
       std::string ids;
       for (duckdb::idx_t row = 0; row < rows; ++row) {
@@ -1233,7 +1233,7 @@ class MgetHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    containers::FlatHashMap<std::string, std::string> source_by_id;
+    irs::containers::FlatHashMap<std::string, std::string> source_by_id;
     source_by_id.reserve(result->RowCount());
     for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
       source_by_id.emplace(result->GetValue(0, row).GetValue<std::string>(),

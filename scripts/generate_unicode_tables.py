@@ -3,12 +3,12 @@
 
 Emits two checked-in headers consumed by the segmentation tokenizer:
 
-  libs/iresearch/include/iresearch/analysis/text/words/tables.hpp
+  iresearch/analysis/text/words/tables.hpp
     WbProp enum (19 classes), Extended_Pictographic flag, and a shift-8
     two-level lookup table (kWbStage1 u16 block ids over cp>>8, kWbStage2
     deduplicated 256-byte blocks). WbLookup(cp) is two dependent loads.
 
-  libs/iresearch/include/iresearch/utils/utf8_case_tables.hpp
+  iresearch/utils/utf8_case_tables.hpp
     Sorted {cp, to} pairs for simple (1:1, context-free) lower/upper case
     mappings from UnicodeData.txt fields 13/12, plus the generator-verified
     kSimpleCaseMaxUtf8Growth bound (UTF-8 byte growth per mapped codepoint).
@@ -217,7 +217,7 @@ def emit_word_break_tables(path, stage1, stage2, ucd_version):
     out.append("#pragma once\n")
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
-    out.append('#include "basics/shared.hpp"\n')
+    out.append('#include "iresearch/utils/shared.hpp"\n')
     out.append("namespace irs::analysis::words {\n")
     out.append(f"enum WbProp : uint8_t {{\n{enum_body}\n}};\n")
     out.append(f"inline constexpr uint8_t kWbPropMask = 0x1F;\n"
@@ -255,7 +255,7 @@ def emit_case_tables(path, lower, upper, growth, ucd_version):
     out.append("#pragma once\n")
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
-    out.append('#include "basics/shared.hpp"\n')
+    out.append('#include "iresearch/utils/shared.hpp"\n')
     out.append("namespace irs::utf8_utils {\n")
     out.append(
         "struct CaseMap {\n"
@@ -314,13 +314,12 @@ def main():
 
     ucd_version = parse_ucd_version(
         os.path.join(ucd_dir, "WordBreakProperty.txt"))
-    utils_dir = os.path.join(args.repo_root, "libs", "iresearch", "include",
-                             "iresearch", "utils")
+    utils_dir = os.path.join(args.repo_root, "iresearch", "utils")
 
     props = build_wb_props(ucd_dir)
     stage1, stage2 = dedup_blocks(props)
-    words_dir = os.path.join(args.repo_root, "libs", "iresearch", "include",
-                             "iresearch", "analysis", "text", "words")
+    words_dir = os.path.join(args.repo_root, "iresearch", "analysis", "text",
+                             "words")
     os.makedirs(words_dir, exist_ok=True)
     wb_bytes = emit_word_break_tables(
         os.path.join(words_dir, "tables.hpp"), stage1, stage2, ucd_version)

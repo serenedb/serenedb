@@ -26,25 +26,25 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "basics/containers/node_hash_map.h"
 #include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {
@@ -56,7 +56,7 @@ struct FilterContext {
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
   irs::analysis::Tokenizer& identity;
   irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;

@@ -33,19 +33,18 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serialization.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
-
-#include "basics/assert.h"
-#include "basics/log.h"
-#include "basics/serialization.h"
-#include "basics/serializer.h"
-#include "iresearch/formats/formats.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 namespace {
@@ -220,7 +219,7 @@ ParsedOp ParseOp(Cursor& c, ParseScratch& scratch) {
       duckdb::BinaryDeserializer deser{ms};
       deser.Begin();
       // Resizes the scratch and reads each element via SerdeRead on SegmentRef.
-      basics::ReadTuple(deser, scratch.segments);
+      irs::utils::ReadTuple(deser, scratch.segments);
       deser.End();
       op.segments = scratch.segments;
       break;
@@ -368,7 +367,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         duckdb::BinarySerializer serializer{tmp,
                                             duckdb::VersionStorageOptions()};
         serializer.Begin();
-        basics::WriteTuple(serializer, op.segments);
+        irs::utils::WriteTuple(serializer, op.segments);
         serializer.End();
         const auto len = static_cast<uint64_t>(tmp.GetPosition());
         payload.Write<uint64_t>(len);

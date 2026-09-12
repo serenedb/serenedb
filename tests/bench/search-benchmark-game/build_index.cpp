@@ -23,9 +23,9 @@
 #include <cstdio>
 #include <iostream>  // std::cin
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
-#include "basics/duckdb_engine.h"
 #include "executor.h"
 #include "index_builder.h"
 #include "insert_field.hpp"
@@ -37,7 +37,7 @@ int main(int argc, const char* argv[]) {
   // thread_local cache libc destroys *before* static dtors, so any
   // DuckDB instance whose lifetime extends into the static-dtor phase
   // trips heap-use-after-free.
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
     irs::timer_utils::InitStats(true);
@@ -98,6 +98,6 @@ int main(int argc, const char* argv[]) {
     exit_code = 1;
   }
   // MUST run before main() returns -- see comment at top of main().
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }

@@ -1,0 +1,2000 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <s2/s2point_region.h>
+#include <simdjson.h>
+
+#include <algorithm>
+#include <bit>
+#include <cstring>
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <memory>
+#include <optional>
+
+#include "geo_test_helpers.hpp"
+#include "tests_shared.hpp"
+
+using namespace irs;
+using namespace analysis;
+using namespace irs::geo;
+
+namespace irs::tests {
+
+template<typename Owner>
+inline irs::analysis::Tokenizer::ptr MakeAnalyzer(
+  typename Owner::Options opts) {
+  return Owner::Make(std::move(opts));
+}
+
+}  // namespace irs::tests
+namespace {
+
+class WkbBuilder {
+ public:
+  WkbBuilder& PutU8(uint8_t v) {
+    _buf.push_back(static_cast<char>(v));
+    return *this;
+  }
+  WkbBuilder& PutU32(uint32_t v) {
+    if (std::endian::native != std::endian::little) {
+      v = std::byteswap(v);
+    }
+    _buf.append(reinterpret_cast<const char*>(&v), sizeof(v));
+    return *this;
+  }
+  WkbBuilder& PutDouble(double v) {
+    uint64_t raw;
+    std::memcpy(&raw, &v, sizeof(v));
+    if (std::endian::native != std::endian::little) {
+      raw = std::byteswap(raw);
+    }
+    _buf.append(reinterpret_cast<const char*>(&raw), sizeof(raw));
+    return *this;
+  }
+  WkbBuilder& PutXY(double lng, double lat) {
+    return PutDouble(lng).PutDouble(lat);
+  }
+  WkbBuilder& Header(uint32_t type) { return PutU8(1).PutU32(type); }
+  irs::bytes_view View() const {
+    return {reinterpret_cast<const irs::byte_type*>(_buf.data()), _buf.size()};
+  }
+
+ private:
+  std::string _buf;
+};
+
+template<typename Fn>
+class CollectFnSink final : public irs::TokenConsumer, public irs::StoreSink {
+ public:
+  explicit CollectFnSink(Fn fn) : _fn(std::move(fn)) {
+    writer.Bind(*this, this);
+  }
+
+  void Consume(irs::TokenBatch& batch, irs::DocRuns) final { _fn(batch); }
+
+  void OnStore(irs::doc_id_t, irs::bytes_view blob) final {
+    store.assign(blob.data(), blob.size());
+  }
+
+  irs::TokenSink writer;
+  irs::bstring store;
+
+ private:
+  Fn _fn;
+};
+
+template<typename FillFn>
+std::optional<std::vector<std::string>> CollectGeoTerms(
+  FillFn&& fill, irs::bstring* store_out = nullptr) {
+  std::vector<std::string> out;
+  const auto collect = [&](irs::TokenBatch& batch) {
+    for (const auto& t : batch.Terms()) {
+      out.emplace_back(t.GetData(), t.GetSize());
+    }
+  };
+  CollectFnSink sink{collect};
+  if (!fill(sink.writer)) {
+    return std::nullopt;
+  }
+  sink.writer.Finish();
+  if (store_out != nullptr) {
+    *store_out = sink.store;
+  }
+  return out;
+}
+
+std::optional<std::vector<std::string>> FillGeoTerms(
+  irs::analysis::Tokenizer& a, std::string_view value,
+  irs::TokenLayout layout = irs::TokenLayout::TermsPos) {
+  return CollectGeoTerms([&](irs::TokenSink& sink) {
+    return a.Fill(
+      duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())}, sink,
+      {layout});
+  });
+}
+
+std::optional<std::vector<std::string>> FillGeoTermsWKB(
+  irs::analysis::GeoTokenizer& a, irs::bytes_view wkb,
+  irs::TokenLayout layout = irs::TokenLayout::TermsPos,
+  irs::bstring* store_out = nullptr) {
+  a.SetWkbInput(true);
+  const std::string_view raw{reinterpret_cast<const char*>(wkb.data()),
+                             wkb.size()};
+  auto& tokens = dynamic_cast<irs::analysis::Tokenizer&>(a);
+  auto out = CollectGeoTerms(
+    [&](irs::TokenSink& sink) {
+      return tokens.Fill(
+        duckdb::string_t{raw.data(), static_cast<uint32_t>(raw.size())}, sink,
+        {layout});
+    },
+    store_out);
+  a.SetWkbInput(false);
+  return out;
+}
+
+}  // namespace
+
+TEST(GeoOptionsTest, default_options) {
+  irs::geo::GeoOptions opts;
+  ASSERT_EQ(20, opts.max_cells);
+  ASSERT_EQ(4, opts.min_level);
+  ASSERT_EQ(23, opts.max_level);
+  ASSERT_EQ(1, opts.level_mod);
+  ASSERT_FALSE(opts.optimize_for_space);
+}
+
+TEST(GeoBench, sizes) {
+  GTEST_SKIP() << "It's just for check sizes, not comment out to allow compile";
+
+  auto source_analyzer =
+    tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>({});
+  GeoJsonTokenizer::Options opts;
+  opts.coding = GeoJsonTokenizer::Coding::S2LatLngU32;
+  auto s2_analyzer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+
+  auto store_size = [](irs::analysis::Tokenizer& a, std::string_view json) {
+    irs::ValueAnalyzer analyzer;
+    irs::ValueTokens tokens;
+    return analyzer.Analyze(
+             a,
+             duckdb::string_t{json.data(), static_cast<uint32_t>(json.size())},
+             tokens)
+             ? tokens.store().size()
+             : size_t{0};
+  };
+
+  auto bench = [&](std::string_view json) {
+    std::cerr << json << std::endl;
+    std::cerr << store_size(*source_analyzer, json) << std::endl;
+    std::cerr << store_size(*s2_analyzer, json) << std::endl;
+  };
+
+  bench(R"=([ 6.537, 50.332 ])=");
+  bench(R"=({ "type": "Point", "coordinates": [ 6.537, 50.332 ] })=");
+  bench(
+    R"=({ "type": "MultiPoint", "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ] })=");
+  bench(
+    R"=({ "type": "MultiPoint", "coordinates": [ [ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ], [ 6.537, 50.376 ] ] })=");
+  bench(
+    R"=({ "type": "LineString", "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ] })=");
+  bench(
+    R"=({ "type": "MultiLineString", "coordinates": [ [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ], [ [ 6.621, 50.332 ], [ 6.621, 50.376 ] ] ] })=");
+  bench(
+    R"=({ "type": "Polygon", "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,52.1], [6.1,51.1], [6.1,50.1] ] ] })=");
+  bench(
+    R"=({ "type": "MultiPolygon", "coordinates": [ [ [ [6.501,50.1], [7.5,50.1], [7.5,51.1], [6.501,51.1], [6.501,50.1] ] ], [ [ [6.1,50.1], [6.5,50.1], [6.5,51.1], [6.1,51.1], [6.1,50.1] ] ] ] })=");
+  bench(
+    R"=({ "type": "Polygon", "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,51.1], [6.1,51.1], [6.1,50.1] ] ] })=");
+  bench(
+    R"=({ "type": "LineString", "coordinates": [ [ 5.437, 50.332 ], [ 7.537, 50.376 ] ] })=");
+  bench(
+    R"=({ "type": "Polygon", "coordinates": [ [ [1,1], [4,1], [4,4], [1,4], [1,1] ] ] })=");
+  bench(
+    R"=({ "type": "Polygon", "coordinates": [ [ [1.1,1.1], [4.1,1.1], [4.1,4.1], [1.1,4.1], [1.1,1.1] ] ] })=");
+  bench(
+    R"=({"type": "Polygon","coordinates": [[[100.318391,13.535502],[100.318391,14.214848],[101.407575,14.214848],[101.407575,13.535502],[100.318391,13.535502]]]})=");
+}
+
+TEST(GeoPointTokenizerTest, constants) {
+  static_assert("geopoint" == GeoPointTokenizer::type_name());
+}
+
+TEST(GeoPointTokenizerTest, options) {
+  GeoPointTokenizer::Options opts;
+  ASSERT_TRUE(opts.latitude.empty());
+  ASSERT_TRUE(opts.longitude.empty());
+  ASSERT_EQ(GeoOptions{}.max_cells, opts.options.max_cells);
+  ASSERT_EQ(GeoOptions{}.min_level, opts.options.min_level);
+  ASSERT_EQ(GeoOptions{}.max_level, opts.options.max_level);
+}
+
+TEST(GeoPointTokenizerTest, prepareQuery) {
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    opts.latitude = {"foo"};
+    opts.longitude = {"bar"};
+    GeoPointTokenizer a(opts);
+
+    GeoFilterOptionsBase options;
+    a.prepare(options);
+
+    EXPECT_EQ(options.prefix, "");
+    EXPECT_EQ(options.stored, StoredType::Source);
+    EXPECT_EQ(1, options.options.level_mod());
+    EXPECT_FALSE(options.options.optimize_for_space());
+    EXPECT_EQ("$", options.options.marker());
+    EXPECT_EQ(opts.options.min_level, options.options.min_level());
+    EXPECT_EQ(opts.options.max_level, options.options.max_level());
+    EXPECT_EQ(opts.options.max_cells, options.options.max_cells());
+    EXPECT_TRUE(options.options.index_contains_points_only());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    GeoPointTokenizer a(opts);
+
+    GeoFilterOptionsBase options;
+    a.prepare(options);
+
+    EXPECT_EQ(options.prefix, "");
+    EXPECT_EQ(options.stored, StoredType::Source);
+    EXPECT_EQ(1, options.options.level_mod());
+    EXPECT_FALSE(options.options.optimize_for_space());
+    EXPECT_EQ("$", options.options.marker());
+    EXPECT_EQ(opts.options.min_level, options.options.min_level());
+    EXPECT_EQ(opts.options.max_level, options.options.max_level());
+    EXPECT_EQ(opts.options.max_cells, options.options.max_cells());
+    EXPECT_TRUE(options.options.index_contains_points_only());
+  }
+}
+
+TEST(GeoPointTokenizerTest, ctor) {
+  {
+    GeoPointTokenizer::Options opts;
+    GeoPointTokenizer a(opts);
+    ASSERT_TRUE(opts.latitude.empty());
+    ASSERT_TRUE(opts.longitude.empty());
+    ASSERT_TRUE(irs::analysis::GeoTokenizer::IsGeoTokenizer(a));
+    ASSERT_FALSE(a.Traits().offsets);
+    ASSERT_FALSE(a.Traits().store);
+    ASSERT_EQ(Type<GeoPointTokenizer>::id(), a.type());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.latitude = {"foo"};
+    opts.longitude = {"bar"};
+    GeoPointTokenizer a(opts);
+    ASSERT_EQ(std::vector<std::string>{"foo"}, a.latitude());
+    ASSERT_EQ(std::vector<std::string>{"bar"}, a.longitude());
+    ASSERT_TRUE(irs::analysis::GeoTokenizer::IsGeoTokenizer(a));
+    ASSERT_FALSE(a.Traits().offsets);
+    ASSERT_FALSE(a.Traits().store);
+    ASSERT_EQ(Type<GeoPointTokenizer>::id(), a.type());
+  }
+}
+
+TEST(GeoPointTokenizerTest, tokenizePointFromArray) {
+  auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseCoordinates<true>(json.value(), shape, false);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
+
+  {
+    GeoPointTokenizer::Options opts;
+    GeoPointTokenizer a(opts);
+    ASSERT_TRUE(a.latitude().empty());
+    ASSERT_TRUE(a.longitude().empty());
+    ASSERT_EQ(1, a.options().level_mod());
+    ASSERT_FALSE(a.options().optimize_for_space());
+    ASSERT_EQ("$", a.options().marker());
+    ASSERT_EQ(opts.options.min_level, a.options().min_level());
+    ASSERT_EQ(opts.options.max_level, a.options().max_level());
+    ASSERT_EQ(opts.options.max_cells, a.options().max_cells());
+    ASSERT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    GeoPointTokenizer a(opts);
+    EXPECT_TRUE(a.latitude().empty());
+    EXPECT_TRUE(a.longitude().empty());
+    EXPECT_EQ(1, a.options().level_mod());
+    EXPECT_FALSE(a.options().optimize_for_space());
+    EXPECT_EQ("$", a.options().marker());
+    EXPECT_EQ(opts.options.min_level, a.options().min_level());
+    EXPECT_EQ(opts.options.max_level, a.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
+    EXPECT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+}
+
+TEST(GeoPointTokenizerTest, tokenizePointFromObject) {
+  auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
+  auto json_object =
+    tests::FromJson(R"({ "lat": 63.57789956676574, "lon": 53.72314453125 })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseCoordinates<true>(json.value(), shape, false);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.latitude = {"lat"};
+    opts.longitude = {"lon"};
+    GeoPointTokenizer a(opts);
+    EXPECT_EQ(std::vector<std::string>{"lat"}, a.latitude());
+    EXPECT_EQ(std::vector<std::string>{"lon"}, a.longitude());
+    EXPECT_EQ(1, a.options().level_mod());
+    EXPECT_FALSE(a.options().optimize_for_space());
+    EXPECT_EQ("$", a.options().marker());
+    EXPECT_EQ(opts.options.min_level, a.options().min_level());
+    EXPECT_EQ(opts.options.max_level, a.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
+    EXPECT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.latitude = {"lat"};
+    opts.longitude = {"lon"};
+    GeoPointTokenizer a(opts);
+    EXPECT_EQ(std::vector<std::string>{"lat"}, a.latitude());
+    EXPECT_EQ(std::vector<std::string>{"lon"}, a.longitude());
+    EXPECT_EQ(1, a.options().level_mod());
+    EXPECT_FALSE(a.options().optimize_for_space());
+    EXPECT_EQ("$", a.options().marker());
+    EXPECT_EQ(opts.options.min_level, a.options().min_level());
+    EXPECT_EQ(opts.options.max_level, a.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
+    EXPECT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+}
+
+TEST(GeoPointTokenizerTest, tokenizePointFromObjectComplexPath) {
+  auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
+  auto json_object = tests::FromJson(
+    R"({ "subObj": { "lat": 63.57789956676574, "lon": 53.72314453125 } })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseCoordinates<true>(json.value(), shape, false);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point, shape.type());
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.latitude = {"subObj", "lat"};
+    opts.longitude = {"subObj", "lon"};
+    GeoPointTokenizer a(opts);
+    EXPECT_EQ((std::vector<std::string>{"subObj", "lat"}), a.latitude());
+    EXPECT_EQ((std::vector<std::string>{"subObj", "lon"}), a.longitude());
+    EXPECT_EQ(1, a.options().level_mod());
+    EXPECT_FALSE(a.options().optimize_for_space());
+    EXPECT_EQ("$", a.options().marker());
+    EXPECT_EQ(opts.options.min_level, a.options().min_level());
+    EXPECT_EQ(opts.options.max_level, a.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
+    EXPECT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.latitude = {"subObj", "lat"};
+    opts.longitude = {"subObj", "lon"};
+    GeoPointTokenizer a(opts);
+    EXPECT_EQ((std::vector<std::string>{"subObj", "lat"}), a.latitude());
+    EXPECT_EQ((std::vector<std::string>{"subObj", "lon"}), a.longitude());
+    EXPECT_EQ(1, a.options().level_mod());
+    EXPECT_FALSE(a.options().optimize_for_space());
+    EXPECT_EQ("$", a.options().marker());
+    EXPECT_EQ(opts.options.min_level, a.options().min_level());
+    EXPECT_EQ(opts.options.max_level, a.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
+    EXPECT_TRUE(a.options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, true));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+}
+
+TEST(GeoPointTokenizerTest, createFromOptions) {
+  {
+    GeoPointTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoPointTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoPointTokenizer&>(*a);
+
+    EXPECT_TRUE(impl.longitude().empty());
+    EXPECT_TRUE(impl.latitude().empty());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoPointTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoPointTokenizer&>(*a);
+
+    EXPECT_TRUE(impl.longitude().empty());
+    EXPECT_TRUE(impl.latitude().empty());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoPointTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoPointTokenizer&>(*a);
+
+    EXPECT_TRUE(impl.longitude().empty());
+    EXPECT_TRUE(impl.latitude().empty());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.latitude = {"foo"};
+    opts.longitude = {"bar"};
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoPointTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoPointTokenizer&>(*a);
+
+    EXPECT_EQ(std::vector<std::string>{"bar"}, impl.longitude());
+    EXPECT_EQ(std::vector<std::string>{"foo"}, impl.latitude());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoPointTokenizer::Options opts;
+    opts.latitude = {"subObj", "foo"};
+    opts.longitude = {"subObj", "bar"};
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoPointTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoPointTokenizer&>(*a);
+
+    EXPECT_EQ((std::vector<std::string>{"subObj", "foo"}), impl.latitude());
+    EXPECT_EQ((std::vector<std::string>{"subObj", "bar"}), impl.longitude());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+}
+
+TEST(GeoJsonTokenizerTest, constants) {
+  static_assert("geojson" == GeoJsonTokenizer::type_name());
+}
+
+TEST(GeoJsonTokenizerSourceTest, options) {
+  GeoJsonTokenizer::Options opts;
+  ASSERT_EQ(GeoJsonTokenizer::Type::Shape, opts.type);
+  ASSERT_EQ(GeoOptions{}.max_cells, opts.options.max_cells);
+  ASSERT_EQ(GeoOptions{}.min_level, opts.options.min_level);
+  ASSERT_EQ(GeoOptions{}.max_level, opts.options.max_level);
+}
+
+TEST(GeoJsonTokenizerSourceTest, ctor) {
+  auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>({});
+  ASSERT_TRUE(irs::analysis::GeoTokenizer::IsGeoTokenizer(*a));
+  ASSERT_FALSE(a->Traits().offsets);
+  ASSERT_FALSE(a->Traits().store);
+  ASSERT_EQ(Type<GeoJsonTokenizer>::id(), a->type());
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizeLatLngRect) {
+  auto json = tests::FromJson(R"({
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          50.361328125,
+          61.501734289732326
+        ],
+        [
+          51.2841796875,
+          61.501734289732326
+        ],
+        [
+          51.2841796875,
+          61.907926072709756
+        ],
+        [
+          50.361328125,
+          61.907926072709756
+        ],
+        [
+          50.361328125,
+          61.501734289732326
+        ]
+      ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>({});
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizePolygon) {
+  auto json = tests::FromJson(R"({
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          52.44873046875,
+          64.33039136366138
+        ],
+        [
+          50.73486328125,
+          63.792191443824464
+        ],
+        [
+          51.5478515625,
+          63.104699747121074
+        ],
+        [
+          52.6904296875,
+          62.825055614564306
+        ],
+        [
+          54.95361328125,
+          63.203925767041305
+        ],
+        [
+          55.37109374999999,
+          63.82128765261384
+        ],
+        [
+          54.7998046875,
+          64.37794095121995
+        ],
+        [
+          53.525390625,
+          64.44437240555092
+        ],
+        [
+          52.44873046875,
+          64.33039136366138
+        ]
+      ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizeLineString) {
+  auto json = tests::FromJson(R"({
+    "type": "LineString",
+    "coordinates": [
+      [
+        37.615908086299896,
+        55.704700721216476
+      ],
+      [
+        37.61495590209961,
+        55.70460097444075
+      ],
+      [
+        37.614915668964386,
+        55.704266972019845
+      ],
+      [
+        37.61498004198074,
+        55.70365336737268
+      ],
+      [
+        37.61568009853363,
+        55.7036518560193
+      ],
+      [
+        37.61656254529953,
+        55.7041400201247
+      ],
+      [
+        37.61668860912323,
+        55.70447251230901
+      ],
+      [
+        37.615661323070526,
+        55.704404502774175
+      ],
+      [
+        37.61548697948456,
+        55.70397830699434
+      ],
+      [
+        37.61526703834534,
+        55.70439090085301
+      ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polyline, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolygon) {
+  auto json = tests::FromJson(R"({
+    "type": "MultiPolygon",
+    "coordinates": [
+        [
+            [
+                [
+                    107,
+                    7
+                ],
+                [
+                    108,
+                    7
+                ],
+                [
+                    108,
+                    8
+                ],
+                [
+                    107,
+                    8
+                ],
+                [
+                    107,
+                    7
+                ]
+            ]
+        ],
+        [
+            [
+                [
+                    100,
+                    0
+                ],
+                [
+                    101,
+                    0
+                ],
+                [
+                    101,
+                    1
+                ],
+                [
+                    100,
+                    1
+                ],
+                [
+                    100,
+                    0
+                ]
+            ]
+        ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPoint) {
+  auto json = tests::FromJson(R"({
+    "type": "MultiPoint",
+    "coordinates": [
+        [
+            -105.01621,
+            39.57422
+        ],
+        [
+            -80.666513,
+            35.053994
+        ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Multipoint, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolyLine) {
+  auto json = tests::FromJson(R"({
+    "type": "MultiLineString",
+    "coordinates": [
+        [
+            [
+                -105.021443,
+                39.578057
+            ],
+            [
+                -105.021507,
+                39.577809
+            ],
+            [
+                -105.021572,
+                39.577495
+            ],
+            [
+                -105.021572,
+                39.577164
+            ],
+            [
+                -105.021572,
+                39.577032
+            ],
+            [
+                -105.021529,
+                39.576784
+            ]
+        ],
+        [
+            [
+                -105.019898,
+                39.574997
+            ],
+            [
+                -105.019598,
+                39.574898
+            ],
+            [
+                -105.019061,
+                39.574782
+            ]
+        ],
+        [
+            [
+                -105.017173,
+                39.574402
+            ],
+            [
+                -105.01698,
+                39.574385
+            ],
+            [
+                -105.016636,
+                39.574385
+            ],
+            [
+                -105.016508,
+                39.574402
+            ],
+            [
+                -105.01595,
+                39.57427
+            ]
+        ],
+        [
+            [
+                -105.014276,
+                39.573972
+            ],
+            [
+                -105.014126,
+                39.574038
+            ],
+            [
+                -105.013825,
+                39.57417
+            ],
+            [
+                -105.01331,
+                39.574452
+            ]
+        ]
+    ]
+  })");
+
+  irs::geo::ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(ShapeContainer::Type::S2Multipolyline, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(*shape.region(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizePoint) {
+  auto json = tests::FromJson(R"({
+    "type": "Point",
+    "coordinates": [
+      53.72314453125,
+      63.57789956676574
+    ]
+  })");
+
+  ShapeContainer shape;
+  json::ParseRegion(json.value(), shape);
+  ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Shape, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_FALSE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Shape, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_FALSE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Centroid, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, true));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Centroid, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, true));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Point, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Point, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, true));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, tokenizePointGeoJSONArray) {
+  auto json = tests::FromJson(R"([ 53.72314453125, 63.57789956676574 ])");
+
+  ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
+    json.value(), shape, cache, coding::Options::Invalid, nullptr));
+  ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
+
+  {
+    GeoJsonTokenizer::Options opts;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    ASSERT_EQ(GeoJsonTokenizer::Type::Shape, a->shapeType());
+    ASSERT_EQ(1, a->options().level_mod());
+    ASSERT_FALSE(a->options().optimize_for_space());
+    ASSERT_EQ("$", a->options().marker());
+    ASSERT_EQ(opts.options.min_level, a->options().min_level());
+    ASSERT_EQ(opts.options.max_level, a->options().max_level());
+    ASSERT_EQ(opts.options.max_cells, a->options().max_cells());
+    ASSERT_FALSE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    ASSERT_EQ(GeoJsonTokenizer::Type::Shape, a->shapeType());
+    ASSERT_EQ(1, a->options().level_mod());
+    ASSERT_FALSE(a->options().optimize_for_space());
+    ASSERT_EQ("$", a->options().marker());
+    ASSERT_EQ(opts.options.min_level, a->options().min_level());
+    ASSERT_EQ(opts.options.max_level, a->options().max_level());
+    ASSERT_EQ(opts.options.max_cells, a->options().max_cells());
+    ASSERT_FALSE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Centroid, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Centroid, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Point, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 3;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+    EXPECT_EQ(GeoJsonTokenizer::Type::Point, a->shapeType());
+    EXPECT_EQ(1, a->options().level_mod());
+    EXPECT_FALSE(a->options().optimize_for_space());
+    EXPECT_EQ("$", a->options().marker());
+    EXPECT_EQ(opts.options.min_level, a->options().min_level());
+    EXPECT_EQ(opts.options.max_level, a->options().max_level());
+    EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
+    EXPECT_TRUE(a->options().index_contains_points_only());
+
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
+
+    S2RegionTermIndexer indexer(S2Options(opts.options, false));
+    auto terms = indexer.GetIndexTerms(shape.centroid(), {});
+    ASSERT_FALSE(terms.empty());
+
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, invalidGeoJson) {
+  {
+    GeoJsonTokenizer::Options opts;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, unbindResetsWkbInput) {
+  constexpr std::string_view kPoint =
+    R"({"type":"Point","coordinates":[37.6156,55.7522]})";
+
+  GeoJsonTokenizer::Options opts;
+  auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+  auto& a = irs::analysis::GeoTokenizer::Cast(*tokenizer);
+
+  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
+
+  a.SetWkbInput(true);
+  ASSERT_FALSE(FillGeoTerms(*tokenizer, kPoint).has_value());
+
+  tokenizer->Unbind();
+  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
+}
+
+TEST(GeoJsonTokenizerSourceTest, prepareQuery) {
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+
+    GeoFilterOptionsBase options;
+    a->prepare(options);
+
+    EXPECT_EQ(options.prefix, "");
+    EXPECT_EQ(options.stored, StoredType::Source);
+    EXPECT_EQ(1, options.options.level_mod());
+    EXPECT_FALSE(options.options.optimize_for_space());
+    EXPECT_EQ("$", options.options.marker());
+    EXPECT_EQ(opts.options.min_level, options.options.min_level());
+    EXPECT_EQ(opts.options.max_level, options.options.max_level());
+    EXPECT_EQ(opts.options.max_cells, options.options.max_cells());
+    EXPECT_FALSE(options.options.index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+
+    GeoFilterOptionsBase options;
+    a->prepare(options);
+
+    EXPECT_EQ(options.prefix, "");
+    EXPECT_EQ(options.stored, StoredType::Source);
+    EXPECT_EQ(1, options.options.level_mod());
+    EXPECT_FALSE(options.options.optimize_for_space());
+    EXPECT_EQ("$", options.options.marker());
+    EXPECT_EQ(opts.options.min_level, options.options.min_level());
+    EXPECT_EQ(opts.options.max_level, options.options.max_level());
+    EXPECT_EQ(opts.options.max_cells, options.options.max_cells());
+    EXPECT_TRUE(options.options.index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    auto a = static_cast<GeoJsonTokenizer*>(tokenizer.get());
+
+    GeoFilterOptionsBase options;
+    a->prepare(options);
+
+    EXPECT_EQ(options.prefix, "");
+    EXPECT_EQ(options.stored, StoredType::Source);
+    EXPECT_EQ(1, options.options.level_mod());
+    EXPECT_FALSE(options.options.optimize_for_space());
+    EXPECT_EQ("$", options.options.marker());
+    EXPECT_EQ(opts.options.min_level, options.options.min_level());
+    EXPECT_EQ(opts.options.max_level, options.options.max_level());
+    EXPECT_EQ(opts.options.max_cells, options.options.max_cells());
+    EXPECT_TRUE(options.options.index_contains_points_only());
+  }
+}
+
+TEST(GeoJsonTokenizerSourceTest, createFromOptions) {
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoJsonTokenizer&>(*a);
+
+    ASSERT_EQ(opts.type, impl.shapeType());
+    ASSERT_EQ(1, impl.options().level_mod());
+    ASSERT_FALSE(impl.options().optimize_for_space());
+    ASSERT_EQ("$", impl.options().marker());
+    ASSERT_EQ(opts.options.min_level, impl.options().min_level());
+    ASSERT_EQ(opts.options.max_level, impl.options().max_level());
+    ASSERT_EQ(opts.options.max_cells, impl.options().max_cells());
+    ASSERT_FALSE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoJsonTokenizer&>(*a);
+
+    ASSERT_EQ(opts.type, impl.shapeType());
+    ASSERT_EQ(1, impl.options().level_mod());
+    ASSERT_FALSE(impl.options().optimize_for_space());
+    ASSERT_EQ("$", impl.options().marker());
+    ASSERT_EQ(opts.options.min_level, impl.options().min_level());
+    ASSERT_EQ(opts.options.max_level, impl.options().max_level());
+    ASSERT_EQ(opts.options.max_cells, impl.options().max_cells());
+    ASSERT_FALSE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.options.max_cells = 1000;
+    opts.options.min_level = 2;
+    opts.options.max_level = 22;
+    opts.options.optimize_for_space = true;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoJsonTokenizer&>(*a);
+
+    ASSERT_EQ(opts.type, impl.shapeType());
+    ASSERT_EQ(1, impl.options().level_mod());
+    ASSERT_TRUE(impl.options().optimize_for_space());
+    ASSERT_EQ("$", impl.options().marker());
+    ASSERT_EQ(opts.options.min_level, impl.options().min_level());
+    ASSERT_EQ(opts.options.max_level, impl.options().max_level());
+    ASSERT_EQ(opts.options.max_cells, impl.options().max_cells());
+    ASSERT_FALSE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Centroid;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoJsonTokenizer&>(*a);
+
+    EXPECT_EQ(opts.type, impl.shapeType());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Point;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    auto& impl = dynamic_cast<GeoJsonTokenizer&>(*a);
+
+    EXPECT_EQ(opts.type, impl.shapeType());
+    EXPECT_EQ(1, impl.options().level_mod());
+    EXPECT_FALSE(impl.options().optimize_for_space());
+    EXPECT_EQ("$", impl.options().marker());
+    EXPECT_EQ(opts.options.min_level, impl.options().min_level());
+    EXPECT_EQ(opts.options.max_level, impl.options().max_level());
+    EXPECT_EQ(opts.options.max_cells, impl.options().max_cells());
+    EXPECT_TRUE(impl.options().index_contains_points_only());
+  }
+
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    opts.coding = GeoJsonTokenizer::Coding::S2Point;
+    ASSERT_NE(nullptr,
+              tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts));
+  }
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    opts.coding = GeoJsonTokenizer::Coding::S2LatLngU32;
+    ASSERT_NE(nullptr,
+              tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts));
+  }
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    opts.coding = GeoJsonTokenizer::Coding::S2LatLngF64;
+    ASSERT_NE(nullptr,
+              tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts));
+  }
+  {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    opts.coding = GeoJsonTokenizer::Coding::Source;
+    ASSERT_NE(nullptr,
+              tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts));
+  }
+}
+
+TEST(GeoJsonTokenizerShapeTest, tokenizePoint) {
+  GeoJsonTokenizer::Options opts;
+  opts.type = GeoJsonTokenizer::Type::Point;
+  opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
+
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(*geo, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
+
+  EXPECT_FALSE(store.empty());
+}
+
+TEST(GeoJsonTokenizerShapeTest, tokenizePolygon) {
+  GeoJsonTokenizer::Options opts;
+  opts.type = GeoJsonTokenizer::Type::Shape;
+  opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(*geo, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
+
+  EXPECT_FALSE(store.empty());
+}
+
+TEST(GeoJsonTokenizerShapeTest, rejectsShapeVsTypeMismatch) {
+  GeoJsonTokenizer::Options opts;
+  opts.type = GeoJsonTokenizer::Type::Point;
+  opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+  auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(FillGeoTermsWKB(*geo, b.View()).has_value());
+}
+
+TEST(GeoPointTokenizerShapeTest, tokenizePoint) {
+  GeoPointTokenizer::Options opts;
+  GeoPointTokenizer a{opts};
+
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
+
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(a, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
+
+  EXPECT_TRUE(store.empty());
+}
+
+TEST(GeoPointTokenizerShapeTest, rejectsNonPoint) {
+  GeoPointTokenizer::Options opts;
+  GeoPointTokenizer a{opts};
+
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(FillGeoTermsWKB(a, b.View()).has_value());
+}
+
+TEST(GeoPointTokenizerTest, native_fill_matches_pull) {
+  auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
+  GeoPointTokenizer::Options opts;
+  GeoPointTokenizer ref_a(opts);
+  const auto expected =
+    FillGeoTerms(ref_a, json.text(), irs::TokenLayout::Terms);
+  ASSERT_TRUE(expected.has_value());
+  ASSERT_FALSE(expected->empty());
+  for (const auto layout : {irs::TokenLayout::Terms, irs::TokenLayout::TermsPos,
+                            irs::TokenLayout::TermsPosOffs}) {
+    GeoPointTokenizer fill_a(opts);
+    const auto filled = FillGeoTerms(fill_a, json.text(), layout);
+    ASSERT_TRUE(filled.has_value());
+    ASSERT_EQ(*expected, *filled);
+  }
+}
+
+TEST(GeoJsonTokenizerTest, native_fill_matches_pull) {
+  const std::vector<std::string> inputs = {
+    R"({ "type": "Point", "coordinates": [ 63.57789, 53.72314 ] })",
+    R"({ "type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]] })"};
+
+  for (const auto& text : inputs) {
+    SCOPED_TRACE(text);
+    GeoJsonTokenizer::Options opts;
+    auto ref_a = tests::MakeAnalyzer<GeoJsonTokenizer>(opts);
+    const auto expected = FillGeoTerms(*ref_a, text, irs::TokenLayout::Terms);
+    ASSERT_TRUE(expected.has_value());
+    ASSERT_FALSE(expected->empty());
+    for (const auto layout :
+         {irs::TokenLayout::Terms, irs::TokenLayout::TermsPos,
+          irs::TokenLayout::TermsPosOffs}) {
+      auto fill_a = tests::MakeAnalyzer<GeoJsonTokenizer>(opts);
+      const auto filled = FillGeoTerms(*fill_a, text, layout);
+      ASSERT_TRUE(filled.has_value());
+      ASSERT_EQ(*expected, *filled);
+    }
+  }
+}

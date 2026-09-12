@@ -37,20 +37,23 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/geo_filter.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <optional>
 #include <string>
@@ -58,9 +61,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -75,7 +75,7 @@ using sdb::connector::SearchColumnInfo;
 // so a static Connection destructor would outlive it.
 duckdb::ClientContext& TestContext() {
   static auto* conn =
-    new duckdb::Connection{::sdb::DuckDBEngine::Instance().instance()};
+    new duckdb::Connection{::irs::DuckDBEngine::Instance().instance()};
   return *conn->context;
 }
 
@@ -575,7 +575,7 @@ irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
   *wf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = wf.mutable_options();
   *opts = {pattern,
-           basics::downCast<irs::analysis::WildcardTokenizer>(
+           irs::utils::downCast<irs::analysis::WildcardTokenizer>(
              *column_analyzer.analyzer.get()),
            has_positions};
   SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
@@ -609,7 +609,7 @@ void CloseShouldBuckets(irs::BooleanFilter& node) {
   for (const auto occur : irs::kAllOccur) {
     for (auto& child : node.Bucket(occur).filters) {
       if (child->type() == irs::Type<irs::BooleanFilter>::id()) {
-        CloseShouldBuckets(sdb::basics::downCast<irs::BooleanFilter>(*child));
+        CloseShouldBuckets(irs::utils::downCast<irs::BooleanFilter>(*child));
       }
     }
   }
@@ -803,26 +803,26 @@ class SearchFilterBuilderTest : public ::testing::Test {
         const auto type = f.type();
         const auto name = [&]() -> std::string {
           if (type == irs::Type<irs::BooleanFilter>::id()) {
-            const auto& node = sdb::basics::downCast<irs::BooleanFilter>(f);
+            const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
             return "Boolean(mm=" + std::to_string(node.MinShouldMatch()) + ")";
           }
           if (type == irs::Type<irs::ByRange>::id()) {
             return "ByRange(f=" +
                    std::to_string(
-                     sdb::basics::downCast<irs::ByRange>(f).field_id()) +
+                     irs::utils::downCast<irs::ByRange>(f).field_id()) +
                    ")";
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
             return "ByGranularRange(f=" +
-                   std::to_string(sdb::basics::downCast<irs::ByGranularRange>(f)
-                                    .field_id()) +
+                   std::to_string(
+                     irs::utils::downCast<irs::ByGranularRange>(f).field_id()) +
                    ")";
           }
           return std::string{f.type()().name()};
         }();
         out += name + "\n";
         if (type == irs::Type<irs::BooleanFilter>::id()) {
-          const auto& node = sdb::basics::downCast<irs::BooleanFilter>(f);
+          const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
           for (const auto occur : irs::kAllOccur) {
             for (const auto& clause : node.Terms(occur)) {
               out.append((depth + 1) * 2, ' ');

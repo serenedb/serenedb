@@ -25,14 +25,14 @@
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
@@ -104,8 +104,8 @@ class SearchTableTransaction {
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
 
-  containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+  irs::containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
+  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;
 };

@@ -33,7 +33,7 @@
 namespace irs {
 
 class DirectoryReader;
-class IndexReader;
+struct IndexReader;
 
 }  // namespace irs
 namespace sdb::catalog {

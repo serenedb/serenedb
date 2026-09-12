@@ -31,9 +31,9 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/serializer.hpp>
 
-#include "basics/assert.h"
-#include "basics/serializer.h"
 #include "core/deletes/iceberg_deletion_vector.hpp"
 #include "core/deletes/iceberg_positional_delete.hpp"
 #include "core/metadata/iceberg_table_metadata.hpp"
@@ -51,9 +51,9 @@ void FileManifest::Serialize(irs::bstring& out) const {
     // the id baseline is not reconstructible across restarts anyway (delta
     // re-stamps make ids path-dependent) -- a moved pin after a restart
     // takes the rebuild road.
-    basics::WriteTuple(serializer, FileManifest{.version = version});
+    irs::utils::WriteTuple(serializer, FileManifest{.version = version});
   } else {
-    basics::WriteTuple(serializer, *this);
+    irs::utils::WriteTuple(serializer, *this);
   }
   out.append(stream.GetData(), stream.GetPosition());
 }
@@ -63,7 +63,7 @@ std::shared_ptr<const FileManifest> FileManifest::Parse(irs::bytes_view tail) {
                               tail.size()};
   duckdb::BinaryDeserializer deserializer{stream};
   auto manifest = std::make_shared<FileManifest>();
-  basics::ReadTuple(deserializer, *manifest);
+  irs::utils::ReadTuple(deserializer, *manifest);
   return manifest;
 }
 

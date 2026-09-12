@@ -20,13 +20,13 @@
 
 #include <benchmark/benchmark.h>
 
+#include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/regexp_utils.hpp>
+#include <iresearch/utils/wildcard_utils.hpp>
 #include <string_view>
 
 #include "fst/arcsort.h"
 #include "fst/union.h"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/wildcard_utils.hpp"
 
 namespace {
 

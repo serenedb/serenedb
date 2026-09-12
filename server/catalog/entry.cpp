@@ -24,8 +24,8 @@
 #include <duckdb/common/extra_type_info.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 
-#include "basics/duckdb_engine.h"
 #include "catalog/database.h"
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"
@@ -64,7 +64,7 @@ void RegisterForeignCreateInfoDeserializer() {
 }
 
 duckdb::DatabaseManager& IdAllocator() {
-  return duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  return duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
 }
 
 ObjectId NextId() { return ObjectId{IdAllocator().NextOid()}; }

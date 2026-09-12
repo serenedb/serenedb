@@ -26,13 +26,11 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <iresearch/utils/crash_handler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <utility>
 
-#include "app/app_server.h"
-#include "app/init.h"
-#include "basics/crash_handler.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/data_store.h"
 #include "catalog/log/duckdb_global_catalog.h"
@@ -44,6 +42,8 @@
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
+#include "server/utils/app_server.h"
+#include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
 namespace {
@@ -55,7 +55,7 @@ const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
 int RunServer(int argc, char** argv) {
   try {
-    CrashHandler::installCrashHandler();
+    irs::CrashHandler::installCrashHandler();
 
     AppServer server;
 
@@ -88,7 +88,7 @@ int RunServer(int argc, char** argv) {
          up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
-      CrashHandler::SetState("stopping");
+      irs::CrashHandler::SetState("stopping");
       auto stop = [](const char* what, auto&& fn) noexcept {
         try {
           fn();
@@ -137,13 +137,13 @@ int RunServer(int argc, char** argv) {
       // it unless it can read its definition, so the catalog below must still
       // be up -- and the catalog must be down before that destructor, because
       // its objects hold allocations of the allocator it takes with it.
-      stop("storage", [&] { DuckDBEngine::Instance().CloseDatabases(); });
+      stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
       }
     };
 
-    CrashHandler::SetState("starting");
+    irs::CrashHandler::SetState("starting");
     store.Initialize(db_path.directory());
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
@@ -174,7 +174,7 @@ int RunServer(int argc, char** argv) {
 
     SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 
-    CrashHandler::SetState("running");
+    irs::CrashHandler::SetState("running");
     server.wait();
     return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
@@ -228,7 +228,7 @@ int main(int argc, char* argv[]) {
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
-  auto& engine = sdb::DuckDBEngine::Instance();
+  auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   server::query::RegisterServerExtensions(engine.instance());
 

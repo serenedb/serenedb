@@ -22,10 +22,11 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "basics/system-compiler.h"
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
+
 #include "connector/functions/embedding/provider_openai.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector::embedding {
 

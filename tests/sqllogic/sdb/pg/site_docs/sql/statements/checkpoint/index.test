@@ -4,8 +4,8 @@ control substitution on
 
 # DOCS_TEST_BODY
 
-#statement ok
-#CHECKPOINT;
+statement ok
+CHECKPOINT;
 
 # DOCS_TEST: example_002
 
@@ -17,15 +17,15 @@ ATTACH '${__TEST_DIR__}/db41.db' AS db41;
 
 # DOCS_TEST_BODY
 
-#statement ok
-#CHECKPOINT file_db;
+statement ok
+CHECKPOINT db41;
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-#statement ok
-#FORCE CHECKPOINT;
+statement ok
+FORCE CHECKPOINT;
 
 # DOCS_TEST: example_004
 

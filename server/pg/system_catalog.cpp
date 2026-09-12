@@ -34,7 +34,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
 #include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"

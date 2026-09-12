@@ -30,7 +30,7 @@ target_link_libraries(
         iresearch-static
         s2 # needed for some includes in geo analyzers
         serene
-        serene_geo
+        iresearch-static
         serene_connector
         llhttp
         duckdb_static

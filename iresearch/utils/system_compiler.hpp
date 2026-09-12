@@ -22,7 +22,7 @@
 #pragma once
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/operating-system.hpp"
+#include "iresearch/utils/operating_system.hpp"
 
 #ifdef SDB_DEV
 #define SDB_UNREACHABLE()                          \

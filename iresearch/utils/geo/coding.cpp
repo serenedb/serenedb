@@ -30,7 +30,7 @@
 #include <ranges>
 
 #include "geo_json.h"
-#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/geo/shape_container.hpp"
 #include "iresearch/utils/log.hpp"

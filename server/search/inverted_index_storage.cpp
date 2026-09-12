@@ -46,7 +46,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <system_error>
 #include <yaclib/coro/await.hpp>

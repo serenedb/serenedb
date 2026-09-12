@@ -28,7 +28,7 @@ EXCEPTIONS: set[str] = set()
 EXCLUDE_PREFIXES: tuple[str, ...] = (
     "third_party/",
     "iresearch/",
-    "tests/libs/iresearch/",
+    "tests/iresearch/",
 )
 
 

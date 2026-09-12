@@ -6,7 +6,7 @@ function(add_bench FILE_NAME)
     target_link_libraries(${NAME} PRIVATE sereneserver benchmark)
     target_include_directories(
         ${NAME}
-        PRIVATE ${CMAKE_SOURCE_DIR}/tests/libs/iresearch
+        PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
     )
     if(VELOX_ENABLE_FAISS)
         target_compile_definitions(${NAME} PRIVATE VELOX_ENABLE_FAISS)

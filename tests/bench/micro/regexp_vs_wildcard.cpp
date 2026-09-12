@@ -61,7 +61,7 @@ inline constexpr irs::field_id kFieldId = 1;
 
 // Indexing helpers
 //
-// Trimmed copy of tests/libs/iresearch/index/doc_generator.{hpp,cpp}.
+// Trimmed copy of tests/iresearch/index/doc_generator.{hpp,cpp}.
 // Only the bits required to index europarl into a single analyzed
 // body_anl field. Original supports many fields (title, date, id, body
 // in several variants, with payloads); the bench needs none of that.
@@ -208,7 +208,7 @@ class EuroparlBodyTemplate {
 };
 
 // Splits a UTF-8 byte range on a delimiter rune, yielding string columns.
-// Copied from tests/libs/iresearch/index/doc_generator.cpp; iterates
+// Copied from tests/iresearch/index/doc_generator.cpp; iterates
 // codepoints via duckdb's utf8proc wrapper.
 template<typename OctetIterator>
 class BreakIterator {

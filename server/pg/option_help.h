@@ -26,7 +26,7 @@
 
 #include <cassert>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <ranges>

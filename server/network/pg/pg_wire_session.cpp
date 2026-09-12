@@ -31,7 +31,7 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"

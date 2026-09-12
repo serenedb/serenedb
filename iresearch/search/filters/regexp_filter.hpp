@@ -26,7 +26,7 @@
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 

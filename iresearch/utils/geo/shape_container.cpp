@@ -30,7 +30,7 @@
 #include <bit>
 #include <cmath>
 
-#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/geo/s2/multi_point_region.hpp"

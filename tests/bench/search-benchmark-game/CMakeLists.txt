@@ -1,18 +1,18 @@
 add_compile_options(-Wno-error)
 
 add_library(search-benchmark-common OBJECT executor.cpp index_builder.cpp)
-# serene_base owns sdb::DuckDBEngine; the build/query binaries Initialize /
+# iresearch-static owns irs::DuckDBEngine; the build/query binaries Initialize /
 # Shutdown it in their respective main(). Replaces the leaking bench::CsDb().
 target_link_libraries(
     search-benchmark-common
     iresearch-static
     simdjson
-    serene_base
+    iresearch-static
 )
 target_include_directories(
     search-benchmark-common
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PUBLIC ${CMAKE_SOURCE_DIR}/tests/libs/iresearch
+    PUBLIC ${CMAKE_SOURCE_DIR}/tests/iresearch
 )
 
 if(APPLE)

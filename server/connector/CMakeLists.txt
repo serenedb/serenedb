@@ -45,7 +45,7 @@ add_library(
 
 target_link_libraries(
     serene_connector
-    serene_base
+    iresearch-static
     iresearch-static
     duckdb_static
     simdjson

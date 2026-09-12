@@ -1,3 +1,12 @@
+# set test resource directory
+set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
+
+# generated next to the tests so it is available externally
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests_config.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp"
+)
+
 set(iresearch-tests_sources
     ./analysis/analyzer_test.cpp
     ./analysis/delimited_tokenizer_tests.cpp
@@ -200,10 +209,10 @@ endif()
 
 target_link_libraries(
     iresearch-tests
-    # serene_base brings sdb::DuckDBEngine so tests_main can Initialize /
+    # iresearch-static brings irs::DuckDBEngine so tests_main can Initialize /
     # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
     # PUBLICly.
-    serene_base
+    iresearch-static
     iresearch-static
     search-benchmark-common
     gtest
@@ -243,8 +252,8 @@ add_executable(
 
 target_link_libraries(
     iresearch-load-tests
-    # See iresearch-tests note above re: serene_base dependency.
-    serene_base
+    # See iresearch-tests note above re: iresearch-static dependency.
+    iresearch-static
     iresearch-static
     search-benchmark-common
     gtest
@@ -265,3 +274,5 @@ target_include_directories(
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
+
+add_test(NAME iresearch-tests COMMAND iresearch-tests)

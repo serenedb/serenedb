@@ -24,7 +24,7 @@
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 
-#include <iresearch/utils/application-exit.hpp>
+#include <iresearch/utils/application_exit.hpp>
 #include <type_traits>
 #include <utility>
 

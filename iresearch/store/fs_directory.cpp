@@ -33,7 +33,7 @@
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 #ifdef _WIN32
 #include <Windows.h>  // for GetLastError()

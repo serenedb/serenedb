@@ -29,7 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
-#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/operating_system.hpp>
 #include <optional>
 #include <string>
 #include <string_view>

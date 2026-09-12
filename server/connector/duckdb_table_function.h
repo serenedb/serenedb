@@ -32,7 +32,7 @@
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>

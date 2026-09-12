@@ -63,7 +63,7 @@
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"

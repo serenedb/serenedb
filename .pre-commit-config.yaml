@@ -1,4 +1,4 @@
-C# See https://pre-commit.com for more information
+# See https://pre-commit.com for more information
 
 # General excludes, files can also be excluded on a hook level.
 exclude: ^docs/.*|resources/.*|third_party/.*/.*|LICENSE|iresearch/parser/lucene_(parser|lexer)\.(hpp|cpp)

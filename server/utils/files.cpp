@@ -28,7 +28,7 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/operating_system.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>
 

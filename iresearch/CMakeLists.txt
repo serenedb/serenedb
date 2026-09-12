@@ -413,7 +413,7 @@ set(IResearch_core_sources
     ./utils/numeric_utils.cpp
     ./parser/lucene_parser.cpp
     ./parser/lucene_lexer.cpp
-    ./utils/application-exit.cpp
+    ./utils/application_exit.cpp
     ./utils/async_utils.cpp
     ./utils/bit_packing.cpp
     ./utils/crash_handler.cpp
@@ -500,7 +500,12 @@ set_source_files_properties(
             "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
 )
 
-target_include_directories(iresearch-static PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(
+    iresearch-static
+    PUBLIC ${CMAKE_SOURCE_DIR}
+    PUBLIC ${CMAKE_BINARY_DIR}
+    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+)
 
 target_include_directories(
     iresearch-static
@@ -539,7 +544,24 @@ target_link_libraries(
     PUBLIC absl::flat_hash_map
     PUBLIC absl::flat_hash_set
     PUBLIC absl::crc32c
-    PUBLIC serene_base
+    PUBLIC absl::flags
+    PUBLIC absl::flags_parse
+    PUBLIC absl::node_hash_map
+    PUBLIC absl::node_hash_set
+    PUBLIC absl::random_random
+    PUBLIC absl::status
+    PUBLIC absl::statusor
+    PUBLIC absl::strings
+    PUBLIC absl::synchronization
+    PUBLIC fmt::fmt
+    PUBLIC yaclib
+    PUBLIC zlib
+    PUBLIC zstd::zstd
+    PUBLIC ${SYSTEM_LIBRARIES}
+    PRIVATE absl::failure_signal_handler
+    PRIVATE absl::stacktrace
+    PRIVATE absl::symbolize
+    PRIVATE boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
     PUBLIC iresearch-ofst
@@ -547,7 +569,7 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
-    PUBLIC serene_geo
+    PUBLIC s2
     PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static

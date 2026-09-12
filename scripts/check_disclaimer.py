@@ -16,7 +16,6 @@ EXCEPTIONS = {
     "tests/bench/micro/call_once.cpp",
     "tests/bench/micro/random.cpp",
     "tests/bench/micro/function.cpp",
-    "tests/libs/fuerte/main.cpp",
 }
 
 PRAGMA_ONCE_EXCEPTIONS: set[str] = set()

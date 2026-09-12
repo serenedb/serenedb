@@ -45,7 +45,7 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

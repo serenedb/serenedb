@@ -42,7 +42,7 @@
 #include "iresearch/utils/geo/shape_container.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/string_utils.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::geo::json {
 namespace {

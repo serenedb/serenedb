@@ -24,9 +24,9 @@
 #include <absl/flags/flag.h>
 
 #include <filesystem>
-#include <iresearch/utils/application-exit.hpp>
+#include <iresearch/utils/application_exit.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/operating_system.hpp>
 #include <iresearch/utils/string_utils.hpp>
 #include <system_error>
 

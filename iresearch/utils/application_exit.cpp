@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/application-exit.hpp"
+#include "iresearch/utils/application_exit.hpp"
 
 #include <unistd.h>
 

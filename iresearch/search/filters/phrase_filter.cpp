@@ -44,7 +44,7 @@
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {

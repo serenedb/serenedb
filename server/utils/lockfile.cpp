@@ -31,7 +31,7 @@
 
 #include <filesystem>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/operating_system.hpp>
 #include <string>
 #include <system_error>
 #include <tuple>

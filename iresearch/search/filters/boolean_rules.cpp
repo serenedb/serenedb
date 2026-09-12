@@ -53,7 +53,7 @@
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::optimizer {
 namespace {

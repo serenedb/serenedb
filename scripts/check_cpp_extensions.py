@@ -47,10 +47,12 @@ MIXED_DISALLOWED = {
 
 errors = 0
 for path in sys.argv[1:]:
-    # Choose rule set based on path
-    if "iresearch" in path:
+    # Choose rule set based on the directory the file lives in, not on a
+    # substring: server/connector/optimizer/iresearch_plan.h is server code.
+    norm = path.replace(os.sep, "/").lstrip("./")
+    if norm.startswith("iresearch/") or norm.startswith("tests/iresearch/"):
         disallowed = IRESEARCH_DISALLOWED
-    elif "server/connector" in path:
+    elif norm.startswith("server/connector/"):
         disallowed = MIXED_DISALLOWED
     else:
         disallowed = DEFAULT_DISALLOWED

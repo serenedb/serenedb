@@ -26,7 +26,7 @@
 #include <type_traits>
 
 #include "iresearch/utils/common.hpp"
-#include "iresearch/utils/system-compiler.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 namespace number_utils {

@@ -21,7 +21,7 @@
 
 #pragma once
 
-// Residual helpers pinned alive by tests/libs/iresearch/search/search_bench_-
+// Residual helpers pinned alive by tests/iresearch/search/search_bench_-
 // test.cpp. New code should NOT add callers here -- use std::filesystem /
 // std::getenv / openssl direct instead. Once that search-bench is cleaned
 // up this header / .cpp pair goes away entirely.

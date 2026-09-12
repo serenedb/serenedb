@@ -25,7 +25,7 @@
 
 #include <functional>
 #include <iresearch/utils/common.hpp>
-#include <iresearch/utils/operating-system.hpp>
+#include <iresearch/utils/operating_system.hpp>
 #include <string>
 #include <vector>
 

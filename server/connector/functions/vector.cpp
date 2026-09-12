@@ -33,7 +33,7 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/system-compiler.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 

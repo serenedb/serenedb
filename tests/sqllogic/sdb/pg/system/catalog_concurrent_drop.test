@@ -167,7 +167,9 @@ statement ok
 DROP TABLE ccd_renamecol;
 
 
-# --- CREATE INDEX: the new index holds the relation it hangs off ---
+# --- CREATE INDEX racing DROP TABLE: duckdb lets the drop through and fails
+# the index creator at commit, when its dependency on the relation can no
+# longer be committed ---
 
 statement ok
 CREATE TABLE ccd_index(a INTEGER, b TEXT);
@@ -184,13 +186,15 @@ CREATE INDEX ccd_index_i ON ccd_index(a);
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement ok
 DROP TABLE ccd_index;
 
 
 connection s1
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency<slt:ignore>
 
 
 connection s1
@@ -199,12 +203,6 @@ SELECT relname FROM pg_class
 WHERE relname IN ('ccd_index', 'ccd_index_i') ORDER BY 1;
 ----
 relname
-ccd_index
-ccd_index_i
-
-
-statement ok
-DROP TABLE ccd_index;
 
 
 # --- ALTER INDEX ... SET ---
@@ -453,9 +451,9 @@ DROP TABLE ccd_pin;
 # --- the same direction for a role ---
 #
 # Roles live in their own attachment, which starts its transaction the first
-# time a statement touches it -- after the drop, here. duckdb's own conflict
-# check cannot see the loss from that read view, so the install refuses the
-# resurrection itself and names the object.
+# time a statement touches it. Reading the role inside the transaction pins
+# that view before the drop, so the later ALTER works on a role another
+# transaction has since deleted: duckdb's write-write conflict.
 
 statement ok
 CREATE TABLE ccd_rolepin(a INTEGER);
@@ -471,8 +469,11 @@ BEGIN;
 
 
 connection s5
-statement ok
-COMMENT ON TABLE ccd_rolepin IS 'pins the read view';
+query
+SELECT rolname FROM pg_roles WHERE rolname = 'ccd_gone';
+----
+rolname
+ccd_gone
 
 
 connection s6
@@ -481,8 +482,10 @@ DROP ROLE ccd_gone;
 
 
 connection s5
-statement error Catalog write-write conflict
+statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
+----
+db error: ERROR: Catalog write-write conflict on alter with "ccd_gone"
 
 
 connection s5

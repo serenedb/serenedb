@@ -22,9 +22,12 @@
 
 #include <absl/strings/numbers.h>
 
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -40,8 +43,6 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/primary_key.h"
 #include "connector/with_option_resolver.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/search_table.h"
 
@@ -110,6 +111,34 @@ SearchTableOptions ResolveOptions(
 
 }  // namespace
 
+duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table) {
+  return duckdb::Identifier{table.GetIdentifierName() + "_pk_seq"};
+}
+
+TableEngine ReadStorageEngine(const WithOptions& options) {
+  if (!options.contains(std::string{kStorageOption})) {
+    return TableEngine::Transactional;
+  }
+  const auto value = FindConstant(options, kStorageOption);
+  if (!value) {
+    throw duckdb::BinderException("WITH option \"%s\" expects a string literal",
+                                  std::string{kStorageOption});
+  }
+  const auto engine = value->GetValue()
+                        .DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                        .GetValue<std::string>();
+  const auto lower = duckdb::StringUtil::Lower(engine);
+  if (lower == "transactional") {
+    return TableEngine::Transactional;
+  }
+  if (lower == kEngineSearch) {
+    return TableEngine::Search;
+  }
+  throw duckdb::BinderException(
+    "WITH option \"%s\" must be 'transactional' or 'search', got \"%s\"",
+    std::string{kStorageOption}, engine);
+}
+
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
@@ -162,6 +191,14 @@ duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
     result.push_back(connector::kColumnIdentifierPrimaryKeyBase + i);
   }
   return result;
+}
+
+duckdb::optional_ptr<duckdb::SequenceCatalogEntry>
+SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
+  auto entry = schema.GetEntry(catalog.GetCatalogTransaction(context),
+                               duckdb::CatalogType::SEQUENCE_ENTRY,
+                               GeneratedPkSequenceName(name));
+  return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
 void SearchTableEntry::OnDrop() {

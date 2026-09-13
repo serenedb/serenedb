@@ -37,6 +37,8 @@
 
 namespace duckdb {
 
+class ClientContext;
+class SequenceCatalogEntry;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;
@@ -56,6 +58,12 @@ enum class TableEngine : uint8_t {
 
 inline constexpr std::string_view kStorageOption = "storage";
 inline constexpr std::string_view kPayloadOption = "sdb_payload";
+
+TableEngine ReadStorageEngine(
+  const duckdb::case_insensitive_map_t<
+    duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
+
+duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table);
 
 using persistence::SearchTableOptions;
 
@@ -100,6 +108,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   void AdoptStorage(std::shared_ptr<search::SearchTable> storage) {
     _storage = std::move(storage);
   }
+
+  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> GeneratedPkSequence(
+    duckdb::ClientContext& context) const;
 
   const auto& Storage() const noexcept {
     SDB_ASSERT(_storage);

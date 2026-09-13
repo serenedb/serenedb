@@ -250,7 +250,23 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 }
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
-  duckdb::BoundCreateTableInfo&) {
+  duckdb::BoundCreateTableInfo& info) {
+  static constexpr auto kSearchOptions = std::to_array({
+    kPayloadOption,
+    kRefreshIntervalSetting,
+    kCompactionIntervalSetting,
+    kCleanupIntervalStepSetting,
+  });
+  const auto& options = info.Base().options;
+  const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  auto unknown = absl::c_find_if(options, [search](const auto& option) {
+    return option.first != kStorageOption &&
+           !(search && absl::c_contains(kSearchOptions, option.first));
+  });
+  if (unknown != options.end()) {
+    return duckdb::ErrorData{
+      duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
+  }
   return {};
 }
 

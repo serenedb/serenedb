@@ -42,14 +42,14 @@ class NGramAllSlots {
                 IndexFeatures layout, const IndexInput& pos_in,
                 const IndexInput* pay_in, size_t total_terms)
     : _leaves(metas.size()),
-      _checker{metas.size(), total_terms, static_cast<uint32_t>(metas.size())} {
+      _matcher{metas.size(), total_terms, static_cast<uint32_t>(metas.size())} {
     _leaves.Open(
       metas,
       [&](Leaf& leaf, const PostingMeta& meta) {
         leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
       },
       [&](uint32_t j, typename Leaves::Slot& slot) {
-        _checker.Slot(j) = {slot.leaf.ValueRef(), slot.leaf.Positions()};
+        _matcher.Slot(j) = {slot.leaf.ValueRef(), slot.leaf.Positions()};
       });
   }
 
@@ -64,33 +64,33 @@ class NGramAllSlots {
     return _leaves.Probe(target);
   }
 
-  bool Match(doc_id_t doc) { return _checker.Match(_leaves.Size(), doc); }
+  bool Match(doc_id_t doc) { return _matcher.Match(_leaves.Size(), doc); }
 
   uint32_t Freq() const noexcept
     requires(Scored)
   {
-    return _checker.GetFreq();
+    return _matcher.GetFreq();
   }
 
-  score_t Boost() const noexcept
+  score_t Scale() const noexcept
     requires(Scored)
   {
-    return _checker.GetBoost();
+    return _matcher.GetScale();
   }
 
   std::span<const OffsAttr> Offsets() const noexcept
     requires(Offs)
   {
-    return _checker.Offsets();
+    return _matcher.Offsets();
   }
 
  private:
   using Leaves = ConjunctionLeaves<Leaf, N>;
   using Base = std::conditional_t<Offs, ngram::NGramPosition, ngram::Dummy>;
-  using Checker = ngram::SerialPositionsChecker<Base, Scored || Offs, N>;
+  using Matcher = ngram::NGramMatcher<Base, Scored || Offs, N>;
 
   Leaves _leaves;
-  Checker _checker;
+  Matcher _matcher;
 };
 
 }  // namespace irs::detail

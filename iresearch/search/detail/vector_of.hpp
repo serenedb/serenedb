@@ -40,7 +40,6 @@
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window.hpp"
@@ -70,6 +69,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -468,8 +468,8 @@ class VectorClusters {
 
   detail::Scratch _mask{};
   ABSL_CACHELINE_ALIGNED score_t _window[detail::kWindowDocs]{};
-  detail::FixedArray<Cluster> _clusters;
-  detail::FixedArray<uint32_t> _order;
+  containers::Fixed<Cluster> _clusters;
+  containers::Fixed<uint32_t> _order;
   size_t _live;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::eof();

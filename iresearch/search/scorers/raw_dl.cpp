@@ -40,15 +40,15 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void DocLenImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale,
   score_t base_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
     const auto r = [&] IRS_FORCE_INLINE {
-      if constexpr (HasBoost) {
-        return boost[i] * base_boost * TermCountToScore(norm[i]);
+      if constexpr (HasScale) {
+        return scale[i] * base_boost * TermCountToScore(norm[i]);
       } else {
         return base_boost * TermCountToScore(norm[i]);
       }
@@ -57,19 +57,17 @@ IRS_FORCE_INLINE void DocLenImpl(
   }
 }
 
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct RawDLScore : public ScoreOperator {
-  RawDLScore(score_t boost, const uint32_t* norm,
-             const score_t* filter_boost) noexcept
-    : norm{norm}, filter_boost{filter_boost}, boost{boost} {
+  RawDLScore(score_t boost, const uint32_t* norm, const score_t* scale) noexcept
+    : norm{norm}, scale{scale}, boost{boost} {
     SDB_ASSERT(this->norm);
   }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    DocLenImpl<MergeType, HasFilterBoost>(res, n, norm,
-                                          TryGetValue(filter_boost), boost);
+    DocLenImpl<MergeType, HasScale>(res, n, norm, TryGetValue(scale), boost);
   }
 
   score_t Score() const noexcept final {
@@ -103,8 +101,7 @@ struct RawDLScore : public ScoreOperator {
   }
 
   const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
 };
 
@@ -127,14 +124,13 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
     norm = kNorms.data();
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<RawDLScore<HasBoost>>(ctx.boost, norm,
-                                                     filter_boost);
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.boost, norm, scale);
   });
 }
 

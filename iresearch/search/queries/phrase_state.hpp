@@ -66,7 +66,7 @@ struct VariadicPhraseState {
   ManagedVector<score_t> boosts;
   const TermReader* reader{};
   detail::PhraseHandles handles;
-  bool volatile_boost{};
+  bool has_boosts{};
 };
 
 static_assert(std::is_nothrow_move_constructible_v<VariadicPhraseState>);

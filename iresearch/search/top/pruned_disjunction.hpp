@@ -34,12 +34,12 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -510,8 +510,8 @@ class PrunedDisjunction : public Root {
   ABSL_CACHELINE_ALIGNED score_t _cand_scores[irs::detail::kWindowDocs];
 
   LoserScoreCollector* _collector = nullptr;
-  irs::detail::FixedArray<Entry> _entries;
-  irs::detail::FixedArray<Entry*> _sorted;
+  irs::containers::Fixed<Entry> _entries;
+  irs::containers::Fixed<Entry*> _sorted;
   [[no_unique_address]] Excludes _excludes;
   size_t _first_essential = 0;
   size_t _first_required = 0;

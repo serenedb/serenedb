@@ -76,7 +76,7 @@ class VectorScore : public ScoreOperator {
 
 ScoreFunction VectorSimilarityScorer::PrepareScorer(
   const ScoreContext& ctx) const {
-  const auto* block = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  const auto* block = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
   if (!block || !block->value) {
     return ScoreFunction::Constant(ctx.boost);
   }

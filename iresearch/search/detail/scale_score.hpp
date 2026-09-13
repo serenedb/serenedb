@@ -27,17 +27,17 @@
 
 namespace irs {
 
-class VolatileBoostScore : public ScoreOperator {
+class ScaleScore : public ScoreOperator {
  public:
-  VolatileBoostScore(const score_t* volatile_boost, score_t constant) noexcept
-    : _constant{constant}, _volatile_boost{volatile_boost} {
-    SDB_ASSERT(volatile_boost);
+  ScaleScore(const score_t* scale, score_t constant) noexcept
+    : _constant{constant}, _scale{scale} {
+    SDB_ASSERT(scale);
   }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res, size_t n) const noexcept {
     for (scores_size_t i = 0; i != n; ++i) {
-      Merge<MergeType>(res[i], _volatile_boost[i] * _constant);
+      Merge<MergeType>(res[i], _scale[i] * _constant);
     }
   }
 
@@ -73,16 +73,15 @@ class VolatileBoostScore : public ScoreOperator {
 
  private:
   score_t _constant;
-  const score_t* _volatile_boost;
+  const score_t* _scale;
 };
 
-inline ScoreFunction MakeVolatileBoostScore(const ScoreContext& ctx,
-                                            score_t value) {
-  const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
-  if (!volatile_boost) {
+inline ScoreFunction MakeScaleScore(const ScoreContext& ctx, score_t value) {
+  const auto* scale = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
+  if (!scale) {
     return ScoreFunction::Constant(value);
   }
-  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value, value);
+  return ScoreFunction::Make<ScaleScore>(scale->value, value);
 }
 
 }  // namespace irs

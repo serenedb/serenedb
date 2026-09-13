@@ -24,6 +24,7 @@
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs::docs {
 namespace {
@@ -31,7 +32,9 @@ namespace {
 class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, detail::DeadRuns* table)
-    : _hits{std::move(hits)}, _table{table} {}
+    : _hits{hits.size(),
+            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
+      _table{table} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
     uint32_t n = 0;
@@ -46,7 +49,7 @@ class HnswHits : public Root {
   }
 
  private:
-  std::vector<ScoreDoc> _hits;
+  containers::Fixed<ScoreDoc> _hits;
   detail::DeadRuns* _table;
   size_t _pos = 0;
 };

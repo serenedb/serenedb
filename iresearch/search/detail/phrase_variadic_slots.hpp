@@ -25,9 +25,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -139,12 +139,10 @@ class PhraseVariadicSlots {
     return _matcher.NextAlignment();
   }
 
-  static constexpr bool kHasBoost = Matcher::kHasBoost;
-
-  score_t Boost() const noexcept
-    requires(kHasBoost)
+  score_t Scale() const noexcept
+    requires(Matcher::kHasScale)
   {
-    return _matcher.GetBoost();
+    return _matcher.GetScale();
   }
 
  private:
@@ -166,9 +164,9 @@ class PhraseVariadicSlots {
     return offset;
   }
 
-  detail::FixedArray<Leaf> _terms;
-  detail::FixedArray<Entry> _slots;
-  detail::FixedArray<Slot*> _probes;
+  containers::Fixed<Leaf> _terms;
+  containers::Fixed<Entry> _slots;
+  containers::Fixed<Slot*> _probes;
   Matcher _matcher;
 };
 

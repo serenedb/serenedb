@@ -18,20 +18,20 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Correctness coverage for the sloppy-phrase gather machinery and the n == 2
-// fused merge-join.
+// Correctness coverage for the sweep's compile-time arity specialisation
+// against its dynamic form.
 //
-// n == 2 phrases - fixed and variadic alike - route to the merge-join in
-// production and never reach gather; gPairJoinDisabled exposes the generic
-// gather + Run path for the equivalence tests, which compile only under
-// SDB_DEV. The SlopOverlapMatcher tests at the end pin the n >= 3
+// A phrase whose slot count ResolveArity can pin - n == 2 and n == 3 - compiles
+// to a sweep with the arity baked in; gStaticArityDisabled forces the dynamic
+// one, so the two can be compared on the same corpus. Those tests compile only
+// under SDB_DEV. The SlopOverlapMatcher tests at the end pin the n >= 3
 // same-position (term-group) semantics of spm::Run and run in any build.
 
 #include <array>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/detail/phrase_iterator.hpp>
-#include <iresearch/search/detail/slop_phrase.hpp>
+#include <iresearch/search/detail/phrase_matcher.hpp>
+#include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/offsets/root.hpp>
@@ -48,28 +48,15 @@ namespace spm = irs::detail::slop;
 
 constexpr irs::field_id kField = tests::FieldIdFor("phrase_anl");
 
-// Routes n == 2 phrases through the generic gather + Run path for the
-// duration of the scope (the production default is the fused merge-join,
-// which bypasses gather entirely).
-class PairJoinGuard {
+// Forces the dynamic-arity sweep for the duration of the scope (the production
+// default bakes the arity in wherever ResolveArity can pin it).
+class DynamicArityGuard {
  public:
-  PairJoinGuard() noexcept { spm::gPairJoinDisabled = true; }
-  ~PairJoinGuard() { spm::gPairJoinDisabled = false; }
+  DynamicArityGuard() noexcept { spm::gStaticArityDisabled = true; }
+  ~DynamicArityGuard() { spm::gStaticArityDisabled = false; }
 
-  PairJoinGuard(const PairJoinGuard&) = delete;
-  PairJoinGuard& operator=(const PairJoinGuard&) = delete;
-};
-
-// Routes the offset-enabled read-all gather through the scalar per-position
-// loop for the duration of the scope (the production default is the bulk
-// three-array ReadAll).
-class OffsBulkScalarGuard {
- public:
-  OffsBulkScalarGuard() noexcept { spm::gOffsBulkGatherDisabled = true; }
-  ~OffsBulkScalarGuard() { spm::gOffsBulkGatherDisabled = false; }
-
-  OffsBulkScalarGuard(const OffsBulkScalarGuard&) = delete;
-  OffsBulkScalarGuard& operator=(const OffsBulkScalarGuard&) = delete;
+  DynamicArityGuard(const DynamicArityGuard&) = delete;
+  DynamicArityGuard& operator=(const DynamicArityGuard&) = delete;
 };
 
 irs::bytes_view Term(std::string_view s) {
@@ -147,11 +134,11 @@ std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
 
 #ifdef SDB_DEV
 
-class SlopGatherTestCase : public tests::FilterTestCaseBase {};
+class PhraseSlopMatcherTestCase : public tests::FilterTestCaseBase {};
 
-// Pair-join equivalence: the n == 2 merge-join (production default) must
-// produce exactly the docs the generic gather + Run path does.
-TEST_P(SlopGatherTestCase, pair_join_equivalence_fixed) {
+// The arity-specialised sweep (production default) must produce exactly the
+// docs the dynamic one does.
+TEST_P(PhraseSlopMatcherTestCase, static_arity_equivalence_fixed) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::PayloadedJsonFieldFactory);
@@ -184,20 +171,21 @@ TEST_P(SlopGatherTestCase, pair_join_equivalence_fixed) {
 
     tests::PreparedFilter prepared{q, rdr};
 
-    const auto join = CollectDocs(prepared);
-    std::vector<irs::doc_id_t> legacy;
+    const auto fixed = CollectDocs(prepared);
+    std::vector<irs::doc_id_t> dynamic;
     {
-      PairJoinGuard pj;
-      legacy = CollectDocs(prepared);
+      DynamicArityGuard dyn;
+      dynamic = CollectDocs(prepared);
     }
-    ASSERT_EQ(legacy, join) << "pair join diverged from gather: " << s.ctx;
-    ASSERT_FALSE(join.empty()) << "expected matches for: " << s.ctx;
+    ASSERT_EQ(dynamic, fixed)
+      << "static arity diverged from dynamic: " << s.ctx;
+    ASSERT_FALSE(fixed.empty()) << "expected matches for: " << s.ctx;
   }
 }
 
 // Same for the offsets path: per-match offsets (and, via the match
-// count, freq) from the join must be identical to the generic path's.
-TEST_P(SlopGatherTestCase, pair_join_equivalence_offsets) {
+// count, freq) from the specialised sweep must match the dynamic one.
+TEST_P(PhraseSlopMatcherTestCase, static_arity_equivalence_offsets) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::PayloadedJsonFieldFactory);
@@ -213,22 +201,22 @@ TEST_P(SlopGatherTestCase, pair_join_equivalence_offsets) {
 
   tests::PreparedFilter prepared{q, rdr};
 
-  const auto join = CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr);
-  std::vector<OffsetMatch> legacy;
+  const auto fixed = CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr);
+  std::vector<OffsetMatch> dynamic;
   {
-    PairJoinGuard pj;
-    legacy = CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr);
+    DynamicArityGuard dyn;
+    dynamic = CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr);
   }
-  ASSERT_FALSE(join.empty());
-  ASSERT_EQ(legacy, join);
+  ASSERT_FALSE(fixed.empty());
+  ASSERT_EQ(dynamic, fixed);
 }
 
-// Variadic pair-join equivalence: an n == 2 variadic phrase (a term set per
-// slot, here from prefix expansion) routes to the same merge-join; same
-// join-vs-generic discipline as the fixed test. Duplicate positions inside
+// Variadic arity equivalence: an n == 2 variadic phrase (a term set per slot,
+// here from prefix expansion) takes the same specialisation; same
+// static-vs-dynamic discipline as the fixed test. Duplicate positions inside
 // a slot (same-position synonyms) cannot occur on this corpus; that case is
 // pinned by the merged-stream fuzz oracle.
-TEST_P(SlopGatherTestCase, pair_join_equivalence_variadic) {
+TEST_P(PhraseSlopMatcherTestCase, static_arity_equivalence_variadic) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::PayloadedJsonFieldFactory);
@@ -273,24 +261,24 @@ TEST_P(SlopGatherTestCase, pair_join_equivalence_variadic) {
 
     tests::PreparedFilter prepared{q, rdr};
 
-    const auto join = CollectDocs(prepared);
-    std::vector<irs::doc_id_t> legacy;
+    const auto fixed = CollectDocs(prepared);
+    std::vector<irs::doc_id_t> dynamic;
     {
-      PairJoinGuard pj;
-      legacy = CollectDocs(prepared);
+      DynamicArityGuard dyn;
+      dynamic = CollectDocs(prepared);
     }
-    ASSERT_EQ(legacy, join)
-      << "variadic pair join diverged from gather: " << s.ctx;
-    ASSERT_FALSE(join.empty()) << "expected matches for: " << s.ctx;
+    ASSERT_EQ(dynamic, fixed)
+      << "variadic static arity diverged from dynamic: " << s.ctx;
+    ASSERT_FALSE(fixed.empty()) << "expected matches for: " << s.ctx;
   }
 }
 
-// Offsets path through the variadic join: per-match offsets must be
-// identical to the generic gather path's. Exact comparison is safe: with no
+// Offsets path through the variadic sweep: per-match offsets must be
+// identical to the generic sweep's. Exact comparison is safe: with no
 // same-position tokens in the corpus no slot holds duplicate positions, the
 // one case where the two paths may legitimately source offsets from
 // different equal-position terms.
-TEST_P(SlopGatherTestCase, pair_join_equivalence_offsets_variadic) {
+TEST_P(PhraseSlopMatcherTestCase, static_arity_equivalence_offsets_variadic) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::PayloadedJsonFieldFactory);
@@ -306,24 +294,24 @@ TEST_P(SlopGatherTestCase, pair_join_equivalence_offsets_variadic) {
 
   tests::PreparedFilter prepared{q, rdr};
 
-  const auto join = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
-  std::vector<OffsetMatch> legacy;
+  const auto fixed = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
+  std::vector<OffsetMatch> dynamic;
   {
-    PairJoinGuard pj;
-    legacy = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
+    DynamicArityGuard dyn;
+    dynamic = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
   }
-  ASSERT_FALSE(join.empty());
-  ASSERT_EQ(legacy, join);
+  ASSERT_FALSE(fixed.empty());
+  ASSERT_EQ(dynamic, fixed);
 }
 
-// Per-doc solo dispatch in the variadic join: a slot whose current document
-// holds exactly one live sub-iterator feeds JoinPair raw, others go through
+// Per-doc solo dispatch in the variadic sweep: a slot whose current document
+// holds exactly one live sub-iterator feeds the sweep raw, others go through
 // the merged stream. The sequential corpus never puts two live subs in BOTH
 // slots of one document, so the merged x merged branch (and the dispatch
 // counting itself) is pinned here on an inline corpus. No same-position
 // tokens, so exact offsets comparison is safe (see
-// pair_join_equivalence_offsets_variadic).
-TEST_P(SlopGatherTestCase, pair_join_solo_dispatch_equivalence) {
+// static_arity_equivalence_offsets_variadic).
+TEST_P(PhraseSlopMatcherTestCase, static_arity_solo_dispatch_equivalence) {
   // qui* -> {quick, quilt}, fo* -> {fox, forward}; the per-doc live sub
   // counts walk all four dispatch branches across the documents.
   static constexpr char kData[] =
@@ -347,35 +335,36 @@ TEST_P(SlopGatherTestCase, pair_join_solo_dispatch_equivalence) {
     tests::PreparedFilter prepared{q, rdr};
     const auto ctx = "qui* fo* s" + std::to_string(slop);
 
-    const auto join = CollectDocs(prepared);
-    std::vector<irs::doc_id_t> legacy;
+    const auto fixed = CollectDocs(prepared);
+    std::vector<irs::doc_id_t> dynamic;
     {
-      PairJoinGuard pj;
-      legacy = CollectDocs(prepared);
+      DynamicArityGuard dyn;
+      dynamic = CollectDocs(prepared);
     }
-    ASSERT_EQ(legacy, join) << "solo dispatch diverged from gather: " << ctx;
-    ASSERT_FALSE(join.empty()) << "expected matches for: " << ctx;
+    ASSERT_EQ(dynamic, fixed)
+      << "solo dispatch diverged from dynamic arity: " << ctx;
+    ASSERT_FALSE(fixed.empty()) << "expected matches for: " << ctx;
 
-    const auto join_offs =
+    const auto fixed_offs =
       CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
-    std::vector<OffsetMatch> legacy_offs;
+    std::vector<OffsetMatch> dynamic_offs;
     {
-      PairJoinGuard pj;
-      legacy_offs = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
+      DynamicArityGuard dyn;
+      dynamic_offs = CollectOffsets<irs::VariadicPhraseQuery>(prepared, rdr);
     }
-    ASSERT_EQ(legacy_offs, join_offs) << ctx;
-    ASSERT_FALSE(join_offs.empty()) << ctx;
+    ASSERT_EQ(dynamic_offs, fixed_offs) << ctx;
+    ASSERT_FALSE(fixed_offs.empty()) << ctx;
   }
 }
 
 // Multi-block postings: every corpus above keeps a term's positions within
-// a single 128-entry block, so the bulk ReadAll refill and its backlog Skip
-// never run in CI (benches are the only consumers). This corpus gives the
-// dense term hundreds of positions per document - several position blocks -
-// plus a document the conjunction skips, so the pending-position catch-up
-// crosses blocks too. All decode paths must agree: join vs gather for the
-// pair, and bulk vs scalar offset gather for n == 3.
-TEST_P(SlopGatherTestCase, multi_block_postings) {
+// a single 128-entry block, so neither the block refill the sweep drives nor
+// its backlog Skip runs in CI. This corpus gives the dense term hundreds of
+// positions per document - several position blocks - plus a document the
+// conjunction skips, so the pending-position catch-up crosses blocks too.
+// Join and sweep must agree for the pair, and the n == 3 sweep must produce
+// offsets across the refills.
+TEST_P(PhraseSlopMatcherTestCase, multi_block_postings) {
   const auto repeat = [](std::string_view tok, size_t n) {
     std::string s;
     for (size_t i = 0; i != n; ++i) {
@@ -410,40 +399,32 @@ TEST_P(SlopGatherTestCase, multi_block_postings) {
     return tests::PreparedFilter{q, rdr};
   };
 
-  // Pair: production join vs the generic gather path.
+  // Pair: the arity-specialised sweep vs the dynamic one.
   {
     auto prepared = make({"bbb", "aaa"}, 1);
-    const auto join = CollectDocs(prepared);
-    ASSERT_EQ(2u, join.size());  // D1 and D3
+    const auto fixed = CollectDocs(prepared);
+    ASSERT_EQ(2u, fixed.size());  // D1 and D3
     {
-      PairJoinGuard pj;
-      ASSERT_EQ(join, CollectDocs(prepared));
+      DynamicArityGuard dyn;
+      ASSERT_EQ(fixed, CollectDocs(prepared));
     }
   }
 
-  // Triple: bulk ReadAll with refills, positions and offsets.
+  // Triple: the sweep drives the block refills itself.
   {
     auto prepared = make({"xxx", "bbb", "aaa"}, 1);
-    const auto read_all = CollectDocs(prepared);
-    ASSERT_EQ(2u, read_all.size());  // D1 and D3
-
-    // Offsets: bulk three-array ReadAll vs its scalar loop.
-    const auto bulk = CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr);
-    ASSERT_FALSE(bulk.empty());
-    {
-      OffsBulkScalarGuard scalar;
-      ASSERT_EQ(bulk, CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr));
-    }
+    ASSERT_EQ(2u, CollectDocs(prepared).size());  // D1 and D3
+    ASSERT_FALSE(CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr).empty());
   }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(slop_gather_test, SlopGatherTestCase,
+INSTANTIATE_TEST_SUITE_P(phrase_slop_matcher_test, PhraseSlopMatcherTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
                                             ::testing::Values(tests::FormatInfo{
                                               "1_5simd"})),
-                         SlopGatherTestCase::to_string);
+                         PhraseSlopMatcherTestCase::to_string);
 
 #endif  // SDB_DEV
 

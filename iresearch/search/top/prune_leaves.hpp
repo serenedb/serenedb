@@ -28,10 +28,10 @@
 #include <vector>
 
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -137,11 +137,11 @@ class PruneLeaves {
   }
 
   ColumnArgsFetcher& _fetcher;
-  irs::detail::RunOf<Leaf, N> _leaves;
-  irs::detail::RunOf<ScoreFunction, N> _scorers;
-  irs::detail::RunOf<score_t, N> _remaining;
-  irs::detail::RunOf<score_t, N> _suffix;
-  irs::detail::RunOf<uint32_t, N> _order;
+  irs::containers::Fixed<Leaf, N> _leaves;
+  irs::containers::Fixed<ScoreFunction, N> _scorers;
+  irs::containers::Fixed<score_t, N> _remaining;
+  irs::containers::Fixed<score_t, N> _suffix;
+  irs::containers::Fixed<uint32_t, N> _order;
 };
 
 }  // namespace irs::top

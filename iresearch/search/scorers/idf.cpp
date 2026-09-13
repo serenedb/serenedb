@@ -23,7 +23,7 @@
 #include <cmath>
 
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/volatile_boost_score.hpp"
+#include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -41,7 +41,7 @@ void IDF::collect(byte_type* stats_buf, const FieldCollector* field,
 }
 
 ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
-  return MakeVolatileBoostScore(ctx, ctx.boost * stats_cast(ctx.stats)->value);
+  return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->value);
 }
 
 }  // namespace irs

@@ -30,10 +30,10 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/stats_arena.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -125,7 +125,7 @@ class CounterSlots {
       1, (terms + CounterBlock::kTerms - 1) / CounterBlock::kTerms);
   }
 
-  detail::FixedArray<CounterBlock> _blocks;
+  containers::Fixed<CounterBlock> _blocks;
   size_t _per_thread;
   size_t _terms;
   uint32_t _threads;
@@ -229,7 +229,7 @@ class PhraseCollector final : public FieldPrepareCollector {
 
  private:
   size_t _size;
-  detail::FixedArray<std::vector<TermCollector>> _parts;
+  containers::Fixed<std::vector<TermCollector>> _parts;
 };
 
 class AllCollector final : public PrepareCollector {

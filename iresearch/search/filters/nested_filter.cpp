@@ -156,7 +156,7 @@ class ScoredChild {
     if (_held != 0) {
       Flush();
     }
-    SDB_ASSERT(slot < doc_limits::kBlockSize);
+    SDB_ASSERT(slot < kScoreBlock);
     _parents[slot] = _sum;
   }
 
@@ -176,7 +176,7 @@ class ScoredChild {
     _held = 0;
   }
 
-  ABSL_CACHELINE_ALIGNED score_t _parents[doc_limits::kBlockSize]{};
+  ABSL_CACHELINE_ALIGNED score_t _parents[kScoreBlock]{};
   ABSL_CACHELINE_ALIGNED score_t _batch[kScoreBlock];
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
   lead::Node::ptr _child;

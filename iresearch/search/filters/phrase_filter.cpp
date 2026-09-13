@@ -27,7 +27,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
@@ -184,7 +184,7 @@ class PhraseTermVisitor final : public FilterVisitor,
       }
       (*_part)[_term_offset].Collect(meta);
       ++_term_offset;
-      _volatile_boost |= (boost != kNoBoost);
+      _has_boosts |= (boost != kNoBoost);
     }
     if (_visited_terms) {
       const auto term = _terms->value();
@@ -194,7 +194,7 @@ class PhraseTermVisitor final : public FilterVisitor,
     return true;
   }
 
-  void Reset() noexcept { _volatile_boost = false; }
+  void Reset() noexcept { _has_boosts = false; }
 
   void Reset(std::vector<TermCollector>* part,
              std::vector<bstring>* visited_terms = nullptr) noexcept {
@@ -207,7 +207,7 @@ class PhraseTermVisitor final : public FilterVisitor,
 
   bool Found() const noexcept { return _found; }
 
-  bool VolatileBoost() const noexcept { return _volatile_boost; }
+  bool HasBoosts() const noexcept { return _has_boosts; }
 
  private:
   const SubReader* _segment{};
@@ -218,7 +218,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   TermIterator* _terms = nullptr;
   size_t _term_offset = 0;
   bool _found = false;
-  bool _volatile_boost = false;
+  bool _has_boosts = false;
 };
 
 bool HasIntervalOffsets(const ByPhraseOptions& options) noexcept {
@@ -477,7 +477,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
   if (collect_groups) {
     state.term_groups = ComputeTermGroups(options, part_terms, ctx.memory);
   }
-  state.volatile_boost = !is_ord_empty && ptv.VolatileBoost();
+  state.has_boosts = !is_ord_empty && ptv.HasBoosts();
   SDB_ASSERT(phrase_size == state.num_terms.size());
 
   state.metas.reserve(state.terms.size());
@@ -485,7 +485,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
     SDB_ASSERT(term.first.docs_count != 0);
     state.metas.emplace_back(&term.first);
   }
-  if (state.volatile_boost) {
+  if (state.has_boosts) {
     state.boosts.reserve(state.terms.size());
     for (const auto& term : state.terms) {
       state.boosts.emplace_back(term.second);
@@ -518,7 +518,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
   if (absl::c_all_of(state.num_terms,
                      [](uint32_t count) noexcept { return count == 1; })) {
     auto boost = ctx.boost;
-    if (state.volatile_boost) {
+    if (state.has_boosts) {
       score_t sum = 0.f;
       for (const auto& term : state.terms) {
         sum += term.second;

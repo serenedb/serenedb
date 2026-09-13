@@ -31,10 +31,10 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/phrase_fixed_slots.hpp"
+#include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
-#include "iresearch/search/detail/slop_phrase.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
@@ -74,17 +74,16 @@ template<PhraseMatch M, bool Bounds, typename Input, bool HasFreq = false,
          bool Offs = false, bool HasBoost = false, typename Query, typename F>
 auto ResolveSlotMatcherOf(const Query& query, F&& f) {
   using Leaf = detail::PostingPos<Input, Bounds, Offs>;
+  using Slot =
+    std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
   if constexpr (M == PhraseMatch::Slop) {
-    using Slot =
-      std::pair<detail::PhraseVariadicPositions<Leaf>*, TermInterval>;
-    return f.template operator()<SlopPhrase<Slot, Offs, HasFreq>, Leaf>(
+    return f.template
+    operator()<PhraseSlopMatcher<Slot, Offs, HasFreq, 0, HasBoost>, Leaf>(
       query.slop, BuildExpectedSteps(query.positions));
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
-    using Slot =
-      std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
     return f.template operator()<
-      PhraseFrequency<Slot, Offs, HasFreq, kIntervals, HasBoost>, Leaf>();
+      PhraseMatcher<Slot, Offs, HasFreq, kIntervals, HasBoost>, Leaf>();
   }
 }
 
@@ -92,12 +91,12 @@ template<PhraseMatch M, size_t N, bool HasFreq = false, bool Offs = false,
          typename Query, typename F>
 auto ResolveMatcherOf(const Query& query, F&& f) {
   if constexpr (M == PhraseMatch::Slop) {
-    return f.template operator()<SlopPhraseFrequency<Offs, HasFreq, N>>(
+    return f.template operator()<FixedPhraseSlopMatcher<Offs, HasFreq, N>>(
       query.slop, BuildExpectedSteps(query.positions));
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
-    return f.template
-    operator()<FixedPhraseFrequency<Offs, HasFreq, kIntervals, N>>();
+    return f
+      .template operator()<FixedPhraseMatcher<Offs, HasFreq, kIntervals, N>>();
   }
 }
 
@@ -154,10 +153,10 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> Result {
     return ResolveInput(*h.doc, [&]<typename Input> -> Result {
       return ResolveBool(
-        Scored && state.volatile_boost, [&]<bool Weighed> -> Result {
+        Scored && state.has_boosts, [&]<bool HasBoosts> -> Result {
           return ResolveSlotMatcherOf < M, Bounds, Input, Scored, false,
                  Scored &&
-                   Weighed >
+                   HasBoosts >
                      (query,
                       [&]<typename Matcher, typename Leaf>(
                         auto&&... args) -> Result {

@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -44,7 +44,7 @@ class ConjunctionLeaves {
     uint32_t order = 0;
   };
 
-  using Slots = RunOf<Slot, N>;
+  using Slots = containers::Fixed<Slot, N>;
 
   explicit ConjunctionLeaves(size_t size) : _slots(size) {
     SDB_ASSERT(size > 1);
@@ -63,10 +63,10 @@ class ConjunctionLeaves {
       }
     };
     SDB_ASSERT(metas.size() == _slots.size());
-    RunOf<uint32_t, N> order{metas.size(),
-                             [](uint32_t& slot, size_t i) noexcept {
-                               slot = static_cast<uint32_t>(i);
-                             }};
+    containers::Fixed<uint32_t, N> order{metas.size(),
+                                         [](uint32_t& slot, size_t i) noexcept {
+                                           slot = static_cast<uint32_t>(i);
+                                         }};
     absl::c_sort(order, [&](uint32_t lhs, uint32_t rhs) {
       return at(lhs).docs_count < at(rhs).docs_count;
     });

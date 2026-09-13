@@ -27,10 +27,11 @@
 #include <limits>
 
 #include "iresearch/search/detail/estimate.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs {
@@ -44,7 +45,7 @@ class PhraseQuery : public QueryBuilder {
                 std::is_same_v<StateType, VariadicPhraseState>);
 
  public:
-  using positions_t = std::vector<TermInterval>;
+  using positions_t = containers::Fixed<TermInterval>;
 
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;

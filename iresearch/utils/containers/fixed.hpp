@@ -30,22 +30,90 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
-namespace irs::detail {
+namespace irs::containers {
 
-template<typename T>
-class FixedArray {
+template<typename T, size_t N = 0>
+class Fixed {
  public:
   using value_type = T;
   using iterator = T*;
   using const_iterator = const T*;
 
-  FixedArray() = default;
+  Fixed() = default;
 
-  explicit FixedArray(size_t size)
-    : FixedArray{size, [](T&, size_t) noexcept {}} {}
+  explicit Fixed(size_t size) { SDB_ASSERT(size == N); }
 
   template<typename Init>
-  FixedArray(size_t size, Init&& init) {
+  Fixed(size_t size, Init&& init) {
+    SDB_ASSERT(size == N);
+    for (size_t i = 0; i != N; ++i) {
+      init(_data[i], i);
+    }
+  }
+
+  template<typename Args>
+  Fixed(size_t size, std::piecewise_construct_t, Args&& args)
+    : Fixed{std::piecewise_construct, std::forward<Args>(args),
+            std::make_index_sequence<N>{}} {
+    SDB_ASSERT(size == N);
+  }
+
+  template<typename... Args>
+  explicit Fixed(std::piecewise_construct_t, Args&&... args)
+    : _data{std::make_from_tuple<T>(std::forward<Args>(args))...} {
+    static_assert(sizeof...(Args) == N);
+  }
+
+  Fixed(Fixed&&) = delete;
+  Fixed& operator=(Fixed&&) = delete;
+
+  T* data() noexcept { return _data.data(); }
+  const T* data() const noexcept { return _data.data(); }
+
+  static constexpr size_t size() noexcept { return N; }
+  static constexpr bool empty() noexcept { return N == 0; }
+
+  T& operator[](size_t i) noexcept {
+    SDB_ASSERT(i < N);
+    return _data[i];
+  }
+  const T& operator[](size_t i) const noexcept {
+    SDB_ASSERT(i < N);
+    return _data[i];
+  }
+
+  T& front() noexcept { return _data.front(); }
+  const T& front() const noexcept { return _data.front(); }
+
+  T& back() noexcept { return _data.back(); }
+  const T& back() const noexcept { return _data.back(); }
+
+  T* begin() noexcept { return _data.data(); }
+  T* end() noexcept { return _data.data() + N; }
+  const T* begin() const noexcept { return _data.data(); }
+  const T* end() const noexcept { return _data.data() + N; }
+
+ private:
+  template<typename Args, size_t... I>
+  Fixed(std::piecewise_construct_t, Args&& args, std::index_sequence<I...>)
+    : _data{std::make_from_tuple<T>(args(I))...} {}
+
+  std::array<T, N> _data{};
+};
+
+template<typename T>
+class Fixed<T, 0> {
+ public:
+  using value_type = T;
+  using iterator = T*;
+  using const_iterator = const T*;
+
+  Fixed() = default;
+
+  explicit Fixed(size_t size) : Fixed{size, [](T&, size_t) noexcept {}} {}
+
+  template<typename Init>
+  Fixed(size_t size, Init&& init) {
     if (size == 0) {
       return;
     }
@@ -68,7 +136,7 @@ class FixedArray {
   }
 
   template<typename Args>
-  FixedArray(size_t size, std::piecewise_construct_t, Args&& args) {
+  Fixed(size_t size, std::piecewise_construct_t, Args&& args) {
     if (size == 0) {
       return;
     }
@@ -94,16 +162,17 @@ class FixedArray {
     _size = size;
   }
 
-  FixedArray(FixedArray&&) = delete;
-  FixedArray& operator=(FixedArray&&) = delete;
+  Fixed(Fixed&& rhs) noexcept
+    : _data{std::exchange(rhs._data, nullptr)},
+      _size{std::exchange(rhs._size, 0)} {}
 
-  ~FixedArray() {
-    if (_data == nullptr) {
-      return;
-    }
-    std::destroy_n(_data, _size);
-    std::allocator<T>{}.deallocate(_data, _size);
+  Fixed& operator=(Fixed&& rhs) noexcept {
+    std::swap(_data, rhs._data);
+    std::swap(_size, rhs._size);
+    return *this;
   }
+
+  ~Fixed() { Release(); }
 
   T* data() noexcept { return _data; }
   const T* data() const noexcept { return _data; }
@@ -144,80 +213,16 @@ class FixedArray {
   const T* end() const noexcept { return _data + _size; }
 
  private:
+  void Release() noexcept {
+    if (_data == nullptr) {
+      return;
+    }
+    std::destroy_n(_data, _size);
+    std::allocator<T>{}.deallocate(_data, _size);
+  }
+
   T* _data = nullptr;
   size_t _size = 0;
 };
 
-template<typename T, size_t N>
-class FixedRun {
- public:
-  using value_type = T;
-  using iterator = T*;
-  using const_iterator = const T*;
-
-  FixedRun() = default;
-
-  explicit FixedRun(size_t size) { SDB_ASSERT(size == N); }
-
-  template<typename Init>
-  FixedRun(size_t size, Init&& init) {
-    SDB_ASSERT(size == N);
-    for (size_t i = 0; i != N; ++i) {
-      init(_data[i], i);
-    }
-  }
-
-  template<typename Args>
-  FixedRun(size_t size, std::piecewise_construct_t, Args&& args)
-    : FixedRun{std::piecewise_construct, std::forward<Args>(args),
-               std::make_index_sequence<N>{}} {
-    SDB_ASSERT(size == N);
-  }
-
-  template<typename... Args>
-  explicit FixedRun(std::piecewise_construct_t, Args&&... args)
-    : _data{std::make_from_tuple<T>(std::forward<Args>(args))...} {
-    static_assert(sizeof...(Args) == N);
-  }
-
-  FixedRun(FixedRun&&) = delete;
-  FixedRun& operator=(FixedRun&&) = delete;
-
-  T* data() noexcept { return _data.data(); }
-  const T* data() const noexcept { return _data.data(); }
-
-  static constexpr size_t size() noexcept { return N; }
-  static constexpr bool empty() noexcept { return N == 0; }
-
-  T& operator[](size_t i) noexcept {
-    SDB_ASSERT(i < N);
-    return _data[i];
-  }
-  const T& operator[](size_t i) const noexcept {
-    SDB_ASSERT(i < N);
-    return _data[i];
-  }
-
-  T& front() noexcept { return _data.front(); }
-  const T& front() const noexcept { return _data.front(); }
-
-  T& back() noexcept { return _data.back(); }
-  const T& back() const noexcept { return _data.back(); }
-
-  T* begin() noexcept { return _data.data(); }
-  T* end() noexcept { return _data.data() + N; }
-  const T* begin() const noexcept { return _data.data(); }
-  const T* end() const noexcept { return _data.data() + N; }
-
- private:
-  template<typename Args, size_t... I>
-  FixedRun(std::piecewise_construct_t, Args&& args, std::index_sequence<I...>)
-    : _data{std::make_from_tuple<T>(args(I))...} {}
-
-  std::array<T, N> _data{};
-};
-
-template<typename T, size_t N>
-using RunOf = std::conditional_t<N == 0, FixedArray<T>, FixedRun<T, N>>;
-
-}  // namespace irs::detail
+}  // namespace irs::containers

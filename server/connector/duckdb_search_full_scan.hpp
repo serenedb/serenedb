@@ -36,6 +36,7 @@
 #include <iresearch/types.hpp>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -244,7 +245,16 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   };
   ColScanState col_scan;
 
-  std::vector<std::unique_ptr<StreamSegmentCursor>> stream_cursors;
+  struct StreamCursorSlot {
+    std::mutex mutex;
+    std::shared_ptr<StreamSegmentCursor> cursor;
+  };
+  struct StreamCursors {
+    std::atomic_uint32_t slots{0};
+    std::unique_ptr<StreamCursorSlot[]> current;
+    uint32_t count = 0;
+  };
+  StreamCursors stream_cursors;
   duckdb::idx_t stream_threads = 1;
 
   // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for score pruning,

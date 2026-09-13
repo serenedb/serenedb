@@ -107,7 +107,9 @@ statement ok
 INSERT INTO sc_ts_t VALUES (1, 'a fat cat'), (2, 'a fat dog sat');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sc_ts_en (template='text', locale='en_US.UTF-8', case='none', stemming=false, accent=false, frequency=true, position=true);
+CREATE TEXT SEARCH DICTIONARY sc_ts_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX sc_ts_idx ON sc_ts_t USING inverted(id, body sc_ts_en);

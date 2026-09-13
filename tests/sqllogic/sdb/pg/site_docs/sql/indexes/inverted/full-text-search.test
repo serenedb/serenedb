@@ -4,15 +4,9 @@ statement ok
 CREATE TABLE sentences (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sentences_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY sentences_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX sentences_idx ON sentences
@@ -276,13 +270,8 @@ statement ok
 CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY fuzzy_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
 CREATE INDEX products_idx ON products USING inverted (id, name fuzzy_dict);
@@ -313,13 +302,9 @@ statement ok
 CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bigram_dict (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 2,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY bigram_dict AS
+    generate_ngrams(2, 2)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX titles_idx ON titles USING inverted (id, title bigram_dict);
@@ -368,15 +353,9 @@ INSERT INTO movies VALUES
 (10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY basic_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY basic_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX movies_idx ON movies
@@ -425,16 +404,9 @@ statement ok
 CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY offsets_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY offsets_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX docs_idx ON docs USING inverted (id, body offsets_en);

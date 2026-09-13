@@ -10,7 +10,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 "Near me" is a search too. The [inverted index](../../sql/indexes/inverted/index.md) keeps geometry next to text, so a distance filter runs on the same index that answers your keyword queries and you can mix the two in one `WHERE`. Here you find shops within a radius, inside a distance band and near a location that also matches a name, then bucket every point into a heatmap grid.
 
-The shops are a coffee chain scattered across the Bay Area. `geo` is a `GEOMETRY` column indexed with a `geojson` dictionary using `s2point` coding, coordinates run `longitude latitude` and every distance is geodesic metres.
+The shops are a coffee chain scattered across the Bay Area. `geo` is a `GEOMETRY` column indexed with an `encode_geojson` dictionary using `s2point` coding, coordinates run `longitude latitude` and every distance is geodesic metres.
 
 <details>
 <summary>Schema and sample data</summary>
@@ -61,6 +61,6 @@ Click the hottest square and you want the shops behind the number. Filter on the
 
 ## See also
 
-- [Geospatial Search guide](../../sql/indexes/inverted/geospatial-search.md): indexing polygons, GeoJSON columns and the lat/lon `geopoint` template
+- [Geospatial Search guide](../../sql/indexes/inverted/geospatial-search.md): indexing polygons, GeoJSON columns and the lat/lon `encode_geopoint` template
 - [Geo functions reference](../../sql/functions/search/geo.md): `ST_Intersects`, `ST_Contains`, `ST_Distance_Between`, `ST_Distance_Centroid` and the `<->` operator
 - [Faceted Search](./faceted-search.md): combine a location filter with facet counts over the survivors

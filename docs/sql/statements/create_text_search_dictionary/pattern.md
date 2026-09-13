@@ -1,22 +1,22 @@
 ---
-title: "pattern"
+title: "split_by_pattern"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# pattern
+# split_by_pattern
 
-The `pattern` template tokenizes text with an [RE2](https://github.com/google/re2) regular expression.
+The `split_by_pattern` template tokenizes text with an [RE2](https://github.com/google/re2) regular expression.
 
-It works in two modes selected by the `GROUP` option. In **extract** mode (`GROUP = 0` for the whole match, or `N > 0` for the Nth capture group) every match becomes a token. In **split** mode (`GROUP = -1`, the default) the pattern marks the separators and the text between matches becomes the tokens. This makes it useful both for pulling structured tokens out of free text — identifiers, codes, mentions — and for splitting on separators too complex for a fixed [`delimiter`](./delimiter.md).
+It works in two modes selected by the `GROUP` option. In **extract** mode (`GROUP = 0` for the whole match, or `N > 0` for the Nth capture group) every match becomes a token. In **split** mode (`GROUP = -1`, the default) the pattern marks the separators and the text between matches becomes the tokens. This makes it useful both for pulling structured tokens out of free text — identifiers, codes, mentions — and for splitting on separators too complex for a fixed [`split_csv`](./csv.md).
 
 ## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `PATTERN` | string | **required** | RE2 regular expression used to match (extract mode) or to mark separators (split mode). An empty string fails with `pattern: empty pattern`, and a regex RE2 cannot compile fails with `pattern: invalid regex: <RE2 message>` |
-| `GROUP` | integer | `-1` | What each match contributes to the token stream: `-1` = split on each match, `0` = the whole match, `N > 0` = the Nth capture group. `N` may not exceed the number of capture groups in `PATTERN`; any other value fails with `pattern: group <n> out of range, pattern has <k> capturing groups` |
+| `PATTERN` | string | **required** | RE2 regular expression used to match (extract mode) or to mark separators (split mode). An empty string fails with `split_by_pattern: empty pattern`, and a regex RE2 cannot compile fails with `split_by_pattern: invalid regex: <RE2 message>` |
+| `GROUP` | integer | `-1` | What each match contributes to the token stream: `-1` = split on each match, `0` = the whole match, `N > 0` = the Nth capture group. `N` may not exceed the number of capture groups in `PATTERN`; any other value fails with `split_by_pattern: group <n> out of range, pattern has <k> capturing groups` |
 
 All three errors are raised by `CREATE TEXT SEARCH DICTIONARY` itself, because the statement instantiates the tokenizer to validate it. The regex is compiled with capturing disabled whenever `GROUP` is `0` or below, so for a `GROUP` below `-1` the range error reports `0 capturing groups`.
 
@@ -57,7 +57,7 @@ Here the pattern `\s+` marks the separators and the runs of text between them ar
 
 ### Split an identifier on several delimiters (`GROUP = -1`)
 
-A character class splits on `-`, `_` or `.` in a single pass — something a fixed `delimiter` cannot do:
+A character class splits on `-`, `_` or `.` in a single pass — something the one fixed delimiter of `split_csv` cannot do:
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/pattern/example_003" />
 
@@ -69,6 +69,7 @@ With `GROUP = 2` each match emits just its second capture group — the trailing
 
 ## See also
 
-- [delimiter](./delimiter.md) / [multi_delimiter](./multi-delimiter.md) — split on literal characters
-- [segmentation](./segmentation.md) — Unicode word-boundary splitting
+- [delimiter](./csv.md) / [multi_delimiter](./multi-delimiter.md) — split on literal characters
+- [text](./text.md) — Unicode word-boundary splitting
+- [`split_by_pattern()`](../../functions/search/tokenizers.md#split_by_pattern) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

@@ -3,12 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jtext (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY jtext AS
+    split_text(case := 'lower');
 
 statement ok
 CREATE TABLE products (id INTEGER PRIMARY KEY, doc VARIANT);

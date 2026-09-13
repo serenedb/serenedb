@@ -4,15 +4,9 @@ statement ok
 CREATE TABLE tsq (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tsq_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY tsq_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX tsq_idx ON tsq USING inverted(a, b tsq_english, c tsq_english);
@@ -1576,13 +1570,8 @@ a
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper AS
+    split_text(case := 'upper') | normalize_tokens('en_US.UTF-8', accent := false);
 
 # Default ambient analyzer (tsq_english, lowercase): 'Quick' lowercases
 # to 'quick' which is indexed in rows 1 and 2.
@@ -1731,13 +1720,8 @@ a
 # build time. Need a real catalog tokenizer registered.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper AS
+    split_text(case := 'upper') | normalize_tokens('en_US.UTF-8', accent := false);
 
 # Scalar TOKENIZE with named analyzer: 'Quick' uppercases to 'QUICK',
 # which isn't in the lowercase index -> 0 rows.
@@ -2065,14 +2049,9 @@ statement ok
 CREATE TABLE tsq_ngram (a INTEGER PRIMARY KEY, b VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tsq_ngram_dict(
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 2,
-    preserveoriginal = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY tsq_ngram_dict AS
+    generate_ngrams(2, 2, preserveoriginal := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX tsq_ngram_idx ON tsq_ngram USING inverted(a, b tsq_ngram_dict);

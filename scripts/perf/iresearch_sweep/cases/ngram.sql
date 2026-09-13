@@ -7,14 +7,9 @@
 DROP TABLE IF EXISTS sweep_t;
 DROP TEXT SEARCH DICTIONARY IF EXISTS sweep_ngram;
 
-CREATE TEXT SEARCH DICTIONARY sweep_ngram(
-  template = 'ngram',
-  mingram = 2,
-  maxgram = 3,
-  preserveoriginal = false,
-  frequency = true,
-  position = true
-);
+CREATE TEXT SEARCH DICTIONARY sweep_ngram AS
+    generate_ngrams(2, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 CREATE TABLE sweep_t (
   pk INTEGER PRIMARY KEY,

@@ -111,8 +111,8 @@ class Loader {
            absl::StrCat("DROP TABLE IF EXISTS ", kMeta),
            absl::StrCat("DROP TEXT SEARCH DICTIONARY IF EXISTS ", kTokenizer),
            absl::StrCat("CREATE TEXT SEARCH DICTIONARY ", kTokenizer,
-                        " (template = 'segmentation', case = 'lower', "
-                        "break = 'alpha', frequency = true, position = true)"),
+                        " AS split_text(case := 'lower', break := 'alpha') "
+                        "WITH (frequency, position)"),
            absl::StrCat("CREATE TABLE ", kTable,
                         " (path TEXT PRIMARY KEY, title TEXT NOT NULL, "
                         "breadcrumb TEXT NOT NULL, "

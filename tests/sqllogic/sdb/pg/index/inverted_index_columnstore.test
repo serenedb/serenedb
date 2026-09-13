@@ -25,15 +25,9 @@ INSERT INTO foo VALUES
   (5, 55, 500, 5.5, 5.25, TRUE,  'index');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 # pk, small_int, big_int, flt, dbl, flag are stored in the columnstore;
 # txt is tokenized for full-text filtering.

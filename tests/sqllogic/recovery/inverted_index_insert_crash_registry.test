@@ -9,15 +9,9 @@ control max-async-connections 5
 # exercises directory removal on a boot-created storage.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY reg_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY reg_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE reg_t(a INTEGER PRIMARY KEY, b TEXT);

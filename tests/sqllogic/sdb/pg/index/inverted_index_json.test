@@ -1,9 +1,8 @@
 # JSON-path inverted index -- mirrors the scenario in json_indexing.md.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict(
-    template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS
+    keyword();
 
 statement ok
 CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);
@@ -83,9 +82,9 @@ id
 # range, IN) accept the same JSON-path expression as TERM_LIKE.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY text_dict(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY text_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE preds (id INTEGER PRIMARY KEY, content JSON);
@@ -590,9 +589,9 @@ id
 # alongside the string leaf's Freq+Pos.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en_text(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY en_text AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE json_text (id INTEGER PRIMARY KEY, content JSON);

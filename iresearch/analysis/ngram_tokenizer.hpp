@@ -64,7 +64,9 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
     NGramMode ngram_mode{NGramMode::All};
   };
 
-  static constexpr std::string_view type_name() noexcept { return "ngram"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "generate_ngrams";
+  }
   static Tokenizer::ptr Make(Options opts);
 
   explicit NGramTokenizer(Options&& options);

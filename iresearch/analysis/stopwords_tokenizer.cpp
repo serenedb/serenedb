@@ -40,7 +40,7 @@ Tokenizer::ptr StopwordsTokenizer::Make(Options opts,
   auto stopwords = duckdb::make_uniq<StopwordSet>(std::move(opts.mask));
   if (!opts.stopwords_path.empty() &&
       !dict::LoadStopwords(*stopwords, {}, opts.stopwords_path)) {
-    THROW_SQL_ERROR(ERR_MSG("stopwords: failed to load stopwords"));
+    THROW_SQL_ERROR(ERR_MSG("remove_stopwords: failed to load stopwords"));
   }
   stopwords->ShrinkToFit();
 

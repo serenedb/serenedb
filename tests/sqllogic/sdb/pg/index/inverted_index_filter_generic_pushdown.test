@@ -4,15 +4,9 @@
 # instead of a Filter node above the scan.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY gfp_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY gfp_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok

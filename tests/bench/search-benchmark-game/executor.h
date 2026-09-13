@@ -41,7 +41,7 @@ struct BenchConfig {
   std::string_view format_name = "1_5simd";
   std::string_view scorer = "bm25";
   std::string_view scorer_options = R"({})";
-  std::string_view tokenizer = "segmentation";
+  std::string_view tokenizer = "text";
   std::string_view tokenizer_options = R"({})";
   size_t segment_mem_max = 1 << 28;
 };

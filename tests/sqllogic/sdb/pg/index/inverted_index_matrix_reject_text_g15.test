@@ -1,14 +1,17 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY kw_dict AS keyword();
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
-    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY ng_dict AS
+    generate_ngrams(2, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY any_text_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # ============================================================================
@@ -346,7 +349,7 @@ db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/A
 
 
 # ----------------------------------------------------------------------------
-# any_text_dict (template = 'text' analyzer)
+# any_text_dict (text analyzer)
 # ----------------------------------------------------------------------------
 
 statement error

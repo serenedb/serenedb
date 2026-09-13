@@ -52,7 +52,7 @@ class NearestNeighborsTokenizer final
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
-    return "nearest_neighbors";
+    return "find_nearest_words";
   }
 
   explicit NearestNeighborsTokenizer(const Options& options,

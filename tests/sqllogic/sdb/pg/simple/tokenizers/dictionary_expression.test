@@ -1,0 +1,552 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_text AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_text AS split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('expr_text', 'The Runners were Running');
+----
+ts_lexize
+{the,runner,were,run}
+
+query
+SELECT ts_lexize('opt_text', 'The Runners were Running') = ts_lexize('expr_text', 'The Runners were Running') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_text_named AS split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_text_arrow AS split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('expr_text_named', 'The Runners') = ts_lexize('expr_text', 'The Runners') AS same;
+----
+same
+t
+
+query
+SELECT ts_lexize('expr_text_arrow', 'The Runners') = ts_lexize('expr_text', 'The Runners') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_pipe AS
+    split_csv(',')
+    | split_text(case := 'lower') | stem_words('en_US.UTF-8')
+    | remove_stopwords(['the'])
+    WITH (frequency, position);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_pipe AS
+    split_csv(',') | split_text(case := 'lower') | stem_words('en_US.UTF-8') | remove_stopwords(['the'])
+    WITH (frequency, position);
+
+query
+SELECT ts_lexize('expr_pipe', 'The,Quick,Foxes');
+----
+ts_lexize
+{quick,fox}
+
+query
+SELECT ts_lexize('opt_pipe', 'The,Quick,Foxes') = ts_lexize('expr_pipe', 'The,Quick,Foxes') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_pipe_grouped AS
+    (split_csv(',') | split_text(case := 'lower') | stem_words('en_US.UTF-8')) | remove_stopwords(['the']);
+
+query
+SELECT ts_lexize('expr_pipe_grouped', 'The,Quick,Foxes');
+----
+ts_lexize
+{quick,fox}
+
+statement ok
+CREATE TABLE expr_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO expr_docs VALUES (1, 'The,Quick,Foxes'), (2, 'Lazy,Dogs');
+
+statement ok
+CREATE INDEX expr_docs_idx ON expr_docs USING inverted (id, body expr_pipe);
+
+statement ok
+VACUUM (REFRESH_TABLE) expr_docs;
+
+query
+SELECT id FROM expr_docs_idx WHERE body @@ 'fox';
+----
+id
+1
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_ngram AS generate_ngrams(2, 3);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_ngram AS generate_ngrams(2, 3);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_ngram_null AS generate_ngrams(NULL, 3);
+
+query
+SELECT ts_lexize('opt_ngram', 'abcd') = ts_lexize('expr_ngram', 'abcd') AS same;
+----
+same
+t
+
+query
+SELECT ts_lexize('opt_ngram', 'abcd') = ts_lexize('expr_ngram_null', 'abcd') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_pre AS lower($1) | split_csv(',');
+
+query
+SELECT ts_lexize('expr_sql_pre', 'RED,Green');
+----
+ts_lexize
+{red,green}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_post AS split_csv(',') | upper(trim($1));
+
+query
+SELECT ts_lexize('expr_sql_post', 'red, green ,blue');
+----
+ts_lexize
+{RED,GREEN,BLUE}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_split AS
+    string_split(lower($1), ',')
+    | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('expr_sql_split', 'Cats,RUNNING');
+----
+ts_lexize
+{cat,run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_only AS regexp_split_to_array(lower($1), '\W+');
+
+query
+SELECT ts_lexize('expr_sql_only', 'Hello, World! FOO bar');
+----
+ts_lexize
+{hello,world,foo,bar}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_string AS sql('upper($1)');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_wrapped AS sql(upper($1));
+
+query
+SELECT ts_lexize('expr_sql_string', 'abc'), ts_lexize('expr_sql_wrapped', 'abc');
+----
+ts_lexize	ts_lexize
+{ABC}	{ABC}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_concat AS (lower($1) || '!') | split_csv(',');
+
+query
+SELECT ts_lexize('expr_sql_concat', 'A,B');
+----
+ts_lexize
+{a,b!}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_shingle AS generate_shingles(split_csv(' '), 2, 2);
+
+query
+SELECT array_length(ts_lexize('expr_shingle', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_shingle_chain AS
+    generate_shingles(split_csv(' ') | normalize_tokens(case := 'lower'), mingram := 2, maxgram := 2);
+
+query
+SELECT 'quick' = ANY(ts_lexize('expr_shingle_chain', 'Quick Brown Fox')) AS has_unigram;
+----
+has_unigram
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_wildcard AS generate_wildcard_ngrams(split_csv(' '), 3);
+
+statement ok
+CREATE TABLE expr_terms (id INTEGER PRIMARY KEY, term VARCHAR);
+
+statement ok
+INSERT INTO expr_terms VALUES (1, 'search'), (2, 'research'), (3, 'seabird'), (4, 'plain');
+
+statement ok
+CREATE INDEX expr_terms_idx ON expr_terms USING inverted (id, term expr_wildcard);
+
+statement ok
+VACUUM (REFRESH_TABLE) expr_terms;
+
+query
+SELECT id FROM expr_terms_idx WHERE term @@ ts_like('sea%') ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_union AS [keyword(), generate_ngrams(2, 2)];
+
+query
+SELECT ts_lexize('expr_union', 'abcd');
+----
+ts_lexize
+{abcd,ab,bc,cd}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_sql_list AS [upper($1), lower($1)];
+
+query
+SELECT ts_lexize('expr_sql_list', 'Ab');
+----
+ts_lexize
+{AB,ab}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_union_chain AS [split_csv(' ') | normalize_tokens(case := 'upper'), keyword()];
+
+query
+SELECT ts_lexize('expr_union_chain', 'hello world');
+----
+ts_lexize
+{HELLO,"hello world",WORLD}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_from_dict AS opt_text | remove_stopwords(['run']);
+
+query
+SELECT ts_lexize('expr_from_dict', 'The Runners were Running');
+----
+ts_lexize
+{the,runner,were}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_from_qualified AS public.opt_text | remove_stopwords(['run']);
+
+query
+SELECT ts_lexize('expr_from_qualified', 'The Runners were Running');
+----
+ts_lexize
+{the,runner,were}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_copy AS opt_text;
+
+query
+SELECT ts_lexize('expr_copy', 'The Runners were Running');
+----
+ts_lexize
+{the,runner,were,run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_identity AS $1 WITH (frequency);
+
+query
+SELECT ts_lexize('expr_identity', 'Hello World');
+----
+ts_lexize
+{"Hello World"}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_multi AS split_by_delimiters([',', ';']);
+
+query
+SELECT ts_lexize('expr_multi', 'a,b;c');
+----
+ts_lexize
+{a,b,c}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_lambda AS split_csv(',') | (x -> upper(trim(x)));
+
+query
+SELECT ts_lexize('expr_lambda', 'red, green ,blue');
+----
+ts_lexize
+{RED,GREEN,BLUE}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_lambda_head AS
+    (v -> string_split(lower(v), ','))
+    | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('expr_lambda_head', 'Cats,RUNNING');
+----
+ts_lexize
+{cat,run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_lambda_identity AS (x -> x) WITH (frequency);
+
+query
+SELECT ts_lexize('expr_lambda_identity', 'Hello World');
+----
+ts_lexize
+{"Hello World"}
+
+statement error a lambda stage takes exactly one parameter
+CREATE TEXT SEARCH DICTIONARY bad_lambda AS split_csv(',') | ((x, y) -> upper(x));
+
+statement error a lambda stage takes exactly one parameter
+CREATE TEXT SEARCH DICTIONARY bad_lambda_precedence AS split_csv(',') | x -> upper(x);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_list AS remove_stopwords(['the', 'a']);
+
+query
+SELECT ts_lexize('opt_list', 'cat'), ts_lexize('opt_list', 'the');
+----
+ts_lexize	ts_lexize
+{cat}	{}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_text_list AS
+    split_text(case := 'lower') | remove_stopwords(['the', 'a', 'an', 'is']) | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('opt_text_list', 'The cat is a hunter');
+----
+ts_lexize
+{cat,hunter}
+
+statement error
+CREATE TEXT SEARCH DICTIONARY expr_help AS split_text() | stem_words('en_US.UTF-8') WITH (help);
+----
+db error: ERROR: 
+CREATE TEXT SEARCH DICTIONARY <name> AS <analyzer> [WITH (frequency, position, norm, offset)]
+<analyzer> := <template>(<arguments>) | <analyzer> | <analyzer> | [<analyzer>, ...] | <sql expression over $1> | <dictionary name>
+
+split_text(case := 'none', break := 'alpha')
+  as a function: split_text(value, case := 'none', break := 'alpha')
+  case   Text case conversion: none, lower, upper
+  break  Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+
+generate_ngrams(mingram := 2, maxgram := 3, preserveoriginal := false, inputtype := 'utf8', startmarker := '', endmarker := '', mode := 'all')
+  as a function: generate_ngrams(value, mingram := 2, maxgram := 3, preserveoriginal := false, inputtype := 'utf8', startmarker := '', endmarker := '', mode := 'all')
+  mingram           Minimum n-gram length
+  maxgram           Maximum n-gram length
+  preserveoriginal  Emit the original token alongside n-grams
+  inputtype         Input stream encoding: binary, utf8
+  startmarker       Prefix marker appended at n-gram boundary
+  endmarker         Suffix marker appended at n-gram boundary
+  mode              Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
+
+find_nearest_words(modellocation := '', topk := 1)
+  as a function: find_nearest_words(value, modellocation := '', topk := 1)
+  modellocation  Path to the ML model file
+  topk           Number of top results to return
+
+stem_words(locale := '')
+  as a function: stem_words(value, locale := '')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+
+remove_stopwords(stopwords := [], stopwordspath := '', hex := false)
+  as a function: remove_stopwords(value, stopwords := [], stopwordspath := '', hex := false)
+  stopwords      Inline stop words: a list of strings, or a comma-separated string of double-quoted words
+  stopwordspath  Path to a stop-word file, or to a directory whose files are all loaded
+  hex            Treat stop words as hex-encoded strings
+
+classify_text(modellocation := '', topk := 1, threshold := 0)
+  as a function: classify_text(value, modellocation := '', topk := 1, threshold := 0)
+  modellocation  Path to the ML model file
+  topk           Number of top results to return
+  threshold      Minimum confidence score [0.0..1.0]
+
+collate_tokens(locale := '')
+  as a function: collate_tokens(value, locale := '')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+
+split_csv(delimiter)
+  as a function: split_csv(value, delimiter)
+  delimiter  Token delimiter character or string
+
+split_by_delimiters(delimiters)
+  as a function: split_by_delimiters(value, delimiters)
+  delimiters  Delimiters: a list of strings, or a comma-separated string of double-quoted delimiters (e.g. '",", "|", "!"')
+
+generate_wildcard_ngrams(<analyzer>, ngramsize := 3)
+  as a function: generate_wildcard_ngrams(value, ngramsize := 3)
+  ngramsize  N-gram size for wildcard prefix indexing (minimum 2)
+
+normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
+  as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
+  locale  ICU locale for case conversion; omit for locale-independent simple case
+  case    Text case conversion: none, lower, upper
+  accent  Preserve accent marks
+  form    Unicode normalization form: nfc, nfkc
+
+split_text_icu(locale, break := 'alpha')
+  as a function: split_text_icu(value, locale, break := 'alpha')
+  locale  ICU locale string (e.g. en_US.UTF-8)
+  break   Token boundary detection mode: all, graphic, alpha, sentence
+
+split_by_non_alpha(case := 'none')
+  as a function: split_by_non_alpha(value, case := 'none')
+  case  Text case conversion: none, lower, upper
+
+<analyzer> | <analyzer>
+  chain: each stage re-analyzes the tokens of the previous one
+
+split_by_pattern(pattern, group := -1)
+  as a function: split_by_pattern(value, pattern, group := -1)
+  pattern  RE2 regular expression pattern for matching or splitting
+  group    Capture group to extract: -1=split, 0=whole match, N>0=Nth group
+
+expand_path(delimiter := '/', replacement := '', reverse := false, skip := 0)
+  as a function: expand_path(value, delimiter := '/', replacement := '', reverse := false, skip := 0)
+  delimiter    Path separator character or string (UTF-8)
+  replacement  Replacement for delimiter in tokens
+  reverse      Use reverse tokenization for domain-like hierarchies
+  skip         Number of initial tokens to skip
+
+[<analyzer>, <analyzer>, ...]
+  union: every branch analyzes the same input, the tokens are merged
+
+encode_geopoint(latitude := [], longitude := [], maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  as a function: encode_geopoint(value, latitude := [], longitude := [], maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  latitude          Path to the latitude field, slash-separated ('lat', 'loc/lat') or a list of segments (['loc', 'lat']); empty (the default) treats the indexed JSON value as a [lat, lng] array directly. latitude and longitude must both be set or both left empty.
+  longitude         Path to the longitude field, slash-separated ('lng', 'loc/lng') or a list of segments; see latitude for empty-default semantics.
+  maxcells          Maximum number of S2 cells
+  minlevel          Minimum S2 cell level (0-30)
+  maxlevel          Maximum S2 cell level (0-30), ~1m precision at level 23
+  levelmod          S2 level modifier (1, 2, or 3)
+  optimizeforspace  Optimize S2 index for space rather than speed
+
+encode_geojson(type := 'shape', coding := 'source', maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  as a function: encode_geojson(value, type := 'shape', coding := 'source', maxcells := 20, minlevel := 4, maxlevel := 23, levelmod := 1, optimizeforspace := false)
+  type              GeoJson shape type: shape, centroid, point
+  coding            Encoding format: source, s2point, s2latlngf64, s2latlngu32
+  maxcells          Maximum number of S2 cells
+  minlevel          Minimum S2 cell level (0-30)
+  maxlevel          Maximum S2 cell level (0-30), ~1m precision at level 23
+  levelmod          S2 level modifier (1, 2, or 3)
+  optimizeforspace  Optimize S2 index for space rather than speed
+
+keyword()
+
+sql(expression)
+  any SQL expression that reads its input as $1 is a sql stage as well
+  expression  DuckDB scalar expression over its input $1 (VARCHAR), returning VARCHAR or BLOB (one token per value) or a list of them (token list); built-in functions only, no subqueries, no volatile functions
+
+generate_shingles(<analyzer>, mingram := 2, maxgram := 2, outputunigrams := true, outputunigramsifnoshingles := false, storetokens := true, frequentwords := [], fillertoken := '')
+  as a function: generate_shingles(value, mingram := 2, maxgram := 2, outputunigrams := true, outputunigramsifnoshingles := false, storetokens := true, frequentwords := [], fillertoken := '')
+  mingram                     Minimum shingle (word n-gram) size (minimum 2)
+  maxgram                     Maximum shingle (word n-gram) size (>= mingram)
+  outputunigrams              Index individual tokens alongside the shingles
+  outputunigramsifnoshingles  Index unigrams only when the input is too short to form a shingle
+  storetokens                 Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
+  frequentwords               Frequent words (typically stopwords): a list of strings, or a comma-separated string of double-quoted words. When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
+  fillertoken                 Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
+
+expand_solr_synonyms(synonyms)
+  as a function: expand_solr_synonyms(value, synonyms)
+  synonyms  Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
+
+expand_wordnet_synonyms(synonyms)
+  as a function: expand_wordnet_synonyms(value, synonyms)
+  synonyms  Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
+
+generate_sparse_ngrams(maxngramlength := 16, covering := false)
+  as a function: generate_sparse_ngrams(value, maxngramlength := 16, covering := false)
+  maxngramlength  Maximum emitted n-gram length (minimum 3)
+  covering        Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+
+<dictionary name>
+  a stored dictionary as a stage: its analyzer is copied as it stands when the new dictionary is created
+
+WITH (frequency, position, norm, offset)
+  norm       Enables norm feature in index
+  offset     Enables offset feature in index
+  position   Enables position feature in index
+  frequency  Enables frequency feature in index
+
+
+statement error does not take an analyzer argument
+CREATE TEXT SEARCH DICTIONARY bad_nested AS split_text(lower($1), 'en_US.UTF-8');
+
+statement error
+CREATE TEXT SEARCH DICTIONARY bad_method AS split_text() | stem_words('en_US.UTF-8').stem('en_US.UTF-8');
+----
+db error: ERROR: "stem" is not a text search template and does not read input
+HINT: an SQL stage must reference the input as $1, e.g. stem($1)
+
+
+statement error pipeline\(\) is not available in the expression form
+CREATE TEXT SEARCH DICTIONARY bad_pipeline AS pipeline(split_csv(','), stem_words('en_US.UTF-8'));
+
+statement error union\(\) is not available in the expression form
+CREATE TEXT SEARCH DICTIONARY bad_union AS "union"(keyword(), generate_ngrams(2, 2));
+
+statement error does not read input
+CREATE TEXT SEARCH DICTIONARY bad_constant AS 'abc';
+
+statement error is not a text search template and does not read input
+CREATE TEXT SEARCH DICTIONARY bad_no_input AS upper('x');
+
+statement error is not a text search template and does not read input
+CREATE TEXT SEARCH DICTIONARY bad_typo AS txt('en_US.UTF-8');
+
+statement error is a text search template and cannot be nested inside an SQL expression
+CREATE TEXT SEARCH DICTIONARY bad_sql_nested AS lower(split_text($1, 'en_US.UTF-8'));
+
+statement error a list stage must hold analyzers
+CREATE TEXT SEARCH DICTIONARY bad_list AS [keyword(), 'x'];
+
+statement error given more than once
+CREATE TEXT SEARCH DICTIONARY bad_twice AS split_text('lower', case := 'upper');
+
+statement error takes at most 2 positional arguments
+CREATE TEXT SEARCH DICTIONARY bad_positional AS
+    split_text('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j');
+
+statement error is not a constant
+CREATE TEXT SEARCH DICTIONARY bad_identifier AS split_text(en_US);
+
+statement error unknown option "cas"
+CREATE TEXT SEARCH DICTIONARY bad_option AS split_text(cas := 'lower');
+
+statement error required option "delimiter" not given
+CREATE TEXT SEARCH DICTIONARY bad_required AS split_csv();
+
+statement error requires a nested analyzer as its first argument
+CREATE TEXT SEARCH DICTIONARY bad_shingle AS generate_shingles(2, 3);
+
+statement error text search dictionary "nosuchdict" does not exist
+CREATE TEXT SEARCH DICTIONARY bad_dict AS nosuchdict | stem_words('en_US.UTF-8');
+
+statement error option "template" is set by the expression
+CREATE TEXT SEARCH DICTIONARY bad_with_template AS
+    split_text()
+    | stem_words('en_US.UTF-8')
+    WITH (template = 'text');
+
+statement error is not applicable after AS
+CREATE TEXT SEARCH DICTIONARY bad_with_option AS split_text() | stem_words('en_US.UTF-8') WITH (locale = 'de');
+
+statement error
+CREATE TEXT SEARCH DICTIONARY bad_reserved AS union(keyword(), generate_ngrams(2, 2));

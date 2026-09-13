@@ -7,49 +7,47 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # sql
 
-The `sql` template derives the tokens of a value by evaluating a DuckDB scalar expression over it. The expression reads the value through the pseudo-column `input` and returns either one token or a list of tokens, which turns the built-in SQL functions into an analyzer: `lower`, `trim`, `regexp_split_to_array`, `string_split`, `replace`, a `CASE`, a cast. Use it for a transformation no other template offers — a split rule a single regular expression cannot express, a token derived from a structured value, or normalization with the same function the rest of the schema uses.
+The `sql` template derives the tokens of a value by evaluating a DuckDB scalar expression over it. The expression reads the value through the placeholder `$1` and returns either one token or a list of tokens, which turns the built-in SQL functions into an analyzer: `lower`, `trim`, `regexp_split_to_array`, `string_split`, `replace`, a `CASE`, a cast. Use it for a transformation no other template offers — a split rule a single regular expression cannot express, a token derived from a structured value, or normalization with the same function the rest of the schema uses.
 
-The expression is a SQL string inside the statement, so the single quotes inside it are doubled: `EXPRESSION = 'string_split(lower(input), '' '')'`.
+The expression is written inline: any expression at a stage position that reads `$1` becomes a `sql` stage, so `AS regexp_split_to_array(lower($1), '\W+')` is this template on its own and `string_split(lower($1), ' ') | remove_stopwords(['the'])` puts it in front of a filter. `sql(<expression>)` marks the stage explicitly, and inside it no name is read as a template; `sql('<text>')` takes the expression as a string.
 
 ## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `EXPRESSION` | string | **required** | DuckDB scalar expression over the pseudo-column `input` (`VARCHAR`). It returns `VARCHAR` or `BLOB` — one token per value — or a list of them, which is one token per element. Built-in functions only, no subqueries, no parameters, no volatile functions |
+| `EXPRESSION` | string | **required** | DuckDB scalar expression over the placeholder `$1` (`VARCHAR`). It returns `VARCHAR` or `BLOB` — one token per value — or a list of them, which is one token per element. Built-in functions only, no subqueries, no other parameters, no volatile functions |
 
-`input` is an ordinary SQL identifier, so it is case-insensitive, and the qualified spelling `sql.input` binds to the same value. Nothing else is in scope, so any other column reference fails.
+`$1` is the only placeholder and stands for the whole value; it may appear any number of times. Nothing else is in scope, so a column reference fails, and an expression without `$1` is not a `sql` stage at all.
 
 `CREATE TEXT SEARCH DICTIONARY` parses and binds the expression once to validate it, so a malformed or disallowed expression is rejected by the statement that creates the dictionary:
 
-- `required parameter "expression" was not found` — the option is missing.
+- `sql(): required option "expression" not given` — the option is missing.
 - `sql: expected exactly one expression` — the value holds more than one comma-separated expression.
 - `sql: <DuckDB parser message>` — the value does not parse as an expression.
-- `sql: subqueries are not allowed` and `sql: parameters are not allowed` — a `SELECT` inside the expression, or a `$1` / `?` placeholder.
+- `sql: subqueries are not allowed` and `sql: parameters are not allowed` — a `SELECT` inside the expression, or a placeholder other than `$1`, such as `$2` or `$name`.
 - `sql: function "<name>": only built-in functions are allowed` — the function is qualified with a catalog other than `system` or a schema other than `main`, or its name is not a scalar function, macro or aggregate of the system catalog. An unqualified name is resolved as `system.main.<name>`, which is why a user-defined macro is rejected whether it is qualified or not.
 - `sql: text-search function "<name>" is not allowed in a sql tokenizer expression (it would recurse into the tokenizer)` — any function whose name starts with `ts_`, anywhere in the expression, since calling one would re-enter the tokenizer.
 - `sql: volatile expressions are not allowed` — `random()::VARCHAR` and the like. The same value has to produce the same tokens every time.
-- `sql: expression must return VARCHAR, BLOB, or a list of them, got <type>` — `length(input)` reports `BIGINT`, `[length(input)]` reports `BIGINT[]`.
+- `sql: expression must return VARCHAR, BLOB, or a list of them, got <type>` — `length($1)` reports `BIGINT`, `[length($1)]` reports `BIGINT[]`.
 - `sql: <DuckDB binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function, a lambda. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
 
 The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags). `OFFSET` is rejected with `Unsupported index features are specified: <mask>`, because an expression result carries no offsets back into the source value; a [`pipeline`](./pipeline/index.md) that contains a `sql` step loses offsets for the same reason.
-
-Inside a pipeline the option is spelled `STEP⟨N⟩_EXPRESSION`. [`copy_from`](./copy-from.md) inherits `EXPRESSION` from the source dictionary and can override it.
 
 ## Tokenization
 
 The return type decides the token shape. A scalar `VARCHAR` or `BLOB` result is exactly one token per value; a list result — `VARCHAR[]` or `BLOB[]` — is one token per element, emitted in list order.
 
-Token content is verbatim. The template applies no case folding, accent folding, stemming, stopword filtering or trimming, and imposes no length limit, truncation, padding or marker bytes. Whatever bytes the expression returns become the term, so casing and accents are entirely the expression's business — `lower(input)`, `strip_accents(input)`. The original value does not survive on its own, since only the result is emitted, unless the expression keeps it as `list_value(input, lower(input))` does. An empty string the expression produces is emitted as an empty token; the template filters nothing.
+Token content is verbatim. The template applies no case folding, accent folding, stemming, stopword filtering or trimming, and imposes no length limit, truncation, padding or marker bytes. Whatever bytes the expression returns become the term, so casing and accents are entirely the expression's business — `lower($1)`, `strip_accents($1)`. The original value does not survive on its own, since only the result is emitted, unless the expression keeps it as `list_value($1, lower($1))` does. An empty string the expression produces is emitted as an empty token; the template filters nothing.
 
 Positions are dense: with `POSITION` enabled the tokens of a value are numbered consecutively from `1` in emission order, one per token, with no gaps and no stacked positions, so a phrase query matches the order the expression produced.
 
 | Input | `EXPRESSION` | Tokens |
 |---|---|---|
-| `Hello, World! FOO bar` | `regexp_split_to_array(lower(input), '\W+')` | `hello`, `world`, `foo`, `bar` |
-| `Foo BAR baz` | `string_split(lower(input), ' ')` | `foo`, `bar`, `baz` |
-| `  hello  ` | `upper(trim(input))` | `HELLO` |
-| `Ab` | `list_value(upper(input), NULL, lower(input))` | `AB`, `ab` |
-| `skip` | `nullif(input, 'skip')` | _(none — the value is rejected)_ |
+| `Hello, World! FOO bar` | `regexp_split_to_array(lower($1), '\W+')` | `hello`, `world`, `foo`, `bar` |
+| `Foo BAR baz` | `string_split(lower($1), ' ')` | `foo`, `bar`, `baz` |
+| `  hello  ` | `upper(trim($1))` | `HELLO` |
+| `Ab` | `list_value(upper($1), NULL, lower($1))` | `AB`, `ab` |
+| `skip` | `nullif($1, 'skip')` | _(none — the value is rejected)_ |
 | `ab` | `input::BLOB` | one `BLOB` token holding the two bytes of `ab` |
 
 The expressions above are written as they read; inside the statement each single quote is doubled.
@@ -60,7 +58,7 @@ A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are in
 
 An error raised while the expression runs — a failed cast, an invalid regular expression argument — is not caught by the template. It propagates out of the statement that was analyzing the value, whether that is `INSERT`, `CREATE INDEX` or `ts_lexize`.
 
-As a step of a [`pipeline`](./pipeline/index.md) the expression runs once per token the previous step produced: that token becomes `input`, and the result replaces it. A scalar result rewrites the token one-to-one, a list result fans it out.
+As a step of a [`pipeline`](./pipeline/index.md) the expression runs once per token the previous step produced: that token becomes `$1`, and the result replaces it. A scalar result rewrites the token one-to-one, a list result fans it out.
 
 ## Examples
 
@@ -78,9 +76,17 @@ A scalar expression is a normalizer: the whole value comes out as a single token
 
 ### Inside a pipeline
 
-A `sql` first step splits and lowercases, then a [`stopwords`](./stopwords.md) second step filters the tokens it produced:
+A `sql` first step splits and lowercases, then a [`remove_stopwords`](./stopwords.md) second step filters the tokens it produced:
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/sql/example_003" />
+
+### Expression form
+
+The same two dictionaries written as expressions, with the SQL inline:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/sql/example_004" />
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/sql/example_005" />
 
 ## See also
 
@@ -88,5 +94,4 @@ A `sql` first step splits and lowercases, then a [`stopwords`](./stopwords.md) s
 - [keyword](./keyword.md) — keep the whole value as one verbatim token
 - [norm](./norm.md) — case and accent normalization as built-in options
 - [pipeline](./pipeline/index.md) — chain `sql` with other analyzers
-- [copy_from](./copy-from.md) — inherit the expression and override it
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

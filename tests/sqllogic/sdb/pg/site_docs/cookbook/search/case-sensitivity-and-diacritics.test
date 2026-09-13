@@ -24,26 +24,14 @@ INSERT INTO movies VALUES
 (10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY basic_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY basic_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY exact_dict AS
+    split_text()
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX movies_idx ON movies
@@ -170,41 +158,25 @@ id	title
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY search_friendly (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY search_friendly AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY identifier_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true
-);
+CREATE TEXT SEARCH DICTIONARY identifier_dict AS
+    split_text();
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY upper_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY upper_dict AS
+    split_text(case := 'upper') | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
 SELECT ts_lexize('upper_dict', 'Café Résumé');

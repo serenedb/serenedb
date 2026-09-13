@@ -3,13 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_text (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY ta_text AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
 SELECT ts_lexize('ta_text', 'Quick BROWN Fox');
@@ -22,7 +17,7 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_keyword (template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY ta_keyword AS keyword();
 
 query
 SELECT ts_lexize('ta_keyword', 'Hello World');
@@ -35,11 +30,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_ngram (
-    template = 'ngram',
-    mingram = 2,
-    maxgram = 3
-);
+CREATE TEXT SEARCH DICTIONARY ta_ngram AS
+    generate_ngrams(2, 3);
 
 query
 SELECT ts_lexize('ta_ngram', 'cat');
@@ -52,13 +44,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_stem (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY ta_stem AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8');
 
 query
 SELECT ts_lexize('ta_stem', 'running runners ran');
@@ -71,14 +58,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_stopwords (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    stopwords = '"the", "of"'
-);
+CREATE TEXT SEARCH DICTIONARY ta_stopwords AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | remove_stopwords(['the', 'of']);
 
 query
 SELECT ts_lexize('ta_stopwords', 'the speed of light');
@@ -91,13 +72,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_accent (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY ta_accent AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
 SELECT ts_lexize('ta_accent', 'Café');
@@ -110,14 +86,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ta_pipeline (
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = ',',
-    step2_template = 'norm',
-    step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower'
-);
+CREATE TEXT SEARCH DICTIONARY ta_pipeline AS
+    split_csv(',') | normalize_tokens('en_US.UTF-8', case := 'lower');
 
 query
 SELECT ts_lexize('ta_pipeline', 'RED,Green,BLUE');

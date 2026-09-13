@@ -27,7 +27,6 @@
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizer_pool.hpp>

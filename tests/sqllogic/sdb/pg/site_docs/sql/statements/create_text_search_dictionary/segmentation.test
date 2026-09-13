@@ -3,11 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_dict (
-    template = 'segmentation',
-    case = 'lower',
-    BREAK = 'alpha'
-);
+CREATE TEXT SEARCH DICTIONARY seg_dict AS
+    split_text(case := 'lower', break := 'alpha');
 
 query
 SELECT ts_lexize('seg_dict', 'The Quick fox-trot.');
@@ -20,11 +17,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_all (
-    template = 'segmentation',
-    case = 'upper',
-    BREAK = 'all'
-);
+CREATE TEXT SEARCH DICTIONARY seg_all AS
+    split_text(case := 'upper', break := 'all');
 
 query
 SELECT ts_lexize('seg_all', 'The Quick fox-trot.');
@@ -37,10 +31,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY seg_graphic (
-    template = 'segmentation',
-    BREAK = 'graphic'
-);
+CREATE TEXT SEARCH DICTIONARY seg_graphic AS
+    split_text(break := 'graphic');
 
 query
 SELECT ts_lexize('seg_graphic', 'The Quick fox-trot.');

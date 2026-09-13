@@ -42,30 +42,19 @@ DROP TEXT SEARCH DICTIONARY IF EXISTS code_grams_q;
 
 -- English analyzer for statements/editorials. norm/frequency/position enable
 -- BM25 with positional phrases.
-CREATE TEXT SEARCH DICTIONARY cf_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY cf_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position, norm);
 
 -- Index-side sparse ngrams: all grams, so every substring stays coverable.
-CREATE TEXT SEARCH DICTIONARY code_grams(
-    template = 'sparse_ngram',
-    frequency = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY code_grams AS
+    generate_sparse_ngrams()
+    WITH (frequency, norm);
 
 -- Query-side covering mode: the minimal gram chain for a substring. Never
 -- bound to an index -- referenced by name in ts_tokenize at query time.
-CREATE TEXT SEARCH DICTIONARY code_grams_q(
-    template = 'sparse_ngram',
-    covering = true
-);
+CREATE TEXT SEARCH DICTIONARY code_grams_q AS
+    generate_sparse_ngrams(covering := true);
 
 -- Source 1: Codeforces problems. Reshaping in the view: rename
 -- description -> statement, flatten the tags list, default missing ratings.

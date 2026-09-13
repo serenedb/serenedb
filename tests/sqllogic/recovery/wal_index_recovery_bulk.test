@@ -4,15 +4,9 @@ control substitution on
 # threshold — exercises the multi-flush path inside RunWalRecovery.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bulk_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY bulk_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE wal_bulk_t(a INTEGER PRIMARY KEY, b TEXT);

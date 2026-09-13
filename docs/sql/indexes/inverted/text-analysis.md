@@ -44,41 +44,41 @@ Symmetry is the default, not a hard rule. To analyze a query string with a *diff
 
 ## Tokenizing templates
 
-The tokenizing template decides how text is split. The most common is `text`, which splits on word boundaries (shown above). Others target specific needs:
+The tokenizing template decides how text is split. The most common is `split_text`, which splits on word boundaries (shown above). Others target specific needs:
 
 A **verbatim** column — the `keyword` template, or simply a column with *no* dictionary — emits the whole value as a single token, giving exact, case-sensitive matching for ids, codes and categories:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_002" />
 
-The `ngram` template emits overlapping character n-grams, which power substring and fuzzy matching:
+The `generate_ngrams` template emits overlapping character n-grams, which power substring and fuzzy matching:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_003" />
 
-Further tokenizing templates — `sparse_ngram`, `delimiter` / `multi_delimiter`, `segmentation`, `icu_text`, `split_by_non_alpha`, `pattern`, `path_hierarchy`, `wildcard`, `shingle`, `sql` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md).
+Further tokenizing templates — `generate_sparse_ngrams`, `split_csv` / `split_by_delimiters`, `split_text_icu`, `split_by_non_alpha`, `split_by_pattern`, `expand_path`, `generate_wildcard_ngrams`, `generate_shingles`, `sql` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md).
 
 ## Normalization
 
-Normalization rewrites tokens so that equivalent forms collapse together. The `text` template exposes the common normalizers as options:
+Normalization rewrites tokens so that equivalent forms collapse together. Each normalizer is a stage chained after the `split_text` split:
 
 **Stemming** reduces words to a root form, improving recall by matching different inflections:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_004" />
 
-**Stop words** drop high-frequency words that carry little meaning (the list is comma-separated and quoted):
+**Stop words** drop high-frequency words that carry little meaning:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_005" />
 
-**Accent folding** maps accented characters to their ASCII base so `café` matches `cafe`. It is controlled by `accent` — `accent = false` folds accents away, `accent = true` preserves them:
+**Accent folding** maps accented characters to their ASCII base so `café` matches `cafe`. It is the `normalize_tokens` stage's job — `normalize_tokens('en_US.UTF-8', accent := false)` folds accents away, and without that stage they are preserved:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_006" />
 
-Case folding (`case = 'lower'`) is applied in every example above. Dedicated normalizing templates also exist — `stem`, `norm`, `stopwords`, [`collation`](../../statements/create_text_search_dictionary/collation.md) — for use inside a pipeline.
+Case folding (`split_text(case := 'lower')`) is applied in every example above. [`collate_tokens`](../../statements/create_text_search_dictionary/collation.md) is the other normalizing stage, producing sort keys for a locale.
 
-**Locale-aware analysis.** The [`collation`](../../statements/create_text_search_dictionary/collation.md) and [`norm`](../../statements/create_text_search_dictionary/norm.md) templates take an ICU `locale`, so sorting and equality follow a language's rules rather than raw byte order — German `de`, for example, sorts `ä` next to `a`. A `collation` dictionary turns each value into one locale-ordered key, which is ideal for [range queries](./full-text-search.md#range-queries) and exact ordering on a column. The same ICU locales back the SQL [`COLLATE` clause](../../expressions/collations/index.md).
+**Locale-aware analysis.** The [`collate_tokens`](../../statements/create_text_search_dictionary/collation.md) and [`normalize_tokens`](../../statements/create_text_search_dictionary/norm.md) templates take an ICU `locale`, so sorting and equality follow a language's rules rather than raw byte order — German `de`, for example, sorts `ä` next to `a`. A `collate_tokens` dictionary turns each value into one locale-ordered key, which is ideal for [range queries](./full-text-search.md#range-queries) and exact ordering on a column. The same ICU locales back the SQL [`COLLATE` clause](../../expressions/collations/index.md).
 
 ## Composing with `pipeline`
 
-The `pipeline` template chains templates in order. Steps are numbered **starting at 1** (`step1_template`, `step2_template`, …). Here a `delimiter` tokenizer splits on commas, then a `norm` step lowercases each token:
+A chain of stages joined with `|` is a `pipeline`: each stage re-analyzes the tokens of the one before it. Here a `split_csv` tokenizer splits on commas, then a `normalize_tokens` stage lowercases each token:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_007" />
 

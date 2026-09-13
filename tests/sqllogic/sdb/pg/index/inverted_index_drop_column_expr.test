@@ -15,15 +15,9 @@
 # the plain case below is the control that was always passing.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY dce_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY dce_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE dce(id INTEGER, a TEXT, spare INTEGER);

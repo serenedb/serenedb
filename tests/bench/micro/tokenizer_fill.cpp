@@ -35,7 +35,6 @@
 #include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
@@ -1224,7 +1223,7 @@ Tokenizer::ptr MakeWildcard() {
   return WildcardTokenizer::Make({}, tests::Cache());
 }
 
-Tokenizer::ptr MakeSegmentation() { return SegmentationTokenizer::Make({}); }
+Tokenizer::ptr MakeText() { return TextTokenizer::Make({}); }
 
 Tokenizer::ptr MakeIcuText() {
   return IcuTextTokenizer::Make(
@@ -1235,14 +1234,6 @@ Tokenizer::ptr MakeIcuSentence() {
   return IcuTextTokenizer::Make(
     {.separate = IcuTextTokenizer::Options::Separate::Sentence,
      .locale = icu::Locale::createFromName("en_US")});
-}
-
-Tokenizer::ptr MakeTextEn() {
-  TextTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en_US.UTF-8");
-  o.explicit_stopwords = {"the", "and", "of", "a"};
-  o.explicit_stopwords_set = true;
-  return TextTokenizer::Make(std::move(o), tests::Cache());
 }
 
 Tokenizer::ptr MakeSolrSynonyms() {
@@ -1257,7 +1248,7 @@ Tokenizer::ptr MakeSolrSynonymsLarge() {
 
 Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make(
+  subs.push_back(TextTokenizer::Make(
     {.convert = seg_lower ? irs::Case::Lower : irs::Case::None}));
   {
     NormalizingTokenizer::Options o;
@@ -1284,7 +1275,7 @@ Tokenizer::ptr MakePipelineTextSegLower() { return MakePipelineTextImpl(true); }
 
 Tokenizer::ptr MakePipelineSegNgram() {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
+  subs.push_back(TextTokenizer::Make({.convert = irs::Case::Lower}));
   NGramTokenizer::Options o;
   o.min_gram = 3;
   o.max_gram = 3;
@@ -1375,7 +1366,7 @@ Tokenizer::ptr MakePipelineT2Coll() {
 
 Tokenizer::ptr MakePipelineSegStop() {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::None}));
+  subs.push_back(TextTokenizer::Make({.convert = irs::Case::None}));
   {
     StopwordsTokenizer::Options o;
     o.mask = {"the", "and", "of", "a"};
@@ -1529,16 +1520,14 @@ BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_covering, &MakeSparseNgramCovering,
 TOKENIZER_BENCH(wildcard, MakeWildcard, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, wildcard_unicode, &MakeWildcard, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
-TOKENIZER_BENCH(segmentation, MakeSegmentation, TextCorpus);
-BENCHMARK_CAPTURE(BM_Fill, segmentation_unicode, &MakeSegmentation,
-                  &TextUnicodeCorpus)
+TOKENIZER_BENCH(text, MakeText, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, text_unicode, &MakeText, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(icu_text, MakeIcuText, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, icu_text_unicode, &MakeIcuText, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(icu_text_cjk, MakeIcuText, CjkCorpus);
 TOKENIZER_BENCH(icu_text_sentence, MakeIcuSentence, TextCorpus);
-TOKENIZER_BENCH(text_en, MakeTextEn, TextCorpus);
 TOKENIZER_BENCH(pipeline_text_en, MakePipelineText, TextCorpus);
 BENCHMARK_CAPTURE(BM_FillColumn, pipeline_text_en_mixed, &MakePipelineText,
                   &TextMixedCorpus)
@@ -1554,8 +1543,6 @@ BENCHMARK_CAPTURE(BM_Fill, pipeline_text_en_unicode, &MakePipelineText,
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pipeline_text_en_seglower_unicode,
                   &MakePipelineTextSegLower, &TextUnicodeCorpus)
-  ->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_Fill, text_en_unicode, &MakeTextEn, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(solr_synonyms, MakeSolrSynonyms, SynonymCorpus);
 TOKENIZER_BENCH(solr_synonyms_large, MakeSolrSynonymsLarge, LargeSynonymCorpus);

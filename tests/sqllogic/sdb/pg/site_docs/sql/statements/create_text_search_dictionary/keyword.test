@@ -3,9 +3,8 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim (
-    template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY verbatim AS
+    keyword();
 
 # DOCS_TEST: example_002
 
@@ -22,9 +21,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_keyword (
-    template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY tok_keyword AS
+    keyword();
 
 query
 SELECT ts_lexize('tok_keyword', 'New York City');

@@ -1,0 +1,88 @@
+# DOCS_TEST: text
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_text('The Quick fox-trot.', case := 'lower') AS tokens;
+----
+tokens
+{the,quick,fox,trot}
+
+# DOCS_TEST: chain
+
+# DOCS_TEST_BODY
+
+query
+SELECT stem_words(normalize_tokens(split_text('The Runners Café', case := 'lower'), 'en_US.UTF-8', accent := false), 'en_US.UTF-8') AS tokens;
+----
+tokens
+{the,runner,cafe}
+
+# DOCS_TEST: dictionary
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8');
+
+query
+SELECT stem_words(normalize_tokens(split_text('The Runners Café', case := 'lower'), 'en_US.UTF-8', accent := false), 'en_US.UTF-8')
+       = ts_lexize('english', 'The Runners Café') AS same;
+----
+same
+t
+
+# DOCS_TEST: list
+
+# DOCS_TEST_BODY
+
+query
+SELECT normalize_tokens(['Café', 'ÉCOLE'], 'en_US.UTF-8', case := 'lower', accent := false) AS tokens;
+----
+tokens
+{cafe,ecole}
+
+# DOCS_TEST: shingle
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_length(generate_shingles(split_csv('quick brown fox', ' '), 2, 2), 1) AS terms;
+----
+terms
+5
+
+# DOCS_TEST: table
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE articles (id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO articles VALUES (1, 'The Runners'), (2, 'were Running');
+
+query
+SELECT id, stem_words(split_text(body, case := 'lower'), 'en_US.UTF-8') AS tokens FROM articles ORDER BY id;
+----
+id	tokens
+1	{the,runner}
+2	{were,run}
+
+# DOCS_TEST: constant_option
+
+# DOCS_TEST_BODY
+
+statement error must be a constant
+SELECT split_text(body, case := body) FROM articles;
+
+# DOCS_TEST: split_by_non_alpha
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_by_non_alpha('The Quick-Brown FOX 2024', case := 'lower') AS tokens;
+----
+tokens
+{the,quick,brown,fox,2024}

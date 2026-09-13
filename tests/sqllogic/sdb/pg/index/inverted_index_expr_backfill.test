@@ -4,9 +4,8 @@
 # expression is only ever indexed by the backfill scan.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict(
-    template = 'keyword'
-);
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS
+    keyword();
 
 statement ok
 CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);

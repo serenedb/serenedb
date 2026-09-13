@@ -12,16 +12,9 @@ statement ok
 CREATE TABLE t (id INT PRIMARY KEY, body VARCHAR, val INT);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE INDEX idx ON t USING inverted(body en) INCLUDE (id, val);

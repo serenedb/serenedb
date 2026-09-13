@@ -231,10 +231,8 @@ db error: ERROR: minhash: num_hashes must be a constant
 # --- Composes with any dictionary through ts_lexize ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_delim(
-    template = 'delimiter',
-    delimiter = ','
-)
+CREATE TEXT SEARCH DICTIONARY mh_delim AS
+    split_csv(',')
 
 
 query
@@ -247,11 +245,8 @@ A2887D396E1BB271
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_seg(
-    template = 'segmentation',
-    break = 'alpha',
-    case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY mh_seg AS
+    split_text(break := 'alpha', case := 'lower')
 
 
 query
@@ -265,12 +260,8 @@ F734A8DCAC263610
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_text(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY mh_text AS
+    split_text(case := 'lower')
 
 
 query
@@ -297,10 +288,8 @@ t
 # --- And inside a sql dictionary, which then yields BLOB tokens ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_sql(
-    template = 'sql',
-    expression = 'minhash(string_split(lower(input), '' ''), 16)'
-)
+CREATE TEXT SEARCH DICTIONARY mh_sql AS
+    minhash(string_split(lower($1), ' '), 16)
 
 
 query

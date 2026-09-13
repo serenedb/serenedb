@@ -49,7 +49,9 @@ class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "stem"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "stem_words";
+  }
 
   explicit StemmingTokenizer(const Options& options);
 

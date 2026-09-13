@@ -9,9 +9,9 @@ hash-threshold 100
 # is pinned with ORDER BY / list_sort.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY smd(template = 'text', locale = 'en_US.UTF-8',
-    case = 'none', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY smd AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE mt(id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR)

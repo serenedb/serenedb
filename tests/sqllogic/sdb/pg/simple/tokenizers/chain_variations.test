@@ -1,0 +1,426 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY words AS split_text(case := 'lower');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_stem AS split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+# --- $1 stages at every position of a chain ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_head AS lower($1) | split_csv(',');
+
+query
+SELECT ts_lexize('sql_head', 'RED,Green');
+----
+ts_lexize
+{red,green}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_middle AS split_csv(',') | trim($1) | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('sql_middle', 'running , flies');
+----
+ts_lexize
+{run,fli}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_tail AS split_csv(',') | upper($1);
+
+query
+SELECT ts_lexize('sql_tail', 'red,green');
+----
+ts_lexize
+{RED,GREEN}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_fanout AS split_csv(';') | string_split($1, ',') | upper($1);
+
+query
+SELECT ts_lexize('sql_fanout', 'a,b;c');
+----
+ts_lexize
+{A,B,C}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_twice AS split_csv(',') | ($1 || '/' || $1);
+
+query
+SELECT ts_lexize('sql_twice', 'a,b');
+----
+ts_lexize
+{a/a,b/b}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_case AS split_csv(',') | (CASE WHEN $1 = 'x' THEN 'ex' ELSE $1 END);
+
+query
+SELECT ts_lexize('sql_case', 'x,y');
+----
+ts_lexize
+{ex,y}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_only_list AS [upper($1), lower($1), $1];
+
+query
+SELECT ts_lexize('sql_only_list', 'Ab');
+----
+ts_lexize
+{AB,ab,Ab}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_explicit AS sql(upper($1)) | split_csv(' ');
+
+query
+SELECT ts_lexize('sql_explicit', 'a b');
+----
+ts_lexize
+{A,B}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_string AS split_csv(' ') | sql('upper($1)');
+
+query
+SELECT ts_lexize('sql_string', 'a b');
+----
+ts_lexize
+{A,B}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_identity_middle AS split_csv(',') | $1 | upper($1);
+
+query
+SELECT ts_lexize('sql_identity_middle', 'a,b');
+----
+ts_lexize
+{A,B}
+
+# --- lambdas at every position ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lambda_head AS (v -> string_split(lower(v), ',')) | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('lambda_head', 'Cats,RUNNING');
+----
+ts_lexize
+{cat,run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lambda_middle AS split_csv(',') | (x -> trim(x)) | upper($1);
+
+query
+SELECT ts_lexize('lambda_middle', ' a , b ');
+----
+ts_lexize
+{A,B}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lambda_tail AS split_csv(',') | (x -> x || '!');
+
+query
+SELECT ts_lexize('lambda_tail', 'a,b');
+----
+ts_lexize
+{a!,b!}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lambda_identity_middle AS split_csv(',') | (x -> x) | upper($1);
+
+query
+SELECT ts_lexize('lambda_identity_middle', 'a,b');
+----
+ts_lexize
+{A,B}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lambda_shadow AS split_csv(',') | (input -> upper(input));
+
+query
+SELECT ts_lexize('lambda_shadow', 'a,b');
+----
+ts_lexize
+{A,B}
+
+# --- grouping ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY group_left AS (split_csv(',') | lower($1)) | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY group_right AS split_csv(',') | (lower($1) | stem_words('en_US.UTF-8'));
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY group_flat AS split_csv(',') | lower($1) | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('group_left', 'Cats,RUNNING') = ts_lexize('group_flat', 'Cats,RUNNING') AS l,
+       ts_lexize('group_right', 'Cats,RUNNING') = ts_lexize('group_flat', 'Cats,RUNNING') AS r;
+----
+l	r
+t	t
+
+# --- wrappers over chains, dictionaries, lambdas and unions ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_chain AS generate_shingles(split_csv(' ') | normalize_tokens(case := 'lower'), 2, 2);
+
+query
+SELECT array_length(ts_lexize('shingle_chain', 'Quick Brown Fox'), 1) AS n,
+       'quick' = ANY(ts_lexize('shingle_chain', 'Quick Brown Fox')) AS lowered;
+----
+n	lowered
+5	t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_dict AS generate_shingles(words, 2, 2);
+
+query
+SELECT ts_lexize('shingle_dict', 'Quick Brown Fox') = ts_lexize('shingle_chain', 'Quick Brown Fox') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_lambda AS generate_shingles((v -> string_split(lower(v), ' ')), mingram := 2, maxgram := 2);
+
+query
+SELECT ts_lexize('shingle_lambda', 'Quick Brown Fox') = ts_lexize('shingle_chain', 'Quick Brown Fox') AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_sql AS generate_shingles(string_split(lower($1), ' '), 2, 2);
+
+query
+SELECT ts_lexize('shingle_sql', 'Quick Brown Fox') = ts_lexize('shingle_chain', 'Quick Brown Fox') AS same;
+----
+same
+t
+
+statement error pipeline: stage 0 produces a per-document store blob
+CREATE TEXT SEARCH DICTIONARY shingle_then_filter AS generate_shingles(split_csv(' '), 2, 2) | remove_stopwords(['quick']);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_then_filter AS generate_shingles(split_csv(' '), 2, 2, storetokens := false) | remove_stopwords(['quick']);
+
+query
+SELECT array_length(ts_lexize('shingle_then_filter', 'quick brown fox'), 1) AS n,
+       'quick' = ANY(ts_lexize('shingle_then_filter', 'quick brown fox')) AS has_quick;
+----
+n	has_quick
+4	f
+
+# --- unions ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_sql AS [split_csv(','), lower($1)];
+
+query
+SELECT ts_lexize('union_sql', 'A,B');
+----
+ts_lexize
+{A,"a,b",B}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_dict_lambda AS [words, (x -> upper(x))];
+
+query
+SELECT ts_lexize('union_dict_lambda', 'Hello World');
+----
+ts_lexize
+{hello,"HELLO WORLD",world}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_of_chains AS [split_csv(',') | upper($1), split_csv(',') | lower($1)];
+
+query
+SELECT ts_lexize('union_of_chains', 'a,B');
+----
+ts_lexize
+{A,a,B,b}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_in_chain AS split_csv(';') | [upper($1), lower($1)];
+
+query
+SELECT ts_lexize('union_in_chain', 'a;B');
+----
+ts_lexize
+{A,a,B,b}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_then_filter AS [split_csv(','), split_csv(' ')] | remove_stopwords(['b']);
+
+query
+SELECT ts_lexize('union_then_filter', 'a,b c');
+----
+ts_lexize
+{a,"a,b","b c",c}
+
+# --- stored dictionaries at every position ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict_head AS words | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict_middle AS lower($1) | words | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict_tail AS split_csv(',') | en_stem;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict_qualified AS public.words | public.en_stem;
+
+query
+SELECT ts_lexize('dict_head', 'Running Flies') AS h,
+       ts_lexize('dict_middle', 'Running Flies') AS m,
+       ts_lexize('dict_tail', 'Running,Flies') AS t,
+       ts_lexize('dict_qualified', 'Running Flies') AS q;
+----
+h	m	t	q
+{run,fli}	{run,fli}	{run,fli}	{run,fli}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict_of_sql AS sql_middle | upper($1);
+
+query
+SELECT ts_lexize('dict_of_sql', 'running , flies');
+----
+ts_lexize
+{RUN,FLI}
+
+# --- spelling variations ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_upper AS SPLIT_TEXT(CASE := 'lower') | STEM_WORDS('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_quoted AS "split_text"(case := 'lower') | "stem_words"('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_arrow AS split_text(case => 'lower') | stem_words(locale => 'en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_positional AS split_text('lower') | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_null AS split_text('lower', NULL) | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spell_mixed AS split_text('lower', break := 'alpha') | stem_words('en_US.UTF-8');
+
+query
+SELECT count(*) AS same FROM (
+  SELECT ts_lexize(d, 'The Runners were Running') = ts_lexize('en_stem', 'The Runners were Running') AS eq
+  FROM (VALUES ('spell_upper'), ('spell_quoted'), ('spell_arrow'), ('spell_positional'), ('spell_null'), ('spell_mixed')) AS t(d)
+) WHERE eq;
+----
+same
+6
+
+# --- features on chains ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY feat_chain AS split_csv(',') | (x -> lower(trim(x))) | stem_words('en_US.UTF-8') WITH (frequency, position);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY feat_identity AS $1 WITH (frequency);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY feat_union AS [split_csv(','), lower($1)] WITH (frequency, position, norm);
+
+statement error Unsupported index features
+CREATE TEXT SEARCH DICTIONARY feat_bad AS split_csv(',') | upper($1) WITH (frequency, position, offset);
+
+# --- functions and dictionaries agree ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sc_stop AS split_csv(',') | remove_stopwords(['b']);
+
+query
+SELECT stem_words(split_text(v, case := 'lower'), 'en_US.UTF-8') = ts_lexize('en_stem', v) AS a,
+       remove_stopwords(split_csv(v, ','), ['b']) = ts_lexize('sc_stop', v) AS b
+FROM (VALUES ('Running,Flies b'), ('a,b,c')) AS t(v);
+----
+a	b
+t	t
+t	t
+
+# --- indexing over chains with sql and lambda stages ---
+
+statement ok
+CREATE TABLE chain_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO chain_docs VALUES (1, ' Running , flies '), (2, 'Lazy , dogs'), (3, NULL);
+
+statement ok
+CREATE INDEX chain_docs_idx ON chain_docs USING inverted (id, body feat_chain);
+
+statement ok
+VACUUM (REFRESH_TABLE) chain_docs;
+
+query
+SELECT id FROM chain_docs_idx WHERE body @@ 'fli' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM chain_docs_idx WHERE body @@ ts_phrase('running', 'flies') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM chain_docs_idx WHERE body @@ ts_tokenize('DOGS') ORDER BY id;
+----
+id
+2
+
+# --- errors ---
+
+statement error text search dictionary "input" does not exist
+CREATE TEXT SEARCH DICTIONARY err_bare_input AS input;
+
+statement error does not read input
+CREATE TEXT SEARCH DICTIONARY err_old_placeholder AS lower(input);
+
+statement error does not read input
+CREATE TEXT SEARCH DICTIONARY err_other_param AS split_csv(',') | upper($2);
+
+statement error parameters are not allowed
+CREATE TEXT SEARCH DICTIONARY err_extra_param AS split_csv(',') | (upper($1) || $2);
+
+statement error is not a constant
+CREATE TEXT SEARCH DICTIONARY err_param_option AS split_text(case := $1);
+
+statement error a lambda stage takes exactly one parameter
+CREATE TEXT SEARCH DICTIONARY err_lambda_two AS split_csv(',') | ((x, y) -> upper(x));
+
+statement error cannot be nested inside an SQL expression
+CREATE TEXT SEARCH DICTIONARY err_lambda_template AS split_csv(',') | (x -> stem_words(x));
+
+statement error cannot be nested inside an SQL expression
+CREATE TEXT SEARCH DICTIONARY err_sql_template AS lower(stem_words($1));
+
+statement error does not take an analyzer argument
+CREATE TEXT SEARCH DICTIONARY err_nested_call AS stem_words(split_csv(','), 'en_US.UTF-8');
+
+statement error requires a nested analyzer as its first argument
+CREATE TEXT SEARCH DICTIONARY err_wrapper_no_child AS generate_shingles(2, 2);
+
+statement error a list stage must hold analyzers
+CREATE TEXT SEARCH DICTIONARY err_list_constant AS [split_csv(','), 'x'];
+
+statement error
+CREATE TEXT SEARCH DICTIONARY err_sql_unknown_fn AS whaaat($1);
+
+statement error
+CREATE TEXT SEARCH DICTIONARY err_sql_type AS split_csv(',') | length($1);
+
+statement ok
+DROP TABLE chain_docs CASCADE;

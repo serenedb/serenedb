@@ -157,7 +157,7 @@ PRAGMA database_size;
 # DOCS_TEST: example_014
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY dict (template = 'text', locale = 'en_US.UTF-8');
+CREATE TEXT SEARCH DICTIONARY dict AS split_text() | stem_words('en_US.UTF-8');
 
 # DOCS_TEST_BODY
 

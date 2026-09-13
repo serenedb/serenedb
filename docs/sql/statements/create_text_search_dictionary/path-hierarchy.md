@@ -1,15 +1,15 @@
 ---
-title: "path_hierarchy"
+title: "expand_path"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# path_hierarchy
+# expand_path
 
-The `path_hierarchy` template tokenizes a hierarchical path into every prefix along the way, so a value indexed at `/usr/local/bin` is also found by a search for `/usr` or `/usr/local`.
+The `expand_path` template tokenizes a hierarchical path into every prefix along the way, so a value indexed at `/usr/local/bin` is also found by a search for `/usr` or `/usr/local`.
 
-This is ideal for file paths, category trees and URL paths where you want a query on any ancestor to match the descendants stored beneath it. By default it splits on `/`; set `DELIMITER` to use another separator. With `REVERSE = true` it builds the hierarchy from the right instead — the natural choice for domain names, where `docs.serenedb.com` should also match `serenedb.com` and `com`. Unlike a plain [`delimiter`](./delimiter.md) split, which would emit the individual components, `path_hierarchy` emits the cumulative prefixes.
+This is ideal for file paths, category trees and URL paths where you want a query on any ancestor to match the descendants stored beneath it. By default it splits on `/`; set `DELIMITER` to use another separator. With `REVERSE = true` it builds the hierarchy from the right instead — the natural choice for domain names, where `docs.serenedb.com` should also match `serenedb.com` and `com`. Unlike a plain [`split_csv`](./csv.md) split, which would emit the individual components, `expand_path` emits the cumulative prefixes.
 
 ## Options
 
@@ -62,5 +62,6 @@ With `REVERSE = true` and `DELIMITER = '.'` each token is a suffix of the value,
 
 ## See also
 
-- [delimiter](./delimiter.md) — split on a single delimiter without building prefixes
+- [csv](./csv.md) — split on a single delimiter without building prefixes
+- [`expand_path()`](../../functions/search/tokenizers.md#expand_path) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

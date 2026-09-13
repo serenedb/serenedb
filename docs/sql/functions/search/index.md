@@ -9,6 +9,7 @@ These functions operate on an [inverted index](../../indexes/inverted/index.md) 
 | Page | Functions |
 | :--- | :--- |
 | [Full-Text](./full-text.md) | The `@@` match operator, `TSQUERY` constructors and operators, PostgreSQL-compatible parsers, convenience predicates and `ts_lexize` |
+| [Tokenizers](./tokenizers.md) | Every dictionary template as a scalar function — `split_text`, `stem_words`, `generate_ngrams`, `split_csv` and the others — for ad hoc analysis without a dictionary |
 | [Term Dictionary](./term-dictionary.md) | Facet counts, distinct values, autocomplete and min/max via the `ts_dict_*` aggregates read from the index dictionary |
 | [Vector](../vector.md) | `l2_distance`, `cosine_distance`, `l1_distance` and the `<->` operator |
 | [Geo](./geo.md) | `ST_Intersects`, `ST_Contains`, `ST_Distance_Between`, `ST_Distance_Centroid` |

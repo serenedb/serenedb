@@ -11,9 +11,9 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TEXT SEARCH DICTIONARY db(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY db AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE t(id BIGINT PRIMARY KEY, body TEXT)

@@ -46,9 +46,9 @@ DROP TABLE merge_plain;
 # Same merge actions against a table with an inverted index.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY merge_dict(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY merge_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE merge_idx(a INTEGER PRIMARY KEY, body TEXT);

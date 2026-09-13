@@ -6,7 +6,7 @@ hash-threshold 100
 # predicate cannot constrain a text enumeration (cross-field).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY num_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY num_kw AS keyword()
 
 statement ok
 CREATE TABLE numt(id INTEGER PRIMARY KEY, n INTEGER, cat VARCHAR NOT NULL)

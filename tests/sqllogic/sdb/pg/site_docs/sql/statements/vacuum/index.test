@@ -48,9 +48,9 @@ SET vacuum_rebuild_indexes = 1000000;
 
 # DOCS_TEST: example_007
 statement ok
-CREATE TEXT SEARCH DICTIONARY en (
-    template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text(case := 'lower')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -79,9 +79,9 @@ statement ok
 DROP TEXT SEARCH DICTIONARY IF EXISTS en;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en (
-    template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text(case := 'lower')
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);

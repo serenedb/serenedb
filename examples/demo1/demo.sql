@@ -15,16 +15,9 @@ DROP INDEX IF EXISTS imdb_idx;
 DROP VIEW IF EXISTS imdb_v;
 DROP TEXT SEARCH DICTIONARY IF EXISTS imdb_en;
 
-CREATE TEXT SEARCH DICTIONARY imdb_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY imdb_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 -- Same view shape as demo0, just pointing at the local glob produced by
 -- bootstrap.sql. The (file_index, file_row_number) pair PK is auto-detected,

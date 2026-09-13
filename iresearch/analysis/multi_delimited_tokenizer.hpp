@@ -33,7 +33,7 @@ class MultiDelimitedTokenizer : private util::Noncopyable {
   };
 
   static constexpr std::string_view type_name() noexcept {
-    return "multi_delimiter";
+    return "split_by_delimiters";
   }
 
   static Tokenizer::ptr Make(Options opts);

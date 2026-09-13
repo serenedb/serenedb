@@ -24,27 +24,14 @@ DROP TEXT SEARCH DICTIONARY IF EXISTS imdb_fts_ngram;
 DROP TEXT SEARCH DICTIONARY IF EXISTS imdb_fts_en;
 
 -- Main english tokenizer with offsets enabled (for snippet generation).
-CREATE TEXT SEARCH DICTIONARY imdb_fts_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY imdb_fts_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
 
 -- 3-gram tokenizer for typo-tolerant substring search.
-CREATE TEXT SEARCH DICTIONARY imdb_fts_ngram(
-    template = 'ngram',
-    mingram = 3,
-    maxgram = 3,
-    preserveoriginal = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY imdb_fts_ngram AS
+    generate_ngrams(3, 3, preserveoriginal := false)
+    WITH (frequency, position);
 
 CREATE VIEW imdb_fts AS
   SELECT text, label, text AS text_ngram

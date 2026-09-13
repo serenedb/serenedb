@@ -15,16 +15,9 @@ FROM
   generate_series(1, 100) as cutelooked_team(boss);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE INDEX clickclack_facts ON clickclack USING inverted(fact test_english);

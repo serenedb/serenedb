@@ -30,7 +30,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
                                    private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept {
-    return "sparse_ngram";
+    return "generate_sparse_ngrams";
   }
 
   struct Options {

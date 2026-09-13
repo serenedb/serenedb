@@ -24,7 +24,7 @@
 
 #include <array>
 #include <iosfwd>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "executor.h"
@@ -79,9 +79,8 @@ inline constexpr irs::field_id kTextFieldId = 2;
 struct TextField {
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view text;
-  irs::analysis::Tokenizer::ptr tokenizer{
-    irs::analysis::SegmentationTokenizer::Make(
-      irs::analysis::SegmentationTokenizer::Options{})};
+  irs::analysis::Tokenizer::ptr tokenizer{irs::analysis::TextTokenizer::Make(
+    irs::analysis::TextTokenizer::Options{})};
 
   irs::field_id Id() const noexcept { return id; }
 

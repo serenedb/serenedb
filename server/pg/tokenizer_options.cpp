@@ -74,8 +74,11 @@ void CheckThreshold(std::string_view option, double value) {
 }
 
 void CheckTemplate(std::string_view /*option*/, std::string_view value) {
+  if (value == kDictionaryTemplate) {
+    return;
+  }
   for (const auto& group : kTokenizerSubgroups) {
-    if (group.name == value) {
+    if (group.name == value && group.kind != TemplateKind::Features) {
       return;
     }
   }

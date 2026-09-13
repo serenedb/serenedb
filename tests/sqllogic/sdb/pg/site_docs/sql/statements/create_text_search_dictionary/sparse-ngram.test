@@ -3,11 +3,9 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams (
-    template = 'sparse_ngram',
-    frequency = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY code_grams AS
+    generate_sparse_ngrams()
+    WITH (frequency, norm);
 
 query
 SELECT ts_lexize('code_grams', 'hello world');
@@ -20,10 +18,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_q (
-    template = 'sparse_ngram',
-    covering = true
-);
+CREATE TEXT SEARCH DICTIONARY code_grams_q AS
+    generate_sparse_ngrams(covering := true);
 
 query
 SELECT ts_lexize('code_grams_q', 'hello world');
@@ -91,11 +87,8 @@ id	match
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_q2 (
-    template = 'copy_from',
-    from = 'code_grams',
-    covering = true
-);
+CREATE TEXT SEARCH DICTIONARY code_grams_q2 AS
+    generate_sparse_ngrams(covering := true);
 
 query
 SELECT ts_lexize('code_grams_q2', 'for(int i=42');
@@ -108,10 +101,8 @@ ts_lexize
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY code_grams_short (
-    template = 'sparse_ngram',
-    maxngramlength = 4
-);
+CREATE TEXT SEARCH DICTIONARY code_grams_short AS
+    generate_sparse_ngrams(4);
 
 query
 SELECT ts_lexize('code_grams_short', 'hello world');

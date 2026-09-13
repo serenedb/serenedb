@@ -39,6 +39,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
+#include "text_chain.hpp"
 
 namespace {
 
@@ -495,14 +496,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   using tests::FieldBase;
   using tests::JsonDocGenerator;
 
-  irs::analysis::TextTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("en"),
-  };
-  opts.case_convert = irs::Case::Lower;
-  opts.explicit_stopwords_set = true;
-  opts.stemming = false;
-  auto analyzer =
-    irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
+  auto analyzer = tests::MakeTextChain(
+    {.locale = "en", .convert = irs::Case::Lower, .stemming = false});
   ASSERT_NE(nullptr, analyzer);
 
   struct TextField : FieldBase {

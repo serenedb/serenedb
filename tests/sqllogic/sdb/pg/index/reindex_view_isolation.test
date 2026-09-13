@@ -15,15 +15,9 @@ TO '${__TEST_DIR__}/reindex_iso.parquet' (FORMAT PARQUET);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY reindex_iso_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY reindex_iso_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok

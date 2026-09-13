@@ -8,15 +8,9 @@ control substitution on
 # the surrounding non-indexed-table noise.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY iw_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY iw_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE iw_idx_t(id INTEGER PRIMARY KEY, body TEXT);

@@ -17,15 +17,9 @@ COPY (SELECT 1 AS id, 'pudge goes mid' AS body
 TO '${__TEST_DIR__}/view_idx.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY view_idx_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY view_idx_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW pq_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_idx.parquet');

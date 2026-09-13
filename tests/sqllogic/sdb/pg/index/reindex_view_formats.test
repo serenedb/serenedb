@@ -8,15 +8,9 @@ hash-threshold 100
 # and rebuilds.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY refmt_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY refmt_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # CSV glob: add a file -> delta; rewrite a file -> delta.

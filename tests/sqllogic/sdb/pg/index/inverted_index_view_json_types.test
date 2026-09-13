@@ -89,15 +89,9 @@ statement ok
 COPY jsonl_src TO '${__TEST_DIR__}/jsonl.jsonl' (FORMAT json);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jsonl_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY jsonl_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW jsonl_v AS SELECT * FROM read_json('${__TEST_DIR__}/jsonl.jsonl', columns={

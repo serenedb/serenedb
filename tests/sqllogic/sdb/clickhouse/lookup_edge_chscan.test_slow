@@ -32,15 +32,9 @@ statement ok
 ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlke (TYPE clickhouse);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY chlke_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY chlke_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # =====================================================================

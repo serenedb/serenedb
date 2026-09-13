@@ -1,13 +1,13 @@
 ---
-title: "geojson"
+title: "encode_geojson"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# geojson
+# encode_geojson
 
-The `geojson` template is a geospatial analyzer: instead of breaking text into word tokens, it reads a geometry and emits the [S2](http://s2geometry.io/) cell-ID terms that cover it. Those terms are what the [inverted index](../../indexes/inverted/index.md) stores and matches, so a `JSON` or `GEOMETRY` column indexed through `geojson` can be queried with spatial predicates such as containment, intersection and distance.
+The `encode_geojson` template is a geospatial analyzer: instead of breaking text into word tokens, it reads a geometry and emits the [S2](http://s2geometry.io/) cell-ID terms that cover it. Those terms are what the [inverted index](../../indexes/inverted/index.md) stores and matches, so a `JSON` or `GEOMETRY` column indexed through `encode_geojson` can be queried with spatial predicates such as containment, intersection and distance.
 
 ## How it works
 
@@ -28,9 +28,9 @@ Geo dictionaries support no [feature flags](./index.md#feature-flags) — `FREQU
 
 A geometry that does not parse simply produces no terms: invalid JSON, a missing or non-array `coordinates`, an unrecognized `type` or `GeometryCollection`, an invalid `LineString` or `Polygon`, a non-point geometry under `TYPE = point`, and a degenerate geometry whose centroid is not a unit vector, such as a zero-area polygon. At index time such a row is indexed without geo terms and no error is raised.
 
-### When to use `geojson` vs `geopoint`
+### When to use `encode_geojson` vs `encode_geopoint`
 
-Use `geojson` when rows hold arbitrary geometries — polygons, lines, multi-geometries — points already expressed as GeoJSON, or a `GEOMETRY` column. Reach for [`geopoint`](./geopoint.md) instead when every row is a single point whose latitude and longitude live in two separate fields of a JSON object; it builds the point directly without GeoJSON assembly. Given the same level options both templates emit the same terms for a point, so a point indexed either way is queried identically.
+Use `encode_geojson` when rows hold arbitrary geometries — polygons, lines, multi-geometries — points already expressed as GeoJSON, or a `GEOMETRY` column. Reach for [`encode_geopoint`](./geopoint.md) instead when every row is a single point whose latitude and longitude live in two separate fields of a JSON object; it builds the point directly without GeoJSON assembly. Given the same level options both templates emit the same terms for a point, so a point indexed either way is queried identically.
 
 ## Options
 
@@ -68,4 +68,5 @@ For the full indexing-and-query walkthrough — `ST_Intersects`, `ST_Contains` a
 - [geopoint](./geopoint.md) — index points from latitude/longitude fields
 - [`GEOMETRY` data type](../../data_types/geometry.md)
 - [Geospatial Search Functions](../../functions/search/geo.md) — `ST_*` reference
+- [`encode_geojson()`](../../functions/search/tokenizers.md#encode_geojson) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

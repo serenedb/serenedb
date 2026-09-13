@@ -9,15 +9,9 @@ hash-threshold 100
 # including NULL rows and (for MAP) empty-vs-NULL distinction.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-)
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 
 # --- ARRAY -------------------------------------------------------------

@@ -20,7 +20,6 @@
 
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -31,6 +30,7 @@
 #include "gtest/gtest.h"
 #include "test_resources.hpp"
 #include "tests_config.hpp"
+#include "text_chain.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
@@ -82,15 +82,10 @@ void AssertUnionMembers(irs::analysis::UnionTokenizer& u,
 irs::analysis::Tokenizer::ptr MakeText(
   std::string_view locale, irs::Case case_convert, bool stemming,
   std::vector<std::string> stopwords = {}) {
-  irs::analysis::TextTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName(std::string(locale).c_str());
-  opts.case_convert = case_convert;
-  opts.stemming = stemming;
-  for (auto& w : stopwords) {
-    opts.explicit_stopwords.push_back(std::move(w));
-  }
-  opts.explicit_stopwords_set = true;
-  return irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
+  return tests::MakeTextChain({.locale = std::string{locale},
+                               .convert = case_convert,
+                               .stemming = stemming,
+                               .stopwords = std::move(stopwords)});
 }
 
 irs::analysis::Tokenizer::ptr MakeNGram(size_t min_gram, size_t max_gram,
@@ -247,13 +242,8 @@ TEST(union_tokenizer_test, VisitMembers) {
 TEST(union_tokenizer_test, options_construction) {
   irs::analysis::UnionTokenizer::Options opts;
 
-  irs::analysis::TextTokenizer::Options text_opts;
-  text_opts.locale = icu::Locale::createFromName("en_US.UTF-8");
-  text_opts.case_convert = irs::Case::Lower;
-  text_opts.stemming = false;
-  text_opts.explicit_stopwords_set = true;
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
-    irs::analysis::TokenizerConfig{std::move(text_opts)}));
+    tests::TextChainConfig({.convert = irs::Case::Lower, .stemming = false})));
 
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NGramTokenizer::Options{

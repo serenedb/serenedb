@@ -15,14 +15,9 @@ INSERT INTO documents VALUES
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = true,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY english_dict AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX idx_docs ON documents
@@ -50,3 +45,58 @@ SELECT ts_lexize('english_dict', 'running engines');
 ----
 ts_lexize
 {run,engin}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_expr AS
+    split_csv(',') | split_text(case := 'lower') | stem_words('en_US.UTF-8') | remove_stopwords(['the'])
+    WITH (frequency, position);
+
+query
+SELECT ts_lexize('english_expr', 'The,Quick,Foxes');
+----
+ts_lexize
+{quick,fox}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY split_stem AS
+    string_split(lower($1), ',') | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('split_stem', 'Cats,RUNNING');
+----
+ts_lexize
+{cat,run}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY exact_and_grams AS [keyword(), generate_ngrams(2, 2)] WITH (frequency);
+
+query
+SELECT ts_lexize('exact_and_grams', 'abcd');
+----
+ts_lexize
+{abcd,ab,bc,cd}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_no_run AS english_dict | remove_stopwords(['run']);
+
+query
+SELECT ts_lexize('english_no_run', 'running engines');
+----
+ts_lexize
+{engin}

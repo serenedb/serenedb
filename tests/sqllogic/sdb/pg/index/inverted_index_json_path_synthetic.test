@@ -15,12 +15,8 @@ hash-threshold 100
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY js_wild(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY js_wild AS
+    generate_wildcard_ngrams(split_csv(' '), 3);
 
 
 statement ok
@@ -59,9 +55,8 @@ id
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY js_geo(
-    template = 'geojson'
-);
+CREATE TEXT SEARCH DICTIONARY js_geo AS
+    encode_geojson();
 
 
 statement ok
@@ -98,67 +93,50 @@ count
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY js_norm(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY js_norm AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 # The norm grid is the index's one `row_group_size`, so a dictionary has no
 # norm-specific size to set.
 query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    frequency = true,
-    norm = true,
-    norm_row_group_size = 256
-);
+CREATE TEXT SEARCH DICTIONARY bad_norm AS
+    split_text(norm_row_group_size := 256)
+    WITH (frequency, norm);
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "norm_row_group_size"
+HINT: known names: case, break
 
 
 # The option is gone whatever it is written next to: it used to require
 # `norm = true`, so both shapes that used to be rejected for that reason are
 # now rejected for the same one reason.
 query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    norm_row_group_size = 256
-);
+CREATE TEXT SEARCH DICTIONARY bad_norm AS
+    split_text(norm_row_group_size := 256);
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "norm_row_group_size"
+HINT: known names: case, break
 
 
 query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    norm = false,
-    norm_row_group_size = 256
-);
+CREATE TEXT SEARCH DICTIONARY bad_norm AS
+    split_text(norm_row_group_size := 256)
+    WITH (norm = false);
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "norm_row_group_size"
+HINT: known names: case, break
 
 
 # A value that used to be rejected on its own account is rejected by name now.
 query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    frequency = true,
-    norm = true,
-    norm_row_group_size = 0
-);
+CREATE TEXT SEARCH DICTIONARY bad_norm AS
+    split_text(norm_row_group_size := 0)
+    WITH (frequency, norm);
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "norm_row_group_size"
+HINT: known names: case, break
 
 
 statement ok

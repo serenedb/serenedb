@@ -14,7 +14,7 @@ target_sources(
         minhash.cpp
         search.cpp
         sequence.cpp
-        split_by_non_alpha.cpp
+        tokenizer_functions.cpp
         ts_anyall.cpp
         ts_between.cpp
         ts_compound.cpp

@@ -36,33 +36,22 @@ const dictionaryDdl = (
     exact: boolean,
 ): string => {
     const stops = ctx.stopwords
-        .map((w) => `"${w.replace(/["']/g, "")}"`)
-        .join(",");
-    const steps = [
-        `step1_template = 'text',
-             step1_locale = 'en_US.UTF-8',
-             step1_case = 'lower',
-             step1_accent = true,
-             step1_stemming = false,
-             step1_stopwords = ${lit(stops)}`,
-        `step2_template = 'delimiter', step2_delimiter = '_'`,
+        .map((w) => lit(w.replace(/["']/g, "")))
+        .join(", ");
+    const stages = [
+        `split_text(case := 'lower') | remove_stopwords([${stops}])`,
+        `split_csv('_')`,
     ];
     if (!exact && ctx.synonyms) {
-        steps.push(`step${steps.length + 1}_template = 'solr_synonyms',
-             step${steps.length + 1}_synonyms = ${lit(ctx.synonyms)}`);
+        stages.push(`expand_solr_synonyms(${lit(ctx.synonyms)})`);
     }
     if (!exact && ctx.stemming) {
-        steps.push(
-            `step${steps.length + 1}_template = 'stem', step${steps.length + 1}_locale = 'en'`,
-        );
+        stages.push(`stem_words('en')`);
     }
     return `
-            CREATE TEXT SEARCH DICTIONARY ${name} (
-                template = 'pipeline',
-                ${steps.join(",\n                ")},
-                frequency = true,
-                position = true
-            )`;
+            CREATE TEXT SEARCH DICTIONARY ${name} AS
+                ${stages.join("\n                | ")}
+                WITH (frequency, position)`;
 };
 
 const tableExists = async (ctx: DbContext, name: string): Promise<boolean> => {
@@ -151,10 +140,9 @@ export const SchemaRepository = {
         // which is what makes pasted code ("body @@ plainto_tsquery('…')")
         // findable; ts_ngram needs frequency+position on the field
         await ctx.pool.query(`
-            CREATE TEXT SEARCH DICTIONARY ${ctx.ngramDict} (
-                template = 'ngram', mingram = 3, maxgram = 3,
-                frequency = true, position = true, norm = true
-            )`);
+            CREATE TEXT SEARCH DICTIONARY ${ctx.ngramDict} AS
+                generate_ngrams(3, 3)
+                WITH (frequency, position, norm)`);
 
         const embeddingCol = ctx.hybrid
             ? `,\n                embedding FLOAT[${dim}]`

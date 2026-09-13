@@ -32,7 +32,7 @@
 #include "token_sink_utils.hpp"
 
 TEST(token_stopwords_stream_tests, consts) {
-  static_assert("stopwords" ==
+  static_assert("remove_stopwords" ==
                 irs::Type<irs::analysis::StopwordsTokenizer>::name());
 }
 

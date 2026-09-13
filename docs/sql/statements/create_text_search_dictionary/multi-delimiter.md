@@ -1,23 +1,23 @@
 ---
-title: "multi_delimiter"
+title: "split_by_delimiters"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# multi_delimiter
+# split_by_delimiters
 
-The `multi_delimiter` template cuts the input at every occurrence of any delimiter in the `DELIMITERS` list and emits the pieces as tokens. Each entry is a byte string, not a regular expression: a single character and a multi-character string such as `"foo"` both work, and matching is byte-exact. It suits fields that mix separators — for example splitting `key:value; key2:value2` on `:`, `;` and space yields the individual keys and values.
+The `split_by_delimiters` template cuts the input at every occurrence of any delimiter in the `DELIMITERS` list and emits the pieces as tokens. Each entry is a byte string, not a regular expression: a single character and a multi-character string such as `"foo"` both work, and matching is byte-exact. It suits fields that mix separators — for example splitting `key:value; key2:value2` on `:`, `;` and space yields the individual keys and values.
 
-The pieces are emitted verbatim, so chain the template into a [`pipeline`](./pipeline/index.md) if you also need case folding or stemming. Beyond taking several separators, it differs from [`delimiter`](./delimiter.md) in dropping empty tokens and in doing no quote handling, so a `"` is an ordinary byte here.
+The pieces are emitted verbatim, so chain the template into a [`pipeline`](./pipeline/index.md) if you also need case folding or stemming. Beyond taking several separators, it differs from [`split_csv`](./csv.md) in dropping empty tokens and in doing no quote handling, so a `"` is an ordinary byte here.
 
 ## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `DELIMITERS` | string | **required** | One string holding a comma-separated list of double-quoted delimiters (e.g., `'":", ";", " "'`). An entry may be a single character or a multi-character string. No entry may be a prefix of another |
+| `DELIMITERS` | string | **required** | A list of delimiter strings (`[':', ';', ' ']`), or one string holding a comma-separated list of double-quoted delimiters (e.g., `'":", ";", " "'`). An entry may be a single character or a multi-character string. No entry may be a prefix of another |
 
-The value is split on commas first, and each entry must then be wrapped in double quotes; whitespace around the commas is ignored. An unquoted entry fails with `Invalid format of list of words(should be comma-separated and quoted)`. Entries are taken verbatim — there is no escape processing — and empty entries (`""`) are dropped. Omitting the option fails with `required parameter "delimiters" was not found`.
+The string form is split on commas first, and each entry must then be wrapped in double quotes; whitespace around the commas is ignored. An unquoted entry fails with `Invalid format of list of words(should be comma-separated and quoted)`. Entries are taken verbatim — there is no escape processing — and empty entries (`""`) are dropped. Omitting the option fails with `split_by_delimiters(): required option "delimiters" not given`.
 
 No delimiter may be a prefix of another, so `'"ab", "abc"'` is rejected when the dictionary is created, with `multi_delimited: delimiters must not be prefixes of one another`. A string is a prefix of itself, so this rules out duplicates as well. Delimiters that merely share a suffix, such as `'"bc", "abc"'`, are accepted.
 
@@ -46,10 +46,11 @@ Splitting `key:value; key2:value2` on the colon, semicolon and space separators 
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/multi-delimiter/example_001" />
 
-Because the list is split on commas before the quotes are parsed, a comma cannot be used as a delimiter here: `DELIMITERS = '","'` fails with `Invalid format of list of words(should be comma-separated and quoted)`. To split on a comma, use the [`delimiter`](./delimiter.md) template instead.
+Because the string form is split on commas before the quotes are parsed, a comma cannot be used as a delimiter in it: `DELIMITERS = '","'` fails with `Invalid format of list of words(should be comma-separated and quoted)`. To split on a comma, pass the list form, `DELIMITERS = [',', ';']`, or use the [`split_csv`](./csv.md) template.
 
 ## See also
 
-- [delimiter](./delimiter.md) — split on a single delimiter, keeping empty tokens
+- [csv](./csv.md) — split on a single delimiter, keeping empty tokens
 - [pattern](./pattern.md) — split on a regular expression
+- [`split_by_delimiters()`](../../functions/search/tokenizers.md#split_by_delimiters) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

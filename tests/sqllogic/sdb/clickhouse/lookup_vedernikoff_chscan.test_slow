@@ -27,15 +27,9 @@ statement ok
 ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlk (TYPE clickhouse);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ch_lk_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY ch_lk_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE VIEW lk_vedernikoff_v AS SELECT * FROM chlk.chtest.vedernikoff;

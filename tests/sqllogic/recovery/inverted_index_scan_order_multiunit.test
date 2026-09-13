@@ -17,8 +17,9 @@ SET threads = 1
 
 onlyif serenedb
 statement ok
-CREATE TEXT SEARCH DICTIONARY en
-  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_csv(' ')
+    WITH (frequency, position)
 
 
 onlyif serenedb

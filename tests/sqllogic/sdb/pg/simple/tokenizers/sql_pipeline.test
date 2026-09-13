@@ -7,13 +7,8 @@ control substitution on
 # --- 1:1 rewrite mid-chain ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_mid_norm(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = ',',
-    step2_template = 'sql',
-    step2_expression = 'upper(trim(input))'
-)
+CREATE TEXT SEARCH DICTIONARY sql_mid_norm AS
+    split_csv(',') | upper(trim($1))
 
 query
 SELECT ts_lexize('sql_mid_norm', 'red, green ,blue');
@@ -25,13 +20,8 @@ ts_lexize
 # --- fan-out mid-chain: the expression returns a list per token ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_mid_split(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = ' ',
-    step2_template = 'sql',
-    step2_expression = 'string_split(input, ''-'')'
-)
+CREATE TEXT SEARCH DICTIONARY sql_mid_split AS
+    split_csv(' ') | string_split($1, '-')
 
 query
 SELECT ts_lexize('sql_mid_split', 'a-b c-d');
@@ -43,15 +33,10 @@ ts_lexize
 # --- sql stage followed by another stage ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_mid_then_stop(
-    template = 'pipeline',
-    step1_template = 'delimiter',
-    step1_delimiter = ',',
-    step2_template = 'sql',
-    step2_expression = 'lower(input)',
-    step3_template = 'stopwords',
-    step3_stopwords = '"the"'
-)
+CREATE TEXT SEARCH DICTIONARY sql_mid_then_stop AS
+    split_csv(',')
+    | lower($1)
+    | remove_stopwords(['the'])
 
 query
 SELECT ts_lexize('sql_mid_then_stop', 'The,Fox');

@@ -16,7 +16,7 @@ hash-threshold 100
 # silently lost. Triggers in both backfill and live-INSERT paths.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY verbatim_dict( template = 'keyword' );
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword();
 
 statement ok
 CREATE TABLE words (

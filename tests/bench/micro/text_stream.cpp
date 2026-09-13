@@ -22,9 +22,9 @@
 
 #include <benchmark/benchmark.h>
 
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/text/words/ascii.hpp>
 #include <iresearch/analysis/text/words/unicode.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <random>
 
 #include "bench_token_sink.h"
@@ -141,25 +141,25 @@ std::string MakeLongWordsAscii() {
   return data;
 }
 
-SegmentationTokenizer::Options MakeOpts(
-  irs::Case convert, SegmentationTokenizer::Options::Accept accept,
-  SegmentationTokenizer::Options::Separate separate) {
-  SegmentationTokenizer::Options opts;
+TextTokenizer::Options MakeOpts(irs::Case convert,
+                                TextTokenizer::Options::Accept accept,
+                                TextTokenizer::Options::Separate separate) {
+  TextTokenizer::Options opts;
   opts.convert = convert;
   opts.accept = accept;
   opts.separate = separate;
   return opts;
 }
 
-SegmentationTokenizer::Options DefaultOpts() {
+TextTokenizer::Options DefaultOpts() {
   return MakeOpts(irs::Case::Lower,
-                  SegmentationTokenizer::Options::Accept::AlphaNumeric,
-                  SegmentationTokenizer::Options::Separate::Word);
+                  TextTokenizer::Options::Accept::AlphaNumeric,
+                  TextTokenizer::Options::Separate::Word);
 }
 
 void RunCorpus(benchmark::State& state, const std::string& data,
-               SegmentationTokenizer::Options opts) {
-  auto stream = SegmentationTokenizer::Make(std::move(opts));
+               TextTokenizer::Options opts) {
+  auto stream = TextTokenizer::Make(std::move(opts));
   bench::DrainSink sink;
   const duckdb::string_t value{data.data(), static_cast<uint32_t>(data.size())};
   for (auto _ : state) {
@@ -190,19 +190,19 @@ class LongWordsAscii : public benchmark::Fixture {
   std::string data = MakeLongWordsAscii();
 };
 
-BENCHMARK_DEFINE_F(EnglishAscii, BmSegmentation)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(EnglishAscii, BmText)(benchmark::State& state) {
   RunCorpus(state, data, DefaultOpts());
 }
 
-BENCHMARK_DEFINE_F(MixedAccent, BmSegmentation)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(MixedAccent, BmText)(benchmark::State& state) {
   RunCorpus(state, data, DefaultOpts());
 }
 
-BENCHMARK_DEFINE_F(Multilingual, BmSegmentation)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(Multilingual, BmText)(benchmark::State& state) {
   RunCorpus(state, data, DefaultOpts());
 }
 
-BENCHMARK_DEFINE_F(LongWordsAscii, BmSegmentation)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(LongWordsAscii, BmText)(benchmark::State& state) {
   RunCorpus(state, data, DefaultOpts());
 }
 
@@ -257,17 +257,16 @@ BENCHMARK_DEFINE_F(Multilingual, BmScanUnicode)(benchmark::State& state) {
   RunScanUnicode(state, data);
 }
 
-BENCHMARK_DEFINE_F(EnglishAscii, BmSegmentationSweep)
+BENCHMARK_DEFINE_F(EnglishAscii, BmTextSweep)
 (benchmark::State& state) {
   RunCorpus(
     state, data,
-    MakeOpts(
-      state.range(0) != 0 ? irs::Case::Lower : irs::Case::None,
-      static_cast<SegmentationTokenizer::Options::Accept>(state.range(1)),
-      static_cast<SegmentationTokenizer::Options::Separate>(state.range(2))));
+    MakeOpts(state.range(0) != 0 ? irs::Case::Lower : irs::Case::None,
+             static_cast<TextTokenizer::Options::Accept>(state.range(1)),
+             static_cast<TextTokenizer::Options::Separate>(state.range(2))));
 }
 
-void BmSegmentationShortValues(benchmark::State& state) {
+void BmTextShortValues(benchmark::State& state) {
   const size_t n = static_cast<size_t>(state.range(0));
   const std::string base = MakeEnglishAscii();
   constexpr size_t kValues = 1024;
@@ -277,7 +276,7 @@ void BmSegmentationShortValues(benchmark::State& state) {
     values.emplace_back(base.data() + i * 37 % (base.size() - n),
                         static_cast<uint32_t>(n));
   }
-  auto stream = SegmentationTokenizer::Make(DefaultOpts());
+  auto stream = TextTokenizer::Make(DefaultOpts());
   bench::DrainSink sink;
   size_t i = 0;
   for (auto _ : state) {
@@ -288,8 +287,8 @@ void BmSegmentationShortValues(benchmark::State& state) {
                           static_cast<int64_t>(n));
 }
 
-void BmSegmentationAnalyzer(benchmark::State& state) {
-  auto stream = SegmentationTokenizer::Make(DefaultOpts());
+void BmTextAnalyzer(benchmark::State& state) {
+  auto stream = TextTokenizer::Make(DefaultOpts());
   const duckdb::string_t str{"QUICK BROWN FOX JUMPS OVER THE LAZY DOG"};
   bench::DrainSink sink;
   for (auto _ : state) {
@@ -302,30 +301,25 @@ void BmSegmentationAnalyzer(benchmark::State& state) {
 
 }  // namespace
 
-BENCHMARK(BmSegmentationAnalyzer);
+BENCHMARK(BmTextAnalyzer);
 
-BENCHMARK_REGISTER_F(EnglishAscii, BmSegmentation);
+BENCHMARK_REGISTER_F(EnglishAscii, BmText);
 BENCHMARK_REGISTER_F(EnglishAscii, BmScanOnly);
 BENCHMARK_REGISTER_F(EnglishAscii, BmScanWordRuns);
 BENCHMARK_REGISTER_F(EnglishAscii, BmScanUnicode);
 BENCHMARK_REGISTER_F(MixedAccent, BmScanUnicode);
 BENCHMARK_REGISTER_F(Multilingual, BmScanUnicode);
-BENCHMARK_REGISTER_F(MixedAccent, BmSegmentation);
-BENCHMARK_REGISTER_F(Multilingual, BmSegmentation);
-BENCHMARK_REGISTER_F(LongWordsAscii, BmSegmentation);
+BENCHMARK_REGISTER_F(MixedAccent, BmText);
+BENCHMARK_REGISTER_F(Multilingual, BmText);
+BENCHMARK_REGISTER_F(LongWordsAscii, BmText);
 
-BENCHMARK_REGISTER_F(EnglishAscii, BmSegmentationSweep)
+BENCHMARK_REGISTER_F(EnglishAscii, BmTextSweep)
   ->ArgsProduct({
     /* convert */ {0, 1},
     /* accept */ {0, 2},
     /* separate */ {0, 1},
   });
 
-BENCHMARK(BmSegmentationShortValues)
-  ->Arg(8)
-  ->Arg(16)
-  ->Arg(24)
-  ->Arg(31)
-  ->Arg(64);
+BENCHMARK(BmTextShortValues)->Arg(8)->Arg(16)->Arg(24)->Arg(31)->Arg(64);
 
 BENCHMARK_MAIN();

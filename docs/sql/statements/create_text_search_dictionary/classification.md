@@ -1,29 +1,27 @@
 ---
-title: "classification"
+title: "classify_text"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# classification
+# classify_text
 
-The `classification` template runs a pre-trained text-classification model over the input and emits its predicted category labels as tokens. This lets you index documents by an inferred property — topic, language, sentiment — and then query them by label like any other term, without storing the label yourself.
+The `classify_text` template runs a pre-trained text-classification model over the input and emits its predicted category labels as tokens. This lets you index documents by an inferred property — topic, language, sentiment — and then query them by label like any other term, without storing the label yourself.
 
 At index and query time the analyzer hands the value to a [fastText](https://fasttext.cc/) supervised model loaded from `MODELLOCATION` and turns the model's predictions into terms. `TOPK` caps how many of the highest-scoring labels are emitted and `THRESHOLD` drops any whose probability falls below the given score.
 
 The model file is **required** and must exist on the server host when the dictionary is created; a file the loader rejects fails with `failed to load fasttext model from: <path>, error: <...>` and no dictionary is created. It also has to be a supervised model: a model trained any other way still loads, but classifying a value with it fails with fastText's `Model needs to be supervised for prediction!`. Dictionaries that name the same `MODELLOCATION` share one in-memory copy of the model.
 
-Classification and [`nearest_neighbors`](./nearest-neighbors.md) are the two model-backed templates — use `classification` to tag a document with predicted categories, and `nearest_neighbors` to expand it with semantically related terms.
+Classification and [`find_nearest_words`](./nearest-neighbors.md) are the two model-backed templates — use `classify_text` to tag a document with predicted categories, and `find_nearest_words` to expand it with semantically related terms.
 
 ## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `MODELLOCATION` | string — a path on the server host | **required** | Path to the fastText model file. Its existence is checked when the dictionary is created, so a path that is not there fails with `File "<path>" referenced by option "modellocation" does not exist`; omitting the option altogether fails with `classification: empty model location` |
-| `TOPK` | integer | `1` | Maximum number of highest-scoring labels emitted per value. Must be greater than zero, otherwise `classification: top_k must be positive` |
+| `MODELLOCATION` | string — a path on the server host | **required** | Path to the fastText model file. Its existence is checked when the dictionary is created, so a path that is not there fails with `File "<path>" referenced by option "modellocation" does not exist`; omitting the option altogether fails with `classify_text: empty model location` |
+| `TOPK` | integer | `1` | Maximum number of highest-scoring labels emitted per value. Must be greater than zero, otherwise `classify_text: top_k must be positive` |
 | `THRESHOLD` | double | `0.0` | Minimum probability a label must reach to be emitted. Must lie in `[0.0, 1.0]`, otherwise `invalid value in "threshold" parameter. Should be in [0, 1]`. The default keeps every label the model returns |
-
-A dictionary built with [`copy_from`](./copy-from.md) inherits all three options, and any of them can be respelled there.
 
 ## Tokenization
 
@@ -47,4 +45,5 @@ With the dictionary attached to a text column in a `USING inverted` index, each 
 
 - [nearest_neighbors](./nearest-neighbors.md) — expand text with semantically related terms
 - [Full-Text Search](../../indexes/inverted/full-text-search.md)
+- [`classify_text()`](../../functions/search/tokenizers.md#classify_text) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

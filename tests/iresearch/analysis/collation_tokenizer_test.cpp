@@ -68,7 +68,7 @@ irs::bstring BlockTerm(irs::analysis::Tokenizer& stream,
 }  // namespace
 
 TEST(collation_token_stream_test, consts) {
-  static_assert("collation" ==
+  static_assert("collate_tokens" ==
                 irs::Type<irs::analysis::CollationTokenizer>::name());
 }
 

@@ -45,7 +45,7 @@ done
 
 pq="$(printf '%s' "$PARQUET" | sed "s/'/''/g")"
 psql "$CONN" -v ON_ERROR_STOP=1 -X \
-	-c "CREATE TEXT SEARCH DICTIONARY perf_english(template='delimiter', delimiter=' ');" \
+	-c "CREATE TEXT SEARCH DICTIONARY perf_english AS split_csv(' ');" \
 	-c "CREATE VIEW hits_view AS SELECT * FROM read_parquet('$pq');" >/dev/null
 inc="$(psql "$CONN" -At -v ON_ERROR_STOP=1 -X \
 	-c "SELECT string_agg('\"'||column_name||'\"', ', ') FROM (DESCRIBE hits_view);")"

@@ -39,7 +39,6 @@
 #include "path_hierarchy_tokenizer.hpp"
 #include "pattern_tokenizer.hpp"
 #include "pipeline_tokenizer.hpp"
-#include "segmentation_tokenizer.hpp"
 #include "shingle_tokenizer.hpp"
 #include "solr_synonyms_tokenizer.hpp"
 #include "sparse_ngram_tokenizer.hpp"
@@ -61,20 +60,19 @@ class SharedObjectCache;
 namespace irs::analysis {
 
 struct TokenizerConfig {
-  std::variant<KeywordTokenizer::Options, TextTokenizer::Options,
-               StemmingTokenizer::Options, DelimitedTokenizer::Options,
-               MultiDelimitedTokenizer::Options, PatternTokenizer::Options,
-               PathHierarchyTokenizer::Options, NGramTokenizer::Options,
-               NormalizingTokenizer::Options, SegmentationTokenizer::Options,
-               StopwordsTokenizer::Options, ClassificationTokenizer::Options,
-               CollationTokenizer::Options, SolrSynonymsTokenizer::Options,
-               WordnetSynonymsTokenizer::Options,
-               NearestNeighborsTokenizer::Options, GeoPointTokenizer::Options,
-               GeoJsonTokenizer::Options, WildcardTokenizer::Options,
-               PipelineTokenizer::Options, UnionTokenizer::Options,
-               SparseNGramTokenizer::Options, SplitByNonAlphaTokenizer::Options,
-               SqlTokenizer::Options, ShingleTokenizer::Options,
-               IcuTextTokenizer::Options>
+  std::variant<
+    KeywordTokenizer::Options, StemmingTokenizer::Options,
+    DelimitedTokenizer::Options, MultiDelimitedTokenizer::Options,
+    PatternTokenizer::Options, PathHierarchyTokenizer::Options,
+    NGramTokenizer::Options, NormalizingTokenizer::Options,
+    TextTokenizer::Options, StopwordsTokenizer::Options,
+    ClassificationTokenizer::Options, CollationTokenizer::Options,
+    SolrSynonymsTokenizer::Options, WordnetSynonymsTokenizer::Options,
+    NearestNeighborsTokenizer::Options, GeoPointTokenizer::Options,
+    GeoJsonTokenizer::Options, WildcardTokenizer::Options,
+    PipelineTokenizer::Options, UnionTokenizer::Options,
+    SparseNGramTokenizer::Options, SplitByNonAlphaTokenizer::Options,
+    SqlTokenizer::Options, ShingleTokenizer::Options, IcuTextTokenizer::Options>
     config;
 };
 

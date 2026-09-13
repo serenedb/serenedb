@@ -27,9 +27,9 @@ $PSQL <<<'\i scripts/perf/iresearch_sweep/cases/_vocab.sql' >/dev/null
 $PSQL <<<'
 DROP TABLE IF EXISTS sweep_t;
 DROP TEXT SEARCH DICTIONARY IF EXISTS sweep_ngram;
-CREATE TEXT SEARCH DICTIONARY sweep_ngram(
-  template = '"'"'ngram'"'"', mingram = 2, maxgram = 3,
-  preserveoriginal = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY sweep_ngram AS
+    generate_ngrams(2, 3, preserveoriginal := false)
+    WITH (frequency, position);
 CREATE TABLE sweep_t (pk INTEGER PRIMARY KEY, body VARCHAR);
 ' >/dev/null
 $PSQL -c "CREATE INDEX sweep_idx ON sweep_t USING inverted(pk, body sweep_ngram);" >/dev/null

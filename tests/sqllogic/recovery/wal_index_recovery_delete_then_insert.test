@@ -15,15 +15,9 @@ control substitution on
 # delete (across windows) ends up with the new content, not a mix.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY del_then_insert_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY del_then_insert_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE del_then_insert_t(a INTEGER PRIMARY KEY, b TEXT);

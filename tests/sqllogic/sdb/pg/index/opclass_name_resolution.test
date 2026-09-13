@@ -13,10 +13,10 @@
 # --- dict with a built-in opclass name shadows the built-in --------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ivf(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY ivf AS keyword();
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY included(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY included AS keyword();
 
 
 # Bare 'ivf' on a column: resolves to the dict, not the built-in IVF.
@@ -301,7 +301,7 @@ HINT: 'included' is a built-in opclass; use the options form 'included (...)'
 # A non-built-in name with parens is rejected regardless of whether a
 # dict exists -- the options form is reserved for built-ins.
 statement ok
-CREATE TEXT SEARCH DICTIONARY hint_only_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY hint_only_dict AS keyword();
 
 statement error
 CREATE INDEX hint_parens_dict ON hint_ivf_col USING inverted(

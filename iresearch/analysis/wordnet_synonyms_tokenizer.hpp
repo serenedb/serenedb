@@ -69,7 +69,7 @@ class WordnetSynonymsTokenizer final
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
-    return "wordnet_synonyms";
+    return "expand_wordnet_synonyms";
   }
 
   static SynonymsMap Parse(std::string& input);

@@ -20,7 +20,7 @@ run_one() {
 	$psql <<<'
 DROP TABLE IF EXISTS sweep_t;
 DROP TEXT SEARCH DICTIONARY IF EXISTS sweep_verbatim;
-CREATE TEXT SEARCH DICTIONARY sweep_verbatim(template = '"'"'keyword'"'"');
+CREATE TEXT SEARCH DICTIONARY sweep_verbatim AS keyword();
 CREATE TABLE sweep_t (pk INTEGER PRIMARY KEY, body VARCHAR);' >/dev/null
 	$psql <<<"INSERT INTO sweep_t SELECT id, 'https://host' || (id % 1000)::VARCHAR || '.example.com/path' || (id % 500)::VARCHAR || '/' || id::VARCHAR || '?q=' || md5(id::VARCHAR) FROM range(${ROWS}) AS r(id);" >/dev/null
 

@@ -27,7 +27,7 @@
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -101,7 +101,7 @@ struct TextField {
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
   irs::analysis::Tokenizer::ptr tokenizer =
-    irs::analysis::SegmentationTokenizer::Make({});
+    irs::analysis::TextTokenizer::Make({});
 };
 
 std::vector<std::string> MakeTermPool() {

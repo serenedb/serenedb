@@ -14,13 +14,13 @@ TO '${__TEST_DIR__}/view_column_case.parquet' (FORMAT PARQUET);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY view_column_case_en (template = 'keyword', frequency = true, norm = true, position = true);
+CREATE TEXT SEARCH DICTIONARY view_column_case_en AS keyword() WITH (frequency, position, norm);
 
 statement ok
 CREATE VIEW view_column_case_v AS SELECT timestamp AS Ts, body AS Body FROM read_parquet('${__TEST_DIR__}/view_column_case.parquet');
 
 statement ok
-CREATE INDEX view_column_case_idx ON view_column_case_v USING inverted ((ts_split_by_non_alpha(Body, true)) view_column_case_en) INCLUDE (Ts);
+CREATE INDEX view_column_case_idx ON view_column_case_v USING inverted ((split_by_non_alpha(Body, case := 'lower')) view_column_case_en) INCLUDE (Ts);
 
 query
 SELECT Body FROM view_column_case_idx ORDER BY Ts LIMIT 1;
@@ -29,7 +29,7 @@ body
 error in module 0
 
 query
-SELECT Ts::VARCHAR AS ts, Body FROM view_column_case_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'error' ORDER BY Ts LIMIT 3;
+SELECT Ts::VARCHAR AS ts, Body FROM view_column_case_idx WHERE split_by_non_alpha(Body, case := 'lower') @@ 'error' ORDER BY Ts LIMIT 3;
 ----
 ts	body
 2025-01-01 00:00:00	error in module 0
@@ -37,7 +37,7 @@ ts	body
 2025-01-01 00:00:04	error in module 0
 
 query
-SELECT count(*) AS c FROM view_column_case_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'module';
+SELECT count(*) AS c FROM view_column_case_idx WHERE split_by_non_alpha(Body, case := 'lower') @@ 'module';
 ----
 c
 20

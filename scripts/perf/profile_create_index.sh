@@ -87,17 +87,19 @@ fi
 
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 
-# PERF_DICT_TEMPLATE = delimiter (default) | text
-PERF_DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-delimiter}"
+# PERF_DICT_TEMPLATE = csv (default) | text
+PERF_DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-csv}"
 case "${PERF_DICT_TEMPLATE}" in
-delimiter)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(template = 'delimiter', delimiter = ' ');"
+csv)
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS split_csv(' ');"
 	;;
 text)
-	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);"
+	DICT_SQL="CREATE TEXT SEARCH DICTIONARY perf_english AS
+	    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+	    WITH (frequency, position);"
 	;;
 *)
-	echo "PERF_DICT_TEMPLATE must be 'delimiter' or 'text', got '${PERF_DICT_TEMPLATE}'" >&2
+	echo "PERF_DICT_TEMPLATE must be 'csv' or 'text', got '${PERF_DICT_TEMPLATE}'" >&2
 	exit 1
 	;;
 esac

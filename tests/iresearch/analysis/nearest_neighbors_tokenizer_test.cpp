@@ -41,7 +41,7 @@ std::string ModelLocation() {
 }  // namespace
 
 TEST(nearest_neighbors_tokenizer_test, consts) {
-  static_assert("nearest_neighbors" ==
+  static_assert("find_nearest_words" ==
                 irs::Type<irs::analysis::NearestNeighborsTokenizer>::name());
 }
 

@@ -7,7 +7,7 @@ split: headings
 
 `minhash` reduces a list of tokens to a compact [MinHash](https://en.wikipedia.org/wiki/MinHash) signature that approximates the *set* of those tokens. Two texts with similar token sets produce overlapping signatures, so comparing signatures estimates their Jaccard similarity cheaply — the basis for approximate deduplication and near-duplicate detection across large collections.
 
-There is no `minhash` dictionary template. `TEMPLATE = 'minhash'` is rejected with `Invalid type of text search dictionary`, and `NUMHASHES` is not an option of any template. What replaced it is a scalar function, `minhash(tokens, num_hashes)`, which returns the signature as a `LIST(BLOB)`. Signatures are built by calling that function — inside an indexed expression, or inside the `EXPRESSION` of a [`sql`](../sql.md) dictionary — and matched as ordinary keyword terms. Signature components are opaque hash values, not readable words: you never search them by hand; you compare whole signatures.
+There is no `minhash` dictionary template, and `NUMHASHES` is not an option of any template. What replaced it is a scalar function, `minhash(tokens, num_hashes)`, which returns the signature as a `LIST(BLOB)`. Signatures are built by calling that function — inside an indexed expression, or as a [`sql`](../sql.md) stage of a dictionary, `AS minhash(regexp_split_to_array(lower($1), '\W+'), 16)` — and matched as ordinary keyword terms. Signature components are opaque hash values, not readable words: you never search them by hand; you compare whole signatures.
 
 ## Options
 
@@ -56,10 +56,8 @@ An indexed expression is evaluated without a client context, so it must be conte
 A `sql` dictionary moves the hashing into the column's analyzer, so the query side needs no `minhash()` call — the dictionary hashes the query text too:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY mh_sql(
-    template = 'sql',
-    expression = 'minhash(regexp_split_to_array(lower(input), ''\W+''), 16)'
-);
+CREATE TEXT SEARCH DICTIONARY mh_sql AS
+    minhash(regexp_split_to_array(lower($1), '\W+'), 16);
 
 CREATE INDEX mh_sql_idx ON mh_docs USING inverted(id, body mh_sql);
 

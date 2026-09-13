@@ -11,16 +11,9 @@ statement ok
 CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, val INTEGER, ext INTEGER);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE INDEX docs_idx ON docs USING inverted(body en) INCLUDE (id, val);

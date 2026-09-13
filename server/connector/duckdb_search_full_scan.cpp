@@ -32,6 +32,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -77,6 +78,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <ranges>
@@ -105,6 +107,7 @@ namespace sdb::connector {
 // vector: the plan roots are resumable, and `ColFilterChain` narrows a run of
 // at most this many.
 inline constexpr uint32_t kPlanBatch = STANDARD_VECTOR_SIZE;
+inline constexpr uint32_t kStageDocs = kPlanBatch;
 
 // The pushed column-value predicate as the verification behind whatever plan
 // produced the documents. It answers about a run rather than about one
@@ -157,6 +160,33 @@ class ColFilterVerify : public irs::detail::TableFilter {
   const duckdb::TableFilter* _score_filter = nullptr;
   duckdb::TableFilterState* _score_state = nullptr;
 };
+
+struct StreamSegmentCursor {
+  std::mutex mutex;
+  std::atomic_uint32_t workers{0};
+  bool started = false;
+  bool exhausted = false;
+  bool scored = false;
+  irs::ColumnArgsFetcher score_fetcher;
+  irs::ColFilterStateCache filter_states;
+  ColFilterVerify skipper;
+  irs::memory::managed_ptr<irs::memory::Managed> root;
+
+  bool Exhausted() {
+    std::lock_guard lock{mutex};
+    return exhausted;
+  }
+
+  void Exhaust() {
+    std::lock_guard lock{mutex};
+    exhausted = true;
+    root.reset();
+  }
+};
+
+IResearchScanGlobalState::IResearchScanGlobalState() = default;
+
+IResearchScanGlobalState::~IResearchScanGlobalState() = default;
 
 // Per-worker scan state, one family per ScanMode. Base holds what every mode
 // shares (claim bookkeeping + per-segment filter classification);
@@ -243,18 +273,13 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
 };
 
 struct StreamScanLocalState : public SegDocBufferedScanLocalState {
-  // Whichever root this query's shape produced -- `hits::Root` when the
-  // scan scores, `docs::Root` when it does not. The four roots share no base
-  // but `memory::Managed`, so the pointer is one and the call site downcasts.
-  irs::memory::managed_ptr<irs::memory::Managed> streaming;
-  bool streaming_scored = false;
-  irs::ColumnArgsFetcher score_fetcher;
+  StreamSegmentCursor* cursor = nullptr;
   // What the root last handed over and how much of it the batcher has taken.
   // A root answers by capacity and the batcher stages by row-group window, so
   // the run is held here and offered a window at a time.
-  irs::SlackBuf<irs::doc_id_t, kPlanBatch, irs::doc_limits::kDocsSlack>
+  irs::SlackBuf<irs::doc_id_t, kStageDocs, irs::doc_limits::kDocsSlack>
     stage_docs;
-  irs::SlackBuf<irs::score_t, kPlanBatch, irs::doc_limits::kScoresSlack>
+  irs::SlackBuf<irs::score_t, kStageDocs, irs::doc_limits::kScoresSlack>
     stage_scores;
   uint32_t stage_at = 0;
   uint32_t stage_len = 0;
@@ -269,18 +294,29 @@ struct StreamScanLocalState : public SegDocBufferedScanLocalState {
                           IResearchScanGlobalState& g,
                           duckdb::DataChunk& output);
 
-  bool Streaming() const noexcept { return streaming || stage_at != stage_len; }
+  bool Streaming() const noexcept {
+    return cursor != nullptr || stage_at != stage_len;
+  }
 
   void StopStreaming() noexcept {
-    streaming.reset();
+    Detach();
     stage_at = 0;
     stage_len = 0;
   }
 
  protected:
   void PushHits(IResearchScanGlobalState& g);
-  // Refills `stage_docs` from the root; false once the root is spent.
-  bool Refill();
+  bool Refill(IResearchScanGlobalState& g);
+  void ExhaustCursor();
+
+  void Attach(StreamSegmentCursor& c) noexcept { cursor = &c; }
+
+  void Detach() noexcept {
+    if (cursor) {
+      cursor->workers.fetch_sub(1, std::memory_order_relaxed);
+      cursor = nullptr;
+    }
+  }
 };
 
 // ColScan: bulk units read `.col` through per-segment FullScanners; a
@@ -1292,6 +1328,20 @@ void ClassifySegmentColFilters(const irs::SubReader& seg,
                                irs::ColFilterStateCache& states,
                                irs::ColFilterClassification& out);
 
+namespace {
+
+void BuildStreamCursors(IResearchScanGlobalState& g,
+                        duckdb::ClientContext& context) {
+  g.stream_threads =
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+  g.stream_cursors.reserve(g.total_segments);
+  for (size_t i = 0; i < g.total_segments; ++i) {
+    g.stream_cursors.push_back(std::make_unique<StreamSegmentCursor>());
+  }
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
@@ -1479,6 +1529,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (ss.scan_order &&
       (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan)) {
     BuildSegmentScanOrder(*state, *ss.scan_order);
+  }
+
+  if (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan) {
+    BuildStreamCursors(*state, context);
   }
 
   if (state->mode == ScanMode::ColScan) {
@@ -2144,7 +2198,6 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                         const irs::SubReader& seg,
                                         uint32_t seg_idx,
                                         IResearchScanGlobalState& g) {
-  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
   // Narrowing and materialising are one columnstore pass, and the HitBatcher
   // owns it: what the root is given is the skip alone, so a run no column can
   // hold is never decoded. A streaming scan owes every match, so the root
@@ -2152,7 +2205,6 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   // effect on the plan.
   stage_at = 0;
   stage_len = 0;
-  streaming_scored = g.ScanScore();
   if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -2162,27 +2214,41 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   EnsureHitBatcher(g);
   SDB_ASSERT(classified_seg == seg_idx,
              "segment filters are classified at the claim site");
-  // Bound before the plan is built: what the root skips with is this
-  // segment's chain, which BeginSegment is what binds.
   hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                             &filter_states, seg_cls.active);
-  auto* const skipper = hit_batcher->Skipper();
-  if (streaming_scored) {
+  SDB_ASSERT(seg_idx < g.stream_cursors.size());
+  Detach();
+  auto& c = *g.stream_cursors[seg_idx];
+  Attach(c);
+  std::lock_guard lock{c.mutex};
+  if (c.started) {
+    return;
+  }
+  c.started = true;
+  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+  std::vector<irs::ColFilterSpec> col_specs;
+  absl::c_copy_if(
+    seg_cls.active, std::back_inserter(col_specs),
+    [](const irs::ColFilterSpec& spec) { return !spec.is_score; });
+  c.skipper.Begin(seg, col_specs, g, c.filter_states);
+  irs::detail::DeadRuns* const table = c.skipper.Empty() ? nullptr : &c.skipper;
+  c.scored = g.ScanScore();
+  if (c.scored) {
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that emits a score has a scorer to compute it with");
-    score_fetcher.Clear();
-    auto plan = irs::hits::MakeRoot(seg_query, {
+    c.score_fetcher.Clear();
+    auto root = irs::hits::MakeRoot(seg_query, {
                                                  .scorer = *g.scorer_obj,
-                                                 .fetcher = score_fetcher,
-                                                 .table = skipper,
+                                                 .fetcher = c.score_fetcher,
+                                                 .table = table,
                                                });
-    EnsurePlanned(plan != nullptr);
-    streaming = std::move(plan);
-  } else {
-    auto plan = irs::docs::MakeRoot(seg_query, {.table = skipper});
-    EnsurePlanned(plan != nullptr);
-    streaming = std::move(plan);
+    EnsurePlanned(root != nullptr);
+    c.root = std::move(root);
+    return;
   }
+  auto root = irs::docs::MakeRoot(seg_query, {.table = table});
+  EnsurePlanned(root != nullptr);
+  c.root = std::move(root);
 }
 
 void ColScanLocalState::StartUnit(
@@ -2208,6 +2274,7 @@ void ColScanLocalState::StartUnit(
   }
   bulk_doc_in_seg = 0;
   bulk_seg_doc_count = 0;
+  g.stream_cursors[unit.seg]->workers.fetch_add(1, std::memory_order_relaxed);
   StartSegment(ctx, (*g.reader)[unit.seg], unit.seg, g);
 }
 
@@ -2231,28 +2298,47 @@ FullScanner* ColScanLocalState::OpenScanner(const IResearchScanGlobalState& g) {
   return slot.get();
 }
 
-bool StreamScanLocalState::Refill() {
+bool StreamScanLocalState::Refill(IResearchScanGlobalState& /*g*/) {
   SDB_ASSERT(stage_at == stage_len);
   stage_at = 0;
   stage_len = 0;
-  if (!streaming) {
+  if (!cursor) {
     return false;
   }
-  const auto n = streaming_scored
-                   ? static_cast<irs::hits::Root*>(streaming.get())
-                       ->Run(stage_docs.data(), stage_scores.data(), kPlanBatch)
-                   : static_cast<irs::docs::Root*>(streaming.get())
-                       ->Run(stage_docs.data(), kPlanBatch);
+  auto& c = *cursor;
+  uint32_t n = 0;
+  {
+    std::lock_guard lock{c.mutex};
+    if (!c.exhausted) {
+      SDB_ASSERT(c.root);
+      n = c.scored ? static_cast<irs::hits::Root*>(c.root.get())
+                       ->Run(stage_docs.data(), stage_scores.data(), kStageDocs)
+                   : static_cast<irs::docs::Root*>(c.root.get())
+                       ->Run(stage_docs.data(), kStageDocs);
+      if (n == 0) {
+        c.exhausted = true;
+        c.root.reset();
+      }
+    }
+  }
   if (n == 0) {
-    streaming.reset();
+    Detach();
     return false;
   }
   stage_len = n;
   return true;
 }
 
+void StreamScanLocalState::ExhaustCursor() {
+  if (cursor) {
+    cursor->Exhaust();
+    Detach();
+  }
+}
+
 void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
-  if (streaming_scored) {
+  const bool scored = g.ScanScore();
+  if (scored) {
     prune_threshold = g.score_static_floor;
     if (g.score_dynamic_filter) {
       prune_threshold = std::max(
@@ -2260,7 +2346,7 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
     }
   }
   for (;;) {
-    if (stage_at == stage_len && !Refill()) {
+    if (stage_at == stage_len && !Refill(g)) {
       if (!hit_batcher->Ready() && !hit_batcher->Empty()) {
         hit_batcher->Finalize();
       }
@@ -2290,24 +2376,24 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       if (stage_at == stage_len || row >= rows) {
         if (row >= rows) {
           stage_at = stage_len;
-          streaming.reset();
+          ExhaustCursor();
         }
         continue;
       }
     }
-    const auto cursor = stage_docs[stage_at];
-    const auto span = hit_batcher->OpenWindow(cursor - irs::doc_limits::min());
+    const auto first = stage_docs[stage_at];
+    const auto span = hit_batcher->OpenWindow(first - irs::doc_limits::min());
     if (span == 0) {
       return;
     }
-    const auto max = cursor + static_cast<irs::doc_id_t>(span);
+    const auto max = first + static_cast<irs::doc_id_t>(span);
     uint32_t n = 0;
     while (stage_at + n != stage_len && stage_docs[stage_at + n] < max) {
       ++n;
     }
     SDB_ASSERT(n != 0);
     std::copy_n(stage_docs.data() + stage_at, n, hit_batcher->WindowHead());
-    if (streaming_scored) {
+    if (scored) {
       std::copy_n(stage_scores.data() + stage_at, n, hit_batcher->ScoreHead());
     }
     hit_batcher->CommitWindow(n);
@@ -2545,6 +2631,68 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx,
   }
 }
 
+namespace {
+
+bool ClassifyStreamSegment(IResearchScanGlobalState& g, StreamScanLocalState& l,
+                           uint32_t seg_idx) {
+  if (l.classified_seg == seg_idx) {
+    return !l.seg_cls.segment_dead;
+  }
+  const auto& seg = (*g.reader)[seg_idx];
+  SDB_ASSERT(seg.live_docs_count() != 0);
+  ClassifySegmentColFilters(seg, g, l.filter_states, l.seg_cls);
+  l.classified_seg = seg_idx;
+  return !l.seg_cls.segment_dead;
+}
+
+uint32_t ClaimStreamSegment(IResearchScanGlobalState& g,
+                            StreamScanLocalState& l) {
+  for (;;) {
+    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
+    if (claimed >= g.claimable_segments) {
+      break;
+    }
+    const auto seg_idx = g.SegmentAt(claimed);
+    auto& c = *g.stream_cursors[seg_idx];
+    if (ClassifyStreamSegment(g, l, seg_idx)) {
+      c.workers.fetch_add(1, std::memory_order_relaxed);
+      return seg_idx;
+    }
+    c.Exhaust();
+  }
+  for (;;) {
+    auto best = std::numeric_limits<uint32_t>::max();
+    auto best_workers = std::numeric_limits<uint32_t>::max();
+    for (uint32_t claimed = 0; claimed < g.claimable_segments; ++claimed) {
+      const auto seg_idx = g.SegmentAt(claimed);
+      auto& c = *g.stream_cursors[seg_idx];
+      if (c.Exhausted()) {
+        continue;
+      }
+      const auto workers = c.workers.load(std::memory_order_relaxed);
+      if (workers < best_workers) {
+        best = seg_idx;
+        best_workers = workers;
+      }
+    }
+    if (best == std::numeric_limits<uint32_t>::max()) {
+      return best;
+    }
+    auto& c = *g.stream_cursors[best];
+    if (!c.workers.compare_exchange_weak(best_workers, best_workers + 1,
+                                         std::memory_order_relaxed)) {
+      continue;
+    }
+    if (ClassifyStreamSegment(g, l, best)) {
+      return best;
+    }
+    c.workers.fetch_sub(1, std::memory_order_relaxed);
+    c.Exhaust();
+  }
+}
+
+}  // namespace
+
 void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                       StreamScanLocalState& l, duckdb::DataChunk& output) {
   for (;;) {
@@ -2563,19 +2711,11 @@ void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       output.Reset();
       continue;
     }
-    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (claimed >= g.claimable_segments) {
+    const auto seg_idx = ClaimStreamSegment(g, l);
+    if (seg_idx == std::numeric_limits<uint32_t>::max()) {
       break;
     }
-    const auto seg_idx = g.SegmentAt(claimed);
-    const auto& seg = (*g.reader)[seg_idx];
-    SDB_ASSERT(seg.live_docs_count() != 0);
-    ClassifySegmentColFilters(seg, g, l.filter_states, l.seg_cls);
-    l.classified_seg = seg_idx;
-    if (l.seg_cls.segment_dead) {
-      continue;
-    }
-    l.StartSegment(ctx, seg, seg_idx, g);
+    l.StartSegment(ctx, (*g.reader)[seg_idx], seg_idx, g);
   }
   output.SetChildCardinality(0);
 }

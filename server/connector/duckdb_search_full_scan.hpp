@@ -50,6 +50,7 @@ struct IndexReader;
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
+struct StreamSegmentCursor;
 
 // How the scan executes, decided once in IResearchScanInitGlobal
 // (DecideScanMode): the fastest mode that can apply every pushed filter.
@@ -84,6 +85,9 @@ enum class ScanMode : uint8_t {
 // mode's own state. Per-mode state lives in named sub-structs -- always
 // present (no tag checks on access), used only by their mode.
 struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
+  IResearchScanGlobalState();
+  ~IResearchScanGlobalState() override;
+
   // --- Query shape: the bind data and the snapshot it scans. ---------------
   const SereneDBScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
@@ -240,6 +244,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   };
   ColScanState col_scan;
 
+  std::vector<std::unique_ptr<StreamSegmentCursor>> stream_cursors;
+  duckdb::idx_t stream_threads = 1;
+
   // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for score pruning,
   // and the over-fetch pool size when quantization / a lookup filter requires
   // reranking or survivor slack.
@@ -258,6 +265,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
         return 1;
       case ScanMode::ColScan:
         return std::max<duckdb::idx_t>(1, col_scan.units.size());
+      case ScanMode::Stream:
+        return std::max<duckdb::idx_t>(
+          stream_threads, scorer_obj ? total_segments : claimable_segments);
       default:
         // The scorer prepare phase walks every segment (corpus-level term
         // statistics), even ones the whole-file classification excluded.

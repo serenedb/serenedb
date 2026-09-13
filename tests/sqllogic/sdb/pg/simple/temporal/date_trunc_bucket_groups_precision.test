@@ -475,3 +475,43 @@ null	1	-1
 
 statement ok
 RESET disabled_optimizers;
+
+query
+EXPLAIN SELECT date_trunc('minute', ts::TIMESTAMP_NS) AS m, count(*) AS c FROM prec GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                           │
+│ __internal_date_trunc_unbucket(#0, 60000000, 0), #1                                    │
+│ ~750 rows                                                                              │
+╰────────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────────┴───────────────────────────────────────────╮
+│ Groups: #0                                                                             │
+│ Aggregates: count_star()                                                               │
+│ ~750 rows                                                                              │
+╰────────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────┴───────────────────────────────────────────╮
+│ Projections:                                                                           │
+│ __internal_date_trunc_bucket(CAST(CAST(ts AS TIMESTAMP_NS) AS TIMESTAMP), 60000000, 0) │
+│ ~1,501 rows                                                                            │
+╰────────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────┴───────────────────────────────────────────╮
+│ Table: prec                                                                            │
+│ Type: Sequential Scan                                                                  │
+│ Projections: ts                                                                        │
+│ ~1,501 rows                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('minute', ts::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+m	c	s
+2024-12-23 00:00:00	1	0
+2024-12-23 00:37:00	1	1
+2024-12-23 01:14:00	1	2
+2024-12-23 01:51:00	1	3
+
+query
+SELECT coalesce(date_trunc('minute', ts::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c FROM prec GROUP BY 1 EXCEPT SELECT coalesce(date_trunc('minute', ts)::VARCHAR, 'null') AS m, count(*) AS c FROM prec GROUP BY 1;
+----
+m	c

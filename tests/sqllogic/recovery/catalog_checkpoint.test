@@ -532,14 +532,20 @@ count
 100
 
 
-# RESTRICT still refuses: the index-to-dictionary edge came back with them.
+# The index-to-dictionary edge came back with them: duckdb never asks for
+# CASCADE on behalf of an index, so the drop goes through and takes the
+# index with the dictionary.
 connection after_dict_window
-statement error
+statement ok
 DROP TEXT SEARCH DICTIONARY ckp_dict_window.d;
+
+
+connection after_dict_window
+query
+SELECT count(*) FROM pg_class WHERE relname = 'ckp_dict_inv';
 ----
-db error: ERROR: Cannot drop entry "d" because there are entries that depend on it.
-index "ckp_dict_inv" depends on text search dictionary "d".
-Use DROP...CASCADE to drop all dependents.
+count
+0
 
 
 connection after_dict_window

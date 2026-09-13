@@ -52,20 +52,13 @@ duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
 
 }  // namespace
 
-doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
+doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
   _valid = true;
   SDB_ASSERT(batch_size > 0);
 
-  const auto needed_docs = buffered_docs() + batch_size;
-
-  if (needed_docs >= _docs_mask.set.capacity()) {
-    const auto count = math::RoundupPower2(needed_docs);
-    _docs_mask.set.reserve(count);
-  }
-
   _batch_first_doc_id = LastDocId() + 1;
-  _docs_context.insert(_docs_context.end(), batch_size, ctx);
+  _docs_context.Append(batch_size, tick);
 
   return _batch_first_doc_id;
 }
@@ -76,13 +69,13 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
-  return _docs_context.size() * sizeof(DocContext) +
+  return _docs_context.MemoryActive() +
          bitset::bits_to_words(_docs_mask.set.size()) * sizeof(bitset::word_t) +
          _fields.MemoryActive();
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
-  return sizeof(SegmentWriter) + _docs_context.capacity() * sizeof(DocContext) +
+  return sizeof(SegmentWriter) + _docs_context.MemoryReserved() +
          _docs_mask.set.capacity() / BitsRequired<char>() +
          _fields.MemoryReserved();
 }
@@ -96,6 +89,9 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
     return false;
   }
   if (_docs_mask.set.size() <= doc) {
+    if (_docs_mask.set.capacity() <= doc) {
+      _docs_mask.set.reserve(math::RoundupPower2(doc + 1));
+    }
     _docs_mask.set.resize</*Reserve=*/false>(doc + 1);
   }
   const bool inserted = _docs_mask.set.try_set(doc);
@@ -107,7 +103,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir},
     _scorer{options.scorer},
-    _docs_context{{options.resource_manager}},
+    _docs_context{options.resource_manager},
     _fields{InverterMemory{
       duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
         .GetBufferAllocator(),
@@ -209,7 +205,7 @@ void SegmentWriter::SetFieldOptions(
 void SegmentWriter::ResetState() noexcept {
   _initialized = false;
   _dir.ClearTracked();
-  _docs_context.clear();
+  _docs_context.Clear();
   _docs_mask.set.clear();
   _docs_mask.count = 0;
   _batch_first_doc_id = doc_limits::eof();
@@ -237,7 +233,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _seg_name = meta.name;
 
   if (!_field_writer) {
-    auto& rm = _docs_context.get_allocator().Manager();
+    auto& rm = _docs_context.ResourceManager();
     _field_writer = std::make_unique<burst_trie::FieldWriter>(
       meta.codec->get_postings_writer(/*compaction=*/false, rm),
       /*compaction=*/false, rm);

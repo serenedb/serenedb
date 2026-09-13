@@ -230,6 +230,13 @@ size_t Fwrite(void* fd, const void* buf, size_t size) {
   return size - left;
 }
 
+void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
+#ifdef __linux__
+  ::sync_file_range(HANDLE_CAST(fd), static_cast<off64_t>(offset),
+                    static_cast<off64_t>(size), SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
 size_t Fread(void* fd, void* buf, size_t size) {
   size_t left = size;
   auto current = static_cast<uint8_t*>(buf);

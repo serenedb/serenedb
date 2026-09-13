@@ -340,6 +340,36 @@ ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
 db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
 
 
+# A renamed index still has to be found by its new name when it is dropped,
+# otherwise it keeps enforcing.
+statement ok
+CREATE TABLE ghost(a integer);
+
+statement ok
+INSERT INTO ghost VALUES (1);
+
+statement ok
+CREATE UNIQUE INDEX ghost_idx ON ghost(a);
+
+statement ok
+ALTER INDEX ghost_idx RENAME TO ghost_renamed;
+
+statement error
+INSERT INTO ghost VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
+
+statement ok
+DROP INDEX ghost_renamed;
+
+statement ok
+INSERT INTO ghost VALUES (1);
+
+statement ok
+DROP TABLE ghost;
+
+
 statement ok
 DROP FUNCTION clickclack;
 

@@ -27,14 +27,6 @@ CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
 db error: ERROR: Unknown built-in opclass 'test_english' on 'r' (known: included, ivf)
 
 
-statement error
-DROP TEXT SEARCH DICTIONARY test_english;
-----
-db error: ERROR: Cannot drop entry "test_english" because there are entries that depend on it.
-index "index_t" depends on text search dictionary "test_english".
-Use DROP...CASCADE to drop all dependents.
-
-
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
 

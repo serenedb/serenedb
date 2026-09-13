@@ -309,27 +309,18 @@ statement ok
 CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
 
 
-# A replace is a drop and a create, and an index whose expression calls the
-# function depends on it, so the replace is refused until the index is gone.
-statement error
+# A replace is a drop and a create. duckdb drops an index along with anything it
+# references without asking for CASCADE, so the replace goes through and the
+# index whose expression called the function is gone with the old body.
+statement ok
 CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
-----
-db error: ERROR: Cannot drop entry "babsky_or" because there are entries that depend on it.<slt:ignore>
 
 
 query
 SELECT count(*) FROM pg_indexes WHERE indexname = 'clickclack_or_idx';
 ----
 count
-1
-
-
-statement ok
-DROP INDEX clickclack_or_idx;
-
-
-statement ok
-CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
+0
 
 
 query

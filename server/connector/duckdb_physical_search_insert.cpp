@@ -52,7 +52,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
-#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
@@ -108,7 +107,7 @@ const catalog::SearchTableEntry* CreateCtasTable(
   if (!entry) {
     return nullptr;
   }
-  SDB_ASSERT(ReadStorageEngine(table_info.options) ==
+  SDB_ASSERT(catalog::ReadStorageEngine(table_info.options) ==
              catalog::TableEngine::Search);
 
   state.ctas_mode = true;
@@ -167,7 +166,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
   state->pk_columns = primary_key::PKColumns(*table);
   if (state->pk_columns.empty()) {
-    state->generated_pk_seq = FindGeneratedPkSequence(context, *table);
+    state->generated_pk_seq = table->GeneratedPkSequence(context);
     SDB_ASSERT(state->generated_pk_seq);
   }
 

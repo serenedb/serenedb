@@ -33,10 +33,10 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
-#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
@@ -126,7 +126,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->new_pk_columns = primary_key::PKColumns(_table);
   if (state->new_pk_columns.empty()) {
-    state->generated_pk_seq = FindGeneratedPkSequence(context, _table);
+    state->generated_pk_seq = _table.GeneratedPkSequence(context);
     SDB_ASSERT(state->generated_pk_seq);
   }
 

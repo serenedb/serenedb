@@ -30,10 +30,10 @@
 #include <type_traits>
 #include <vector>
 
+#include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
-#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

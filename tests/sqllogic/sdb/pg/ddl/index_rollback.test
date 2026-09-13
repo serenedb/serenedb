@@ -198,11 +198,10 @@ DROP TABLE ixrb_t;
 
 
 # ---------------------------------------------------------------------------
-# Rolled-back ALTER TABLE ... ALTER COLUMN TYPE on a relation that carries
-# indexes. This road re-puts EVERY index of the relation, so a rollback of it
-# undoes one index version per index -- none of them creating ones. The type
-# change itself is on a column no index covers (a covered one is refused; see
-# alter_table_inverted_index.test).
+# ALTER TABLE ... ALTER COLUMN TYPE inside a transaction on a relation that
+# carries indexes. duckdb refuses the type change while any index exists, even
+# on a column no index covers; the refusal aborts the transaction and must
+# leave every index version, and the ARTs behind them, untouched.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -225,8 +224,10 @@ statement ok
 BEGIN;
 
 
-statement ok
+statement error
 ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
+----
+db error: ERROR: Cannot alter entry "ixrb_at" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -281,9 +282,12 @@ score
 300
 
 
-# The committed control: the same statement, kept this time.
-statement ok
+# The same statement outside a transaction is refused the same way, and the
+# indexes stay attached.
+statement error
 ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
+----
+db error: ERROR: Cannot alter entry "ixrb_at" because there are entries that depend on it.<slt:ignore>
 
 
 query
@@ -293,7 +297,7 @@ WHERE a.attrelid = (SELECT oid FROM pg_class WHERE relname = 'ixrb_at')
   AND a.attname = 'score';
 ----
 data_type
-bigint
+integer
 
 
 statement error

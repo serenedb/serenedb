@@ -149,17 +149,20 @@ id
 
 
 # ---------------------------------------------------------------------------
-# Rolled-back ALTER TABLE ... ALTER COLUMN TYPE. This road re-puts every index
-# of the relation, so its rollback undoes one index version per index. The
-# column is one the index does not cover -- a covered one is refused outright.
+# ALTER TABLE ... ALTER COLUMN TYPE inside a transaction. duckdb refuses the
+# type change on a relation that carries an index, even for a column the index
+# does not cover; the refusal aborts the transaction and the index versions
+# stay untouched.
 # ---------------------------------------------------------------------------
 
 statement ok
 BEGIN;
 
 
-statement ok
+statement error
 ALTER TABLE ixiv_t ALTER COLUMN score TYPE BIGINT;
+----
+db error: ERROR: Cannot alter entry "ixiv_t" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

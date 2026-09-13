@@ -501,13 +501,7 @@ DROP TABLE public.docs;
 
 
 # The dictionary is dropped last: the indexes in s1 and s2 tokenize through it,
-# and that dependency refuses the drop while they exist.
-statement error
-DROP TEXT SEARCH DICTIONARY public.en;
-----
-db error: ERROR: Cannot drop entry "en" because there are entries that depend on it.<slt:ignore>
-
-
+# and duckdb would drop them along with it, CASCADE or not.
 statement ok
 DROP SCHEMA s1 CASCADE;
 

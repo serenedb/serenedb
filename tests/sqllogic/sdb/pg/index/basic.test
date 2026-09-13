@@ -427,7 +427,7 @@ db error: ERROR: Table with name idx_dml_idx does not exist!<slt:ignore>
 statement error
 CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
 ----
-db error: ERROR: can only create an index on a base table<slt:ignore>
+db error: ERROR: View with name idx_dml_idx does not exist!<slt:ignore>
 
 
 statement ok

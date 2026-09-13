@@ -21,6 +21,7 @@
 #include "catalog/catalog.h"
 
 #include <algorithm>
+#include <array>
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
@@ -62,8 +63,9 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
+#include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
-#include "connector/search_table_dispatch.h"
+#include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -89,17 +91,23 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 }  // namespace
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::DuckCatalog{db} {}
+  : duckdb::DuckCatalog{db, true} {}
 
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
   auto& options = info.Base().options;
-  if (connector::ReadStorageEngine(options) == TableEngine::Search) {
+  if (ReadStorageEngine(options) == TableEngine::Search) {
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
-    connector::EnsureGeneratedPkSequence(transaction, schema, *entry);
     if (info.Base().oid == 0) {
+      if (connector::primary_key::KeyColumns(*entry).empty()) {
+        duckdb::CreateSequenceInfo sequence_info;
+        sequence_info.SetQualification(GetName(), schema.name);
+        sequence_info.SetSequenceName(GeneratedPkSequenceName(entry->name));
+        info.dependencies.AddOwnedDependency(
+          *schema.CreateSequence(transaction, sequence_info));
+      }
       auto storage = search::SearchTable::Create(
         GetOid(), schema.oid, entry->oid, true, entry->Options());
       storage->StartTasks();
@@ -202,8 +210,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
-  if (connector::ReadStorageEngine(op.info->Base().options) !=
-      TableEngine::Search) {
+  if (ReadStorageEngine(op.info->Base().options) != TableEngine::Search) {
     return duckdb::DuckCatalog::PlanCreateTableAs(context, planner, op, plan);
   }
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(

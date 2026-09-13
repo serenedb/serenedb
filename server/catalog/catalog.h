@@ -49,6 +49,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   std::string GetCatalogType() override { return kStorageType; }
 
+  bool MatchesNamesExactly() const override { return true; }
+
   void Initialize(bool load_builtin) override;
 
   void OnDetach(duckdb::ClientContext& context) override;

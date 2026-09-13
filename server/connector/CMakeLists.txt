@@ -5,7 +5,6 @@ add_library(
     primary_key.cpp
     offsets_collector.cpp
     search_sink_writer.cpp
-    search_table_dispatch.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     index_expression.cpp

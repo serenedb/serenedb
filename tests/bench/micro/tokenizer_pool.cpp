@@ -26,13 +26,12 @@
 #include <duckdb/storage/buffer/buffer_pool.hpp>
 #include <duckdb/storage/buffer/buffer_pool_reservation.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/object_pool.hpp>
 #include <memory>
 #include <utility>
 #include <vector>
-
-#include "basics/object_pool.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
 
 namespace {
 

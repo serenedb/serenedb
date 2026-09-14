@@ -27,16 +27,16 @@
 #include <duckdb/catalog/dependency_list.hpp>
 #include <expected>
 #include <functional>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/down_cast.h"
 #include "catalog/database.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"
@@ -63,7 +63,7 @@ class SereneDBTableEntry;
 
 // Mutation callback: reads the version in the catalog and fills `updated` with
 // the record the next one is built from (leave it null for a no-op). Signal
-// errors by throwing (pg::SqlException for user-facing ones).
+// errors by throwing (irs::SqlException for user-facing ones).
 template<typename Entry, typename Record = Entry>
 using ChangeCallback =
   absl::AnyInvocable<void(const Entry&, duckdb::unique_ptr<Record>&)>;
@@ -273,7 +273,7 @@ void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
 // functions built on these.
 class Catalog final {
  public:
-  // All mutators throw on failure: pg::SqlException with the PG-compatible
+  // All mutators throw on failure: irs::SqlException with the PG-compatible
   // errcode/message for user-facing errors, SqlException for internal
   // (store/serialization) failures.
   //

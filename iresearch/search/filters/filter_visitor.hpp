@@ -1,0 +1,60 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+///
+/// @author Yuriy Popov
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
+
+namespace irs {
+
+struct SubReader;
+struct TermReader;
+
+template<typename Terms, typename Visitor>
+void VisitTerms(Terms& terms, Visitor& visitor) {
+  do {
+    if constexpr (requires(Visitor& v, Terms& t) { v.SetIndex(t.Index()); }) {
+      visitor.SetIndex(terms.Index());
+    }
+    auto boost = kNoBoost;
+    if constexpr (requires(Terms& t) { t.Boost(); }) {
+      boost = terms.Boost();
+    }
+    if (!visitor.Visit(boost)) {
+      return;
+    }
+  } while (terms.next());
+}
+
+struct FilterVisitor {
+  virtual ~FilterVisitor() = default;
+
+  virtual void Prepare(const SubReader& segment, const TermReader& field,
+                       TermIterator& terms) = 0;
+
+  virtual bool Visit(score_t boost) = 0;
+};
+
+}  // namespace irs

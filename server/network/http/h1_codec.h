@@ -27,9 +27,9 @@
 #include <string>
 #include <vector>
 
-#include "basics/message_buffer.h"
 #include "network/http/common.h"
 #include "network/http/request.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::network {
 

@@ -24,13 +24,12 @@
 #include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/object_pool.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
-
-#include "basics/object_pool.hpp"
-#include "basics/serializer.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 
@@ -75,7 +74,7 @@ class Features final {
 // ObjectFormat (JSON) render: the raw feature mask (combined bits have no
 // enumerator name). The binary tuple format keeps member Serialize above.
 template<typename Context>
-  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+  requires std::is_same_v<typename Context::Format, irs::utils::ObjectFormat>
 void SerdeWrite(Context ctx, const Features& features) {
   ctx.io().WriteValue(
     static_cast<uint64_t>(std::to_underlying(features.GetIndexFeatures())));

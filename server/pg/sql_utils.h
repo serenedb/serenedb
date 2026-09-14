@@ -21,9 +21,9 @@
 #pragma once
 
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string_view>
 
-#include "basics/assert.h"
 #include "catalog/entry.h"
 
 namespace sdb::pg {

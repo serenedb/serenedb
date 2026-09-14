@@ -23,9 +23,9 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/common/optional_ptr.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -50,7 +50,7 @@ bool AclNames(catalog::AclView acl, ObjectId role) {
 // A column grant makes the table name its grantee, and only the table's own
 // definition knows about it.
 using ColumnAclsByTable =
-  containers::FlatHashMap<ObjectId, const catalog::ColumnAcls*>;
+  irs::containers::FlatHashMap<ObjectId, const catalog::ColumnAcls*>;
 
 ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     ObjectId database) {

@@ -25,17 +25,17 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
 
-#include "basics/assert.h"
 #include "connector/functions/ts_query_codec.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search.h"
 #include "string.h"
 #include "ts_common.hpp"

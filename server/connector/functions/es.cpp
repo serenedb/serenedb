@@ -35,14 +35,16 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <map>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -57,11 +59,9 @@
 #include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::connector {
 namespace {
@@ -191,8 +191,8 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
                             "]: ", simdjson::error_message(ec)));
   }
   try {
-    basics::JsonSource source{doc};
-    basics::ReadObject(source, request);
+    utils::JsonSource source{doc};
+    irs::utils::ReadObject(source, request);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
@@ -449,7 +449,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
                     ERR_MSG("no such index [", data.index, "]"));
   }
 
-  containers::FlatHashSet<catalog::ColumnId> inverted_columns;
+  irs::containers::FlatHashSet<catalog::ColumnId> inverted_columns;
   for (const auto& index : catalog::RelationInvertedIndexes(
          &context, catalog::ParentIdOf(*table), catalog::IdOf(*table))) {
     for (const auto id : index->GetColumns()) {
@@ -593,7 +593,7 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string id;
   std::string body;
-  containers::FlatHashMap<std::string, size_t> field_columns;
+  irs::containers::FlatHashMap<std::string, size_t> field_columns;
   size_t id_column = 0;
   size_t source_column = 0;
 };

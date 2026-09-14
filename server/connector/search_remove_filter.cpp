@@ -21,10 +21,10 @@
 #include "search_remove_filter.hpp"
 
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/memory.hpp>
 #include <limits>
 
-#include "basics/memory.hpp"
-#include "basics/primary_key.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -45,7 +45,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
                     const irs::DocumentMask* pending)
     : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
-  irs::lead::Node::ptr PlanLead(const irs::search::ScoredCtx&) const final {
+  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
     return _filter.MakeLead(_segment, _pending);
   }
 
@@ -55,17 +55,17 @@ class SearchRemoveQuery : public irs::QueryBuilder {
   irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
     return {};
   }
-  irs::scored::Root::ptr PlanScored(const irs::scored::Context&) const final {
+  irs::hits::Root::ptr PlanScored(const irs::hits::Context&) const final {
     return {};
   }
   irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
     return {};
   }
-  irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx&,
+  irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx&,
                                   uint64_t) const final {
     return {};
   }
-  irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx&,
+  irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx&,
                                 irs::ScoreMergeType) const final {
     return {};
   }
@@ -102,7 +102,7 @@ irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemoveFilter::Advance() {
+irs::doc_id_t SearchRemoveFilter::Next() {
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc = irs::doc_limits::eof();
@@ -203,11 +203,11 @@ irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemovePrefixFilter::Advance() {
+irs::doc_id_t SearchRemovePrefixFilter::Next() {
   while (true) {
     if (_postings) {
       while (true) {
-        const auto doc = _postings->Advance();
+        const auto doc = _postings->Next();
         if (irs::doc_limits::eof(doc)) {
           break;
         }

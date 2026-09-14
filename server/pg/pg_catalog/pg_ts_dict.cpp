@@ -20,7 +20,8 @@
 
 #include "pg/pg_catalog/pg_ts_dict.h"
 
-#include "basics/assert.h"
+#include <iresearch/utils/assert.hpp>
+
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"

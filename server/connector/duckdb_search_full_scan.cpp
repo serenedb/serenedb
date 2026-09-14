@@ -47,38 +47,42 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/hit_batcher.hpp>
 #include <iresearch/index/index_source.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/common/lazy_bitset.hpp>
-#include <iresearch/search/common/resolve.hpp>
+#include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/term_counts.hpp>
-#include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/lazy_bitset.hpp>
+#include <iresearch/search/detail/resolve.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/docs/make.hpp>
-#include <iresearch/search/filter_visitor.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/search/scored/make.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/filter_visitor.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/hits/make.hpp>
+#include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/search/top/make.hpp>
-#include <iresearch/search/vector_similarity_query.hpp>
-#include <iresearch/search/vector_similarity_scorer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <mutex>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <type_traits>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/system-compiler.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -91,11 +95,7 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "connector/view_fast_path.h"
-#include "iresearch/index/hit_batcher.hpp"
-#include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 
@@ -111,12 +111,13 @@ inline constexpr uint32_t kPlanBatch = STANDARD_VECTOR_SIZE;
 // document: the codec filter and the zonemap both work per columnstore block,
 // so a run is narrowed block by block and a block no row can survive is
 // stepped over instead of being read.
-class ColFilterVerify : public irs::search::TableFilter {
+class ColFilterVerify : public irs::detail::TableFilter {
  public:
   // Binds this segment's active specs. Nothing to verify leaves it empty, and
   // the caller then asks its plan for the whole answer.
-  void Begin(const irs::SubReader& seg, std::span<const ColFilterSpec> active,
-             IResearchScanGlobalState& g, ColFilterStateCache& states);
+  void Begin(const irs::SubReader& seg,
+             std::span<const irs::ColFilterSpec> active,
+             IResearchScanGlobalState& g, irs::ColFilterStateCache& states);
 
   bool Empty() const noexcept {
     return _chain.Empty() && _score_filter == nullptr;
@@ -150,7 +151,7 @@ class ColFilterVerify : public irs::search::TableFilter {
 
  private:
   std::unique_ptr<irs::ReadContext> _ctx;
-  ColFilterChain _chain;
+  irs::ColFilterChain _chain;
   // The filter on the computed score (not a `.col` field): a comparison on
   // scores already in memory, so it runs before the columnstore is read.
   const duckdb::TableFilter* _score_filter = nullptr;
@@ -176,16 +177,16 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
   // scans: computed exactly once per claimed segment (at the claim site) and
   // consumed by StartSegment (HitBatcher binding) and the bulk FullScanner.
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
-  ColFilterClassification seg_cls;
+  irs::ColFilterClassification seg_cls;
   // Per-worker filter-evaluation state (ExpressionExecutor + decode scratch),
   // built once per pushed filter and reused across segments and engines.
-  ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states;
 };
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
   duckdb::Vector* pk_column = nullptr;
-  std::shared_ptr<IndexSource> index_source;
-  std::unique_ptr<HitBatcher> hit_batcher;
+  std::shared_ptr<irs::IndexSource> index_source;
+  std::unique_ptr<irs::HitBatcher> hit_batcher;
   // The scorer prepare phase ran (TopK / scored Stream dispatch).
   bool prepared = false;
 
@@ -197,7 +198,7 @@ struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
 
   void EnsureHitBatcher(const IResearchScanGlobalState& g) {
     if (!hit_batcher) {
-      hit_batcher = std::make_unique<HitBatcher>(
+      hit_batcher = std::make_unique<irs::HitBatcher>(
         g.cs_projections,
         g.needs_lookup ? catalog::term_dict::kPKFieldId
                        : irs::field_limits::invalid(),
@@ -233,7 +234,7 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
   bool emit_prepared = false;
   // A `.col` predicate is a fact about a document rather than about its
   // score, so it is verified before the collector is entered: the candidates
-  // come from a `scored::Root` a batch at a time instead of from the
+  // come from a `hits::Root` a batch at a time instead of from the
   // run-to-completion `top::Root`. The batch it is drained into belongs to
   // that branch, not to every top-k scan.
   ColFilterVerify col_verify;
@@ -242,7 +243,7 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
 };
 
 struct StreamScanLocalState : public SegDocBufferedScanLocalState {
-  // Whichever root this query's shape produced -- `scored::Root` when the
+  // Whichever root this query's shape produced -- `hits::Root` when the
   // scan scores, `docs::Root` when it does not. The four roots share no base
   // but `memory::Managed`, so the pointer is one and the call site downcasts.
   irs::memory::managed_ptr<irs::memory::Managed> streaming;
@@ -258,7 +259,7 @@ struct StreamScanLocalState : public SegDocBufferedScanLocalState {
   uint32_t stage_at = 0;
   uint32_t stage_len = 0;
   // What a scored root would be allowed to skip below, refreshed per batch
-  // from the static floor and the dynamic TOP_N boundary. `scored::Root` emits
+  // from the static floor and the dynamic TOP_N boundary. `hits::Root` emits
   // every match today, so nothing reads it yet.
   irs::score_t prune_threshold = std::numeric_limits<irs::score_t>::lowest();
 
@@ -336,8 +337,8 @@ struct TsDictLocalState : public IResearchScanLocalState {
   std::vector<FieldState> fields;
   CountMode count_mode = CountMode::Meta;
   const irs::QueryBuilder* where_query = nullptr;
-  ColFilterClassification seg_cls;
-  ColFilterStateCache filter_states;
+  irs::ColFilterClassification seg_cls;
+  irs::ColFilterStateCache filter_states;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, IResearchScanGlobalState& g);
@@ -362,7 +363,7 @@ struct TsDictLocalState : public IResearchScanLocalState {
   // The one set the WHERE and the removals folded into, as the documents
   // rather than as a number: what a `.col` predicate has to be given, and what
   // a field too small for its own `TermCounts` is asked about.
-  irs::search::LazyBitset& Live();
+  irs::detail::LazyBitset& Live();
   uint32_t WalkLive(irs::TermIterator& it, bool count_all);
   // The counter for this field's terms, or null where the field is not worth
   // folding a set for and where the documents themselves are needed.
@@ -372,7 +373,7 @@ struct TsDictLocalState : public IResearchScanLocalState {
   ColFilterVerify _col_verify;
   // The set is the segment's and the counter is one field's, so the counter
   // borrows it and has to go first.
-  std::unique_ptr<irs::search::LazyBitset> _live;
+  std::unique_ptr<irs::detail::LazyBitset> _live;
   irs::count::TermCounts::ptr _term_counts;
   // The segment's every document, prepared where the count is masked but
   // unfiltered: the removals are then the whole of what the set says.
@@ -909,22 +910,22 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     // search tables and view-backed indexes alike (term_dict::kPKFieldId
     // IS kGeneratedPKId by definition).
     state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId});
+      irs::ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
+                                 .column_id = catalog::term_dict::kPKFieldId});
   }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.row_number_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
-                            .extract_path = {"row_number"},
-                            .extract_scan_type = duckdb::LogicalType::BIGINT});
+    state.cs_projections.emplace_back(irs::ColumnstoreProjection{
+      .output_slot = state.row_number_output_idx,
+      .column_id = catalog::term_dict::kPKFieldId,
+      .extract_path = {"row_number"},
+      .extract_scan_type = duckdb::LogicalType::BIGINT});
   }
   if (state.file_index_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    state.cs_projections.emplace_back(
-      ColumnstoreProjection{.output_slot = state.file_index_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
-                            .extract_path = {"file_index"},
-                            .extract_scan_type = duckdb::LogicalType::UBIGINT});
+    state.cs_projections.emplace_back(irs::ColumnstoreProjection{
+      .output_slot = state.file_index_output_idx,
+      .column_id = catalog::term_dict::kPKFieldId,
+      .extract_path = {"file_index"},
+      .extract_scan_type = duckdb::LogicalType::UBIGINT});
   }
   const auto in_output = [&](duckdb::idx_t proj) {
     return state.output_projection_ids.empty() ||
@@ -946,7 +947,8 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.column_ids[bind_col];
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj,
+                                    .column_id = col_id.id()};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -984,7 +986,8 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       if (!in_output(proj)) {
         continue;
       }
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj,
+                                    .column_id = col_id.id()};
       if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -1286,8 +1289,8 @@ void OrderSegmentScanUnits(IResearchScanGlobalState& g,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg,
                                IResearchScanGlobalState& g,
-                               ColFilterStateCache& states,
-                               ColFilterClassification& out);
+                               irs::ColFilterStateCache& states,
+                               irs::ColFilterClassification& out);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -1375,8 +1378,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->queries.resize(ss.snapshot->reader.size());
 
   if (!state->col_filters.empty() && state->total_segments != 0) {
-    ColFilterStateCache init_states;
-    ColFilterClassification cls;
+    irs::ColFilterStateCache init_states;
+    irs::ColFilterClassification cls;
     state->segment_order.reserve(state->total_segments);
     for (uint32_t si = 0; si < state->total_segments; ++si) {
       ClassifySegmentColFilters((*state->reader)[si], *state, init_states, cls);
@@ -1888,9 +1891,9 @@ void IResearchSetScanOrder(
 }
 
 void ColFilterVerify::Begin(const irs::SubReader& seg,
-                            std::span<const ColFilterSpec> active,
+                            std::span<const irs::ColFilterSpec> active,
                             IResearchScanGlobalState& g,
-                            ColFilterStateCache& states) {
+                            irs::ColFilterStateCache& states) {
   _chain.Clear();
   _score_filter = nullptr;
   _score_state = nullptr;
@@ -1927,8 +1930,8 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   duckdb::idx_t left = n;
   if (_score_filter != nullptr) {
-    left = ColFilterChain::FilterDocsScores(*_score_filter, *_score_state, docs,
-                                            scores, left);
+    left = irs::ColFilterChain::FilterDocsScores(*_score_filter, *_score_state,
+                                                 docs, scores, left);
   }
   return static_cast<uint32_t>(_chain.FilterDocs(docs, scores, left));
 }
@@ -1937,8 +1940,8 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
                                  irs::score_t* scores, uint32_t words) {
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   if (_score_filter != nullptr) {
-    ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
-                                     scores, words);
+    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
+                                          scores, words);
   }
   return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
 }
@@ -1951,8 +1954,8 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg,
                                IResearchScanGlobalState& g,
-                               ColFilterStateCache& states,
-                               ColFilterClassification& out) {
+                               irs::ColFilterStateCache& states,
+                               irs::ColFilterClassification& out) {
   out.segment_dead = false;
   out.active.clear();
   if (g.col_filters.empty()) {
@@ -1960,7 +1963,7 @@ void ClassifySegmentColFilters(const irs::SubReader& seg,
   }
   const auto* col_reader = seg.GetColReader();
   for (const auto& cf : g.col_filters) {
-    ColFilterSpec spec{
+    irs::ColFilterSpec spec{
       .field = cf.field,
       .filter = cf.filter,
       .is_score = cf.is_score,
@@ -2168,11 +2171,11 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that emits a score has a scorer to compute it with");
     score_fetcher.Clear();
-    auto plan = irs::scored::MakeRoot(seg_query, {
-                                                   .scorer = *g.scorer_obj,
-                                                   .fetcher = score_fetcher,
-                                                   .table = skipper,
-                                                 });
+    auto plan = irs::hits::MakeRoot(seg_query, {
+                                                 .scorer = *g.scorer_obj,
+                                                 .fetcher = score_fetcher,
+                                                 .table = skipper,
+                                               });
     EnsurePlanned(plan != nullptr);
     streaming = std::move(plan);
   } else {
@@ -2236,7 +2239,7 @@ bool StreamScanLocalState::Refill() {
     return false;
   }
   const auto n = streaming_scored
-                   ? static_cast<irs::scored::Root*>(streaming.get())
+                   ? static_cast<irs::hits::Root*>(streaming.get())
                        ->Run(stage_docs.data(), stage_scores.data(), kPlanBatch)
                    : static_cast<irs::docs::Root*>(streaming.get())
                        ->Run(stage_docs.data(), kPlanBatch);
@@ -2675,13 +2678,13 @@ void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
   if (count_mode == CountMode::Meta || !_col_verify.Empty()) {
     return;
   }
-  if (irs::search::DocOf(reader) == nullptr) {
+  if (irs::detail::DocOf(reader) == nullptr) {
     return;
   }
   _term_counts = irs::count::MakeTermCounts(Live(), reader, reader.size());
 }
 
-irs::search::LazyBitset& TsDictLocalState::Live() {
+irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query != nullptr ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
@@ -2690,9 +2693,9 @@ irs::search::LazyBitset& TsDictLocalState::Live() {
     const auto* removals = _seg->docs_mask();
     if (auto* folded = node->Folded(); folded != nullptr) {
       _live =
-        std::make_unique<irs::search::LazyBitset>(std::move(*folded), removals);
+        std::make_unique<irs::detail::LazyBitset>(std::move(*folded), removals);
     } else {
-      _live = std::make_unique<irs::search::LazyBitset>(
+      _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
         removals);
     }
@@ -2709,8 +2712,8 @@ uint32_t TsDictLocalState::WalkLive(irs::TermIterator& it, bool count_all) {
   std::array<irs::doc_id_t, kPlanBatch> cand_docs;
   for (;;) {
     uint32_t n = 0;
-    for (auto doc = postings->Advance(); !irs::doc_limits::eof(doc);
-         doc = postings->Advance()) {
+    for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+         doc = postings->Next()) {
       if (!live.Contains(doc)) {
         continue;
       }

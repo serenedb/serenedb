@@ -20,8 +20,6 @@
 
 #include "connector/functions/split_by_non_alpha.h"
 
-#include <absl/strings/ascii.h>
-
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -30,6 +28,7 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/analysis/text/case/case.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <string_view>
 
@@ -47,29 +46,33 @@ class ListSink {
 
   duckdb::idx_t Offset() const noexcept { return _offset; }
 
-  template<bool ToLower>
   void Push(std::string_view token) {
+    Slot() = duckdb::StringVector::AddStringOrBlob(_result_child, token.data(),
+                                                   token.size());
+    ++_offset;
+  }
+
+  void PushFolded(std::string_view token) {
+    auto folded =
+      duckdb::StringVector::EmptyString(_result_child, token.size());
+    irs::analysis::casing::CaseConvertAsciiExact<true>(
+      folded.GetDataWriteable(), token.data(), token.size());
+    folded.Finalize();
+    Slot() = folded;
+    ++_offset;
+  }
+
+ private:
+  duckdb::string_t& Slot() {
     if (_offset >= duckdb::ListVector::GetListCapacity(_result_list)) {
       duckdb::ListVector::SetListSize(_result_list, _offset);
       duckdb::ListVector::Reserve(
         _result_list, duckdb::ListVector::GetListCapacity(_result_list) * 2);
     }
-    auto* data =
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_result_child);
-    if constexpr (ToLower) {
-      auto str = duckdb::StringVector::EmptyString(_result_child, token.size());
-      absl::ascii_internal::AsciiStrToLower(str.GetDataWriteable(),
-                                            token.data(), token.size());
-      str.Finalize();
-      data[_offset] = str;
-    } else {
-      data[_offset] = duckdb::StringVector::AddStringOrBlob(
-        _result_child, token.data(), token.size());
-    }
-    ++_offset;
+    return duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
+      _result_child)[_offset];
   }
 
- private:
   duckdb::Vector& _result_list;
   duckdb::Vector& _result_child;
   duckdb::idx_t _offset = 0;
@@ -104,12 +107,22 @@ void Split(duckdb::DataChunk& args, duckdb::Vector& result, PushRow push_row) {
 }
 
 template<bool ToLower>
+void PushTokens(ListSink& sink, duckdb::string_t text) {
+  irs::analysis::words::SplitByNonAlpha(text, [&](size_t begin, size_t end) {
+    const std::string_view token{text.GetData() + begin, end - begin};
+    if constexpr (ToLower) {
+      sink.PushFolded(token);
+    } else {
+      sink.Push(token);
+    }
+  });
+}
+
+template<bool ToLower>
 void SplitConstant(duckdb::DataChunk& args, duckdb::ExpressionState&,
                    duckdb::Vector& result) {
   Split(args, result, [](ListSink& sink, duckdb::idx_t, duckdb::string_t text) {
-    irs::analysis::words::SplitByNonAlpha(text, [&](size_t begin, size_t end) {
-      sink.Push<ToLower>(std::string_view{text.GetData() + begin, end - begin});
-    });
+    PushTokens<ToLower>(sink, text);
   });
 }
 
@@ -123,18 +136,12 @@ void SplitDynamic(duckdb::DataChunk& args, duckdb::ExpressionState&,
   Split(args, result,
         [&](ListSink& sink, duckdb::idx_t row, duckdb::string_t text) {
           auto to_lower_row = to_lower_format.sel->get_index(row);
-          const bool to_lower =
-            to_lower_format.validity.RowIsValid(to_lower_row) &&
-            to_lower_values[to_lower_row];
-          irs::analysis::words::SplitByNonAlpha(
-            text, [&](size_t begin, size_t end) {
-              const std::string_view token{text.GetData() + begin, end - begin};
-              if (to_lower) {
-                sink.Push<true>(token);
-              } else {
-                sink.Push<false>(token);
-              }
-            });
+          if (to_lower_format.validity.RowIsValid(to_lower_row) &&
+              to_lower_values[to_lower_row]) {
+            PushTokens<true>(sink, text);
+          } else {
+            PushTokens<false>(sink, text);
+          }
         });
 }
 

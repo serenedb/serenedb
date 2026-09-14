@@ -23,7 +23,7 @@
 #include <string>
 #include <string_view>
 
-#include "basics/message_sequence_view.h"
+#include "server/utils/message_sequence_view.h"
 
 namespace sdb::network::http {
 

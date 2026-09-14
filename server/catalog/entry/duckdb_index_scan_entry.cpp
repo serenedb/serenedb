@@ -25,8 +25,8 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/utils/assert.hpp>
 
-#include "basics/assert.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"

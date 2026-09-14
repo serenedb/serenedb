@@ -28,12 +28,11 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension_helper.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
 #include <string_view>
-
-#include "basics/assert.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector::embedding {
 namespace {

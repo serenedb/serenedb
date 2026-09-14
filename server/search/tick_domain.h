@@ -45,11 +45,11 @@ class TickDomain {
   }
 
   // Reserve `count` ticks and return the LAST tick of the reserved range.
-  Tick Advance(uint64_t count) noexcept {
+  Tick Next(uint64_t count) noexcept {
     return _tick.fetch_add(count, std::memory_order_relaxed) + count;
   }
 
-  // The counter behind Advance, for a reservation made where this class cannot
+  // The counter behind Next, for a reservation made where this class cannot
   // be named: the iresearch flush point reserves its own commit tick.
   std::atomic<Tick>& Counter() noexcept { return _tick; }
 

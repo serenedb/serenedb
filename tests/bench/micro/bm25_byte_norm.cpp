@@ -69,12 +69,11 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/shared.hpp>
 #include <random>
-
-#include "basics/shared.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
 
 namespace {
 

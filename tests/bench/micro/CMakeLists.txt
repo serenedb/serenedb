@@ -6,11 +6,8 @@ function(add_bench FILE_NAME)
     target_link_libraries(${NAME} PRIVATE sereneserver benchmark)
     target_include_directories(
         ${NAME}
-        PRIVATE ${CMAKE_SOURCE_DIR}/tests/libs/iresearch
+        PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
     )
-    if(VELOX_ENABLE_FAISS)
-        target_compile_definitions(${NAME} PRIVATE VELOX_ENABLE_FAISS)
-    endif()
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
@@ -58,6 +55,7 @@ add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
 add_bench(virtual_column_map)
 add_bench(tokenizer_fill)
+add_bench(stemming)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)
@@ -84,12 +82,7 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 
-target_compile_options(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    PRIVATE -fno-lto
-)
-
-# Same relaxed FP search/bm25.cpp is built with, otherwise the kernels here
+# Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
 # aren't the ones we ship.
 target_compile_options(
     serenedb-bench-micro-bm25_byte_norm
@@ -102,10 +95,6 @@ target_compile_options(
         -fno-trapping-math
         -fno-rounding-math
         -ffp-contract=fast
-)
-target_link_options(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    PRIVATE -fno-lto
 )
 
 # regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
@@ -134,11 +123,8 @@ target_compile_options(
     PRIVATE -fassociative-math -fno-signed-zeros
 )
 
-target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)
-if(VELOX_ENABLE_FAISS)
-    target_compile_definitions(
-        vector-distances-bench
-        PRIVATE VELOX_ENABLE_FAISS
-    )
-endif()
+target_link_libraries(
+    vector-distances-bench
+    PRIVATE sereneserver benchmark ${FAISS_LIB}
+)
 add_dependencies(serenedb-bench-micro vector-distances-bench)

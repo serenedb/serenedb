@@ -20,12 +20,12 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {

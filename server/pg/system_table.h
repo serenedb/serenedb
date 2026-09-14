@@ -32,13 +32,13 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <optional>
 #include <span>
 #include <type_traits>
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
 #include "catalog/role.h"

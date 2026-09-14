@@ -24,9 +24,9 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -73,7 +73,7 @@ namespace {
 // struct field, and the column the index reads is `s`.
 std::vector<size_t> IndexedPositions(const duckdb::CreateTableInfo& table,
                                      const catalog::CreateIndexInfo& index) {
-  containers::FlatHashSet<size_t> positions;
+  irs::containers::FlatHashSet<size_t> positions;
   for (auto col_id : index.GetReferencedColumns()) {
     if (const auto* column = catalog::ColumnById(table, col_id)) {
       positions.insert(column->Logical().index);

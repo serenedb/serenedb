@@ -21,18 +21,18 @@
 #include "search/search_table_transaction.h"
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
-#include "basics/primary_key.hpp"
-#include "basics/system-compiler.h"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
+#include "server/utils/primary_key.h"
 
 namespace sdb::search {
 namespace {

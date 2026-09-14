@@ -31,8 +31,8 @@
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <limits>
 #include <memory>
@@ -44,7 +44,7 @@
 
 namespace irs {
 
-class IndexReader;
+struct IndexReader;
 
 }  // namespace irs
 namespace sdb::connector {
@@ -71,7 +71,7 @@ enum class ScanMode : uint8_t {
   // work units read `.col` directly; a segment with deletes falls back to the
   // masked streaming walk. Never scores, never touches the lookup source.
   ColScan,
-  // A `scored::Root` or a `docs::Root` drained into the HitBatcher. The only
+  // A `hits::Root` or a `docs::Root` drained into the HitBatcher. The only
   // mode that materializes through the lookup source, engaged if and only if
   // a lookup column is needed -- for a filter or for the output.
   Stream,
@@ -127,7 +127,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // filter (the source applies it natively during materialization); a column
   // needed by neither (left dangling by a statistics-eliminated filter) is
   // read nowhere. ------------------------------------------------------------
-  std::vector<ColumnstoreProjection> cs_projections;
+  std::vector<irs::ColumnstoreProjection> cs_projections;
   std::vector<duckdb::idx_t> lookup_projected_columns;
   bool needs_lookup = false;
 

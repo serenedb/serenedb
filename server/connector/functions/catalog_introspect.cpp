@@ -25,6 +25,9 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <string>
@@ -32,7 +35,6 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "basics/serializer.h"
 #include "catalog/database.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -45,8 +47,6 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

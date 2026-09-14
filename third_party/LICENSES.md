@@ -7,7 +7,6 @@
 * [Abseil - C++ Common Libraries](https://abseil.io)
 * [S2 Geometry Library](https://s2geometry.io)
 * [OpenFST](https://www.openfst.org/)
-* [frozen](https://github.com/serge-sans-paille/frozen)
 * [Kaldi](https://github.com/kaldi-asr/kaldi)
 * [LLVM](https://github.com/llvm/llvm-project)
 * [Google Benchmark](https://github.com/google/benchmark)
@@ -32,11 +31,12 @@
 * [aws-checksums](https://github.com/awslabs/aws-checksums)
 * [aws-crt-cpp](https://github.com/awslabs/aws-crt-cpp)
 * [aws-sdk-cpp](https://github.com/aws/aws-sdk-cpp)
+* [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp)
+* [StringZilla](https://github.com/ashvardanian/StringZilla)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
 * [Boost](http://www.boost.org)
-* [Boost::Text](https://github.com/tzlaine/text)
 
 ### [MIT license](https://opensource.org/licenses/MIT)
 
@@ -61,6 +61,8 @@
 * [fmt](https://github.com/fmtlib/fmt)
 * [jansson](https://github.com/akheron/jansson)
 * [CRoaring](https://github.com/RoaringBitmap/CRoaring)
+* [duckdb-inet](https://github.com/duckdb/duckdb-inet)
+* [brotli](https://github.com/google/brotli)
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
@@ -73,8 +75,9 @@
 * [re2](https://github.com/google/re2)
 * [simdcomp](https://github.com/fast-pack/simdcomp)
 * [snappy](https://github.com/google/snappy)
-* [snowball](https://github.com/snowballstem/snowball)
+* [snowball](https://github.com/snowballstem/snowball) (vendored as its generated C distribution, [serenedb/libstemmer_c](https://github.com/serenedb/libstemmer_c))
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
+* [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS)
 
 ### Other licenses
 
@@ -123,6 +126,14 @@
 
 * Project Home: https://cmake.org/
 * License: BSD 3-clause "New" or "Revised" License
+
+## Fonts
+
+Used only to generate the logo SVGs in `resources/images/`, not shipped in the
+distribution. The generated SVGs carry outline paths, so the font is not needed
+to display them.
+
+* [DM Sans](https://github.com/googlefonts/dm-fonts) -- [SIL Open Font License 1.1](../resources/fonts/OFL.txt)
 
 ## Tests
 

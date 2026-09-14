@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,13 +35,12 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "basics/build.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
 #include "network/http/mcp/tools.h"
 #include "network/http/mcp/wire.h"
+#include "server/utils/build.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::network::http::mcp {
 namespace {
@@ -223,8 +223,8 @@ class McpHandler final : public HttpHandler {
     try {
       RpcEnvelope envelope;
       doc.rewind();
-      basics::JsonSource source{doc};
-      basics::ReadObject(source, envelope);
+      utils::JsonSource source{doc};
+      irs::utils::ReadObject(source, envelope);
       rpc.id = std::move(envelope.id);
       rpc.method = std::move(envelope.method);
     } catch (const std::exception& e) {
@@ -240,8 +240,8 @@ class McpHandler final : public HttpHandler {
     try {
       RpcParamsEnvelope params;
       doc.rewind();
-      basics::JsonSource source{doc};
-      basics::ReadObject(source, params);
+      utils::JsonSource source{doc};
+      irs::utils::ReadObject(source, params);
       rpc.params = std::move(params.params);
     } catch (const std::exception& e) {
       writer.Json(HttpStatus::Ok,

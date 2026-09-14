@@ -56,7 +56,7 @@ class SourceColumns {
   duckdb::case_insensitive_map_t<duckdb::idx_t> _by_name;
 };
 
-class ViewIndexSourceBase : public IndexSource {
+class ViewIndexSourceBase : public irs::IndexSource {
  protected:
   explicit ViewIndexSourceBase(ViewFastPath fast_path)
     : _fast_path{std::move(fast_path)} {}

@@ -26,17 +26,17 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 
-#include "basics/assert.h"
-#include "basics/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {

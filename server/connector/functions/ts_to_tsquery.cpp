@@ -21,11 +21,11 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -235,13 +235,13 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
   auto& root = AddMaybeNegated<irs::BooleanFilter>(parent, ctx, column_info);
   root.SetBoost(ctx.boost);
-  sdb::ParserContext parser_ctx{
+  irs::ParserContext parser_ctx{
     root, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     ctx.tokenizer};
   parser_ctx.strict_field = true;
   parser_ctx.fuzzy_max_terms =
     column_info.levenshtein_max_terms.value_or(ctx.levenshtein_max_terms);
-  if (!sdb::ParseQuery(parser_ctx, text)) {
+  if (!irs::ParseQuery(parser_ctx, text)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("to_tsquery parse error: ", parser_ctx.error_message),

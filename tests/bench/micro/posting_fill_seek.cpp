@@ -42,7 +42,7 @@
 //
 // The four drivers are the four ways the engine consumes a posting list:
 //
-//   Advance/<shape>  `lead::Node`, one document at a time, the fallback for
+//   Next/<shape>  `lead::Node`, one document at a time, the fallback for
 //                    everything.
 //   Emit/<shape>     `docs::Root`, the unscored single-term scan.
 //   Window/<shape>   `fill::Node`, the bitset window a conjunction intersects
@@ -71,14 +71,16 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/common/window.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/fill/node.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/lead/node.hpp>
-#include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
@@ -86,8 +88,6 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/duckdb_engine.h"
 #include "insert_field.hpp"
 
 namespace {
@@ -248,7 +248,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   index.dir = std::make_unique<irs::MMapDirectory>(index.path);
   index.codec = irs::formats::Get("1_5simd");
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
@@ -318,9 +318,9 @@ constexpr uint32_t kCapacity = 2048;
 
 // -- drivers ------------------------------------------------------------
 
-size_t Advance(const irs::lead::Node::ptr& docs) {
+size_t Next(const irs::lead::Node::ptr& docs) {
   size_t n = 0;
-  while (!irs::doc_limits::eof(docs->Advance())) {
+  while (!irs::doc_limits::eof(docs->Next())) {
     ++n;
   }
   return n;
@@ -340,14 +340,14 @@ size_t Emit(const irs::docs::Root::ptr& docs) {
 }
 
 size_t Window(const irs::fill::Node::ptr& docs) {
-  irs::search::Scratch mask;
+  irs::detail::Scratch mask;
   size_t n = 0;
   irs::doc_id_t min = 0;
   for (;;) {
-    irs::search::Clear(mask.data(), irs::search::kWindowWords);
+    irs::detail::Clear(mask.data(), irs::detail::kWindowWords);
     const auto next =
-      docs->FillOr(min, min + irs::search::kWindowDocs, mask.data());
-    for (size_t i = 0; i != irs::search::kWindowWords; ++i) {
+      docs->FillOr(min, min + irs::detail::kWindowDocs, mask.data());
+    for (size_t i = 0; i != irs::detail::kWindowWords; ++i) {
       n += static_cast<size_t>(std::popcount(mask[i]));
     }
     if (irs::doc_limits::eof(next)) {
@@ -357,14 +357,14 @@ size_t Window(const irs::fill::Node::ptr& docs) {
   }
 }
 
-void BmAdvance(benchmark::State& state, std::string_view term) {
+void BmNext(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
   const Prepared prepared{index.reader[0], *filter};
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Advance(prepared.Lead());
+    docs += Next(prepared.Lead());
   }
   Report(state, docs);
 }
@@ -400,7 +400,7 @@ void BmWindow(benchmark::State& state, std::string_view term) {
   void Bm##name##Period(benchmark::State& s) { Bm##name(s, kPeriod); } \
   void Bm##name##Gen(benchmark::State& s) { Bm##name(s, kGen); }
 
-BM_SHAPES(Advance)
+BM_SHAPES(Next)
 BM_SHAPES(Emit)
 BM_SHAPES(Window)
 
@@ -535,11 +535,11 @@ BENCHMARK(BmText40x400)->Apply(Sizes);
 BENCHMARK(BmText200x2000)->Apply(Sizes);
 BENCHMARK(BmText1500x4000)->Apply(Sizes);
 
-BENCHMARK(BmAdvanceRun)->Apply(Sizes);
-BENCHMARK(BmAdvanceAlmost)->Apply(Sizes);
-BENCHMARK(BmAdvanceDense)->Apply(Sizes);
-BENCHMARK(BmAdvancePeriod)->Apply(Sizes);
-BENCHMARK(BmAdvanceGen)->Apply(Sizes);
+BENCHMARK(BmNextRun)->Apply(Sizes);
+BENCHMARK(BmNextAlmost)->Apply(Sizes);
+BENCHMARK(BmNextDense)->Apply(Sizes);
+BENCHMARK(BmNextPeriod)->Apply(Sizes);
+BENCHMARK(BmNextGen)->Apply(Sizes);
 
 BENCHMARK(BmEmitRun)->Apply(Sizes);
 BENCHMARK(BmEmitAlmost)->Apply(Sizes);
@@ -578,7 +578,7 @@ BENCHMARK(BmConjGenDense)->Apply(Sizes);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -587,6 +587,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

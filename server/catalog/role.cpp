@@ -26,17 +26,17 @@
 
 #include <algorithm>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <map>
 #include <ranges>
 #include <string_view>
 
 #include "auth/acl.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
-#include "basics/static_strings.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/persistence/role.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::catalog {
 
@@ -51,7 +51,7 @@ CreateRoleInfo::CreateRoleInfo(ObjectId id, persistence::RoleData data)
     _password{std::move(data.password)} {
   SetId(id);
   SetRoleName(data.name);
-  if (data.name == StaticStrings::kDefaultUser) {
+  if (data.name == irs::StaticStrings::kDefaultUser) {
     _options |= RoleOption::Superuser;
   }
 }
@@ -94,10 +94,10 @@ void CreateRoleInfo::SerializePayload(duckdb::Serializer& sink) const {
   sink.WritePropertyWithDefault(203, "valid_until", _valid_until);
   sink.WritePropertyWithDefault(204, "password", _password);
   // Session config, membership edges and default ACLs are std::vector of our
-  // own types: the basics framework is the only serializer they have, so they
+  // own types: the utils framework is the only serializer they have, so they
   // ride inside one property.
   sink.OnPropertyBegin(205, "grants");
-  basics::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
+  irs::utils::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
   sink.OnPropertyEnd();
   // The role's own identity, so the record states everything the object is
   // built from: duckdb's base carries the same one on the record around it, but
@@ -117,7 +117,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Deserialize(
   src.ReadPropertyWithDefault(204, "password", role->_password);
   src.OnPropertyBegin(205, "grants");
   auto refs = std::tie(role->_config, role->_member_of, role->_default_acls);
-  basics::ReadTuple(src, refs);
+  irs::utils::ReadTuple(src, refs);
   src.OnPropertyEnd();
   role->SetId(ObjectId{src.ReadPropertyWithDefault<uint64_t>(206, "sdb_id")});
   return role;

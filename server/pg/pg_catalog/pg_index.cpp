@@ -20,10 +20,10 @@
 
 #include "pg/pg_catalog/pg_index.h"
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/down_cast.h"
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
@@ -33,6 +33,7 @@
 #include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 namespace {
@@ -68,7 +69,8 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // Every base table of the database, by id: an index row needs the attnums of
   // the relation it hangs off, and the synthetic rows below are that relation's
   // own key constraints.
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+    tables;
   catalog::VisitTableEntries(context, GetDatabaseId(),
                              [&](const catalog::SereneDBSchemaEntry&,
                                  const catalog::SereneDBTableEntry& table) {

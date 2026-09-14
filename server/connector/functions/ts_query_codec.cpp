@@ -42,9 +42,9 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <iresearch/search/unscored.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/assert.hpp>
 
-#include "basics/assert.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 

@@ -22,7 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <memory>
 
 #include "connector/duckdb_client_state.h"

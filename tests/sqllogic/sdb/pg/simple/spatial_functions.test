@@ -382,6 +382,80 @@ FROM ST_Read('${RESOURCES}/tests/spatial/points.geojson');
 v
 6
 
+# Every other allowlisted OGR driver, each over a fixture holding the same three
+# points, so a driver dropped from the allowlist fails here rather than silently
+# in a user's query. ST_Read_Meta pins which driver actually claimed the file.
+
+query
+SELECT driver_short_name AS v
+FROM ST_Read_Meta('${RESOURCES}/tests/spatial/points.csv');
+----
+v
+CSV
+
+query
+SELECT driver_short_name AS v
+FROM ST_Read_Meta('${RESOURCES}/tests/spatial/points.geojsonl');
+----
+v
+GeoJSONSeq
+
+query
+SELECT driver_short_name AS v
+FROM ST_Read_Meta('${RESOURCES}/tests/spatial/points.vrt');
+----
+v
+OGR_VRT
+
+query
+SELECT driver_short_name AS v
+FROM ST_Read_Meta('${RESOURCES}/tests/spatial/points.fgb');
+----
+v
+FlatGeobuf
+
+# The same three points come back whichever driver read them.
+
+query
+SELECT name, ST_AsText(geom) AS wkt
+FROM ST_Read('${RESOURCES}/tests/spatial/points.csv')
+ORDER BY name;
+----
+name	wkt
+alpha	POINT (1 2)
+beta	POINT (3 4)
+gamma	POINT (5 6)
+
+query
+SELECT name, ST_AsText(geom) AS wkt
+FROM ST_Read('${RESOURCES}/tests/spatial/points.geojsonl')
+ORDER BY name;
+----
+name	wkt
+alpha	POINT (1 2)
+beta	POINT (3 4)
+gamma	POINT (5 6)
+
+query
+SELECT name, ST_AsText(geom) AS wkt
+FROM ST_Read('${RESOURCES}/tests/spatial/points.vrt')
+ORDER BY name;
+----
+name	wkt
+alpha	POINT (1 2)
+beta	POINT (3 4)
+gamma	POINT (5 6)
+
+query
+SELECT name, ST_AsText(geom) AS wkt
+FROM ST_Read('${RESOURCES}/tests/spatial/points.fgb')
+ORDER BY name;
+----
+name	wkt
+alpha	POINT (1 2)
+beta	POINT (3 4)
+gamma	POINT (5 6)
+
 # An existing file that no enabled driver can open must report an error, not
 # return an empty result. Upstream skipped it via a try/catch that never fired
 # (GDALDataset::Open returns nullptr instead of throwing), so this dereferenced

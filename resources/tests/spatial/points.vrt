@@ -1,0 +1,7 @@
+<OGRVRTDataSource>
+  <OGRVRTLayer name="points">
+    <SrcDataSource relativeToVRT="1">points.csv</SrcDataSource>
+    <SrcLayer>points</SrcLayer>
+    <GeometryField encoding="WKT" field="WKT"/>
+  </OGRVRTLayer>
+</OGRVRTDataSource>

@@ -9,12 +9,6 @@ set(CMAKE_CXX_FLAGS
 include(ExternalProject)
 include(UpdateModule)
 
-# PROJ does set(CMAKE_C_STANDARD 99 CACHE ...) without FORCE, so with no prior
-# cache entry it wins globally and drops every C target to -std=gnu99, which
-# breaks OpenSSL ("bad implementation" in internal/refcount.h -- no atomics).
-# Claim the entry before any add_subdirectory so PROJ's set() is a no-op.
-set(CMAKE_C_STANDARD 17 CACHE STRING "" FORCE)
-
 sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
 
 ################################################################################

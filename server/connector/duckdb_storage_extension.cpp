@@ -32,9 +32,10 @@
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
 #include "basics/system-compiler.h"
-#include "catalog1/boot.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/foreign_server.h"
+#include "catalog/boot.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/foreign_server.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
@@ -53,13 +54,22 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  // Resolving the name to the database's own duckdb file is what gives the
-  // attachment a real SingleFileStorageManager: its own storage, its own data
-  // WAL, its own checkpoint. AttachedDatabase reads info.path after this
-  // returns.
   if (info.path.empty()) {
+    auto& cluster = catalog::ClusterOf(context);
+    const auto transaction = cluster.GetCatalogTransaction(context);
+    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                   .GetEntry(transaction, info.name);
+    if (!entry) {
+      duckdb::CreateDatabaseInfo database;
+      database.SetName(info.name);
+      auto* connection = GetSereneDBContextPtr(context);
+      database.permissions.owner =
+        connection ? connection->GetRoleId() : pg::kRootUser;
+      entry = cluster.CreateDatabase(transaction, database);
+    }
+    db.oid = entry->oid;
     info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
-                  .DatabaseFile(name);
+                  .DatabaseFile(entry->oid);
   }
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.

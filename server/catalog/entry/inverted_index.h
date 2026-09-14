@@ -77,12 +77,9 @@ struct InvertedIndexField {
   bool whole_value = false;
   bool is_keyword = false;
   irs::ColumnOptions column_options;
-  // The text search dictionary this field tokenizes through; empty when it
-  // tokenizes verbatim. Named rather than referenced by oid because duckdb
-  // reassigns oids on every load.
-  duckdb::Identifier text_dictionary;
+  duckdb::idx_t text_dictionary = 0;
 
-  bool HasTextDictionary() const noexcept { return !text_dictionary.empty(); }
+  bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
@@ -152,8 +149,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 class IndexTokenizers {
  public:
   IndexTokenizers() = default;
-  IndexTokenizers(duckdb::ClientContext& context,
-                  duckdb::SchemaCatalogEntry& schema,
+  IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
   ColumnTokenizer Acquire(irs::field_id field_id) const;
@@ -202,7 +198,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   const auto& Storage() const noexcept { return _storage; }
   const auto& Config() const noexcept { return _config; }
-  IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const;
+  IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const {
+    return {context, catalog, *_config};
+  }
   std::optional<ScorerOptions> TopKScorer(duckdb::ClientContext& context) const;
   std::string ExpressionText(irs::field_id field_id) const;
 

@@ -20,13 +20,20 @@
 
 #pragma once
 
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duckdb {
 
+class AttachedDatabase;
+class ClientContext;
+struct AttachInfo;
 struct DBConfig;
 
 }  // namespace duckdb
@@ -36,10 +43,18 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
   explicit DataDirectory(std::string directory);
 
   std::string ClusterFile() const;
-  std::string DatabaseFile(std::string_view name) const;
+  std::string DatabaseDir() const;
+  std::string DatabaseFile(duckdb::idx_t oid) const;
 
   std::string directory;
 };
+
+void Attach(duckdb::AttachInfo& info, std::string_view type,
+            duckdb::AttachVisibility visibility);
+
+void Detach(const duckdb::Identifier& name);
+
+void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid);
 
 void RegisterClusterStorage(duckdb::DBConfig& config,
                             duckdb::shared_ptr<DataDirectory> layout);

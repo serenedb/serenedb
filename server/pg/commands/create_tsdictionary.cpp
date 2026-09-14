@@ -927,7 +927,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
   }
   tokenizer.permissions.owner = role;
   auto& catalog = target.catalog.Cast<catalog::SereneDBCatalog>();
-  catalog.CreateTokenizer(duckdb::CatalogTransaction{catalog, client},
+  catalog.CreateTokenizer(catalog.GetCatalogTransaction(client),
                           target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);
 }
 

@@ -55,6 +55,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   void OnDetach(duckdb::ClientContext& context) override;
 
+  void Alter(duckdb::CatalogTransaction transaction,
+             duckdb::AlterInfo& info) override;
+
   std::string GetDefaultSchema() const override {
     return std::string{StaticStrings::kPublic};
   }
@@ -78,7 +81,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
     duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info) override;
+    duckdb::CreateTokenizerInfo& info) override {
+    return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
+  }
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
     duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id);

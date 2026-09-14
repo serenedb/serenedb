@@ -136,10 +136,6 @@ CatalogType DefaultObjType(LogicalOperatorType type) {
       return CatalogType::MACRO_ENTRY;
     case LogicalOperatorType::LOGICAL_CREATE_TYPE:
       return CatalogType::TYPE_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
-      return CatalogType::SCHEMA_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
-      return CatalogType::TRIGGER_ENTRY;
     default:
       return CatalogType::TABLE_ENTRY;
   }
@@ -156,22 +152,6 @@ void MergeGrant(duckdb::vector<duckdb::AclItem>& acl,
   }
   it->privs |= item.privs;
   it->grant_option |= item.grant_option;
-}
-
-template<typename F>
-void VisitExpressionTree(duckdb::Expression& expr, F& visit) {
-  visit(expr);
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr,
-    [&](duckdb::Expression& child) { VisitExpressionTree(child, visit); });
-}
-
-template<typename F>
-void VisitOperatorExpressions(duckdb::LogicalOperator& op, F& visit) {
-  duckdb::LogicalOperatorVisitor::EnumerateExpressions(
-    op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
-      VisitExpressionTree(**child, visit);
-    });
 }
 
 std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
@@ -291,7 +271,8 @@ class Enforcer {
           }
           positions.insert(position);
         };
-        VisitExpressionTree(*update.expressions[i], collect);
+        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
+                                                        collect);
       }
     }
     auto visit = [&](duckdb::Expression& expr) {
@@ -332,11 +313,15 @@ class Enforcer {
         op.Cast<duckdb::LogicalProjection>().table_index.index);
       for (duckdb::idx_t i = 0; i < op.expressions.size(); ++i) {
         if (positions.contains(i)) {
-          VisitExpressionTree(*op.expressions[i], visit);
+          duckdb::ExpressionIterator::EnumerateExpression(op.expressions[i],
+                                                          visit);
         }
       }
     } else {
-      VisitOperatorExpressions(op, visit);
+      duckdb::LogicalOperatorVisitor::EnumerateExpressions(
+        op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
+          duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
+        });
     }
 
     switch (op.type) {
@@ -383,7 +368,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, DefaultObjType(op.type), create.schema);
-        if (_enforce && create.schema) {
+        if (_enforce) {
           RequireSchemaCreate(*create.schema);
           CheckReplace(*create.info);
         }
@@ -618,13 +603,13 @@ class Enforcer {
     }
   }
 
-  static bool ReferencesColumns(duckdb::Expression& expr) {
+  static bool ReferencesColumns(duckdb::unique_ptr<duckdb::Expression>& expr) {
     bool found = false;
-    auto visit = [&](duckdb::Expression& node) {
-      found |=
-        node.GetExpressionType() == duckdb::ExpressionType::BOUND_COLUMN_REF;
-    };
-    VisitExpressionTree(expr, visit);
+    duckdb::ExpressionIterator::EnumerateExpression(
+      expr, [&](duckdb::Expression& node) {
+        found |=
+          node.GetExpressionType() == duckdb::ExpressionType::BOUND_COLUMN_REF;
+      });
     return found;
   }
 
@@ -638,7 +623,7 @@ class Enforcer {
       source->expressions.size() == columns.PhysicalColumnCount();
     duckdb::idx_t position = 0;
     for (const auto& column : columns.Physical()) {
-      if (!per_column || ReferencesColumns(*source->expressions[position])) {
+      if (!per_column || ReferencesColumns(source->expressions[position])) {
         acls.push_back(column.Acl());
       }
       ++position;

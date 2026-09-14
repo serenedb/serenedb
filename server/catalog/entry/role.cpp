@@ -147,6 +147,4 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   return duckdb::make_uniq<RoleCatalogEntry>(catalog, next);
 }
 
-std::string RoleCatalogEntry::ToSQL() const { return GetInfo()->ToString(); }
-
 }  // namespace sdb::catalog

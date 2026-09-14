@@ -61,7 +61,7 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::ClientContext& context, duckdb::AlterInfo& info) override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override;
+  std::string ToSQL() const override { return GetInfo()->ToString(); }
 
  private:
   RoleOption _options;

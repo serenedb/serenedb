@@ -86,8 +86,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto entry = catalog.CreateForeignServer(
     catalog.GetCatalogTransaction(conn_ctx.GetClientContext()), info);
   if (entry) {
-    catalog::AttachForeignServer(
-      entry->Cast<catalog::ForeignServerCatalogEntry>());
+    entry->Cast<catalog::ForeignServerCatalogEntry>().Attach();
   }
 }
 

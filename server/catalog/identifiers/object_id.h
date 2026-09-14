@@ -57,6 +57,8 @@ inline constexpr ObjectId kTsquery{kMinSystem.id() + 102};
 inline constexpr ObjectId kTsqueryArray{kMinSystem.id() + 103};
 inline constexpr ObjectId kUnion{kMinSystem.id() + 104};
 inline constexpr ObjectId kUnionArray{kMinSystem.id() + 105};
+inline constexpr ObjectId kGeometry{kMinSystem.id() + 106};
+inline constexpr ObjectId kGeometryArray{kMinSystem.id() + 107};
 
 // OpClasses
 inline constexpr ObjectId kPgOpclassIvf{kMinSystem.id() + 200};

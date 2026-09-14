@@ -1,0 +1,194 @@
+# DOCS_TEST: example_001
+# DOCS_TEST_BODY
+statement ok
+CREATE TABLE geometries (kind VARCHAR, geom GEOMETRY);
+
+statement ok
+INSERT INTO geometries VALUES
+  ('point', 'POINT(1 2)'),
+  ('linestring', 'LINESTRING(0 0, 1 1, 2 2)'),
+  ('polygon', 'POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))'),
+  ('multipoint', 'MULTIPOINT(0 0, 1 1)'),
+  ('multilinestring', 'MULTILINESTRING((0 0, 1 1), (2 2, 3 3))'),
+  ('multipolygon', 'MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))'),
+  ('geometrycollection', 'GEOMETRYCOLLECTION(POINT(1 2), LINESTRING(0 0, 1 1))');
+
+query
+SELECT kind, ST_AsText(geom) AS geom FROM geometries ORDER BY kind;
+----
+kind	geom
+geometrycollection	GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1))
+linestring	LINESTRING (0 0, 1 1, 2 2)
+multilinestring	MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))
+multipoint	MULTIPOINT (0 0, 1 1)
+multipolygon	MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))
+point	POINT (1 2)
+polygon	POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))
+
+statement ok
+DROP TABLE geometries;
+
+# DOCS_TEST: example_002
+# DOCS_TEST_BODY
+statement ok
+CREATE TABLE vertex_dims (kind VARCHAR, geom GEOMETRY);
+
+statement ok
+INSERT INTO vertex_dims VALUES
+  ('xy', 'POINT(1 2)'),
+  ('xyz', 'POINT Z(1 2 3)'),
+  ('xym', 'POINT M(1 2 4)'),
+  ('xyzm', 'POINT ZM(1 2 3 4)');
+
+query
+SELECT kind, ST_AsText(geom) AS geom, ST_HasZ(geom) AS has_z, ST_HasM(geom) AS has_m FROM vertex_dims ORDER BY kind;
+----
+kind	geom	has_z	has_m
+xy	POINT (1 2)	f	f
+xym	POINT M (1 2 4)	f	t
+xyz	POINT Z (1 2 3)	t	f
+xyzm	POINT ZM (1 2 3 4)	t	t
+
+statement ok
+DROP TABLE vertex_dims;
+
+# DOCS_TEST: example_003
+# DOCS_TEST_BODY
+statement ok
+SET geometry_minimum_shredding_size = 0;
+
+query
+SELECT current_setting('geometry_minimum_shredding_size') AS threshold;
+----
+threshold
+0
+
+statement ok
+SET geometry_minimum_shredding_size = 30000;
+
+# DOCS_TEST: example_004
+# DOCS_TEST_BODY
+statement ok
+SET geometry_minimum_shredding_size = -1;
+
+statement ok
+CREATE TABLE points_plain AS SELECT ST_Point(i, i * 2) AS geom FROM generate_series(1, 50000) AS t(i);
+
+statement ok
+FORCE CHECKPOINT;
+
+query
+SELECT segment_type FROM pragma_storage_info('points_plain') WHERE segment_type <> 'VALIDITY' GROUP BY segment_type;
+----
+segment_type
+GEOMETRY
+
+statement ok
+SET geometry_minimum_shredding_size = 0;
+
+statement ok
+CREATE TABLE points_shredded AS SELECT ST_Point(i, i * 2) AS geom FROM generate_series(1, 50000) AS t(i);
+
+statement ok
+FORCE CHECKPOINT;
+
+query
+SELECT segment_type FROM pragma_storage_info('points_shredded') WHERE segment_type <> 'VALIDITY' GROUP BY segment_type;
+----
+segment_type
+DOUBLE
+
+statement ok
+DROP TABLE points_plain;
+
+statement ok
+DROP TABLE points_shredded;
+
+statement ok
+SET geometry_minimum_shredding_size = 30000;
+
+# DOCS_TEST: example_005
+# DOCS_TEST_BODY
+statement ok
+CREATE TABLE stats_demo (geom GEOMETRY);
+
+statement ok
+INSERT INTO stats_demo VALUES ('POINT(1 2)'), ('POINT(5 6)');
+
+query
+SELECT stats(geom) AS geometry_stats FROM stats_demo LIMIT 1;
+----
+geometry_stats
+{"approx_unique":2,"extent":{"x_max":5.0,"x_min":1.0,"y_max":6.0,"y_min":2.0},"has_empty_geom":false,"has_empty_part":false,"has_no_null":true,"has_non_empty_geom":true,"has_non_empty_part":true,"has_null":false}
+
+statement ok
+DROP TABLE stats_demo;
+
+# DOCS_TEST: example_006
+# DOCS_TEST_BODY
+query
+SELECT crs_name, auth_name, auth_code FROM sdb_coordinate_systems() WHERE auth_name = 'OGC' ORDER BY crs_name;
+----
+crs_name	auth_name	auth_code
+OGC:CRS27	OGC	CRS27
+OGC:CRS83	OGC	CRS83
+OGC:CRS84	OGC	CRS84
+OGC:CRS84h	OGC	CRS84h
+
+# DOCS_TEST: example_008
+# DOCS_TEST_BODY
+statement ok
+SET ignore_unknown_crs = true;
+
+statement ok
+CREATE TABLE unknown_crs (geom GEOMETRY('FOO:1234'));
+
+statement ok
+INSERT INTO unknown_crs VALUES ('POINT(1 2)');
+
+query
+SELECT ST_AsText(geom) AS geom, typeof(geom) AS type, ST_CRS(geom) AS crs FROM unknown_crs;
+----
+geom	type	crs
+POINT (1 2)	GEOMETRY	NULL
+
+statement ok
+DROP TABLE unknown_crs;
+
+statement ok
+SET ignore_unknown_crs = false;
+
+# DOCS_TEST: example_010
+# DOCS_TEST_BODY
+query
+SELECT typeof(ST_SetCRS('POINT(1 2)'::GEOMETRY, 'OGC:CRS84')) AS type;
+----
+type
+GEOMETRY('OGC:CRS84')
+
+# DOCS_TEST: example_011
+# DOCS_TEST_BODY
+query
+SELECT typeof(ST_SetCRS('POINT(1 2)'::GEOMETRY('OGC:CRS84'), '')) AS cleared, typeof('POINT(1 2)'::GEOMETRY('OGC:CRS84')::GEOMETRY) AS by_cast;
+----
+cleared	by_cast
+GEOMETRY	GEOMETRY
+
+# DOCS_TEST: example_012
+# DOCS_TEST_BODY
+query
+SELECT ST_CRS('POINT(1 2)'::GEOMETRY('EPSG:4326')) AS crs;
+----
+crs
+EPSG:4326
+
+# DOCS_TEST: example_007
+# DOCS_TEST_BODY
+statement error
+CREATE TABLE unknown_crs (geom GEOMETRY('FOO:1234'));
+----
+db error: ERROR: Encountered unrecognized coordinate system 'FOO:1234' when trying to create GEOMETRY type
+The coordinate system definition may be incomplete or invalid. Your options are as follows:
+* Load an extension that can identify this coordinate system
+* Provide a full coordinate system definition in e.g. "PROJJSON" or "WKT2" format
+* Set the 'ignore_unknown_crs' configuration option to drop the coordinate system from the resulting geometry type and make this error go away

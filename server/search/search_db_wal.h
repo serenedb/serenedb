@@ -199,7 +199,9 @@ class SearchDbWal {
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
-  std::filesystem::path ChunkDir(uint64_t table_id) const;
+  std::filesystem::path ChunkDir(uint64_t table_id) const {
+    return _chunks_root / std::to_string(table_id);
+  }
   uint64_t MinCommittedTick();
   void RunGc();
 };

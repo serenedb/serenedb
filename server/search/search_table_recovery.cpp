@@ -32,7 +32,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
-#include <limits>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -86,10 +85,7 @@ void ForEachSearchTable(
 
 }  // namespace
 
-void RunSearchTableRecovery(bool skip_wal_recovery) {
-  if (skip_wal_recovery) {
-    return;
-  }
+void RunSearchTableRecovery() {
   auto begin = std::chrono::steady_clock::now();
   auto& engine = GetSearchEngine();
 
@@ -143,10 +139,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     auto exists_of = [&](duckdb::idx_t table_id) {
       return shards.find(table_id) != shards.end();
     };
-    auto committed_of = [&](duckdb::idx_t table_id) -> uint64_t {
-      auto it = shards.find(table_id);
-      return it != shards.end() ? it->second.search->CommittedTick()
-                                : std::numeric_limits<uint64_t>::max();
+    auto committed_of = [&](duckdb::idx_t table_id) {
+      return shards.find(table_id)->second.search->CommittedTick();
     };
     auto ensure_ctx = [&](duckdb::idx_t table_id) -> ReplayCtx& {
       auto [cit, inserted] = ctxs.try_emplace(table_id);

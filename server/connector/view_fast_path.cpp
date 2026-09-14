@@ -370,11 +370,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     }
     if (cat_type == "serenedb") {
-      const auto* sdb_entry =
-        dynamic_cast<const duckdb::TableCatalogEntry*>(&entry);
-      if (!sdb_entry) {
-        return std::nullopt;
-      }
       // Views over a serenedb table ride the same rowid-keyed machinery as
       // views over an attached database.
       ViewFastPath out;
@@ -386,7 +381,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.supports_filters = true;
       // Only the check that every projected name is one of the relation's
       // columns: a name that belongs to none is not this fast path's to serve.
-      const auto& sdb_columns = sdb_entry->GetColumns();
+      const auto& sdb_columns = entry.GetColumns();
       const auto has_column = [&](std::string_view name) {
         for (const auto& col : sdb_columns.Logical()) {
           if (col.Name() == duckdb::Identifier{name}) {

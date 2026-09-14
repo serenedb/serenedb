@@ -728,7 +728,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else {
       type = std::string{TypeNameOf(*parent_child)};
     }
-    SDB_ASSERT(!type.empty());
     auto child = std::make_unique<irs::analysis::TokenizerConfig>();
     BuildChild(type, child_prefix, parent_child, *child);
     return child;
@@ -878,8 +877,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       [&]<const OptionInfo & Feature> {
         bool use_feature = OptionsParser::EraseOptionOrDefault<Feature>();
         if (use_feature) {
-          bool added = _features.Add(Feature.name);
-          SDB_ASSERT(added);
+          _features.Add(Feature.name);
         }
       });
     _features.Validate(type);

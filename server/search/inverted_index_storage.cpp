@@ -149,14 +149,6 @@ std::filesystem::path InvertedIndexStorage::GetPath(duckdb::idx_t db_id,
   return path;
 }
 
-std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
-  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-  duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
-  const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
-  return std::make_shared<InvertedIndexStorage>(
-    db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
-}
-
 InvertedIndexStorage::InvertedIndexStorage(
   duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
   duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
@@ -341,10 +333,6 @@ InvertedIndexStorage::~InvertedIndexStorage() {
     .Detach();
 }
 
-void InvertedIndexStorage::StartTasks() {
-  _search.StartTasks(shared_from_this());
-}
-
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -380,23 +368,19 @@ void InvertedIndexStorage::CheckpointRefresh() {
 InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   Stats stats;
-  if (inverted_index_snapshot) {
-    auto& reader = inverted_index_snapshot->reader;
-    SDB_ASSERT(reader);
-    auto& segments = reader->Meta().index_meta.segments;
-    stats.numSegments = segments.size();
-    stats.numDocs = reader->docs_count();
-    stats.numLiveDocs = reader->live_docs_count();
-    stats.numFiles = 1 + stats.numSegments;
-    for (const auto& segment : segments) {
-      const auto& meta = segment.meta;
-      stats.indexSize += meta.byte_size;
-      stats.numFiles += meta.files.size();
-    }
+  auto& reader = inverted_index_snapshot->reader;
+  SDB_ASSERT(reader);
+  auto& segments = reader->Meta().index_meta.segments;
+  stats.numSegments = segments.size();
+  stats.numDocs = reader->docs_count();
+  stats.numLiveDocs = reader->live_docs_count();
+  stats.numFiles = 1 + stats.numSegments;
+  for (const auto& segment : segments) {
+    const auto& meta = segment.meta;
+    stats.indexSize += meta.byte_size;
+    stats.numFiles += meta.files.size();
   }
-  if (_writer) {
-    stats.numBufferedDocs = _writer->BufferedDocs();
-  }
+  stats.numBufferedDocs = _writer->BufferedDocs();
   stats.numFailedCommits = _num_failed_commits.load(std::memory_order_relaxed);
   stats.numFailedCleanups =
     _num_failed_cleanups.load(std::memory_order_relaxed);
@@ -483,13 +467,6 @@ absl::Status InvertedIndexStorage::CompactUnsafeImpl(
   const irs::IndexFieldOptions* field_options) {
   empty_compaction = false;
 
-  if (!policy) {
-    return absl::InvalidArgumentError(
-      absl::StrCat("unset compaction policy while executing compaction policy "
-                   "on Search index '",
-                   GetId(), "'"));
-  }
-
   try {
     const auto res = _writer->Compact(policy, field_options, nullptr, progress);
     if (res.error == irs::CompactionError::Fail) {
@@ -498,7 +475,6 @@ absl::Status InvertedIndexStorage::CompactUnsafeImpl(
         "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
-      empty_compaction = false;
       return absl::OkStatus();
     }
 
@@ -611,7 +587,6 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     code = RefreshResult::Done;
 
     // update reader
-    SDB_ASSERT(GetInvertedIndexSnapshot());
     SDB_ASSERT(GetInvertedIndexSnapshot()->reader != reader);
     const auto reader_size = reader->size();
     const auto docs_count = reader->docs_count();
@@ -648,10 +623,6 @@ void InvertedIndexStorage::FinishCreation() {
     return;
   }
   _phase = Phase::Active;
-}
-
-InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {
-  return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
 }
 
 bool InvertedIndexStorage::AppendDeleteLog(std::vector<int64_t>&& rows) {

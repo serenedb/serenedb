@@ -85,7 +85,6 @@ Tokenizer::TokenizerWrapper Tokenizer::Acquire() const {
 }
 
 void Tokenizer::Release(irs::analysis::Analyzer::ptr analyzer) const noexcept {
-  SDB_ASSERT(analyzer);
   const absl::MutexLock lock{&_mutex};
   _pool.push_back(std::move(analyzer));
 }

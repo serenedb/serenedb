@@ -772,7 +772,7 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
       auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-        &context, static_cast<duckdb::idx_t>(oid));
+        context, static_cast<duckdb::idx_t>(oid));
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
@@ -1273,7 +1273,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     auto database = SessionCatalog(context);
     auto schema = database
                     ? database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-                        &context, obj_id)
+                        context, obj_id)
                     : nullptr;
     if (!schema) {
       is_null = true;

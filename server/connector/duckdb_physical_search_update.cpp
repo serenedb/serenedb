@@ -199,13 +199,6 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
-duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
-  duckdb::Pipeline& /*pipeline*/, duckdb::Event& /*event*/,
-  duckdb::ClientContext& /*context*/,
-  duckdb::OperatorSinkFinalizeInput& /*input*/) const {
-  return duckdb::SinkFinalizeType::READY;
-}
-
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchUpdate::GetGlobalSourceState(
   duckdb::ClientContext& /*context*/) const {

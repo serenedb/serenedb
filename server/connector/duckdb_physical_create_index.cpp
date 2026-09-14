@@ -105,9 +105,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   duckdb::idx_t table_id;
   std::vector<InsertColumnMeta> columns;
-  // Where the store WAL stood when this index was published (see the WAL
-  // barrier in GetGlobalSinkState); the build covers everything below it.
-  search::WalCursor backfill_wal_cursor;
 
   bool pk_term = false;
   connector::PkColumnKind pk_column = connector::PkColumnKind::None;
@@ -393,8 +390,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
   auto* gstate_ptr =
     sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_storage ||
-      !gstate_ptr->config) {
+  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->config) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
   auto& gstate = *gstate_ptr;
@@ -432,10 +428,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  if (!ParallelSink()) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-  // ParallelSink() is true, so GetLocalSinkState built this type.
   auto* lstate = static_cast<CreateIndexLocalState*>(&input.local_state);
   if (!lstate->writer) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -628,49 +620,36 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     return duckdb::SinkFinalizeType::READY;
   }
 
-  if (gstate.index_storage) {
-    if (gstate.progress) {
-      gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
-    }
-
-    auto& inverted_storage = *gstate.index_storage;
-    auto delete_log = inverted_storage.TakeDeleteLog();
-    if (!delete_log.empty()) {
-      // Sorted rowids encode to lexicographically sorted pk terms, so the
-      // remove filter walks each segment's term dictionary sequentially.
-      absl::c_sort(delete_log);
-      auto trx = inverted_storage.GetTransaction();
-      DuckDBSearchSinkDeleteWriter delete_writer{trx};
-      std::string key;
-      FeedDeletes(delete_writer, key, delete_log.size(),
-                  [&](size_t i) { return delete_log[i]; });
-      trx.RegisterFlush();
-      const auto last_tick =
-        search::TickDomain::Instance().Advance(delete_log.size() + 1);
-      if (!trx.Commit(last_tick)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INTERNAL_ERROR),
-          ERR_MSG("failed to replay concurrent deletes for index '",
-                  gstate.index_name, "'"));
-      }
-    }
-    // The refresh below stamps the index payload with the cursor of the
-    // highest recorded tick it makes durable. A build's ticks are unrelated to
-    // commit ticks, so record the WAL position it covered at the lowest tick:
-    // it means "this index already holds everything below here", whatever tick
-    // the build's segments ended up with.
-    if (gstate.backfill_wal_cursor.generation != 0 ||
-        gstate.backfill_wal_cursor.offset != 0) {
-      inverted_storage.RecordFlushCursor(irs::writer_limits::kMinTick + 1,
-                                         gstate.backfill_wal_cursor);
-    }
-    if (gstate.file_manifest) {
-      inverted_storage.SetFileManifest(gstate.file_manifest);
-    }
-    inverted_storage.Refresh();
-    SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
-    inverted_storage.FinishCreation();
+  if (gstate.progress) {
+    gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
   }
+
+  auto& inverted_storage = *gstate.index_storage;
+  auto delete_log = inverted_storage.TakeDeleteLog();
+  if (!delete_log.empty()) {
+    // Sorted rowids encode to lexicographically sorted pk terms, so the
+    // remove filter walks each segment's term dictionary sequentially.
+    absl::c_sort(delete_log);
+    auto trx = inverted_storage.GetTransaction();
+    DuckDBSearchSinkDeleteWriter delete_writer{trx};
+    std::string key;
+    FeedDeletes(delete_writer, key, delete_log.size(),
+                [&](size_t i) { return delete_log[i]; });
+    trx.RegisterFlush();
+    const auto last_tick =
+      search::TickDomain::Instance().Advance(delete_log.size() + 1);
+    if (!trx.Commit(last_tick)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("failed to replay concurrent deletes for index '",
+                              gstate.index_name, "'"));
+    }
+  }
+  if (gstate.file_manifest) {
+    inverted_storage.SetFileManifest(gstate.file_manifest);
+  }
+  inverted_storage.Refresh();
+  SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
+  inverted_storage.FinishCreation();
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);

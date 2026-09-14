@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/storage/table_storage_info.hpp>
 
 namespace duckdb {
 
@@ -51,8 +52,9 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context,
     duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) override {
+    return {};
+  }
 
   duckdb::virtual_column_map_t GetVirtualColumns() const override;
 

@@ -166,11 +166,6 @@ void Config::OnSet(std::string_view name, bool is_local,
   }
 }
 
-void Config::SetSetting(std::string_view key, std::string value,
-                        bool /*is_local*/) {
-  SetInternal(key, std::move(value));
-}
-
 void Config::SetSettingChecked(std::string_view key, std::string value,
                                bool is_local) {
   duckdb::PhysicalSet::SetVariable(

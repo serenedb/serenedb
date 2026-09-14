@@ -83,10 +83,6 @@ duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
   return col.Type();
 }
 
-void RowIdFetchIndexSource::FinishInit(duckdb::ClientContext& context) {
-  _fetch_chunk.Initialize(context, _fetch_types);
-}
-
 void RowIdFetchIndexSource::BuildPushedFilters(
   const duckdb::TableFilterSet* input_filters) {
   if (!input_filters || !input_filters->HasFilters()) {

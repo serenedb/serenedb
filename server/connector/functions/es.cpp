@@ -293,7 +293,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
 // The backfill-free tail of CREATE INDEX ... USING inverted: the table was
 // created in the same call and is empty, so after StartTasks the first
 // commit only seals the meta payload.
-void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
+void CreateTextIndex(duckdb::ClientContext& context,
                      duckdb::TableCatalogEntry& table,
                      std::span<const std::string_view> text_columns) {
   {
@@ -368,7 +368,6 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   auto request = ParseCreateIndexBody(data.index, data.body);
 
   auto& conn_ctx = GetSereneDBContext(context);
-  const auto database_id = conn_ctx.GetDatabaseId();
 
   // Through the database's own catalog: CREATE SCHEMA and CREATE TABLE are
   // duckdb's operations, and serenedb's are the same ones.
@@ -423,8 +422,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   }
 
   if (!text_columns.empty()) {
-    CreateTextIndex(context, database_id,
-                    table->Cast<duckdb::TableCatalogEntry>(), text_columns);
+    CreateTextIndex(context, table->Cast<duckdb::TableCatalogEntry>(),
+                    text_columns);
   }
 
   output.SetChildCardinality(1);

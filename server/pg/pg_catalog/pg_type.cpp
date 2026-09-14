@@ -1550,8 +1550,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   // pg_attribute.atttypid -> pg_type.oid; without these rows, columns whose
   // type is an array (text[], oid[], int2[], ...) fail to resolve.
   for (const auto& scalar : kSampleData) {
-    if (scalar.typarray == 0 ||
-        scalar.typcategory == PgType::Typcategory::Array) {
+    if (scalar.typarray == 0) {
       continue;
     }
     rows.push_back(PgType{

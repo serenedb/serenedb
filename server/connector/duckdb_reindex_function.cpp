@@ -233,7 +233,6 @@ class PassConnection {
                std::string_view what) {
     info->index_type = "inverted";
     const auto& view_info = *target.view_info;
-    SDB_ASSERT(info->parsed_expressions.empty());
     for (const auto col : target.index->column_ids) {
       if (col >= view_info.names.size()) {
         THROW_SQL_ERROR(

@@ -32,7 +32,6 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
-#include <duckdb/storage/table_storage_info.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
@@ -88,10 +87,6 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
 
 }  // namespace
 
-duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table) {
-  return duckdb::Identifier{table.GetIdentifierName() + "_pk_seq"};
-}
-
 TableEngine ReadStorageEngine(const WithOptions& options) {
   if (!options.contains(std::string{kStorageOption})) {
     return TableEngine::Transactional;
@@ -130,11 +125,6 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
-}
-
-duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
-  duckdb::ClientContext&) {
-  return {};
 }
 
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {

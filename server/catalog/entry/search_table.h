@@ -29,6 +29,7 @@
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/table_column.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -70,7 +71,10 @@ TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
 
-duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table);
+inline duckdb::Identifier GeneratedPkSequenceName(
+  const duckdb::Identifier& table) {
+  return duckdb::Identifier{table.GetIdentifierName() + "_pk_seq"};
+}
 
 using persistence::SearchTableOptions;
 
@@ -90,8 +94,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context,
     duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) override {
+    return {};
+  }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;

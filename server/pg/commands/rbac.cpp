@@ -425,7 +425,7 @@ void ResolveAlterRole(duckdb::ClientContext& client,
   const bool attributes = info.set_options != RoleOption::None ||
                           info.clear_options != RoleOption::None ||
                           info.set_conn_limit || info.set_valid_until;
-  if (!s.Superuser() && (role.oid != s.Role() || attributes)) {
+  if (role.oid != s.Role() || attributes) {
     RequireRoleAdmin(s, role, "alter");
     RequireAttributeGrant(s, "alter", info.set_options);
   }

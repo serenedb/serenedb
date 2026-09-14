@@ -56,9 +56,9 @@ class Transaction : public Config {
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the engine commit.
-  void PreCommit() noexcept;
+  void PreCommit() noexcept { CommitVariables(); }
   // Pre-rollback counterpart -- restores all SET values.
-  void PreRollback() noexcept;
+  void PreRollback() noexcept { RollbackVariables(); }
 
   // Commit the search-index leg synchronously with the store table changes:
   // called by the engine from its TransactionPreCheckpoint hook, on the

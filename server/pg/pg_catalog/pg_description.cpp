@@ -103,11 +103,8 @@ MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
           return;
         }
         for (size_t i = 0; i < view_columns->names.size(); ++i) {
-          const auto comment = view_entry->GetColumnComment(i);
-          if (!comment.IsNull()) {
-            add(PgClass::kId, view_id, static_cast<int32_t>(i + 1),
-                InfoComment(comment));
-          }
+          add(PgClass::kId, view_id, static_cast<int32_t>(i + 1),
+              InfoComment(view_entry->GetColumnComment(i)));
         }
       });
   });

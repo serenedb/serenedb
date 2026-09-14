@@ -207,7 +207,6 @@ uint64_t SearchTableTransaction::AppendCommit() {
     sections.push_back(section);
   }
 
-  SDB_ASSERT(wal != nullptr);
   return wal->AppendCommit(sections, tick_span);
 }
 

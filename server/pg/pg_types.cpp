@@ -658,7 +658,7 @@ std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
   }
   if (auto database = SessionDatabase(context)) {
     if (auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-          context, oid)) {
+          *context, oid)) {
       return std::string{schema->name.GetIdentifierName()};
     }
   }

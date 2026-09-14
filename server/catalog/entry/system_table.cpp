@@ -30,7 +30,6 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
-#include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -186,11 +185,6 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
 duckdb::TableFunction SystemTableEntry::GetScanFunction(
   duckdb::ClientContext&, duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   return connector::BindSystemTableScan(*this, bind_data);
-}
-
-duckdb::TableStorageInfo SystemTableEntry::GetStorageInfo(
-  duckdb::ClientContext&) {
-  return {};
 }
 
 duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {

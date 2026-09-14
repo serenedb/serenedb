@@ -77,13 +77,6 @@ std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
   return path;
 }
 
-std::shared_ptr<SearchTable> SearchTable::Create(
-  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-  bool is_new, const catalog::SearchTableOptions& options) {
-  return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                       options);
-}
-
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options)
@@ -244,26 +237,19 @@ ResultWithTime SearchTable::CompactUnsafe(
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
-  if (!policy) {
-    result = absl::InvalidArgumentError(
-      absl::StrCat("unset compaction policy for search table ", GetTableId()));
-  } else {
-    try {
-      // iresearch serializes Compact against refresh/DML internally, so a long
-      // merge never blocks the refresh chain.
-      const auto res =
-        _writer->Compact(policy, field_options, nullptr, progress);
-      if (!res) {
-        result = absl::InternalError(
-          absl::StrCat("compaction failed for search table ", GetTableId()));
-      } else {
-        empty_compaction = (res.size == 0);  // nothing merged -> idle round
-      }
-    } catch (const std::exception& e) {
+  try {
+    // iresearch serializes Compact against refresh/DML internally, so a long
+    // merge never blocks the refresh chain.
+    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    if (!res) {
       result = absl::InternalError(
-        absl::StrCat("consolidation failed for search table ", GetTableId(),
-                     ": ", e.what()));
+        absl::StrCat("compaction failed for search table ", GetTableId()));
+    } else {
+      empty_compaction = (res.size == 0);  // nothing merged -> idle round
     }
+  } catch (const std::exception& e) {
+    result = absl::InternalError(absl::StrCat(
+      "consolidation failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(

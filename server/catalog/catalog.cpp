@@ -133,19 +133,15 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
-SereneDBCatalog::FindSchemaById(
-  duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
+SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
+                                duckdb::idx_t id) {
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> result;
-  const auto match = [&](duckdb::SchemaCatalogEntry& schema) {
-    if (!result && schema.oid == id) {
-      result = &schema;
-    }
-  };
-  if (context) {
-    duckdb::DuckCatalog::ScanSchemas(*context, match);
-  } else {
-    duckdb::DuckCatalog::ScanSchemas(match);
-  }
+  duckdb::DuckCatalog::ScanSchemas(context,
+                                   [&](duckdb::SchemaCatalogEntry& schema) {
+                                     if (!result && schema.oid == id) {
+                                       result = &schema;
+                                     }
+                                   });
   return result;
 }
 
@@ -284,6 +280,13 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+  std::vector<duckdb::Identifier> servers;
+  GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) { servers.push_back(entry.name); });
+  for (const auto& server : servers) {
+    duckdb::DatabaseManager::Get(context).DetachDatabase(
+      context, server, duckdb::OnEntryNotFound::RETURN_NULL);
+  }
   if (context.transaction.HasActiveTransaction()) {
     auto& cluster = ClusterOf(context);
     duckdb::DropInfo info;

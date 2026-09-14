@@ -144,20 +144,9 @@ void Transaction::OnStatementEnd() {
   // same view, so there is nothing to drop here.
 }
 
-void Transaction::PreCommit() noexcept {
-  // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
-  // transaction is still active so custom-impl settings (search_path,
-  // transaction_isolation) can use their normal set_local path (which may
-  // do catalog lookups).
-  CommitVariables();
-}
-
-void Transaction::PreRollback() noexcept { RollbackVariables(); }
-
 irs::IndexWriter::Transaction& Transaction::EnsureIndexTransaction(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-  SDB_ASSERT(storage);
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
   if (!entry.transaction) {
     entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(

@@ -2006,15 +2006,7 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
     return;  // no segments claimed by this thread
   }
 
-  const size_t accepted = std::visit(
-    [](auto& c) -> size_t {
-      if constexpr (std::is_same_v<std::decay_t<decltype(c)>, std::monostate>) {
-        return 0;
-      } else {
-        return c.AcceptedCount();
-      }
-    },
-    collector);
+  const size_t accepted = std::get<Collector>(collector).AcceptedCount();
   auto accepted_slice = hit_slice.subspan(0, accepted);
   size_t kept = accepted;
   if (g.topk.rerank_pool > 0 && g.vector_scorer != nullptr) {

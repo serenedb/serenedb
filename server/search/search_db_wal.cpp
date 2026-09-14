@@ -452,10 +452,6 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
 
 SearchDbWal::~SearchDbWal() = default;
 
-std::filesystem::path SearchDbWal::ChunkDir(uint64_t table_id) const {
-  return _chunks_root / std::to_string(table_id);
-}
-
 void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   if (_active) {
     return;

@@ -54,7 +54,10 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
     duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    bool is_new, const catalog::SearchTableOptions& options);
+    bool is_new, const catalog::SearchTableOptions& options) {
+    return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
+                                         options);
+  }
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
@@ -74,36 +77,28 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   }
 
   irs::IndexWriter::Transaction GetTransaction() noexcept {
-    SDB_ASSERT(_writer);
     return _writer->GetBatch();
   }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
-    SDB_ASSERT(_writer);
     return _writer->GetSnapshot();
   }
 
   void Commit() {
-    SDB_ASSERT(_writer && _wal);
     _writer->RefreshCommit();
     _wal->OnShardCommit(GetTableId(), _last_committed_tick);
   }
 
   void Clear(uint64_t tick) {
-    SDB_ASSERT(_writer);
     _writer->Clear(tick);
     if (tick > _last_committed_tick) {
       _last_committed_tick = tick;
     }
   }
 
-  SearchDbWal& Wal() noexcept {
-    SDB_ASSERT(_wal);
-    return *_wal;
-  }
+  SearchDbWal& Wal() noexcept { return *_wal; }
 
   SearchDbWal::ChunkWriter NewChunkWriter() {
-    SDB_ASSERT(_wal);
     return _wal->NewChunkWriter(GetTableId());
   }
 

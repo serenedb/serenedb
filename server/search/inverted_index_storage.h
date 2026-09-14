@@ -127,7 +127,10 @@ class InvertedIndexStorage final
   static std::shared_ptr<InvertedIndexStorage> Create(
     duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
     duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
-    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
+    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
+    return std::make_shared<InvertedIndexStorage>(
+      db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
+  }
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -190,7 +193,9 @@ class InvertedIndexStorage final
   // The database whose attachment holds this index's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
-  Stats GetStats() const;
+  Stats GetStats() const {
+    return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
+  }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load(&_snapshot);
@@ -257,7 +262,7 @@ class InvertedIndexStorage final
     _stale_pressure.store(0, std::memory_order_relaxed);
   }
 
-  void StartTasks();
+  void StartTasks() { _search.StartTasks(shared_from_this()); }
 
   void FinishCreation();
 

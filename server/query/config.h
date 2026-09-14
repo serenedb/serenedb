@@ -113,7 +113,9 @@ class Config {
   void OnSet(std::string_view name, bool is_local, duckdb::Value old_value,
              const duckdb::Value* new_value);
 
-  void SetSetting(std::string_view key, std::string value, bool is_local);
+  void SetSetting(std::string_view key, std::string value, bool) {
+    SetInternal(key, std::move(value));
+  }
 
   // Same as SetSetting but routes through DuckDB's SET pipeline, so type
   // casting and the option's set_callback run as if the client had issued a

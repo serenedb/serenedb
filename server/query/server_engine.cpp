@@ -231,6 +231,10 @@ ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
           "replay (the prefetch window; bounds replay memory). 0 = auto "
           "(4 x cpu threads).");
 
+ABSL_FLAG(bool, skip_search_recovery, false,
+          "Do not replay the search-table WAL at startup; search tables come "
+          "up with what their last refresh made durable.");
+
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {

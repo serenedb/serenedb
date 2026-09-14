@@ -48,9 +48,10 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
-    duckdb::Pipeline& pipeline, duckdb::Event& event,
-    duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const final;
+    duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+    duckdb::OperatorSinkFinalizeInput&) const final {
+    return duckdb::SinkFinalizeType::READY;
+  }
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(

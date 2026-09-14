@@ -418,7 +418,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
-  if (!info || !info->info) {
+  if (!info) {
     return _relation_name;
   }
   return duckdb::DuckIndexEntry::GetTableName();

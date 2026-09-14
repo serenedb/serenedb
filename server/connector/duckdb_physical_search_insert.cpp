@@ -313,10 +313,8 @@ SereneDBSearchInsert::GetGlobalSourceState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertSourceState>();
   if (_return_chunk && sink_state != nullptr) {
-    auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
-    if (gstate.returned) {
-      gstate.returned->InitializeScan(state->scan);
-    }
+    sink_state->Cast<SearchInsertGlobalState>().returned->InitializeScan(
+      state->scan);
   }
   return state;
 }

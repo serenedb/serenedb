@@ -52,7 +52,9 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   // repeats, and records the output slot mapping. Returns the column type.
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
   // Sizes the fetch chunk; call after InitProjection.
-  void FinishInit(duckdb::ClientContext& context);
+  void FinishInit(duckdb::ClientContext& context) {
+    _fetch_chunk.Initialize(context, _fetch_types);
+  }
   // Builds `_pushed_filters` (keyed by fetch-column index) from the scan's
   // pushed filters that target fetched columns; call after InitProjection.
   void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);

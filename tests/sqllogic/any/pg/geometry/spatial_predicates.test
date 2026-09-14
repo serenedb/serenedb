@@ -2,6 +2,10 @@
 # SereneDB (duckdb-spatial + GEOS) and reference PostgreSQL + PostGIS 3.6.
 # Boolean results carry no formatting divergence, so they are portable.
 
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 query
 SELECT ST_Intersects('POINT(1 1)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
 ----

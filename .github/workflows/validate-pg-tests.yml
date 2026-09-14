@@ -91,6 +91,7 @@ jobs:
             -p "${PREFIX}" \
             -f docker-compose.validate-pg-tests.yml \
             up \
+            --build \
             --attach tests \
             --exit-code-from tests \
             --remove-orphans

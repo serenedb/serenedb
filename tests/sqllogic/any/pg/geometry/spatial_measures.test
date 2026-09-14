@@ -3,6 +3,10 @@
 # ST_LineLocatePoint are scaled to integers because NUMERIC trailing-zero
 # rendering differs between the two backends even when the value agrees.
 
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 query
 SELECT ST_Area('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
 ----

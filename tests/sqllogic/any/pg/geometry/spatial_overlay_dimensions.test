@@ -9,6 +9,10 @@
 # Results are compared with ST_Equals or a numeric property, never ST_AsText:
 # WKT spacing and ST_GeometryType spelling both diverge.
 
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 # --- intersection drops to a lower dimension ---
 
 query

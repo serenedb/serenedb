@@ -3,6 +3,10 @@
 # POINT (1 1), PostGIS emits POINT(1 1)), so each result is compared with
 # ST_Equals against an expected literal instead -- a boolean, which is portable.
 
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 query
 SELECT ST_Equals(ST_Intersection('LINESTRING(0 0,4 0)'::geometry,'LINESTRING(2 0,6 0)'::geometry), 'LINESTRING(2 0,4 0)'::geometry) AS v;
 ----

@@ -9,7 +9,9 @@ services:
     command: ["sh", "-c", "chmod 0777 /test-tmp"]
 
   postgres:
-    image: postgres:18-alpine
+    build:
+      context: ${SQLLOGIC_DIR}/fixtures/postgres
+    image: serenedb-test-postgres:18-3.6
     depends_on:
       test-tmp-init:
         condition: service_completed_successfully
@@ -29,7 +31,7 @@ services:
       - test-network
     command: ["postgres", "-c", "max_connections=900"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       # start_period: grace window where failures don't count and the container
       # is marked healthy on the first success -- so a fast postgres unblocks
       # `tests` almost immediately; the window only covers a slow initdb.

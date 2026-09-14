@@ -6,6 +6,10 @@
 # boundary, a shared edge, a shape against itself -- because those are what a
 # wrong DE-9IM mask gets wrong while the obvious cases still pass.
 
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+
 # --- point on the boundary vs point in the interior ---
 #
 # The whole difference between Contains and Covers lives here: the corner point

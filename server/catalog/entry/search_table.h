@@ -34,7 +34,6 @@
 #include <string>
 #include <string_view>
 
-#include "basics/assert.h"
 #include "catalog/persistence/search_table.h"
 #include "query/config_variable_names.h"
 
@@ -117,18 +116,10 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
                              duckdb::LogicalUpdate& update,
                              duckdb::ClientContext& context) override;
 
-  void AdoptStorage(std::shared_ptr<search::SearchTable> storage) {
-    _storage = std::move(storage);
-  }
-
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> GeneratedPkSequence(
     duckdb::ClientContext& context) const;
 
-  const auto& Storage() const noexcept {
-    SDB_ASSERT(_storage);
-    return _storage;
-  }
-  const auto& Options() const noexcept { return _options; }
+  const auto& Storage() const noexcept { return _storage; }
 
  private:
   std::shared_ptr<search::SearchTable> _storage;

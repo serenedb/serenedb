@@ -417,7 +417,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
                               std::move(snapshot));
   data->inverted_index = &entry;
   data->inverted_config = entry.Config();
-  data->index_top_k_scorer = entry.TopKScorer(context);
+  data->index_top_k_scorer = entry.Config()->top_k_scorer;
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
     return_types.push_back(type);
     names.push_back(std::string{data->ColumnNameById(id)});

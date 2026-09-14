@@ -125,6 +125,10 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  if (!_storage) {
+    _storage = search::SearchTable::Create(catalog.GetOid(), schema.oid, oid,
+                                           base.oid == 0, _options);
+  }
 }
 
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
@@ -167,14 +171,10 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
   return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
-void SearchTableEntry::OnDrop() {
-  if (_storage) {
-    _storage->MarkDropped();
-  }
-}
+void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID && _storage) {
+  if (prev_entry.type == duckdb::CatalogType::INVALID) {
     _storage->MarkDropped();
   }
   duckdb::TableCatalogEntry::Rollback(prev_entry);

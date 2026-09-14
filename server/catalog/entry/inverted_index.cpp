@@ -103,6 +103,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   auto config = std::make_shared<InvertedIndexConfig>();
   config->row_group_size = ResolveSettings(options).row_group_size;
   config->pk = data.pk;
+  config->top_k_scorer = std::move(data.top_k_scorer);
   config->fields.reserve(data.fields.size());
   for (auto& [field_id, record] : data.fields) {
     config->fields.emplace(field_id,
@@ -359,8 +360,9 @@ std::string InvertedIndexEntry::ExpressionText(irs::field_id field_id) const {
                                           : std::string{};
 }
 
-std::optional<ScorerOptions> InvertedIndexEntry::TopKScorer(
-  duckdb::ClientContext& context) const {
+std::optional<ScorerOptions> TopKScorer(
+  duckdb::ClientContext& context,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   const auto text = TopKScorerOption(options);
   if (text.empty()) {
     return std::nullopt;
@@ -369,7 +371,8 @@ std::optional<ScorerOptions> InvertedIndexEntry::TopKScorer(
 }
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
-  persistence::InvertedIndexData data{.pk = _config->pk};
+  persistence::InvertedIndexData data{.pk = _config->pk,
+                                      .top_k_scorer = _config->top_k_scorer};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
     data.keys.push_back({

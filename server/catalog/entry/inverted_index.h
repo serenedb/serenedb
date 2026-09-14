@@ -166,7 +166,12 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   PkPolicy pk;
   std::vector<InvertedIndexKey> keys;
   InvertedIndexFields fields;
+  std::optional<ScorerOptions> top_k_scorer;
 };
+
+std::optional<ScorerOptions> TopKScorer(
+  duckdb::ClientContext& context,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 class IndexTokenizers {
  public:
@@ -231,7 +236,6 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const {
     return {context, catalog, *_config};
   }
-  std::optional<ScorerOptions> TopKScorer(duckdb::ClientContext& context) const;
   std::string ExpressionText(irs::field_id field_id) const;
 
  private:

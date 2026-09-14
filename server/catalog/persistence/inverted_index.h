@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/search/scorer_options.hpp>
 #include <iresearch/types.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -82,6 +84,7 @@ struct InvertedIndexData {
   PkPolicy pk;
   std::vector<KeyRecord> keys;
   containers::NodeHashMap<irs::field_id, FieldRecord> fields;
+  std::optional<irs::ScorerOptions> top_k_scorer;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -1189,7 +1189,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
       schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
                                 index->GetTableName())
              : nullptr;
-    if (!relation) {
+    if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
       return absl::OkStatus();
     }
     const std::string schema_name = schema_ident.GetIdentifierName();

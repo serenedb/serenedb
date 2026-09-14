@@ -49,10 +49,8 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
   std::string directory;
 };
 
-void Attach(duckdb::AttachInfo& info, std::string_view type,
-            duckdb::AttachVisibility visibility);
-
-void Detach(const duckdb::Identifier& name);
+void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
+            std::string_view type, duckdb::AttachVisibility visibility);
 
 void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid);
 

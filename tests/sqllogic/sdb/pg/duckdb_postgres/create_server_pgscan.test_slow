@@ -103,6 +103,62 @@ CREATE SERVER IF NOT EXISTS srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fd
   OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
 
 
+# ===== the attachment follows the transaction =====
+# CREATE SERVER attaches inside the creating transaction, so a rollback
+# detaches it again and leaves no catalog row.
+statement ok
+BEGIN;
+
+statement ok
+CREATE SERVER rb_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
+
+query
+SELECT count(*) FROM rb_${__DATABASE__}.csrvpg_ved.vedernikoff;
+----
+count
+6
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'rb_${__DATABASE__}';
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'rb_${__DATABASE__}';
+----
+n
+0
+
+
+# DROP SERVER detaches when the drop commits, so a rolled-back DROP leaves the
+# server attached and usable.
+statement ok
+BEGIN;
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'srv_${__DATABASE__}';
+----
+n
+1
+
+query
+SELECT count(*) FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff;
+----
+count
+6
+
+
 # Clean up the remote objects through the server before detaching.
 statement ok
 DROP TABLE srv_${__DATABASE__}.csrvpg_ved.vedernikoff;

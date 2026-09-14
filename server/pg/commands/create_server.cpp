@@ -30,7 +30,6 @@
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/foreign_server.h"
@@ -86,7 +85,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto entry = catalog.CreateForeignServer(
     catalog.GetCatalogTransaction(conn_ctx.GetClientContext()), info);
   if (entry) {
-    entry->Cast<catalog::ForeignServerCatalogEntry>().Attach();
+    entry->Cast<catalog::ForeignServerCatalogEntry>().Attach(context);
   }
 }
 
@@ -109,7 +108,6 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                                       std::string{name});
   }
   catalog.DropForeignServer(transaction, info);
-  catalog::Detach(duckdb::Identifier{name});
 }
 
 }  // namespace sdb::pg

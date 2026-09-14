@@ -25,7 +25,9 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/strip.h>
 
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <string>
 #include <utility>
@@ -45,7 +47,7 @@ std::string ConnectionString(const ServerOptions& options) {
 
 }  // namespace
 
-void ForeignServerCatalogEntry::Attach() const {
+void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
   const std::string type{absl::StripSuffix(_fdw_name, "_fdw")};
   duckdb::AttachInfo info;
   info.name = name;
@@ -58,7 +60,11 @@ void ForeignServerCatalogEntry::Attach() const {
   } else {
     info.path = ConnectionString(_options);
   }
-  catalog::Attach(info, type, duckdb::AttachVisibility::SHOWN);
+  catalog::Attach(context, info, type, duckdb::AttachVisibility::SHOWN);
+}
+
+void ForeignServerCatalogEntry::OnDrop() {
+  duckdb::DatabaseManager::Get(catalog.GetDatabase()).DetachInternal(name);
 }
 
 ForeignServerCatalogEntry::ForeignServerCatalogEntry(

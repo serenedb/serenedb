@@ -1,2 +1,51 @@
-add_subdirectory(basics)
-add_subdirectory(connector)
+add_executable(
+    serenedb-tests
+    # Custom main (NOT gtest_main): brings up DuckDBEngine before any
+    # SDB_* macro fires -- see tests_main.cpp comment.
+    tests_main.cpp
+    assertions_tests.cpp
+    catalog_persistence_test.cpp
+    catalog_table_info_test.cpp
+    duckdb_roundtrip_test.cpp
+    json_serde_test.cpp
+    json_serde_types_test.cpp
+    meta_transaction_snapshot_test.cpp
+    metrics_test.cpp
+    network_duck_executor_test.cpp
+    network_duck_pump_test.cpp
+    network_h1_codec_test.cpp
+    network_header_test.cpp
+    network_http_test.cpp
+    network_listen_spec_test.cpp
+    network_pg_bind_decoder_test.cpp
+    network_pg_codec_test.cpp
+    network_pg_frame_reader_test.cpp
+    network_pg_frames_test.cpp
+    network_pg_hba_test.cpp
+    network_pg_implicit_txn_test.cpp
+    network_pg_protocol_state_test.cpp
+    network_pg_scram_test.cpp
+    network_pg_startup_test.cpp
+    network_proxy_protocol_test.cpp
+    network_router_test.cpp
+    number_of_cores_test.cpp
+    random_test.cpp
+    scorer_bounds_test.cpp
+    serializer_binary_test.cpp
+    serializer_test.cpp
+    connector/copy_in_bridge_test.cpp
+    connector/duckdb_search_filter_builder_test.cpp
+    connector/duckdb_search_sink_writer_test.cpp
+    connector/index_lifecycle_test.cpp
+    connector/pg_progress_registry_test.cpp
+    connector/pg_serialize_array_test.cpp
+    connector/search_db_wal_test.cpp
+    connector/ts_query_codec_test.cpp
+)
+
+target_link_libraries(serenedb-tests PUBLIC sereneserver serene_connector gtest)
+
+target_compile_definitions(
+    serenedb-tests
+    PRIVATE "SDB_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/resources\""
+)

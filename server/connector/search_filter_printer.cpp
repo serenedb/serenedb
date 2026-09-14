@@ -24,35 +24,34 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/geo_filter.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/nested_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/search_range.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/nested_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/vector_radius_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
-
-#include "basics/down_cast.h"
-#include "pg/sql_exception_macro.h"
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace irs {
 namespace {
 
 using duckdb::ExplainNode;
-using sdb::basics::downCast;
+using irs::utils::downCast;
 using sdb::catalog::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
@@ -227,8 +226,8 @@ std::string_view GeoFilterTypeName(GeoFilterType type) {
   return "?";
 }
 
-std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
-  using T = sdb::geo::ShapeContainer::Type;
+std::string_view GeoShapeTypeName(irs::geo::ShapeContainer::Type type) {
+  using T = irs::geo::ShapeContainer::Type;
   switch (type) {
     case T::Empty:
       return "Empty";

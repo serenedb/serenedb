@@ -93,7 +93,7 @@ Beyond the core types above, the SereneDB server (`serened`) emits its own log t
 |-------------|----------------------------------------------------------------------------------------------|
 | `Startup`   | Server startup and initialization: endpoints, role creation, readiness                       |
 | `Search`    | Inverted-index (search engine) activity: background refresh and compaction, index maintenance |
-| `IResearch` | Low-level events from the underlying [IResearch](https://github.com/serenedb/serenedb/tree/main/libs/iresearch) engine |
+| `IResearch` | Low-level events from the underlying [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch) engine |
 | `Storage`   | Storage-engine events                                                                        |
 | `SSL`       | TLS/SSL configuration and connection events                                                  |
 | `HTTP`      | HTTP traffic (shared with the core `HTTP` type above)                                        |

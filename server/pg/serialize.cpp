@@ -58,18 +58,19 @@
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 
-#include "basics/assert.h"
-#include "basics/dtoa.h"
-#include "basics/log.h"
-#include "basics/misc.hpp"
-#include "basics/system-compiler.h"
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
+
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
-#include "pg/errcodes.h"
 #include "pg/pg_types.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
+#include "server/utils/dtoa.h"
 
 namespace sdb::pg {
 namespace {
@@ -687,7 +688,7 @@ struct IntBinCore {
 template<typename Read>
 struct IntTextCore {
   using Value = Read;
-  static constexpr uint32_t kMaxBytes = basics::kIntStrMaxLen;
+  static constexpr uint32_t kMaxBytes = utils::kIntStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
@@ -724,7 +725,7 @@ struct FloatBinCore {
 template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
-  static constexpr uint32_t kMaxBytes = basics::kNumberStrMaxLen;
+  static constexpr uint32_t kMaxBytes = utils::kNumberStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
     static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
@@ -732,11 +733,11 @@ struct FloatTextCore {
       v = 0;
     }
     char* buf = reinterpret_cast<char*>(dst);
-    if (char* ptr = basics::dtoa_literals<basics::kPgDtoaLiterals>(v, buf)) {
+    if (char* ptr = utils::dtoa_literals<utils::kPgDtoaLiterals>(v, buf)) {
       return static_cast<size_t>(ptr - buf);
     }
     if constexpr (Precise) {
-      char* ptr = basics::dtoa_fast(v, buf);
+      char* ptr = utils::dtoa_fast(v, buf);
       return static_cast<size_t>(ptr - buf);
     } else {
       int num_of_digits =
@@ -746,7 +747,7 @@ struct FloatTextCore {
       } else {
         SDB_ASSERT(num_of_digits >= 0);
       }
-      const auto r = std::to_chars(buf, buf + basics::kNumberStrMaxLen, v,
+      const auto r = std::to_chars(buf, buf + utils::kNumberStrMaxLen, v,
                                    std::chars_format::general, num_of_digits);
       SDB_ASSERT(r);
       return static_cast<size_t>(r.ptr - buf);

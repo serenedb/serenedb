@@ -23,14 +23,14 @@
 #include <simdjson.h>
 
 #include <cstdint>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <map>
 #include <string>
 #include <string_view>
 #include <variant>
 
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/simdjson_sink.h"
 
 namespace sdb::network::http::mcp {
 
@@ -42,7 +42,7 @@ struct RpcId {
 template<typename Context>
   requires requires(Context ctx) { ctx.io().Type(); }
 void SerdeRead(Context ctx, RpcId& id) {
-  using JsonType = basics::JsonSource::JsonType;
+  using JsonType = utils::JsonSource::JsonType;
   id.present = true;
   switch (ctx.io().Type()) {
     case JsonType::string:
@@ -80,8 +80,8 @@ using EmptyObject = std::map<std::string, bool>;
 template<typename T>
 std::string ToJson(const T& value) {
   simdjson::builder::string_builder sb;
-  basics::JsonSink sink{sb};
-  basics::WriteObject(sink, value);
+  utils::JsonSink sink{sb};
+  irs::utils::WriteObject(sink, value);
   return std::string{sb.view().value()};
 }
 

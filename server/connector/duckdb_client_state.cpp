@@ -28,19 +28,19 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/log.h"
-#include "basics/system-compiler.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -153,7 +153,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static const containers::FlatHashSet<std::string_view> kHidden = {
+    static const irs::containers::FlatHashSet<std::string_view> kHidden = {
       "sdb_faults", "debug_verification"};
     return !kHidden.contains(name);
   };

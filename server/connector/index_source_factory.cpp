@@ -20,6 +20,9 @@
 
 #include "connector/index_source_factory.h"
 
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+
 #include "catalog/ddl/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/table.h"
@@ -30,13 +33,11 @@
 #include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 
-std::unique_ptr<IndexSource> MakeIndexSource(
+std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,

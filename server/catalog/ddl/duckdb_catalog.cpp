@@ -88,12 +88,14 @@
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 #include <utility>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -129,8 +131,6 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -321,8 +321,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case SCHEMA_ENTRY:
-      if (info_name == StaticStrings::kPgCatalogSchema ||
-          info_name == StaticStrings::kInformationSchema) {
+      if (info_name == irs::StaticStrings::kPgCatalogSchema ||
+          info_name == irs::StaticStrings::kInformationSchema) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
           ERR_MSG("cannot drop schema ", info_name,
@@ -468,8 +468,8 @@ void SereneDBCatalog::Initialize(
   // database is attached. Their entries carry the DefaultGenerators that mint
   // the static content.
   for (const auto& [name, oid] :
-       {std::pair{StaticStrings::kPgCatalogSchema, id::kPgCatalogSchema},
-        std::pair{StaticStrings::kInformationSchema,
+       {std::pair{irs::StaticStrings::kPgCatalogSchema, id::kPgCatalogSchema},
+        std::pair{irs::StaticStrings::kInformationSchema,
                   id::kPgInformationSchema}}) {
     // The oid pg_namespace reports for these two is fixed rather than
     // allocated: they have no definition to take one from.
@@ -479,8 +479,8 @@ void SereneDBCatalog::Initialize(
   // ordinary record that lands after this.
   if (_public_schema_id.isSet()) {
     const auto schema = catalog::MakeSchemaInfo(_public_schema_id, _database_id,
-                                                StaticStrings::kPublic);
-    CreateSchemaEntry(system, StaticStrings::kPublic, _public_schema_id,
+                                                irs::StaticStrings::kPublic);
+    CreateSchemaEntry(system, irs::StaticStrings::kPublic, _public_schema_id,
                       _public_schema_owner, EntryDependencies(*schema));
   }
 }
@@ -1857,7 +1857,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
   }
 
-  containers::FlatHashSet<duckdb::column_t> seen_columns;
+  irs::containers::FlatHashSet<duckdb::column_t> seen_columns;
   auto add_column = [&](std::string_view col_name) {
     for (size_t i = 0; i < rel_columns.size(); ++i) {
       if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {

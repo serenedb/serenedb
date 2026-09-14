@@ -39,27 +39,27 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <system_error>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/serializer.h"
-#include "basics/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/scorer_options.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -214,7 +214,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
+  writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
@@ -597,7 +597,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
               "', last operation tick '", _last_durable_tick, "'");
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '",
                    GetId().id(), "': ", e.message()));

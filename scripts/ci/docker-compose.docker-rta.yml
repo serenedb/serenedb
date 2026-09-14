@@ -38,7 +38,7 @@ services:
       sh -c '
         apt-get update -qq &&
         apt-get install -y -qq --no-install-recommends python3 &&
-        SERENED=/usr/bin/serened /workspace/tests/network/run.sh
+        SERENED=/usr/bin/serened /workspace/tests/drivers/network/run.sh
       '
 
   tests:

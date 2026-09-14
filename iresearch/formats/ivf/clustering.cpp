@@ -1,0 +1,281 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/ivf/clustering.hpp"
+
+#include <faiss/Clustering.h>
+#include <faiss/IndexFlat.h>
+#include <faiss/SuperKMeans.h>
+#include <faiss/VectorTransform.h>
+#include <faiss/utils/distances.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/misc.hpp"
+
+namespace irs {
+namespace {
+
+constexpr uint32_t kSuperKMeansMinD = 32;
+constexpr uint32_t kSuperKMeansMinK = 512;
+constexpr uint32_t kSuperKMeansSphericalMinK = 4096;
+
+void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
+                               uint32_t nredo, uint32_t seed, size_t n,
+                               uint32_t k) {
+  cp.niter = static_cast<int>(niter);
+  cp.nredo = static_cast<int>(nredo);
+  cp.seed = static_cast<int>(seed);
+  cp.min_points_per_centroid = 1;
+  cp.max_points_per_centroid = std::max<int>(cp.max_points_per_centroid,
+                                             static_cast<int>((n + k - 1) / k));
+}
+
+std::vector<float> RunSuperKMeans(const float* data, size_t n, uint32_t k,
+                                  uint32_t d, uint32_t seed, uint32_t niter,
+                                  uint32_t nredo,
+                                  const float* rotation = nullptr) {
+  faiss::SuperKMeansParameters cp;
+  ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+  cp.rotation = rotation;
+  faiss::SuperKMeans kmeans(static_cast<int>(d), static_cast<int>(k), cp);
+  kmeans.train(static_cast<faiss::idx_t>(n), data);
+  return std::move(kmeans.centroids);
+}
+
+std::vector<float> RunLloyd(const float* data, size_t n, uint32_t k, uint32_t d,
+                            uint32_t seed, uint32_t niter, uint32_t nredo,
+                            bool spherical = false) {
+  faiss::ClusteringParameters cp;
+  ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+  cp.spherical = spherical;
+  faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
+  if (spherical) {
+    faiss::IndexFlatIP index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  } else {
+    faiss::IndexFlatL2 index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  }
+  return std::move(clus.centroids);
+}
+
+bool SuperKMeansGate(uint32_t d, uint32_t k, uint32_t min_k) {
+  return d >= kSuperKMeansMinD && k >= min_k;
+}
+
+}  // namespace
+
+std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
+  faiss::RandomRotationMatrix rotation(static_cast<int>(d),
+                                       static_cast<int>(d));
+  rotation.init(static_cast<int>(seed));
+  return std::move(rotation.A);
+}
+
+faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
+  SDB_ASSERT(d);
+  const auto dim = static_cast<int>(d);
+  faiss::PCAMatrix pca{dim, dim, /*eigen_power=*/0.f,
+                       /*random_rotation=*/false};
+  pca.have_bias = false;
+  pca.train(static_cast<faiss::idx_t>(n), data);
+  SDB_ASSERT(pca.is_trained);
+  SDB_ASSERT(pca.is_orthonormal);
+  SDB_ASSERT(pca.A.size() == size_t{d} * d);
+  return pca;
+}
+
+void NormalizeRows(float* data, size_t n, uint32_t d) {
+  for (size_t i = 0; i < n; ++i) {
+    float* row = data + i * d;
+    vector::L2Space<float, float, float>::Normalize(
+      reinterpret_cast<const byte_type*>(row), static_cast<uint16_t>(d), row);
+  }
+}
+
+std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
+                                  size_t n, uint32_t k, uint32_t d,
+                                  uint32_t seed, uint32_t niter, uint32_t nredo,
+                                  ClusteringAlgo algo, const float* rotation) {
+  if (n == 0 || k == 0) {
+    return {};
+  }
+  k = static_cast<uint32_t>(std::min<size_t>(k, n));
+
+  if (VectorMetricIsAngular(metric)) {
+    const bool use_skm =
+      algo == ClusteringAlgo::FlatSuperKMeans ||
+      (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
+       SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
+    if (use_skm) {
+      auto centroids =
+        RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
+      NormalizeRows(centroids.data(), centroids.size() / d, d);
+      return centroids;
+    }
+    return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/true);
+  }
+
+  ClusteringAlgo eff = algo;
+  if (eff == ClusteringAlgo::Auto) {
+    eff = SuperKMeansGate(d, k, kSuperKMeansMinK)
+            ? ClusteringAlgo::FlatSuperKMeans
+            : ClusteringAlgo::Lloyd;
+  }
+  if (eff == ClusteringAlgo::FlatSuperKMeans) {
+    return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
+  }
+  return RunLloyd(data, n, k, d, seed, niter, nredo);
+}
+
+namespace {
+
+template<VectorMetric Metric>
+uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
+                          uint32_t d) noexcept {
+  const auto dd = static_cast<uint16_t>(d);
+  uint32_t best = 0;
+  float best_score = -std::numeric_limits<float>::max();
+  for (uint32_t s = 0; s < k; ++s) {
+    const float score =
+      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, dd);
+    if (score > best_score) {
+      best_score = score;
+      best = s;
+    }
+  }
+  return best;
+}
+
+template<VectorMetric Metric>
+void AssignNearestT(const float* data, size_t n, const float* centroids,
+                    uint32_t k, uint32_t d, std::vector<uint32_t>& out) {
+  const size_t base = out.size();
+  out.resize(base + n);
+  if (n == 0) {
+    return;
+  }
+  if (Metric == VectorMetric::L1 || k == 0) {
+    for (size_t i = 0; i < n; ++i) {
+      out[base + i] = NearestCentroidT<Metric>(data + i * d, centroids, k, d);
+    }
+  } else {
+    std::vector<int64_t> indexes(n);
+    std::vector<float> distances(n);
+    if constexpr (Metric == VectorMetric::InnerProduct ||
+                  Metric == VectorMetric::Cosine) {
+      faiss::knn_inner_product(data, centroids, d, n, k, 1, distances.data(),
+                               indexes.data());
+    } else {
+      faiss::knn_L2sqr(data, centroids, d, n, k, 1, distances.data(),
+                       indexes.data());
+    }
+    for (size_t i = 0; i < n; ++i) {
+      out[base + i] = static_cast<uint32_t>(indexes[i]);
+    }
+  }
+}
+
+void AssignNearest(VectorMetric metric, const float* data, size_t n,
+                   const float* centroids, uint32_t k, uint32_t d,
+                   std::vector<uint32_t>& out) {
+  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric Metric>() {
+    AssignNearestT<Metric>(data, n, centroids, k, d, out);
+  });
+}
+
+}  // namespace
+
+void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
+                          size_t d, std::span<float> data,
+                          std::span<size_t> ids, std::span<size_t> perm,
+                          std::span<std::span<const float>> gathered) {
+  const size_t n = data.size() / d;
+  const size_t k = centroids.size() / d;
+  SDB_ASSERT(ids.size() * d == data.size());
+  SDB_ASSERT(perm.empty() || perm.size() == n);
+  SDB_ASSERT(gathered.empty() || gathered.size() == n);
+  if (n == 0 || k == 0) {
+    std::fill(ids.begin(), ids.end(), 0);
+    return;
+  }
+  std::vector<uint32_t> assign;
+  AssignNearest(metric, data.data(), n, centroids.data(),
+                static_cast<uint32_t>(k), static_cast<uint32_t>(d), assign);
+
+  std::vector<size_t> cursor(k, 0);
+  for (const uint32_t a : assign) {
+    ++cursor[a];
+  }
+  std::exclusive_scan(cursor.begin(), cursor.end(), cursor.begin(), size_t{0});
+
+  std::vector<size_t> pos(n);
+  for (size_t i = 0; i < n; ++i) {
+    pos[i] = cursor[assign[i]]++;
+  }
+
+  std::vector<size_t> old_perm;
+  if (!perm.empty()) {
+    old_perm.assign(perm.begin(), perm.end());
+  }
+  for (size_t i = 0; i < n; ++i) {
+    const uint32_t bucket = assign[i];
+    const size_t p = pos[i];
+    ids[p] = bucket;
+    if (!perm.empty()) {
+      perm[p] = old_perm[i];
+    }
+    if (!gathered.empty()) {
+      gathered[p] = centroids.subspan(static_cast<size_t>(bucket) * d, d);
+    }
+  }
+
+  const size_t row_bytes = d * sizeof(float);
+  std::vector<uint8_t> moved(n, 0);
+  std::vector<float> hold(d);
+  std::vector<float> spill(d);
+  for (size_t i = 0; i < n; ++i) {
+    if (moved[i] != 0) {
+      continue;
+    }
+    if (pos[i] == i) {
+      moved[i] = 1;
+      continue;
+    }
+    std::memcpy(hold.data(), data.data() + i * d, row_bytes);
+    size_t j = i;
+    do {
+      const size_t t = pos[j];
+      std::memcpy(spill.data(), data.data() + t * d, row_bytes);
+      std::memcpy(data.data() + t * d, hold.data(), row_bytes);
+      hold.swap(spill);
+      moved[t] = 1;
+      j = t;
+    } while (j != i);
+  }
+}
+
+}  // namespace irs

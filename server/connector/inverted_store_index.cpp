@@ -44,15 +44,14 @@
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/log.h"
-#include "basics/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -70,6 +69,7 @@
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -90,7 +90,7 @@ std::shared_ptr<const catalog::Index> FindInvertedDefinition(
 // so BoundIndex::BindExpression can turn them into chunk offsets.
 duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
   const duckdb::Expression& expr, ObjectId table_id,
-  const containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
+  const irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
     col_id_to_pos) {
   auto copy = expr.Copy();
   duckdb::ExpressionIterator::VisitExpressionMutable<
@@ -704,7 +704,7 @@ struct ReplayQueue {
       for (auto& trx : head.trxs) {
         queries = std::max<uint64_t>(queries, trx.GetQueries());
       }
-      const auto tick = search::TickDomain::Instance().Advance(queries + 1);
+      const auto tick = search::TickDomain::Instance().Next(queries + 1);
       // A small entry commits its one transaction; a range entry commits every
       // sub-range's transaction at this same tick (disjoint rowids, so equal
       // ticks are fine -- a later delete still masks them at a higher tick).
@@ -861,8 +861,8 @@ struct LiveFeed {
 
   // Phase 1 of the live commit, BEFORE the tick is allocated: finish
   // tokenization and pin every segment onto the flush context. RegisterFlush
-  // must precede TickDomain::Advance -- otherwise a refresh whose tick
-  // snapshot lands between the Advance and the pin could advance its committed
+  // must precede TickDomain::Next -- otherwise a refresh whose tick
+  // snapshot lands between the Next and the pin could advance its committed
   // tick past an unpinned segment (lost insert / FlushPending assert).
   // Returns the max per-segment query count for tick-range sizing.
   uint64_t Prepare() {
@@ -1646,7 +1646,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   // checks) sees exactly what the index reads. An expression's column
   // references are rewritten to positions in this list, which is what
   // BoundIndex::BindExpression turns into chunk offsets.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
+  irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
   // The store table holds the table's columns in catalog order, less the
   // generated primary key, which is an identity this side of the store and is
   // never a row value -- so a column's position is its id's mapping, computed
@@ -1655,7 +1655,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   // Position, not name: RENAME COLUMN hands the renamed entry the very same
   // DataTable, whose cached column definitions go on naming the old column, so
   // a name lookup here silently stops finding the field after a rename.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
+  irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
   pos_by_id.reserve(table.columns.LogicalColumnCount());
   duckdb::idx_t store_pos = 0;
   for (const auto& column : table.columns.Logical()) {

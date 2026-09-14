@@ -29,14 +29,14 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

@@ -10,8 +10,8 @@ pointer-overflow:third_party/lz4/lib/lz4.c
 function:third_party/openssl
 
 # TODO(mbkkt) fix alignment issues for fastpack
-alignment:libs/basics/bit_packing.cpp
+alignment:iresearch/utils/bit_packing.cpp
 
 # TODO(mbkkt) fix shift overflow issues in tests, probably just remove this functions and test
-shift-base:libs/iresearch/include/iresearch/utils/numeric_utils.cpp
-shift-exponent:libs/iresearch/include/iresearch/utils/numeric_utils.cpp
+shift-base:iresearch/utils/numeric_utils.cpp
+shift-exponent:iresearch/utils/numeric_utils.cpp

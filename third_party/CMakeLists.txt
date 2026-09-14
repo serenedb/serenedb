@@ -163,10 +163,8 @@ set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
 ## BOOST
 ################################################################################
 
-# TODO(mbkkt) make it submodule
 sdb_update_module(${GIT_EXECUTABLE} "boost" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(boost)
-set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 # explicitly set since suppressing Boost search
 # needed for iresearch
@@ -295,15 +293,6 @@ set(OpenFST_sources
 
 add_library(iresearch-ofst OBJECT ${OpenFST_sources})
 
-# disable warnings for 3rd-party libs for a cleaner build
-if(MSVC)
-    target_compile_options(
-        iresearch-ofst
-        # MSVC2015-2017 require "/bigobj" to compile debug build
-        PRIVATE "$<$<CONFIG:Debug>:/bigobj>"
-    )
-endif()
-
 target_include_directories(
     iresearch-ofst
     SYSTEM
@@ -358,7 +347,6 @@ target_link_libraries(sdb_blas INTERFACE openblas)
 ################################################################################
 ### faiss library
 ################################################################################
-set(FAISS_LIB "")
 set(FAISS_LIB faiss)
 if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
@@ -386,18 +374,8 @@ target_compile_options(
 ## snowball stemmer
 ################################################################################
 
-if(NOT PERL_FOUND)
-    set(PERL_FOUND TRUE) # suppress error for Perl not-found
-
-    # MSVC will execute ADD_CUSTOM_COMMAND even though OUTPUT is already present
-    if(MSVC)
-        set(PERL_EXECUTABLE echo)
-    endif()
-endif()
-
-set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
-find_package(SNOWBALL REQUIRED)
-add_library(stemmer::stemmer ALIAS stemmer-static)
+sdb_update_module(${GIT_EXECUTABLE} "libstemmer_c" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
+add_subdirectory(libstemmer_c-cmake)
 
 ################################################################################
 ## LZ4
@@ -571,12 +549,6 @@ target_link_libraries(
     clickhouse_cpp
     PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
 )
-
-################################################################################
-## LINK_DIRECTORIES
-################################################################################
-
-set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
 
 ###############################################################################
 ## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)

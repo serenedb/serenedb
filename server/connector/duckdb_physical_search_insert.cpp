@@ -24,6 +24,10 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/log.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -33,11 +37,6 @@
 #include <utility>
 #include <vector>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"
@@ -55,6 +54,7 @@
 #include "query/transaction.h"
 #include "search/search_table.h"
 #include "search/search_table_changes.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {
@@ -291,7 +291,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
+  auto* lstate =
+    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
 
   const auto num_rows = chunk.size();
   if (num_rows == 0 || lstate->no_op) {
@@ -335,7 +336,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
+  auto* lstate =
+    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
   if (lstate->no_op) {
     return duckdb::SinkCombineResultType::FINISHED;
   }

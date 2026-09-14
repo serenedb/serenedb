@@ -32,6 +32,10 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -42,11 +46,6 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/duckdb_engine.h"
-#include "basics/message_buffer.h"
-#include "basics/metrics.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -63,8 +62,9 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/message_buffer.h"
+#include "server/utils/metrics.h"
 
 namespace sdb::network {
 
@@ -161,12 +161,12 @@ class HttpSession final
   // authenticated the request that first touched the connection.
   duckdb::Connection& Connection() override {
     if (!_conn) {
-      const auto dbname = StaticStrings::kDefaultDatabase;
+      const auto dbname = irs::StaticStrings::kDefaultDatabase;
       auto database = catalog::FindDatabase(nullptr, dbname);
       SDB_ENSURE(database);
       const auto database_id = catalog::IdOf(*database);
       const std::string_view user =
-        _user.empty() ? StaticStrings::kDefaultUser : _user;
+        _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
       auto login =
         sdb::pg::RequireLoginRole(user, dbname, database->permissions);
       if (!login.role) {
@@ -174,7 +174,7 @@ class HttpSession final
       }
       const auto& role = login.role;
 
-      _conn = DuckDBEngine::Instance().CreateConnection();
+      _conn = irs::DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
         *_conn->context, user, role, dbname, database_id, nullptr,
         static_cast<int32_t>(_cancel_key >> 32), _cancel);
@@ -377,7 +377,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
     _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
+      duckdb::TaskScheduler::GetScheduler(
+        irs::DuckDBEngine::Instance().instance()),
       *_ioexec);
     // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
     // it onto a duck worker.
@@ -605,7 +606,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         if (_connection_ctx) {
           // No NoticeResponse equivalent on this protocol (and the
           // ConnectionContext dtor asserts the queue is empty).
-          _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
+          _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
         }
       } else {
         writer.Error(http::HttpStatus::NotFound, "not_found");

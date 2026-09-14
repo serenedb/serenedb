@@ -33,7 +33,7 @@ if ! docker run --rm \
     WORKSPACE=/serenedb BUILD_DIR="${BUILD_DIR}" \
       SDB_STRESS_OUTDIR=/serenedb/out/stress \
       SDB_STRESS_JUNIT=/serenedb/out/test-results \
-      ./tests/stress/run.sh 2>&1 | tee -a /serenedb/out/logs/stress-tests.log
+      ./tests/drivers/stress/run.sh 2>&1 | tee -a /serenedb/out/logs/stress-tests.log
   '; then
 	echo "STRESS_TESTS=FAILED"
 	# The summary carries the seeded repro command and the findings; the thread

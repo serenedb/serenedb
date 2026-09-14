@@ -29,8 +29,7 @@
 #include <duckdb/planner/operator/logical_explain.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/planner_extension.hpp>
-
-#include "basics/assert.h"
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::optimizer {
 namespace {

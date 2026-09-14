@@ -1,12 +1,10 @@
 add_compile_warnings_flags()
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
-
 ################################################################################
 ## serened executable
 ################################################################################
 
-add_executable(serened rest_server/serened.cpp ${ProductVersionFiles})
+add_executable(serened rest_server/serened.cpp)
 
 target_link_libraries(serened sereneserver duckdb_shell_static)
 
@@ -30,7 +28,6 @@ target_link_libraries(
         iresearch-static
         s2 # needed for some includes in geo analyzers
         serene
-        serene_geo
         serene_connector
         llhttp
         duckdb_static

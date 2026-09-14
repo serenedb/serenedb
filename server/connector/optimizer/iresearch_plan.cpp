@@ -35,7 +35,12 @@
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/formats/ivf/ivf_reader.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -46,7 +51,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -61,11 +65,7 @@
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/search_filter_builder.hpp"
-#include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "search/search_table.h"
 
@@ -363,9 +363,9 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const bool table_backed =
     bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table;
 
-  containers::FlatHashSet<irs::field_id> analyzed_fields;
-  containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
-  containers::FlatHashMap<catalog::ColumnId, bool> not_null_cache;
+  irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  irs::containers::FlatHashMap<catalog::ColumnId, bool> not_null_cache;
 
   const auto column_not_null = [&](catalog::ColumnId col_id) {
     const auto [it, inserted] = not_null_cache.try_emplace(col_id, false);
@@ -534,7 +534,7 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  static const containers::FlatHashSet<std::string_view> kScorerNames{
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
     S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
     S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),

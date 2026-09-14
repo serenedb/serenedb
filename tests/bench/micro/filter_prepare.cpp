@@ -26,6 +26,28 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,29 +55,7 @@
 #include <system_error>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
 #include "insert_field.hpp"
-#include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/bm25.hpp"
-#include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/levenshtein_filter.hpp"
-#include "iresearch/search/phrase_filter.hpp"
-#include "iresearch/search/prefix_filter.hpp"
-#include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/search_range.hpp"
-#include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/term_set.hpp"
-#include "iresearch/search/tfidf.hpp"
-#include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 
@@ -197,7 +197,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::create_directories(_dir_path);
   _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
@@ -435,7 +435,7 @@ DEFINE_FILTER_VARIANTS(Not, irs::BooleanFilter, SetUpNot);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -444,6 +444,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

@@ -1,0 +1,258 @@
+# set test resource directory
+set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
+
+# generated next to the tests so it is available externally
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests_config.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp"
+)
+
+set(iresearch-tests_sources
+    ./analysis/analyzer_test.cpp
+    ./analysis/delimited_tokenizer_tests.cpp
+    ./analysis/collation_tokenizer_test.cpp
+    ./analysis/classification_tokenizer_test.cpp
+    ./analysis/nearest_neighbors_tokenizer_test.cpp
+    ./analysis/ngram_tokenizer_test.cpp
+    ./analysis/sparse_ngram_tokenizer_test.cpp
+    ./analysis/multi_delimited_tokenizer_tests.cpp
+    ./analysis/pipeline_tokenizer_tests.cpp
+    ./analysis/text_pipeline_equivalence_tests.cpp
+    ./analysis/union_tokenizer_tests.cpp
+    ./analysis/segmentation_tokenizer_tests.cpp
+    ./analysis/text/case_tests.cpp
+    ./analysis/text/normalize_tests.cpp
+    ./analysis/text/stem_cache_tests.cpp
+    ./analysis/text/string_table_tests.cpp
+    ./analysis/resources_tests.cpp
+    ./analysis/shared_object_cache_tests.cpp
+    ./analysis/text/sentence_tests.cpp
+    ./analysis/text/words_tests.cpp
+    ./analysis/normalizing_tokenizer_tests.cpp
+    ./analysis/geo_tokenizer_tests.cpp
+    ./analysis/stemming_tokenizer_tests.cpp
+    ./analysis/stopwords_tokenizer_tests.cpp
+    ./analysis/solr_synonyms_tokenizer_tests.cpp
+    ./analysis/split_by_non_alpha_tokenizer_tests.cpp
+    ./analysis/wordnet_synonyms_tokenizer_tests.cpp
+    ./analysis/path_hierarchy_tokenizer_test.cpp
+    ./analysis/token_attributes_test.cpp
+    ./analysis/tokenizer_tests.cpp
+    ./analysis/tokenizer_fuzz_corpus.cpp
+    ./analysis/tokenizer_fuzz_mutator.cpp
+    ./analysis/tokenizer_fuzz_oracles.cpp
+    ./analysis/tokenizer_fuzz_specs.cpp
+    ./analysis/tokenizer_fuzz_checks.cpp
+    ./analysis/tokenizer_fuzz_tests.cpp
+    ./analysis/tokenizer_inversion_tests.cpp
+    ./analysis/tokenizer_store_tests.cpp
+    ./analysis/tokenizer_config_tests.cpp
+    ./analysis/tokenizer_lifecycle_tests.cpp
+    ./analysis/pattern_tokenizer_tests.cpp
+    ./analysis/shingle_tokenizer_tests.cpp
+    ./analysis/sql_tokenizer_tests.cpp
+    ./analysis/sql_tokenizer_fuzz_tests.cpp
+    ./analysis/wildcard_tokenizer_tests.cpp
+    ./formats/column/column_reader_test.cpp
+    ./formats/column/test_cs_helpers.cpp
+    ./formats/columnstore2_test.cpp
+    ./formats/posting_alloc_test.cpp
+    ./formats/hnsw/hnsw_test.cpp
+    ./formats/ivf/quantizer_test.cpp
+    ./formats/ivf/centroids_test.cpp
+    ./formats/sparse_bitmap_test.cpp
+    ./formats/formats_test_case_base.cpp
+    ./formats/skip_list_test.cpp
+    ./store/directory_test_case.cpp
+    ./store/directory_cleaner_tests.cpp
+    ./store/memory_index_output_tests.cpp
+    ./store/store_utils_tests.cpp
+    ./index/doc_generator.cpp
+    ./index/assert_format.cpp
+    ./index/buffered_column_test.cpp
+    ./index/index_adopt_tests.cpp
+    ./index/index_column_tests.cpp
+    ./index/index_meta_tests.cpp
+    ./index/index_profile_tests.cpp
+    ./index/index_tests.cpp
+    ./index/index_levenshtein_tests.cpp
+    ./index/norm_test.cpp
+    ./index/index_death_tests.cpp
+    ./index/field_meta_test.cpp
+    ./index/inverter_oracle_test.cpp
+    ./index/inverter_tests.cpp
+    ./index/merge_writer_tests.cpp
+    ./index/segment_writer_tests.cpp
+    ./index/sorted_index_tests.cpp
+    ./index/compaction_policy_tests.cpp
+    ./parser/lucene_parser_test.cpp
+    ./search/empty_filter_tests.cpp
+    ./search/nested_filter_test.cpp
+    ./search/granular_range_filter_tests.cpp
+    ./search/wildcard_filter_test.cpp
+    ./search/wildcard_ngram_filter_test.cpp
+    ./search/regexp_filter_test.cpp
+    ./search/levenshtein_filter_test.cpp
+    ./search/index_reader_test.cpp
+    ./search/bitset_docs_test.cpp
+    ./search/sort_tests.cpp
+    ./search/tfidf_test.cpp
+    ./search/score_prune_test.cpp
+    ./search/score_prune_norm_merge_test.cpp
+    ./search/bm25_test.cpp
+    ./search/idf_test.cpp
+    ./search/per_node_scorer_test.cpp
+    ./search/optimizer_scorer_test.cpp
+    ./search/scorer_to_string_test.cpp
+    ./search/raw_tf_test.cpp
+    ./search/score_constant_test.cpp
+    ./search/lm_test.cpp
+    ./search/indri_dirichlet_test.cpp
+    ./search/dfi_test.cpp
+    ./search/boost_attribute_test.cpp
+    ./search/filter_test_case_base.cpp
+    ./search/boolean_filter_tests.cpp
+    ./search/all_filter_tests.cpp
+    ./search/term_filter_tests.cpp
+    ./search/terms_filter_test.cpp
+    ./search/term_predicate_test.cpp
+    ./search/prefix_filter_test.cpp
+    ./search/range_filter_test.cpp
+    ./search/phrase_filter_tests.cpp
+    ./search/slop_phrase_gather_tests.cpp
+    ./search/slop_phrase_fuzz.cpp
+    ./search/ngram_similarity_filter_tests.cpp
+    ./search/top_terms_selector_test.cpp
+    ./search/geo_filter_test.cpp
+    ./search/geo_distance_filter_test.cpp
+    ./search/geo_tokenizer_test.cpp
+    ./search/doc_collector_test.cpp
+    ./search/merge_consistency_test.cpp
+    ./search/vector_similarity_query_test.cpp
+    ./search/block_scoring_test.cpp
+    ./search/boost_query_test.cpp
+    ./search/score_prune_scoring_test.cpp
+    ./utils/async_utils_tests.cpp
+    ./utils/wkb_parser_test.cpp
+    ./utils/automaton_test.cpp
+    ./utils/bitvector_tests.cpp
+    ./utils/encryption_test.cpp
+    ./utils/container_utils_tests.cpp
+    ./utils/crc_test.cpp
+    ./utils/file_utils_tests.cpp
+    ./utils/object_pool_tests.cpp
+    ./utils/numeric_utils_test.cpp
+    ./utils/simd_utils_test.cpp
+    ./utils/directory_utils_tests.cpp
+    ./utils/bit_packing_tests.cpp
+    ./utils/bit_utils_tests.cpp
+    ./utils/levenshtein_utils_test.cpp
+    ./utils/wildcard_utils_test.cpp
+    ./utils/regexp_utils_test.cpp
+    ./utils/ref_counter_tests.cpp
+    ./utils/minhash_utils_test.cpp
+    ./utils/string_tests.cpp
+    ./utils/bitset_tests.cpp
+    ./utils/math_utils_test.cpp
+    ./utils/misc_test.cpp
+    ./utils/std_test.cpp
+    ./utils/thread_pool_test.cpp
+    ./utils/utf8_utils_test.cpp
+    ./utils/utf8_path_tests.cpp
+    ./utils/fst_builder_test.cpp
+    ./utils/fst_utils_test.cpp
+    ./utils/fst_string_weight_test.cpp
+    ./utils/ngram_match_utils_tests.cpp
+    ./utils/write_helpers.cpp
+    ./tests_param.cpp
+    ./tests_main.cpp
+)
+
+set(iresearch-tests_headers
+    ./analysis/tokenizer_fuzz_corpus.hpp
+    ./analysis/tokenizer_fuzz_mutator.hpp
+    ./analysis/tokenizer_fuzz_oracles.hpp
+    ./analysis/tokenizer_fuzz_specs.hpp
+    ./analysis/tokenizer_fuzz_checks.hpp
+    ./index/assert_format.hpp
+    ./index/doc_generator.hpp
+    ./index/index_tests.hpp
+    ./search/filter_test_case_base.hpp
+    ./formats/formats_test_case_base.hpp
+    ${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp # auto generated
+)
+
+add_executable(
+    iresearch-tests
+    ${iresearch-tests_sources}
+    ./analysis/text_analyzer_tests.cpp
+    ./formats/formats_10_tests.cpp
+    ./formats/formats_11_tests.cpp
+    ./formats/formats_12_tests.cpp
+    ./formats/formats_13_tests.cpp
+    ./formats/formats_15_tests.cpp
+)
+
+target_link_libraries(
+    iresearch-tests
+    # iresearch-static brings irs::DuckDBEngine so tests_main can Initialize /
+    # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
+    # PUBLICly.
+    iresearch-static
+    search-benchmark-common
+    gtest
+    simdjson
+    simdutf
+)
+
+target_include_directories(
+    iresearch-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_include_directories(
+    iresearch-tests
+    SYSTEM
+    PRIVATE
+        ${Boost_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+)
+
+# Standalone iresearch-load binary -- split out so CI doesn't have to compile and
+# link the full iresearch-tests just to run the corpus-driven validation.
+add_executable(
+    iresearch-load-tests
+    ./search/load_test.cpp
+    ./search/filter_test_case_base.cpp
+    ./formats/column/test_cs_helpers.cpp
+    ./tests_param.cpp
+    ./tests_main.cpp
+)
+
+target_link_libraries(
+    iresearch-load-tests
+    # See iresearch-tests note above re: iresearch-static dependency.
+    iresearch-static
+    # load_test.cpp reads the corpus through sdb::SlurpFile / Sha256Functor,
+    # which live in server/utils.
+    serene
+    search-benchmark-common
+    gtest
+    simdjson
+    simdutf
+)
+
+target_include_directories(
+    iresearch-load-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_include_directories(
+    iresearch-load-tests
+    SYSTEM
+    PRIVATE
+        ${Boost_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+)
+
+add_test(NAME iresearch-tests COMMAND iresearch-tests)

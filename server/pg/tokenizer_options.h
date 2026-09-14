@@ -46,10 +46,10 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
 
-#include "basics/assert.h"
 #include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 

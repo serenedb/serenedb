@@ -40,8 +40,8 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -61,7 +61,7 @@ inline constexpr irs::field_id kFieldId = 1;
 
 // Indexing helpers
 //
-// Trimmed copy of tests/libs/iresearch/index/doc_generator.{hpp,cpp}.
+// Trimmed copy of tests/iresearch/index/doc_generator.{hpp,cpp}.
 // Only the bits required to index europarl into a single analyzed
 // body_anl field. Original supports many fields (title, date, id, body
 // in several variants, with payloads); the bench needs none of that.
@@ -208,7 +208,7 @@ class EuroparlBodyTemplate {
 };
 
 // Splits a UTF-8 byte range on a delimiter rune, yielding string columns.
-// Copied from tests/libs/iresearch/index/doc_generator.cpp; iterates
+// Copied from tests/iresearch/index/doc_generator.cpp; iterates
 // codepoints via duckdb's utf8proc wrapper.
 template<typename OctetIterator>
 class BreakIterator {

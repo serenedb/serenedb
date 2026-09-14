@@ -40,13 +40,13 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/search/unscored.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

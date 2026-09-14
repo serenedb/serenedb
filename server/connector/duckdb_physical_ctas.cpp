@@ -21,9 +21,9 @@
 #include "connector/duckdb_physical_ctas.h"
 
 #include <atomic>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"

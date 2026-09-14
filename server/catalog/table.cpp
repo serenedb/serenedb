@@ -33,6 +33,8 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -40,8 +42,6 @@
 #include <utility>
 
 #include "catalog/scorer_options.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::catalog {

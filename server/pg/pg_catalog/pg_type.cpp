@@ -21,11 +21,11 @@
 #include "pg/pg_catalog/pg_type.h"
 
 #include <deque>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -1744,7 +1744,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
                                                  visitor);
     };
 
-  containers::FlatHashSet<std::string_view> taken;
+  irs::containers::FlatHashSet<std::string_view> taken;
   visit_types([&](const duckdb::TypeCatalogEntry& type) {
     taken.insert(type.name.GetIdentifierName());
   });

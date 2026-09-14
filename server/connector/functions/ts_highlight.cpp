@@ -41,16 +41,16 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
 
-#include "basics/assert.h"
 #include "connector/common.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/highlight/highlight_options.h"
 #include "connector/highlight/highlight_types.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {

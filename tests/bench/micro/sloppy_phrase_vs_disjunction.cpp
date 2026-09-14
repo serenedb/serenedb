@@ -54,15 +54,16 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/detail/slop_phrase.hpp>
 #include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/offsets/make.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/slop_phrase.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
@@ -71,7 +72,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
 #include "insert_field.hpp"
 #include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"
@@ -416,7 +416,7 @@ Corpus BuildIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -480,7 +480,7 @@ Corpus BuildSyntheticIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -548,7 +548,7 @@ Corpus BuildDense3Index() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -609,7 +609,7 @@ Corpus BuildAllSameIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -674,7 +674,7 @@ Corpus BuildFarApartIndex() {
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::sdb::DuckDBEngine::Instance().instance();
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -1539,7 +1539,7 @@ int main(int argc, char** argv) {
   // cached Corpus statics (reader + directory) outlive main and touch the
   // db in their destructors, so the instance must survive into the
   // static-destruction phase.
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();

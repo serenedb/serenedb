@@ -11,7 +11,7 @@ in .pre-commit-config.yaml):
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
      defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
-     WaitWhileFailurePointDebugging string literal in server/ or libs/).
+     WaitWhileFailurePointDebugging string literal in server/ or iresearch/).
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).
@@ -24,7 +24,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RECOVERY_DIR = "tests/sqllogic/recovery"
-SOURCE_DIRS = ("server", "libs")
+SOURCE_DIRS = ("server", "iresearch")
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -176,7 +176,7 @@ def main():
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
             "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
-            "WaitWhileFailurePointDebugging literal in server/ or libs/)"
+            "WaitWhileFailurePointDebugging literal in server/ or iresearch/)"
         )
 
     # ----- check #3: source -> test -----

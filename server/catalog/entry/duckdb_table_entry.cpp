@@ -38,6 +38,8 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -48,8 +50,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -395,7 +395,7 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const auto pk_columns = TableEntryPKColumns(table);
 
   // PK positions in key order, then indexed positions the key does not cover.
-  containers::FlatHashSet<size_t> pk_positions;
+  irs::containers::FlatHashSet<size_t> pk_positions;
   pk_positions.reserve(pk_columns.size());
   for (const auto key : pk_columns) {
     if (pk_positions.insert(key.index).second) {

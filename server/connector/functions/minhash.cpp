@@ -32,11 +32,11 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/minhash_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 
-#include "basics/wyhash.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include "server/utils/wyhash.h"
 
 namespace sdb::connector {
 namespace {
@@ -130,8 +130,7 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
         continue;
       }
       const auto& token = tokens[token_idx];
-      sketch.Insert(
-        sdb::basics::WyHash(token.GetData(), token.GetSize(), kHashSeed));
+      sketch.Insert(utils::WyHash(token.GetData(), token.GetSize(), kHashSeed));
     }
     const auto row_offset = offset;
     const auto produced =

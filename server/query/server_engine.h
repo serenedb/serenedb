@@ -29,7 +29,7 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::server::query {
 
-// Pre-construct mutator handed to sdb::DuckDBEngine::Initialize.
+// Pre-construct mutator handed to irs::DuckDBEngine::Initialize.
 // Installs the `serenedb` storage extension and the SET-config variables
 // it reads at attach time. Runs AFTER the lite defaults and BEFORE the
 // duckdb::DuckDB ctor.

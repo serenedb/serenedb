@@ -146,6 +146,7 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
+    ./duckdb/validity_mask_tests.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp

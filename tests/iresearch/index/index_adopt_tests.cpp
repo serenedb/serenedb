@@ -587,8 +587,8 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count())
     << "a flushed-but-unadopted segment must not be visible";
 
-  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                       _codec, /*tick=*/10));
+  ASSERT_TRUE(
+    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // One generation: sources gone, replacement in, in the same published meta.
@@ -599,7 +599,11 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
     << "the sources' rows are still reachable, so both halves were published";
 }
 
-TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsAboveTheAdoptTick) {
+// ReplaceSegments adopts at the floor, so every pending removal is eligible --
+// which is the whole reason it does not take a tick.
+// AdoptTickDecidesRemovalMasking covers the underlying rule where the tick is
+// the caller's.
+TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
   Restart(/*cleanup_on_open=*/false);
 
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -620,14 +624,60 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsAboveTheAdoptTick) {
   del.Remove(ByName("doomed"));
   ASSERT_TRUE(del.Commit(20));
 
-  // Adopted at the tick the sources were read at, so the pending removal is
-  // above it and must reach the replacement.
-  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                       _codec, /*tick=*/10));
+  // Adopted at the floor, so the pending removal is above it and must reach
+  // the replacement.
+  ASSERT_TRUE(
+    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
     << "the row came back through the adopted segment";
+}
+
+// The other half of the rule above: a removal a refresh has already consumed
+// is not pending any more, so nothing carries it to a later adoption by tick,
+// and the rebuilt segment would publish carrying the deleted row. Handing it to
+// ReplaceSegments queues it in the same critical section as the imports, so the
+// generation that adopts them already masks it -- there is no published state
+// where the row is back.
+TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
+  Restart(/*cleanup_on_open=*/false);
+
+  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(seed, "doomed"));
+  ASSERT_TRUE(InsertDoc(seed, "kept"));
+  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(_writer->RefreshCommit());
+  const auto sources = CommittedNames(*_writer);
+  ASSERT_EQ(1, sources.size());
+
+  // The rebuild copies both rows, off a snapshot that predates the delete.
+  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(build, "doomed"));
+  ASSERT_TRUE(InsertDoc(build, "kept"));
+  const auto replacement = MetaFilesOf(build.FlushAndFsync());
+  build.Abort();
+
+  // The delete lands and a refresh consumes it: applied to the source, no
+  // longer pending.
+  {
+    auto del = _writer->GetBatch();
+    del.Remove(ByName("doomed"));
+    ASSERT_TRUE(del.Commit(20));
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+  ASSERT_EQ(1, _writer->GetSnapshot().live_docs_count());
+
+  // Reissued into the swap itself rather than after it.
+  auto removals = _writer->GetBatch();
+  removals.Remove(ByName("doomed"));
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
+                                       _codec, &removals,
+                                       /*removals_tick=*/30));
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
+    << "the deleted row came back with the adopted segment";
 }
 
 // A source that is no longer in the index is what a concurrent DELETE of every
@@ -653,8 +703,8 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
   // One source still in the index, one gone.
   std::vector<std::string> replaced = sources;
   replaced.emplace_back("_ffffffff");
-  ASSERT_TRUE(_writer->ReplaceSegments(Views(replaced), Views(replacement),
-                                       _codec, /*tick=*/10));
+  ASSERT_TRUE(
+    _writer->ReplaceSegments(Views(replaced), Views(replacement), _codec));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -1062,8 +1112,8 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   const auto files = FilesOf(flushed);
 
   // The order the build uses: reference through adoption, then abort.
-  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                       _codec, irs::writer_limits::kMinTick));
+  ASSERT_TRUE(
+    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
   build.Abort();
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
 
@@ -1104,8 +1154,8 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
        "ordering note in search_table_backfill.cpp can be dropped";
   // And the swap correctly refuses rather than adopting a segment whose files
   // are gone.
-  EXPECT_FALSE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                        _codec, irs::writer_limits::kMinTick));
+  EXPECT_FALSE(
+    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
 }

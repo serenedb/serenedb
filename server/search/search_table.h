@@ -230,6 +230,18 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   }
   void OpenDeleteLog();
   void AppendDeleteLog(std::span<const int64_t> rows);
+
+  // Drains the delete log and runs `swap` with its mutex still held. A delete
+  // logs before it queues its removal (SearchTableTransaction::Commit), so this
+  // keeps any removal from being queued -- and so from being consumed by a
+  // refresh -- between the drain and `swap` queueing its imports. One consumed
+  // in that gap would reach neither the imports nor the sources they replace,
+  // and nothing would drain it again.
+  template<typename Fn>
+  bool SwapWithDrainedDeletes(Fn&& swap) {
+    absl::MutexLock lock{&_delete_log_mutex};
+    return swap(std::exchange(_delete_log, {}));
+  }
   // Drains what has accumulated; leaves the log open for the next group.
   std::vector<int64_t> TakeDeleteLog();
   void CloseDeleteLog();
@@ -283,9 +295,12 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // already-flushed segments named by `adopted_metas`.
   bool ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<const std::string_view> adopted_metas,
-                       const irs::Format::ptr& codec, uint64_t tick) {
+                       const irs::Format::ptr& codec,
+                       irs::IndexWriter::Transaction* removals = nullptr,
+                       uint64_t removals_tick = irs::writer_limits::kMinTick) {
     SDB_ASSERT(_writer);
-    return _writer->ReplaceSegments(replaced, adopted_metas, codec, tick);
+    return _writer->ReplaceSegments(replaced, adopted_metas, codec, removals,
+                                    removals_tick);
   }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {

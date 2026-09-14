@@ -772,6 +772,31 @@ bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   return false;
 }
 
+bool IndexWriter::Transaction::CommitLocked(uint64_t last_tick,
+                                            FlushContext& flush) noexcept {
+  auto* segment = _active.Segment();
+  if (segment == nullptr) {
+    return true;
+  }
+  // An unregistered transaction is queued into whichever context the caller
+  // holds. A registered one belongs to the context current when it registered,
+  // which may not be this one -- PrepareEmplace would then release it, and the
+  // caller would publish an adoption without the removals meant to mask it.
+  SDB_ASSERT(_active.Flush() == nullptr || _active.Flush() == &flush,
+             "CommitLocked on a transaction registered with another context");
+  try {
+    segment->Commit(_queries, last_tick);
+    if (flush.PrepareEmplace(_active)) {
+      flush.EmplaceLocked(std::move(_active));
+    }
+  } catch (...) {
+    // No Abort here: it takes the lock the caller is holding.
+    return false;
+  }
+  _queries = 0;
+  return true;
+}
+
 void IndexWriter::Transaction::Abort() noexcept {
   auto* segment = _active.Segment();
   if (segment == nullptr) {
@@ -860,24 +885,27 @@ bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
          _segment_limits.Docs() <= segment.buffered_docs();
 }
 
-void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+bool IndexWriter::FlushContext::PrepareEmplace(
+  ActiveSegmentContext& active) noexcept {
   SDB_ASSERT(active._segment != nullptr);
 
   if (active._segment->first_tick == writer_limits::kMaxTick) {
     // Reset all segment data because there wasn't successful transactions
     active._segment->Reset();
     active = {};  // release
-    return;
+    return false;
   }
 
   auto* flush = active._flush;
-  const bool is_null = flush == nullptr;
-  if (!is_null && flush != this) {
+  if (flush != nullptr && flush != this) {
     active = {};  // release
-    return;
+    return false;
   }
+  return true;
+}
 
-  std::lock_guard lock{pending_mutex};
+void IndexWriter::FlushContext::EmplaceLocked(ActiveSegmentContext&& active) {
+  const bool is_null = active._flush == nullptr;
   auto* node = [&] {
     if (is_null) {
       return &pending_segments.emplace_back(std::move(active._segment),
@@ -890,6 +918,14 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
   }();
   pending_freelist.push(*node);
   active = {};
+}
+
+void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+  if (!PrepareEmplace(active)) {
+    return;
+  }
+  std::lock_guard lock{pending_mutex};
+  EmplaceLocked(std::move(active));
 }
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
@@ -1759,7 +1795,7 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 bool IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas, const Format::ptr& codec,
-  uint64_t tick) {
+  Transaction* removals, uint64_t removals_tick) {
   if (codec == nullptr) {
     SDB_WARN(IRESEARCH, "Cannot replace segments: unresolvable codec");
     return false;
@@ -1844,6 +1880,15 @@ bool IndexWriter::ReplaceSegments(
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
 
+  // In the same critical section as the imports below: a query reaches an
+  // import when `import.tick <= query.tick`, so removals queued here mask the
+  // adopted segments in the generation that publishes them. Queueing them
+  // outside this lock would let a commit in between publish one without the
+  // other, which is a deleted row briefly coming back.
+  if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
+    return false;
+  }
+
   // No merger: the replacements are already written, so PrepareFlush takes the
   // plain-import path and applies pending removals by tick rather than
   // remapping them through a merge. The pinned reader rides along so the files
@@ -1851,16 +1896,14 @@ bool IndexWriter::ReplaceSegments(
   for (auto& entry : adopted) {
     // A copy per import: the ctor takes the pin by rvalue, and every import
     // needs its own so the files stay referenced until the commit.
-    flush->imports.emplace_back(
-      std::move(entry.segment), tick, std::move(entry.refs), Compaction{},
-      std::move(entry.reader), decltype(committed_reader){committed_reader});
+    // MinTick used here as pending removes must reach replaced segments.
+    flush->imports.emplace_back(std::move(entry.segment),
+                                writer_limits::kMinTick, std::move(entry.refs),
+                                Compaction{}, std::move(entry.reader),
+                                decltype(committed_reader){committed_reader});
   }
 
-  // noexcept part: mask the replaced segments out of the pending meta. Stage 1
-  // of PrepareFlush skips them, so they and the imports above are published as
-  // one generation. The mask holds views, so the names are copied into the
-  // context rather than borrowed from the caller or from a reader that only
-  // an import would have kept alive.
+  // noexcept part:
   auto& segment_mask = flush->segment_mask;
   segment_mask.reserve(segment_mask.size() + candidates.size());
   for (const auto* candidate : candidates) {

@@ -156,18 +156,14 @@ void Publish(search::SearchTable& shard) {
   }
 }
 
-// Reissues the rowids deleted since the log was last drained, so a row a
-// rebuilt segment carries from before its delete does not come back. Safe to
-// over-apply: a rowid is never reused (Pillar A), so a removal for one already
-// gone matches nothing.
-void ReissueDeletes(search::SearchTable& shard, std::vector<int64_t> rowids) {
+void StageDeletes(irs::IndexWriter::Transaction& trx,
+                  std::vector<int64_t> rowids) {
   if (rowids.empty()) {
     return;
   }
   // Sorted rowids encode to sorted terms, so the remove filter walks each
   // segment's term dictionary sequentially.
   absl::c_sort(rowids);
-  auto trx = shard.GetTransaction();
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(rowids.size());
   std::string key;
@@ -178,15 +174,8 @@ void ReissueDeletes(search::SearchTable& shard, std::vector<int64_t> rowids) {
     remover.DeleteRowImpl(key);
   }
   remover.FinishImpl();
-  trx.RegisterFlush();
-  // Every row these could name was committed at or below the WAL's current
-  // tick, and a removal reaches docs at or below its own.
-  const auto tick = shard.Wal().CurrentTick();
-  if (!trx.Commit(tick)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search-table build: failed to reissue deletes"));
-  }
-  Publish(shard);
+  // Deliberately not RegisterFlush. Registering would also bind the removals to
+  // whatever context is current here rather than the one the imports go to.
 }
 
 struct Slice {
@@ -323,11 +312,17 @@ void RebuildGroup(duckdb::ClientContext& context,
   // the delete-log rather than the adopt tick is what saves the row.
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
-  // Reference the replacements (ReplaceSegments does) BEFORE aborting the
-  // transaction: Abort releases the transaction's own file refs, and the
-  // refresh loop's cleanup would then be free to unlink them.
-  const bool swapped = shard.ReplaceSegments(replaced, adopted, codec,
-                                             irs::writer_limits::kMinTick);
+  auto deletes = shard.GetTransaction();
+  absl::Cleanup abort_deletes = [&deletes] { deletes.Abort(); };
+
+  // Drain and swap under one hold of the delete log, so no removal can be
+  // lost while we are swapping
+  const bool swapped =
+    shard.SwapWithDrainedDeletes([&](std::vector<int64_t> rowids) {
+      StageDeletes(deletes, std::move(rowids));
+      return shard.ReplaceSegments(replaced, adopted, codec, &deletes,
+                                   shard.Wal().CurrentTick());
+    });
   // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();
   if (!swapped) {
@@ -340,9 +335,6 @@ void RebuildGroup(duckdb::ClientContext& context,
               target.table_id.id()));
   }
   Publish(shard);
-  // Only now: the adopted segments are live, so the reissued removals hit
-  // them. Deletes landing from here on reach them through the normal path.
-  ReissueDeletes(shard, shard.TakeDeleteLog());
 }
 
 }  // namespace

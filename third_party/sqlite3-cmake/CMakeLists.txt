@@ -1,5 +1,8 @@
 set(SQLITE3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sqlite3")
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 add_library(_sqlite3 STATIC "${SQLITE3_DIR}/sqlite3.c")
 
 target_include_directories(_sqlite3 SYSTEM PUBLIC "${SQLITE3_DIR}")

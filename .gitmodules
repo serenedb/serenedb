@@ -223,15 +223,11 @@
 	shallow = true
 [submodule "third_party/sqlite3"]
 	path = third_party/sqlite3
-	url = https://github.com/ClickHouse/sqlite-amalgamation.git
-	shallow = true
-[submodule "third_party/expat"]
-	path = third_party/expat
-	url = https://github.com/libexpat/libexpat.git
+	url = https://github.com/serenedb/sqlite-amalgamation.git
 	shallow = true
 [submodule "third_party/proj"]
 	path = third_party/proj
-	url = https://github.com/OSGeo/PROJ.git
+	url = https://github.com/serenedb/PROJ.git
 	shallow = true
 [submodule "third_party/gdal"]
 	path = third_party/gdal

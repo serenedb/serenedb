@@ -658,54 +658,6 @@ set(SQLITE3_LIBRARY _sqlite3 CACHE STRING "" FORCE)
 set(SQLITE3_VERSION "3.53.4" CACHE STRING "" FORCE)
 
 ################################################################################
-## expat (libexpat nests the cmake project one level down)
-################################################################################
-
-# Only GDAL's XML drivers (GML, KML, OSM) use expat, and none is in the
-# allowlist below, so the subdirectory is skipped. Flip ON to build them.
-set(GDAL_USE_EXPAT OFF CACHE BOOL "" FORCE)
-
-if(GDAL_USE_EXPAT)
-    foreach(
-        flag
-        BUILD_TOOLS
-        BUILD_EXAMPLES
-        BUILD_TESTS
-        BUILD_DOCS
-        BUILD_FUZZERS
-        SHARED_LIBS
-        ENABLE_INSTALL
-    )
-        set(EXPAT_${flag} OFF CACHE BOOL "" FORCE)
-    endforeach()
-    sdb_update_module(${GIT_EXECUTABLE} "expat" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-    add_subdirectory(expat/expat)
-
-    # expat's probes run at outer scope (extensions on) but it compiles with
-    # -std=c99, so they select backends glibc then hides (getentropy, O_CLOEXEC).
-    set_target_properties(expat PROPERTIES C_EXTENSIONS ON)
-
-    if(NOT TARGET EXPAT::EXPAT)
-        add_library(EXPAT::EXPAT ALIAS expat)
-    endif()
-    set(EXPAT_FOUND ON CACHE BOOL "" FORCE)
-    set(EXPAT_INCLUDE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib"
-        CACHE PATH
-        ""
-        FORCE
-    )
-    set(EXPAT_INCLUDE_DIRS
-        "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib"
-        CACHE STRING
-        ""
-        FORCE
-    )
-    set(EXPAT_LIBRARY expat CACHE STRING "" FORCE)
-    set(EXPAT_LIBRARIES expat CACHE STRING "" FORCE)
-endif()
-
-################################################################################
 ## PROJ -- pinned to 9.3.1: PROJ validates proj.db's layout at runtime, and
 ## spatial's embedded proj_db.c is DATABASE.LAYOUT.VERSION 1.2 / PROJ 9.1.1.
 ################################################################################

@@ -27,8 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -143,44 +143,6 @@ class PhraseVariadicPositions {
     return false;
   }
 
-  uint32_t ReadAll(uint32_t* out) {
-    uint32_t total = 0;
-    for (uint32_t i = 0; i != _size; ++i) {
-      total += _live[i]->ReadAll(out + total);
-    }
-    std::sort(out, out + total);
-    return total;
-  }
-
-  uint32_t ReadAll(uint32_t* pos_out, uint32_t* start_out, uint32_t* end_out)
-    requires(kOffsets)
-  {
-    if (_size == 1) [[likely]] {
-      return _live[0]->ReadAll(pos_out, start_out, end_out);
-    }
-    uint32_t total = 0;
-    for (uint32_t i = 0; i != _size; ++i) {
-      total +=
-        _live[i]->ReadAll(pos_out + total, start_out + total, end_out + total);
-    }
-    _order.resize(total);
-    absl::c_iota(_order, uint32_t{0});
-    absl::c_sort(_order, [pos_out](uint32_t lhs, uint32_t rhs) noexcept {
-      return pos_out[lhs] < pos_out[rhs];
-    });
-    _permuted.resize(total);
-    const auto gather = [&](uint32_t* out) noexcept {
-      for (uint32_t i = 0; i != total; ++i) {
-        _permuted[i] = out[_order[i]];
-      }
-      std::copy_n(_permuted.data(), total, out);
-    };
-    gather(pos_out);
-    gather(start_out);
-    gather(end_out);
-    return total;
-  }
-
  private:
   IRS_FORCE_INLINE void Won([[maybe_unused]] uint32_t i) noexcept {
     if constexpr (kOffsets) {
@@ -193,16 +155,14 @@ class PhraseVariadicPositions {
     }
   }
 
-  detail::FixedArray<Position*> _live;
-  [[no_unique_address]] utils::Need<HasBoost, detail::FixedArray<score_t>>
+  containers::Fixed<Position*> _live;
+  [[no_unique_address]] utils::Need<HasBoost, containers::Fixed<score_t>>
     _boosts;
   uint32_t _size = 0;
   uint32_t _freq = 0;
   PosAttr::value_t _value = pos_limits::invalid();
   [[no_unique_address]] utils::Need<kOffsets, OffsAttr> _offs;
   [[no_unique_address]] utils::Need<HasBoost, score_t> _boost;
-  [[no_unique_address]] utils::Need<kOffsets, std::vector<uint32_t>> _order;
-  [[no_unique_address]] utils::Need<kOffsets, std::vector<uint32_t>> _permuted;
 };
 
 template<typename Leaf, bool HasBoost = false>
@@ -350,8 +310,8 @@ class PhraseVariadicPos {
   Position _positions;
   Leaf* _begin;
   [[no_unique_address]] utils::Need<HasBoost, const score_t*> _boosts;
-  detail::FixedArray<Leaf*> _heap;
-  detail::FixedArray<uint32_t> _stack;
+  containers::Fixed<Leaf*> _heap;
+  containers::Fixed<uint32_t> _stack;
   size_t _live_count = 0;
   uint32_t _count;
   doc_id_t _doc = doc_limits::invalid();

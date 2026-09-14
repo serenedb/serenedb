@@ -76,9 +76,9 @@ struct FreqBlockAttr final : Attribute {
   uint32_t* value = nullptr;
 };
 
-struct BoostBlockAttr final : Attribute {
+struct ScaleBlockAttr final : Attribute {
   static constexpr std::string_view type_name() noexcept {
-    return "boost_block";
+    return "scale_block";
   }
 
   score_t* value = nullptr;

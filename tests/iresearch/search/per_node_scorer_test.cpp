@@ -77,7 +77,6 @@ std::unique_ptr<irs::ByNGramSimilarity> NGram(
     opts->ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
   }
   opts->threshold = threshold;
-  opts->allow_phrase = false;
   return filter;
 }
 

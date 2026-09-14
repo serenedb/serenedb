@@ -52,15 +52,16 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;
+    bool negated;
   };
 
   absl::InlinedVector<Frame, 16> stack;
-  stack.emplace_back(&root, false);
+  stack.emplace_back(&root, false, false);
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
       const auto* scorer = (**frame.slot).GetScorer();
-      visit(*frame.slot);
+      visit(*frame.slot, frame.negated);
       if (scorer != nullptr && *frame.slot) {
         const auto* lowered = (**frame.slot).GetScorer();
         if (lowered == nullptr || lowered == &DefaultConstScore()) {
@@ -71,9 +72,10 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
       continue;
     }
     frame.children_visited = true;
-    (**frame.slot).VisitChildren([&](Filter::ptr& child) {
+    const bool negated = frame.negated;
+    (**frame.slot).VisitChildren([&](Filter::ptr& child, bool child_negated) {
       if (child) {
-        stack.emplace_back(&child, false);
+        stack.emplace_back(&child, false, negated || child_negated);
       }
     });
   }

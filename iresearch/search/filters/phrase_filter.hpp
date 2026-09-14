@@ -22,43 +22,60 @@
 
 #pragma once
 
-#include <map>
+#include <deque>
+#include <set>
 #include <variant>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 
 namespace irs {
 
+struct TermSetOptions {
+  std::set<bstring, std::less<>> terms;
+
+  bool operator==(const TermSetOptions& rhs) const = default;
+};
+
 class ByPhrase;
 
+enum class SlotKind : uint8_t {
+  Term,
+  Set,
+  Expansion,
+};
+
 class ByPhraseOptions {
- private:
-  using phrase_part =
+ public:
+  using PhrasePart =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
                  ByEditDistanceOptions, TermSetOptions, ByRangeOptions,
-                 ByRegexpOptions, AutomatonOptions,
-                 LevenshteinAutomatonOptions>;
+                 AutomatonOptions, LevenshteinAutomatonOptions>;
 
   struct PhrasePartInfo {
-    phrase_part part;
+    PhrasePart part;
     PosAttr::value_t offs_min{0};
     PosAttr::value_t offs_max{0};
 
     bool operator==(const PhrasePartInfo& other) const = default;
   };
 
-  using phrase_type = std::deque<PhrasePartInfo>;
+  static SlotKind KindOf(const PhrasePart& part) noexcept {
+    if (std::holds_alternative<ByTermOptions>(part)) {
+      return SlotKind::Term;
+    }
+    if (std::holds_alternative<TermSetOptions>(part)) {
+      return SlotKind::Set;
+    }
+    return SlotKind::Expansion;
+  }
 
- public:
   using FilterType = ByPhrase;
 
   template<typename PhrasePart>
@@ -84,19 +101,26 @@ class ByPhraseOptions {
 
   void clear() noexcept {
     _phrase.clear();
-    _is_simple_term_only = true;
     _slop = 0;
   }
 
-  bool simple() const noexcept { return _is_simple_term_only; }
+  bool simple() const noexcept {
+    for (const auto& info : _phrase) {
+      if (KindOf(info.part) != SlotKind::Term) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   bool empty() const noexcept { return _phrase.empty(); }
 
   size_t size() const noexcept { return _phrase.size(); }
 
-  phrase_type::const_iterator begin() const noexcept { return _phrase.begin(); }
+  auto begin() const noexcept { return _phrase.begin(); }
 
-  phrase_type::const_iterator end() const noexcept { return _phrase.end(); }
+  auto end() const noexcept { return _phrase.end(); }
+
   PosAttr::value_t slop() const noexcept { return _slop; }
   void set_slop(PosAttr::value_t value) noexcept { _slop = value; }
 
@@ -108,15 +132,13 @@ class ByPhraseOptions {
     if (_phrase.empty()) {
       offs_max = offs_min = 0;
     }
-    _is_simple_term_only &= std::is_same_v<PhrasePart, ByTermOptions>;
     _phrase.push_back(PhrasePartInfo{.part = std::forward<PhrasePart>(t),
                                      .offs_min = offs_min,
                                      .offs_max = offs_max});
     return std::get<std::decay_t<PhrasePart>>(_phrase.back().part);
   }
 
-  phrase_type _phrase;
-  bool _is_simple_term_only{true};
+  std::deque<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
 };
 

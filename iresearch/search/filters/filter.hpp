@@ -204,7 +204,7 @@ class Filter {
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
-  using ChildVisitor = absl::FunctionRef<void(Filter::ptr&)>;
+  using ChildVisitor = absl::FunctionRef<void(Filter::ptr&, bool negated)>;
 
   virtual void VisitChildren(ChildVisitor) {}
 

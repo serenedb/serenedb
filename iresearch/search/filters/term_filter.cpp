@@ -28,60 +28,12 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 
 namespace irs {
-namespace {
-
-class ByTermIterator : public TermIterator {
- public:
-  ByTermIterator(const TermReader& reader, bytes_view term)
-    : _reader{&reader}, _meta{reader.Lookup(term)} {
-    _term.value = term;
-  }
-
-  bytes_view value() const noexcept final { return _term.value; }
-
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return id == irs::Type<TermAttr>::id() ? &_term : nullptr;
-  }
-
-  const PostingMeta& cookie() const final { return _meta; }
-
-  TermPostings::ptr postings(IndexFeatures features) const final {
-    if (_meta.docs_count == 0) {
-      return TermPostings::empty();
-    }
-    auto it = _reader->iterator();
-    SDB_ASSERT(it);
-    if (!it->seek(_term.value)) {
-      return TermPostings::empty();
-    }
-    return it->postings(features);
-  }
-
-  bool next() final { return std::exchange(_found, false); }
-
- private:
-  const TermReader* _reader;
-  const PostingMeta _meta;
-  TermAttr _term;
-  bool _found{_meta.docs_count != 0};
-};
-
-}  // namespace
-
-void ByTerm::Visit(const SubReader& segment, const TermReader& field,
-                   const ByTermOptions& options, FilterVisitor& visitor) {
-  ByTermIterator term{field, options.term};
-  if (!term.next()) {
-    return;
-  }
-  visitor.Prepare(segment, field, term);
-  std::ignore = visitor.Visit(kNoBoost);
-}
 
 QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,

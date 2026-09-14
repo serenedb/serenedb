@@ -23,7 +23,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/phrase_fixed_slots.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -37,10 +37,10 @@ namespace {
 
 template<typename Leaf, size_t Slots, typename... Prefix>
 Root::ptr MakeSlots(const FixedPhraseQuery& query,
-                    std::span<const PostingMeta* const> metas,
+                    std::span<const PostingMeta> metas,
                     const irs::detail::PhraseHandles& h, const Context& ctx,
                     Prefix&&... prefix) {
-  using Matcher = FixedPhraseFrequency<false, true, true, Slots>;
+  using Matcher = FixedPhraseMatcher<false, true, true, Slots>;
   using SlotsType = irs::detail::PhraseFixedSlots<Matcher, Leaf, Slots>;
   return MakeShape<PrunedPhrase, SlotsType>(
     ctx, std::forward<Prefix>(prefix)..., metas, query.positions, *h.doc,

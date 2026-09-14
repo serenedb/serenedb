@@ -27,6 +27,7 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/queries/ngram_similarity_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
@@ -49,8 +50,7 @@ namespace {
 
 irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
                                   const std::vector<std::string_view>& ngrams,
-                                  float_t threshold = 1.f,
-                                  bool allow_phrase = true) {
+                                  float_t threshold = 1.f) {
   irs::ByNGramSimilarity filter;
   *filter.mutable_field_id() = field_id;
   auto* opts = filter.mutable_options();
@@ -58,7 +58,6 @@ irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
     opts->ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
   }
   opts->threshold = threshold;
-  opts->allow_phrase = allow_phrase;
   return filter;
 }
 
@@ -73,24 +72,24 @@ class CustomNGramScorer : public sort::CustomSort {
 
 struct NGramAttrs {
   const irs::FreqBlockAttr* freq = nullptr;
-  const irs::BoostBlockAttr* boost = nullptr;
+  const irs::ScaleBlockAttr* scale = nullptr;
 };
 
 void CaptureNGramAttrs(sort::CustomSort& scorer, NGramAttrs& attrs) {
   scorer.prepare_scorer =
     [&attrs](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     attrs.freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
-    attrs.boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    attrs.scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Constant(0.f);
   };
 }
 
 irs::score_t GetFilterBoost(const NGramAttrs& attrs, tests::LeadCursor& doc) {
-  if (attrs.boost == nullptr) {
+  if (attrs.scale == nullptr) {
     return irs::kNoBoost;
   }
   doc.FetchScoreArgs(0);
-  return attrs.boost->value[0];
+  return attrs.scale->value[0];
 }
 
 }  // namespace
@@ -145,6 +144,22 @@ TEST(ngram_similarity_base_test, equal) {
 }
 
 class NGramSimilarityFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(NGramSimilarityFilterTestCase, all_ngrams_allow_gaps) {
+  {
+    tests::JsonDocGenerator gen(R"([{ "seq" : 1, "field": [ "1", "9", "2"] }])",
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  const Docs expected{1};
+  CheckQuery(MakeFilter(kFieldFieldId, {"1", "2"}, 1.f), expected, Costs{1},
+             rdr);
+
+  CheckQuery(*tests::Optimized(MakeFilter(kFieldFieldId, {"1", "2"}, 1.f)),
+             expected, Costs{1}, rdr);
+}
 
 TEST_P(NGramSimilarityFilterTestCase, boost) {
   // no boost
@@ -714,8 +729,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
-  // bulk pos read check (for future optimization)
-  // sequence '' pattern '' -> longest is ''   and  boost 1 and frequency 1
+  // An empty n-gram matches an empty term with frequency and scale 1.
   {
     tests::JsonDocGenerator gen("[{ \"seq\" : 1, \"field\": [ \"\"] }]",
                                 &tests::GenericJsonFieldFactory);
@@ -729,27 +743,36 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
 
   CustomNGramScorer sort;
-  NGramAttrs attrs;
-  CaptureNGramAttrs(sort, attrs);
+  uint32_t frequency = 0;
+  irs::score_t scale = irs::kNoBoost;
+  // A single-term query with one matching document folds its score during
+  // planning. Copy the values while the temporary score attributes are alive.
+  sort.prepare_scorer = [&](const irs::ScoreContext& ctx) {
+    const auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    EXPECT_NE(nullptr, freq);
+    if (freq != nullptr) {
+      frequency = freq->value[0];
+    }
+    const auto* scale_attr = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
+    scale = scale_attr != nullptr ? scale_attr->value[0] : irs::kNoBoost;
+    return irs::ScoreFunction::Constant(0.f);
+  };
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
       auto score_function = docs->PrepareScore();
-      const auto* frequency = attrs.freq;
-      // ensure all iterators contain  attributes
-      EXPECT_TRUE(bool(frequency));
       EXPECT_TRUE(!irs::doc_limits::eof(docs->Next()));
       EXPECT_FALSE(irs::doc_limits::eof(docs->Value()));
-      EXPECT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
+      EXPECT_DOUBLE_EQ(1., scale);
       const std::string_view rhs = "";
       const std::string_view lhs = "";
-      EXPECT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
-                       (irs::ngram_similarity<char, true>(
-                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      EXPECT_DOUBLE_EQ(
+        scale, (irs::ngram_similarity<char, true>(lhs.data(), lhs.size(),
+                                                  rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
-      EXPECT_EQ(1, frequency->value[0]);
+      EXPECT_EQ(1, frequency);
       EXPECT_FALSE(!irs::doc_limits::eof(docs->Next()));
       ++i;
     }
@@ -1082,14 +1105,14 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
 struct TestScoreFunctionImpl : public irs::ScoreOperator {
   TestScoreFunctionImpl(std::vector<size_t>* f, const irs::FreqBlockAttr* p,
                         std::vector<irs::score_t>* b,
-                        const irs::BoostBlockAttr* fb) noexcept
-    : freq(f), filter_boost(b), freq_from_filter(p), boost_from_filter(fb) {}
+                        const irs::ScaleBlockAttr* sa) noexcept
+    : freq(f), scale_values(b), freq_from_filter(p), scale_attr(sa) {}
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
   void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
     freq->push_back(freq_from_filter->value[0]);
-    filter_boost->push_back(boost_from_filter->value[0]);
+    scale_values->push_back(scale_attr->value[0]);
     std::memset(res, 0, n * sizeof(irs::score_t));
   }
 
@@ -1104,9 +1127,9 @@ struct TestScoreFunctionImpl : public irs::ScoreOperator {
   }
 
   std::vector<size_t>* freq;
-  std::vector<irs::score_t>* filter_boost;
+  std::vector<irs::score_t>* scale_values;
   const irs::FreqBlockAttr* freq_from_filter;
-  const irs::BoostBlockAttr* boost_from_filter;
+  const irs::ScaleBlockAttr* scale_attr;
 };
 
 TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
@@ -1126,7 +1149,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
   uint64_t finish_docs_with_field = 0;
   uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
-  std::vector<irs::score_t> filter_boost;
+  std::vector<irs::score_t> scale_values;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
@@ -1144,24 +1167,24 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
   };
   scorer.prepare_scorer =
     [&frequency,
-     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+     &scale_values](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
-    auto* boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
-      &frequency, freq, &filter_boost, boost);
+      &frequency, freq, &scale_values, scale);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
-  std::vector<irs::score_t> expected_filter_boost{
+  std::vector<irs::score_t> expected_scale{
     4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
   CheckQuery(*tests::Optimized(std::move(filter), order.get()),
              std::span{&order, 1}, expected, rdr);
   ASSERT_EQ(expected_frequency, frequency);
-  ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
-  for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
+  ASSERT_EQ(expected_scale.size(), scale_values.size());
+  for (size_t i = 0; i < expected_scale.size(); ++i) {
     SCOPED_TRACE(testing::Message("i=") << i);
-    ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
+    ASSERT_DOUBLE_EQ(expected_scale[i], scale_values[i]);
   }
-  ASSERT_EQ(6, finish_count);
+  ASSERT_EQ(5, finish_count);
   ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
   ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
@@ -1183,7 +1206,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
   uint64_t finish_docs_with_field = 0;
   uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
-  std::vector<irs::score_t> filter_boost;
+  std::vector<irs::score_t> scale_values;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
@@ -1201,24 +1224,24 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
   };
   scorer.prepare_scorer =
     [&frequency,
-     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+     &scale_values](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
-    auto* boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
-      &frequency, freq, &filter_boost, boost);
+      &frequency, freq, &scale_values, scale);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
-  std::vector<irs::score_t> expected_filter_boost{
+  std::vector<irs::score_t> expected_scale{
     4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
   CheckQuery(*tests::Optimized(std::move(filter), order.get()),
              std::span{&order, 1}, expected, rdr);
   ASSERT_EQ(expected_frequency, frequency);
-  ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
-  for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
+  ASSERT_EQ(expected_scale.size(), scale_values.size());
+  for (size_t i = 0; i < expected_scale.size(); ++i) {
     SCOPED_TRACE(testing::Message("i=") << i);
-    ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
+    ASSERT_DOUBLE_EQ(expected_scale[i], scale_values[i]);
   }
-  ASSERT_EQ(6, finish_count);
+  ASSERT_EQ(5, finish_count);
   ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
   ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
@@ -1238,7 +1261,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
 
-  Docs expected{11, 12, 8, 13, 5, 1, 2};
+  Docs expected{8, 5, 11, 12, 1, 13, 2};
 
   irs::Scorer::ptr scorer{std::make_unique<irs::TFIDF>(true)};
 
@@ -1270,9 +1293,14 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
   std::vector<irs::doc_id_t> phrase;
   for (auto& scorer : scorers) {
     irs::ByNGramSimilarity ngram_filter =
-      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, false);
-    irs::ByNGramSimilarity phrase_filter =
-      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, true);
+      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F);
+
+    irs::ByPhrase phrase_filter;
+    *phrase_filter.mutable_field_id() = kFieldFieldId;
+    for (const auto term : {"at", "tl", "la", "as"}) {
+      phrase_filter.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view{term});
+    }
 
     MakeResult(ngram_filter, std::span{&scorer, 1}, rdr, ngram);
     MakeResult(phrase_filter, std::span{&scorer, 1}, rdr, phrase);
@@ -1317,7 +1345,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
 
-  Docs expected{11, 12, 8, 13, 1, 5, 2};
+  Docs expected{8, 11, 12, 1, 5, 13, 2};
 
   irs::Scorer::ptr scorer{std::make_unique<irs::BM25>()};
 

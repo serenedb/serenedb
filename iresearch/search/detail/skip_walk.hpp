@@ -25,6 +25,7 @@
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/skip_levels.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -95,65 +96,19 @@ class SkipWalk {
     _skip.Reader().Init(num_levels);
   }
 
-  class ReadSkip {
+  class ReadSkip : public SkipLevels<NoPosState> {
    public:
-    ReadSkip() { Disable(); }
-
-    void Disable() noexcept {
-      SDB_ASSERT(!doc_limits::valid(_levels[_num_levels - 1].doc));
-      _levels[_num_levels - 1].doc = doc_limits::eof();
-    }
-
-    void Enable(const PostingMeta& meta) noexcept {
-      CopyState<NoPosState>(_levels[0], meta);
-      SDB_ASSERT(doc_limits::eof(_levels[_num_levels - 1].doc));
-      _levels[_num_levels - 1].doc = doc_limits::invalid();
-    }
-
-    void Init(size_t num_levels) {
-      SDB_ASSERT(0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels);
-      _num_levels = static_cast<uint32_t>(num_levels);
-    }
-
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      return _levels[level].doc < target;
-    }
-
-    IRS_FORCE_INLINE void MoveDown(size_t level) noexcept {
-      SDB_ASSERT(_prev);
-      CopyState<NoPosState>(_levels[level], *_prev);
-    }
-
     void SetShape(SkipShape shape) noexcept { _shape = shape; }
 
     IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
-      auto& next = _levels[level];
-      CopyState<NoPosState>(*_prev, next);
+      auto& next = this->_levels[level];
+      CopyState<NoPosState>(*this->_prev, next);
       ReadDocState(next, in,
                    SkipLayout{.pos = _shape.pos, .offs = _shape.offs});
       SkipScoreBounds(_shape.bounds, in);
     }
 
-    void Seal(size_t level) {
-      auto& next = _levels[level];
-      CopyState<NoPosState>(*_prev, next);
-      next.doc = doc_limits::eof();
-    }
-
-    IRS_FORCE_INLINE static size_t AdjustLevel(size_t level) noexcept {
-      return level;
-    }
-
-    IRS_FORCE_INLINE void Reset(SkipState& state) noexcept { _prev = &state; }
-
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      return _levels[_num_levels - 1].doc;
-    }
-
    private:
-    SkipState _levels[doc_limits::kMaxSkipLevels];
-    uint32_t _num_levels = 1;
-    SkipState* _prev = nullptr;
     SkipShape _shape;
   };
 

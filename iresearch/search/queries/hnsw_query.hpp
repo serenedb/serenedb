@@ -29,6 +29,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs {
 
@@ -42,7 +43,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
-      _query{std::move(query)},
+      _query{query.size(),
+             [&](float& slot, size_t i) noexcept { slot = query[i]; }},
       _metric{metric},
       _d{d},
       _record_size{record_size},
@@ -61,7 +63,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  private:
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
-  std::vector<float> _query;
+  containers::Fixed<float> _query;
   VectorMetric _metric;
   uint32_t _d;
   uint32_t _record_size;

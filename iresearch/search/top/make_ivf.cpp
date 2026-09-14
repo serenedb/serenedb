@@ -88,7 +88,7 @@ class VectorChain : public Root {
   ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
   ABSL_CACHELINE_ALIGNED doc_id_t _own[kRun];
   irs::detail::VectorClusters<Cluster> _clusters;
-  irs::detail::BoostProvider _provider;
+  irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;

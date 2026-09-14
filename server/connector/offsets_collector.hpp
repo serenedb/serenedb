@@ -89,10 +89,10 @@ class OffsetsCollector final : public irs::PreparedStateVisitor {
   bool Visit(const irs::TermState& state, irs::score_t) final;
   bool Visit(const irs::MultiTermQuery&, const irs::MultiTermState& state,
              irs::score_t) final;
-  bool Visit(const irs::FixedPhraseQuery& query,
-             const irs::FixedPhraseState& state, irs::score_t) final;
+  bool Visit(const irs::FixedPhraseQuery& query, const irs::PhraseState& state,
+             irs::score_t) final;
   bool Visit(const irs::VariadicPhraseQuery& query,
-             const irs::VariadicPhraseState& state, irs::score_t) final;
+             const irs::PhraseState& state, irs::score_t) final;
   bool Visit(const irs::NGramSimilarityQuery& query,
              const irs::NGramState& state, irs::score_t) final;
 

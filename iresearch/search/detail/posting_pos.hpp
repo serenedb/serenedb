@@ -27,6 +27,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
+#include "iresearch/formats/posting/skip_levels.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
@@ -206,58 +207,15 @@ class PostingPos {
  private:
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  class ReadSkip {
+  class ReadSkip : public SkipLevels<SkipCopyTraits<Offs>> {
    public:
-    ReadSkip() { Disable(); }
-
-    void Disable() noexcept {
-      SDB_ASSERT(!doc_limits::valid(_levels[_num_levels - 1].doc));
-      _levels[_num_levels - 1].doc = doc_limits::eof();
-    }
-
-    void Enable(const PostingMeta& meta) noexcept {
-      CopyState<SkipCopyTraits<Offs>>(_levels[0], meta);
-      SDB_ASSERT(doc_limits::eof(_levels[_num_levels - 1].doc));
-      _levels[_num_levels - 1].doc = doc_limits::invalid();
-    }
-
-    void Init(size_t num_levels) {
-      SDB_ASSERT(0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels);
-      _num_levels = static_cast<uint32_t>(num_levels);
-    }
-
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      return _levels[level].doc < target;
-    }
-
-    void MoveDown(size_t level) noexcept {
-      SDB_ASSERT(_prev);
-      CopyState<SkipCopyTraits<Offs>>(_levels[level], *_prev);
-    }
-
     void SetLayout(SkipLayout layout) noexcept { _layout = layout; }
 
     void Read(size_t level, InputType& in) {
-      auto& next = _levels[level];
-      CopyState<SkipCopyTraits<Offs>>(*_prev, next);
+      auto& next = this->_levels[level];
+      CopyState<SkipCopyTraits<Offs>>(*this->_prev, next);
       ReadPosState<Offs>(next, in, _layout.offs);
       SkipScoreBounds(Bounds, in);
-    }
-
-    void Seal(size_t level) {
-      auto& next = _levels[level];
-      CopyState<SkipCopyTraits<Offs>>(*_prev, next);
-      next.doc = doc_limits::eof();
-    }
-
-    IRS_FORCE_INLINE static size_t AdjustLevel(size_t level) noexcept {
-      return level;
-    }
-
-    void Reset(SkipState& state) noexcept { _prev = &state; }
-
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      return _levels[_num_levels - 1].doc;
     }
 
     IRS_FORCE_INLINE void SkipBounds(InputType& in) {
@@ -265,9 +223,6 @@ class PostingPos {
     }
 
    private:
-    SkipState _levels[doc_limits::kMaxSkipLevels];
-    uint32_t _num_levels = 1;
-    SkipState* _prev = nullptr;
     SkipLayout _layout;
   };
 

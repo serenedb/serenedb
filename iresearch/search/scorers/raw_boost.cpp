@@ -25,13 +25,13 @@
 #include <absl/container/inlined_vector.h>
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/detail/volatile_boost_score.hpp"
+#include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 
 ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
-  return MakeVolatileBoostScore(ctx, ctx.boost);
+  return MakeScaleScore(ctx, ctx.boost);
 }
 
 }  // namespace irs

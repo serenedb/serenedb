@@ -20,20 +20,24 @@
 
 // Property-based oracle for the sloppy-phrase matcher (irs::detail::slop),
 // on in-memory position vectors. Each random case is checked against a
-// brute-force reference (full Cartesian product, no windows or pruning):
+// transcription of Lucene's SloppyPhraseMatcher with its priority queue
+// intact, so the two implementations of the same specification are
+// structurally different and a bug in one cannot cancel out in the other:
 // Run's freq/best_distance and early-exit, the groups-aware collector,
-// JoinPair for n == 2, and the variadic n == 2 path over the merged,
-// duplicate-free slot lists. New matcher paths go here before any timing.
+// the compile-time arity specialisation at n == 2, and the variadic n == 2
+// path over the merged, duplicate-free slot lists. New matcher paths go here
+// before any timing.
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <iresearch/search/detail/phrase_iterator.hpp>
-#include <iresearch/search/detail/slop_phrase.hpp>
+#include <iresearch/search/detail/phrase_matcher.hpp>
+#include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
+#include <queue>
 #include <random>
 #include <string>
 #include <tuple>
@@ -57,38 +61,7 @@ struct Case {
   value_t slop{0};
 };
 
-// Per-group duplicate rule (Lucene, ES-verified): a shared position is
-// illegal only between slots of the same group; empty groups mean
-// globally strict. Reimplemented (not calling into spm::) so it can't
-// inherit a bug.
-bool GroupDistinct(const std::vector<value_t>& chain,
-                   const std::vector<uint32_t>& groups) {
-  for (size_t a = 0; a < chain.size(); ++a) {
-    for (size_t b = a + 1; b < chain.size(); ++b) {
-      if (chain[a] == chain[b] && (groups.empty() || groups[a] == groups[b])) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-// Independently re-derived step cost, deliberately not calling
-// spm::StepCost so a cost-model bug cannot cancel out between the
-// matcher and the oracle: plain |delta - expected| distance, plus one
-// extra move for a reversal (delta < 0) - except at expected == 1,
-// where |delta - 1| already absorbs it. StepCostSpec pins the two
-// formulations against each other, including expected == 0.
-uint64_t BruteStepCost(int64_t delta, value_t expected) {
-  const int64_t e = static_cast<int64_t>(expected);
-  const int64_t dist = delta > e ? delta - e : e - delta;
-  const int64_t reversal = (expected != 1 && delta < 0) ? 1 : 0;
-  return static_cast<uint64_t>(dist + reversal);
-}
-
-// Counts valid tuples; cost is computed only at a full tuple, so none of
-// Run's window/pruning leaks in.
-spm::MatchResult BruteRun(const Case& c) {
+spm::MatchResult LuceneRun(const Case& c) {
   spm::MatchResult res{};
   const size_t n = c.slots.size();
   if (n < 2) {
@@ -100,38 +73,133 @@ spm::MatchResult BruteRun(const Case& c) {
     }
   }
 
-  std::vector<value_t> chain(n);
-  auto rec = [&](auto&& self, size_t i) -> void {
-    if (i == n) {
-      if (!GroupDistinct(chain, c.groups)) {
-        return;
-      }
-      // 64-bit so it never wraps; counts iff total cost <= slop.
-      uint64_t cost = 0;
-      for (size_t k = 1; k < n; ++k) {
-        const int64_t delta =
-          static_cast<int64_t>(chain[k]) - static_cast<int64_t>(chain[k - 1]);
-        cost += BruteStepCost(delta, c.expected_steps[k - 1]);
-      }
-      if (cost > c.slop) {
-        return;
-      }
-      const value_t cost32 = static_cast<value_t>(cost);
-      ++res.freq;
-      if (!res.any || cost32 < res.best_distance) {
-        res.best_distance = cost32;
-      }
-      res.any = true;
-      return;
+  std::vector<int64_t> offsets(n, 0);
+  for (size_t i = 1; i < n; ++i) {
+    offsets[i] = offsets[i - 1] + c.expected_steps[i - 1];
+  }
+
+  std::vector<size_t> idx(n, 0);
+  std::vector<int64_t> shift(n);
+  int64_t end = std::numeric_limits<int64_t>::min();
+  for (size_t i = 0; i < n; ++i) {
+    shift[i] = static_cast<int64_t>(c.slots[i][0]) - offsets[i];
+    end = std::max(end, shift[i]);
+  }
+
+  using Entry = std::pair<int64_t, size_t>;  // (shift, slot)
+  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> pq;
+  for (size_t i = 0; i < n; ++i) {
+    pq.emplace(shift[i], i);
+  }
+
+  const auto emit = [&](int64_t window) {
+    ++res.freq;
+    res.weight += 1.0 / (1.0 + static_cast<double>(window));
+    const auto d = static_cast<value_t>(window);
+    if (!res.any || d < res.best_distance) {
+      res.best_distance = d;
     }
-    for (const value_t p : c.slots[i]) {
-      chain[i] = p;
-      self(self, i + 1);
+    res.any = true;
+  };
+
+  const auto docpos = [&](size_t i) { return shift[i] + offsets[i]; };
+  const auto advance = [&](size_t i) {
+    if (++idx[i] >= c.slots[i].size()) {
+      return false;
+    }
+    shift[i] = static_cast<int64_t>(c.slots[i][idx[i]]) - offsets[i];
+    end = std::max(end, shift[i]);
+    return true;
+  };
+  const auto advance_rpts = [&] {
+    for (;;) {
+      size_t a = n;
+      size_t b = n;
+      for (size_t i = 0; i < n && a == n; ++i) {
+        for (size_t j = i + 1; j < n; ++j) {
+          if (docpos(i) == docpos(j) &&
+              (c.groups.empty() || c.groups[i] == c.groups[j])) {
+            a = i;
+            b = j;
+            break;
+          }
+        }
+      }
+      if (a == n) {
+        return true;
+      }
+      const size_t lesser = (shift[a] < shift[b] ||
+                             (shift[a] == shift[b] && offsets[a] < offsets[b]))
+                              ? a
+                              : b;
+      if (!advance(lesser)) {
+        return false;
+      }
     }
   };
-  rec(rec, 0);
+  const auto requeue = [&] {
+    pq = {};
+    for (size_t i = 0; i < n; ++i) {
+      pq.emplace(shift[i], i);
+    }
+  };
+
+  if (!advance_rpts()) {
+    return res;
+  }
+  requeue();
+
+  auto [_, pp] = pq.top();
+  pq.pop();
+  int64_t window = end - shift[pp];
+  int64_t next = pq.top().first;
+  for (;;) {
+    if (!advance(pp)) {
+      break;
+    }
+    if (!advance_rpts()) {
+      break;
+    }
+    requeue();
+    {
+      auto rest = pq;
+      next = std::numeric_limits<int64_t>::max();
+      while (!rest.empty()) {
+        const auto [sh, slot] = rest.top();
+        rest.pop();
+        if (slot != pp) {
+          next = std::min(next, sh);
+        }
+      }
+    }
+    if (shift[pp] > next) {
+      if (window <= static_cast<int64_t>(c.slop)) {
+        emit(window);
+      }
+      pp = 0;
+      for (size_t i = 1; i < n; ++i) {
+        if (shift[i] < shift[pp]) {
+          pp = i;
+        }
+      }
+      next = std::numeric_limits<int64_t>::max();
+      for (size_t i = 0; i < n; ++i) {
+        if (i != pp) {
+          next = std::min(next, shift[i]);
+        }
+      }
+      window = end - shift[pp];
+    } else {
+      window = std::min(window, end - shift[pp]);
+    }
+  }
+  if (window <= static_cast<int64_t>(c.slop)) {
+    emit(window);
+  }
   return res;
 }
+
+spm::MatchResult Reference(const Case& c) { return LuceneRun(c); }
 
 std::string Show(const Case& c) {
   std::string s = "slop=" + std::to_string(c.slop) + " expected=[";
@@ -174,142 +242,51 @@ std::string Show(const spm::MatchResult& r) {
          " best=" + std::to_string(r.best_distance) + "}";
 }
 
-// PosAttr contract JoinPair relies on: value() invalid before first next();
-// next() past the end -> false, value() = eof; seek(t) -> first pos >= t or
-// eof; offsets valid only while positioned; reset() rewinds to before the
-// first position.
-struct MockPos {
-  std::vector<value_t> pos;
-  std::vector<irs::OffsAttr> offs;  // parallel to pos
-  size_t i{static_cast<size_t>(-1)};
-  value_t val{irs::pos_limits::invalid()};
-  irs::OffsAttr attr;
-
-  void reset() {
-    i = static_cast<size_t>(-1);
-    val = irs::pos_limits::invalid();
-  }
-
-  bool next() {
-    const size_t n = (i == static_cast<size_t>(-1)) ? 0 : i + 1;
-    if (n >= pos.size()) {
-      i = pos.size();
-      val = irs::pos_limits::eof();
-      return false;
-    }
-    i = n;
-    val = pos[i];
-    attr = offs[i];
-    return true;
-  }
-  value_t value() const { return val; }
-  value_t seek(value_t t) {
-    while (val < t) {
-      if (!next()) {
-        break;
-      }
-    }
-    return val;
-  }
-};
-
-// Deterministic offset per (slot, position), so resolved offsets can be
-// recomputed at verification time.
-irs::OffsAttr OffsFor(uint32_t slot, value_t p) {
-  irs::OffsAttr o;
-  o.start = p * 8 + slot;
-  o.end = o.start + 3;
-  return o;
-}
-
-MockPos MakeMock(const Case& c, uint32_t slot) {
-  MockPos m;
-  m.pos = c.slots[slot];
-  m.offs.reserve(m.pos.size());
-  for (const value_t p : m.pos) {
-    m.offs.push_back(OffsFor(slot, p));
-  }
-  return m;
-}
-
-// JoinPair must match the brute reference and Run's collector on every
-// n == 2 case, in every instantiation and for either anchor choice.
-bool CheckJoin(const Case& c, const spm::MatchResult& ref,
-               const std::vector<spm::EnumeratedMatch>& run_out) {
+// The compile-time arity specialisation must agree with the dynamic one on
+// every n == 2 case: same freq, same best distance, same collected spans.
+bool CheckStaticArity(const Case& c, const spm::MatchResult& ref,
+                      const std::vector<spm::MatchSpan>& run_out) {
   SDB_ASSERT(c.slots.size() == 2);
-  const bool enforce = spm::EnforceUniqueness(c.groups);
-  const value_t expected = c.expected_steps[0];
+  spm::MatchScratch scratch;
+  std::vector<spm::MatchSpan> out;
+  const spm::MatchResult fixed =
+    spm::Run<2>(c.slots, c.slop, c.expected_steps, scratch,
+                /*early_exit=*/false, c.groups, &out);
+
   bool ok = true;
-
-  for (const bool anchor_is_slot0 : {true, false}) {
-    const uint32_t a = anchor_is_slot0 ? 0u : 1u;
-    const uint32_t p = a ^ 1u;
-
-    // full count + collector (Offs && HasFreq)
-    spm::PairScratch scratch;
-    std::vector<spm::PairMatch> out;
-    MockPos anchor = MakeMock(c, a);
-    MockPos partner = MakeMock(c, p);
-    const spm::MatchResult join = spm::JoinPair<true, true>(
-      anchor, partner, &anchor.attr, &partner.attr, anchor_is_slot0, c.slop,
-      expected, enforce, scratch, &out);
-
-    if (join.any != ref.any || join.freq != ref.freq ||
-        (ref.any && join.best_distance != ref.best_distance)) {
-      std::printf(
-        "MISMATCH JoinPair(full) vs Brute (anchor_slot0=%d)\n"
-        "  case: %s\n  join: %s\n  ref : %s\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str(), Show(join).c_str(),
-        Show(ref).c_str());
+  if (fixed.any != ref.any || fixed.freq != ref.freq ||
+      (ref.any && fixed.best_distance != ref.best_distance)) {
+    std::printf(
+      "MISMATCH Sweep<2> vs Lucene\n  case: %s\n  fixed: %s\n  ref  : %s\n",
+      Show(c).c_str(), Show(fixed).c_str(), Show(ref).c_str());
+    ok = false;
+  }
+  if (out.size() != run_out.size()) {
+    std::printf(
+      "MISMATCH Sweep<2> collector size\n  case: %s\n  fixed=%zu dyn=%zu\n",
+      Show(c).c_str(), out.size(), run_out.size());
+    return false;
+  }
+  for (size_t k = 0; k < out.size(); ++k) {
+    const auto& f = out[k];
+    const auto& r = run_out[k];
+    if (std::tie(f.leftmost, f.rightmost, f.leftmost_slot, f.rightmost_slot) !=
+        std::tie(r.leftmost, r.rightmost, r.leftmost_slot, r.rightmost_slot)) {
+      std::printf("MISMATCH Sweep<2> span %zu\n  case: %s\n", k,
+                  Show(c).c_str());
       ok = false;
+      break;
     }
+  }
 
-    // same comparator both sides, so tuples match elementwise; offsets
-    // must resolve to the (slot, position) mapping.
-    if (out.size() != run_out.size()) {
-      std::printf(
-        "MISMATCH JoinPair collector size (anchor_slot0=%d)\n"
-        "  case: %s\n  join=%zu run=%zu\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str(), out.size(),
-        run_out.size());
-      ok = false;
-    } else {
-      for (size_t k = 0; k < out.size(); ++k) {
-        const auto& j = out[k];
-        const auto& r = run_out[k];
-        const bool tuple_eq =
-          std::tie(j.leftmost, j.rightmost, j.leftmost_slot,
-                   j.rightmost_slot) ==
-          std::tie(r.leftmost, r.rightmost, r.leftmost_slot, r.rightmost_slot);
-        const irs::OffsAttr lo = OffsFor(j.leftmost_slot, j.leftmost);
-        const irs::OffsAttr ro = OffsFor(j.rightmost_slot, j.rightmost);
-        const bool offs_eq =
-          j.start_offset == lo.start && j.end_offset == ro.end;
-        if (!tuple_eq || !offs_eq) {
-          std::printf(
-            "MISMATCH JoinPair match %zu (anchor_slot0=%d)\n"
-            "  case: %s\n",
-            k, static_cast<int>(anchor_is_slot0), Show(c).c_str());
-          ok = false;
-          break;
-        }
-      }
-    }
-
-    // filter path (early-exit) on fresh iterators
-    spm::PairScratch scratch2;
-    MockPos anchor2 = MakeMock(c, a);
-    MockPos partner2 = MakeMock(c, p);
-    const spm::MatchResult join_exit = spm::JoinPair<false, false>(
-      anchor2, partner2, nullptr, nullptr, anchor_is_slot0, c.slop, expected,
-      enforce, scratch2, nullptr);
-    if (join_exit.any != ref.any) {
-      std::printf(
-        "MISMATCH JoinPair(filter).any (anchor_slot0=%d)\n"
-        "  case: %s\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str());
-      ok = false;
-    }
+  spm::MatchScratch scratch2;
+  const spm::MatchResult fixed_exit =
+    spm::Run<2>(c.slots, c.slop, c.expected_steps, scratch2,
+                /*early_exit=*/true, c.groups);
+  if (fixed_exit.any != ref.any) {
+    std::printf("MISMATCH Sweep<2>(early_exit).any\n  case: %s\n",
+                Show(c).c_str());
+    ok = false;
   }
   return ok;
 }
@@ -318,21 +295,21 @@ bool Check(const Case& c) {
   spm::MatchScratch scratch;
 
   // run_full also collects: one DFS pass counts and emits.
-  std::vector<spm::EnumeratedMatch> out;
+  std::vector<spm::MatchSpan> out;
   const spm::MatchResult run_full =
     spm::Run(c.slots, c.slop, c.expected_steps, scratch, /*early_exit=*/false,
              c.groups, &out);
   // early_exit cannot collect (Run asserts !(early_exit && out)).
   const spm::MatchResult run_exit = spm::Run(
     c.slots, c.slop, c.expected_steps, scratch, /*early_exit=*/true, c.groups);
-  const spm::MatchResult ref = BruteRun(c);
+  const spm::MatchResult ref = Reference(c);
 
   bool ok = true;
 
   if (run_full.any != ref.any || run_full.freq != ref.freq ||
       run_full.best_distance != ref.best_distance) {
     std::printf(
-      "MISMATCH Run(full) vs Brute\n  case: %s\n  run : %s\n  ref : %s\n",
+      "MISMATCH Run(full) vs Lucene\n  case: %s\n  run : %s\n  ref : %s\n",
       Show(c).c_str(), Show(run_full).c_str(), Show(ref).c_str());
     ok = false;
   }
@@ -346,7 +323,7 @@ bool Check(const Case& c) {
   }
 
   // one tuple per counted match, so size == freq (what BuildMatches
-  // asserts); groups-aware, so it also equals the groups-aware brute count.
+  // asserts); groups-aware, so it also equals the groups-aware reference count.
   if (out.size() != run_full.freq) {
     std::printf(
       "MISMATCH collector size vs freq\n  case: %s\n  out=%zu freq=%llu\n",
@@ -370,10 +347,10 @@ bool Check(const Case& c) {
     }
   }
 
-  // n == 2 fast path: hold JoinPair to the same references, reusing
-  // run_full's matches as the tuple oracle.
+  // n == 2: hold the compile-time arity specialisation to the same
+  // references, reusing run_full's spans as the oracle.
   if (c.slots.size() == 2) {
-    ok &= CheckJoin(c, ref, out);
+    ok &= CheckStaticArity(c, ref, out);
   }
 
   return ok;
@@ -426,11 +403,11 @@ std::vector<value_t> MergedUnion(
   return all;
 }
 
-// The variadic n == 2 path: the full plain battery -- Run, its collector and
-// JoinPair -- over the merged, duplicate-free slot lists the engine builds
-// from a variadic slot's terms. same_group mirrors the production mapping
-// (EnforceUniqueness over the two slots' group ids).
-bool CheckMergedJoin(const MergedCase& c) {
+// The variadic n == 2 path: the full plain battery -- Run and its collector --
+// over the merged, duplicate-free slot lists the engine builds from a
+// variadic slot's terms. same_group mirrors the production mapping
+// (same-group pairs over the two slots' group ids).
+bool CheckMerged(const MergedCase& c) {
   const std::vector<uint32_t> groups =
     c.same_group ? std::vector<uint32_t>{0, 0} : std::vector<uint32_t>{0, 1};
   Case merged{.slots = {MergedUnion(c.subs[0]), MergedUnion(c.subs[1])},
@@ -512,7 +489,7 @@ int RunEdgeCases() {
   int failures = 0;
   auto expect = [&](const Case& c, bool want_any, uint64_t want_freq,
                     value_t want_best, const char* name) {
-    const spm::MatchResult ref = BruteRun(c);
+    const spm::MatchResult ref = Reference(c);
     if (!Check(c)) {
       std::printf("  (in edge case '%s')\n", name);
       ++failures;
@@ -531,7 +508,7 @@ int RunEdgeCases() {
   // Adjacent forward pair, exact.
   expect({.slots = {{1}, {2}}, .expected_steps = {1}, .groups = {}, .slop = 0},
          true, 1, 0, "adjacent_exact");
-  // Reversed pair needs slop>=2 (StepCost(-1,1)=2).
+  // Reversed pair needs slop>=2: the shifts differ by 2.
   expect({.slots = {{2}, {1}}, .expected_steps = {1}, .groups = {}, .slop = 1},
          false, 0, 0, "reversed_slop1_miss");
   expect({.slots = {{2}, {1}}, .expected_steps = {1}, .groups = {}, .slop = 2},
@@ -539,14 +516,38 @@ int RunEdgeCases() {
   // Same position, no groups -> strict -> dropped.
   expect({.slots = {{1}, {1}}, .expected_steps = {1}, .groups = {}, .slop = 1},
          false, 0, 0, "samepos_nogroups");
-  // Same position, distinct groups -> allowed, StepCost(0,1)=1.
+  // Same position, distinct groups -> allowed, window 1.
   expect(
     {.slots = {{1}, {1}}, .expected_steps = {1}, .groups = {0, 1}, .slop = 1},
     true, 1, 1, "samepos_distinct_groups");
+  // Reversed pair under a declared gap: query offsets [0, 2], document
+  // [2, 1], shifts {2, -1} -> cost 3, no extra reversal surcharge.
+  expect({.slots = {{2}, {1}}, .expected_steps = {2}, .groups = {}, .slop = 2},
+         false, 0, 0, "reversed_gap2_slop2_miss");
+  expect({.slots = {{2}, {1}}, .expected_steps = {2}, .groups = {}, .slop = 3},
+         true, 1, 3, "reversed_gap2_slop3_hit");
+  // Adjacent swap inside a three-term phrase ("a b c" vs "a c b"): shifts
+  // {0, 1, -1} -> cost 2, not the 3 a per-pair sum would charge.
+  expect({.slots = {{1}, {3}, {2}},
+          .expected_steps = {1, 1},
+          .groups = {},
+          .slop = 1},
+         false, 0, 0, "adjacent_swap_three_terms_slop1_miss");
+  expect({.slots = {{1}, {3}, {2}},
+          .expected_steps = {1, 1},
+          .groups = {},
+          .slop = 2},
+         true, 1, 2, "adjacent_swap_three_terms_slop2_hit");
+  // "a b c d" vs "a c b d": shifts {0, 1, -1, 0} -> cost 2.
+  expect({.slots = {{1}, {3}, {2}, {4}},
+          .expected_steps = {1, 1, 1},
+          .groups = {},
+          .slop = 2},
+         true, 1, 2, "adjacent_swap_four_terms_slop2_hit");
   // ES-verified (b): repeat + a third term on the repeat's position.
   // Groups {0,1,0}: slot 1 may share position 2 with slot 2 (different
   // groups); the two group-0 slots sit on distinct positions. One tuple
-  // (1,2,2), cost StepCost(1)+StepCost(0) = 1.
+  // (1,2,2), cost 1.
   expect({.slots = {{1}, {2}, {2}},
           .expected_steps = {1, 1},
           .groups = {0, 1, 0},
@@ -579,7 +580,7 @@ int RunEdgeCases() {
   // Empty slot -> no match.
   expect({.slots = {{}, {1}}, .expected_steps = {1}, .groups = {}, .slop = 5},
          false, 0, 0, "empty_slot");
-  // Dense 3-term, small slop -- just exercise the n>=3 path against brute.
+  // Dense 3-term, small slop -- just exercise the n>=3 path against Lucene.
   if (!Check({.slots = {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}},
               .expected_steps = {1, 1},
               .groups = {},
@@ -618,12 +619,12 @@ MergedCase RandomMergedCase(std::mt19937_64& rng) {
 }
 
 // Hand-picked merged-slot shapes; the semantic reference is the merged
-// union under strict uniqueness, so correctness is pinned by CheckMergedJoin
+// union under strict uniqueness, so correctness is pinned by CheckMerged
 // itself rather than hand freq values.
 int RunMergedEdgeCases() {
   int failures = 0;
   auto check = [&](const MergedCase& c, const char* name) {
-    if (!CheckMergedJoin(c)) {
+    if (!CheckMerged(c)) {
       std::printf("  (in merged edge case '%s': %s)\n", name, Show(c).c_str());
       ++failures;
     }
@@ -694,21 +695,8 @@ TEST(SlopMatcherFuzz, RandomMergedPairCases) {
   std::mt19937_64 rng{seed};
   for (uint64_t i = 0; i < iterations; ++i) {
     const MergedCase c = RandomMergedCase(rng);
-    ASSERT_TRUE(CheckMergedJoin(c))
+    ASSERT_TRUE(CheckMerged(c))
       << "iteration " << i << " seed " << seed
       << " (set SLOP_FUZZ_SEED to this value to reproduce the stream)";
-  }
-}
-
-// The production case ladder and the oracle's |delta - expected| form
-// must agree everywhere; exhaustive over a domain wider than any fuzz
-// case generates.
-TEST(SlopMatcherFuzz, StepCostSpec) {
-  for (value_t expected = 0; expected <= 16; ++expected) {
-    for (int64_t delta = -256; delta <= 256; ++delta) {
-      ASSERT_EQ(BruteStepCost(delta, expected),
-                static_cast<uint64_t>(spm::StepCost(delta, expected)))
-        << "delta=" << delta << " expected=" << expected;
-    }
   }
 }

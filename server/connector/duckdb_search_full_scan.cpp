@@ -55,7 +55,6 @@
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/resolve.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>

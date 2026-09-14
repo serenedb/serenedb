@@ -44,7 +44,6 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -1600,7 +1599,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
         ++clauses;
       }
     }
-    node.VisitChildren([&](irs::Filter::ptr& child) {
+    node.VisitChildren([&](irs::Filter::ptr& child, bool) {
       ok = ok && child && IsAcceptorTreeOn(*child, field);
       ++clauses;
     });
@@ -1662,7 +1661,7 @@ bool ContainsNegation(irs::Filter& filter) {
     return true;
   }
   bool found = false;
-  filter.VisitChildren([&](irs::Filter::ptr& child) {
+  filter.VisitChildren([&](irs::Filter::ptr& child, bool) {
     found = found || (child && ContainsNegation(*child));
   });
   return found;

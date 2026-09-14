@@ -22,7 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "iresearch/search/detail/volatile_boost_score.hpp"
+#include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
@@ -38,7 +38,7 @@ const ConstantScore& DefaultConstScore() noexcept {
 }
 
 ScoreFunction ConstantScore::PrepareScorer(const ScoreContext& ctx) const {
-  return MakeVolatileBoostScore(ctx, ctx.boost * _value);
+  return MakeScaleScore(ctx, ctx.boost * _value);
 }
 
 bool ConstantScore::equals(const Scorer& other) const noexcept {

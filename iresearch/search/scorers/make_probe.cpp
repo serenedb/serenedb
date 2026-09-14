@@ -27,6 +27,7 @@
 
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -41,7 +42,10 @@ class ProbeScore : public ScoreOperator {
   ProbeScore(ScoreFunction&& required, std::vector<ScoreFunction>&& probed,
              uint32_t* held, score_t constant) noexcept
     : _required{std::move(required)},
-      _probed{std::move(probed)},
+      _probed{probed.size(),
+              [&](ScoreFunction& slot, size_t i) noexcept {
+                slot = std::move(probed[i]);
+              }},
       _held{held},
       _constant{constant} {
     SDB_ASSERT(_probed.empty() || _held != nullptr);
@@ -145,7 +149,7 @@ class ProbeScore : public ScoreOperator {
   }
 
   ScoreFunction _required;
-  std::vector<ScoreFunction> _probed;
+  containers::Fixed<ScoreFunction> _probed;
   uint32_t* IRS_RESTRICT _held;
   [[no_unique_address]] utils::Need<HasConst, score_t> _constant;
   ABSL_CACHELINE_ALIGNED mutable score_t _gathered[kScoreBlock];

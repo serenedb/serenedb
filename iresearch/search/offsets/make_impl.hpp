@@ -75,10 +75,11 @@ offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
   if (!h.HasOffsets()) {
     return {};
   }
-  const std::span metas{state.metas.data(), state.metas.size()};
-  const std::span widths{state.num_terms.data(), state.num_terms.size()};
+  const std::span<const PostingMeta> metas{state.metas.data(),
+                                           state.metas.size()};
+  const std::span offsets{state.offsets.data(), state.offsets.size()};
   const std::span<const TermInterval> intervals{query.positions};
-  SDB_ASSERT(metas.size() != widths.size());
+  SDB_ASSERT(!state.Fixed());
 
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
     return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
@@ -91,9 +92,9 @@ offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
           return memory::make_managed<Impl>(
             metas.size(),
             [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(*metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
             },
-            widths, std::span<const score_t>{}, intervals,
+            offsets, std::span<const score_t>{}, intervals,
             std::forward<decltype(args)>(args)...);
         });
     });
@@ -107,7 +108,7 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
   if (!h.HasOffsets()) {
     return {};
   }
-  const std::span metas{state.terms.data(), state.terms.size()};
+  const std::span metas{state.metas.data(), state.metas.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
     return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
@@ -115,7 +116,7 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
         using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
         return memory::make_managed<Impl>(metas, *h.doc, h.Layout(), *h.pos,
-                                          h.pay, state.total_terms);
+                                          h.pay, query.TotalTerms());
       } else {
         using Slots = detail::NGramSlots<Leaf, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
@@ -124,7 +125,7 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
           [&](Leaf& leaf, size_t i) {
             leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
           },
-          static_cast<uint32_t>(query.MinMatchCount()), state.total_terms);
+          static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
       }
     });
   });

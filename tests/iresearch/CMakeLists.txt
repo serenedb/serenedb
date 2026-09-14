@@ -119,8 +119,8 @@ set(iresearch-tests_sources
     ./search/prefix_filter_test.cpp
     ./search/range_filter_test.cpp
     ./search/phrase_filter_tests.cpp
-    ./search/slop_phrase_gather_tests.cpp
-    ./search/slop_phrase_fuzz.cpp
+    ./search/phrase_slop_matcher_tests.cpp
+    ./search/phrase_slop_matcher_fuzz.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp

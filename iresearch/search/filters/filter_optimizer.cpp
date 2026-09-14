@@ -71,7 +71,15 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
 }
 
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
-  TraverseFilter(root, [&](Filter::ptr& slot) { RunRules(slot, ctx); });
+  if (!ctx.scored) {
+    TraverseFilter(root, [&](Filter::ptr& slot, bool) { RunRules(slot, ctx); });
+    return;
+  }
+  auto negated_ctx = ctx;
+  negated_ctx.scored = false;
+  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
+    RunRules(slot, negated ? negated_ctx : ctx);
+  });
 }
 
 }  // namespace
@@ -115,7 +123,7 @@ void InitOptimizeRules() {
 namespace {
 
 void AssertNoTermChild(Filter::ptr& root) {
-  TraverseFilter(root, [](Filter::ptr& slot) {
+  TraverseFilter(root, [](Filter::ptr& slot, bool) {
     if (slot->type() != Type<BooleanFilter>::id()) {
       return;
     }

@@ -32,6 +32,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs::hits {
 namespace {
@@ -41,7 +42,10 @@ class HnswHits : public Root {
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
            ColumnArgsFetcher& fetcher, irs::detail::DeadRuns* table,
            const irs::detail::ScoreArgs& args)
-    : _hits{std::move(hits)}, _fetcher{fetcher}, _table{table} {
+    : _hits{hits.size(),
+            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
+      _fetcher{fetcher},
+      _table{table} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
@@ -76,8 +80,8 @@ class HnswHits : public Root {
   }
 
  private:
-  std::vector<ScoreDoc> _hits;
-  irs::detail::BoostProvider _provider;
+  containers::Fixed<ScoreDoc> _hits;
+  irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::DeadRuns* _table;

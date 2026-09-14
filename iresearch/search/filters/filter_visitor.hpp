@@ -35,9 +35,6 @@ struct TermReader;
 template<typename Terms, typename Visitor>
 void VisitTerms(Terms& terms, Visitor& visitor) {
   do {
-    if constexpr (requires(Visitor& v, Terms& t) { v.SetIndex(t.Index()); }) {
-      visitor.SetIndex(terms.Index());
-    }
     auto boost = kNoBoost;
     if constexpr (requires(Terms& t) { t.Boost(); }) {
       boost = terms.Boost();

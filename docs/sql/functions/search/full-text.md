@@ -95,6 +95,8 @@ The gap form expresses proximity directly. To require `quick` within three token
 
 **Slop.** `slop := N` spends a budget of `N` position moves to line the query up with the document, shared across the whole phrase: `ts_phrase('quick fox', slop := 1)` matches `quick brown fox`, because shifting `fox` one position costs one unit. An intervening token costs 1 per token and a transposed adjacent pair costs 2, so `slop := 2` also matches `fox quick`. `slop := 0` is an exact phrase.
 
+Precisely, a match costs the spread of its shifts: shift each query token by its document position minus its query position, then take the largest shift minus the smallest. A swapped pair inside a longer phrase therefore still costs 2, so `ts_phrase('quick brown fox', slop := 2)` matches `quick fox brown`.
+
 When a `gap` is declared, the budget counts deviation from *that* gap rather than from adjacency: `ts_phrase('quick', 1, 'fox', slop := 1)` accepts `quick fox` and `quick a b fox` — one step either side of the declared single-token gap. Interval gaps already express a range, so `ts_phrase('a', [1, 3], 'b', slop := 2)` is an error.
 
 `(...)::slop(N)` applies the same budget as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.

@@ -28,6 +28,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs::lead {
 namespace {
@@ -36,7 +37,8 @@ class HnswHits : public Node {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
            const detail::ScoreArgs& args)
-    : _hits{std::move(hits)} {
+    : _hits{hits.size(),
+            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
@@ -77,8 +79,8 @@ class HnswHits : public Node {
   ScoreFunction PrepareScore() final { return std::move(_score); }
 
  private:
-  std::vector<ScoreDoc> _hits;
-  detail::BoostProvider _provider;
+  containers::Fixed<ScoreDoc> _hits;
+  detail::ScaleProvider _provider;
   ScoreFunction _score;
   score_t _block[kScoreBlock];
   size_t _pos = 0;

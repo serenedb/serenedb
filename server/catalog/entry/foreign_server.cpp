@@ -20,9 +20,46 @@
 
 #include "catalog/entry/foreign_server.h"
 
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
+#include <absl/strings/str_replace.h>
+#include <absl/strings/strip.h>
+
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <string>
 #include <utility>
 
+#include "catalog/boot.h"
+
 namespace sdb::catalog {
+namespace {
+
+std::string ConnectionString(const ServerOptions& options) {
+  return absl::StrJoin(options, " ", [](std::string* out, const auto& option) {
+    absl::StrAppend(
+      out, option.first, "='",
+      absl::StrReplaceAll(option.second, {{"\\", "\\\\"}, {"'", "\\'"}}), "'");
+  });
+}
+
+}  // namespace
+
+void ForeignServerCatalogEntry::Attach() const {
+  const std::string type{absl::StripSuffix(_fdw_name, "_fdw")};
+  duckdb::AttachInfo info;
+  info.name = name;
+  if (type == "iceberg") {
+    for (const auto& [key, value] : _options) {
+      info.options.emplace(key, duckdb::Value{value});
+    }
+    auto warehouse = info.options.extract("warehouse");
+    info.path = warehouse ? warehouse.mapped().ToString() : "";
+  } else {
+    info.path = ConnectionString(_options);
+  }
+  catalog::Attach(info, type, duckdb::AttachVisibility::SHOWN);
+}
 
 ForeignServerCatalogEntry::ForeignServerCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateForeignServerInfo& info)

@@ -23,13 +23,16 @@
 #include <absl/strings/ascii.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <string>
 #include <utility>
 
 #include "auth/role_closure.h"
+#include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/foreign_server.h"
 
 namespace sdb::pg {
@@ -66,15 +69,26 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                        : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
   const auto role = conn_ctx.GetRoleId();
-  if (!auth::ClosureFor(&conn_ctx.GetClientContext(), role)->is_superuser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied to create foreign server"));
+  auto& context = conn_ctx.GetClientContext();
+  auto& cluster = catalog::ClusterOf(context);
+  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                    .GetEntry(cluster.GetCatalogTransaction(context),
+                              duckdb::Identifier{conn_ctx.GetDatabase()});
+  if (database && !auth::ClosureFor(&context, role)
+                     ->Can(duckdb::CatalogType::DATABASE_ENTRY,
+                           database->permissions, duckdb::AclMode::Create)) {
+    throw duckdb::PermissionException("permission denied for database %s",
+                                      database->name.GetIdentifierName());
   }
   info.permissions.owner = role;
 
   auto& catalog = CatalogOf(conn_ctx);
-  catalog.CreateForeignServer(
+  auto entry = catalog.CreateForeignServer(
     catalog.GetCatalogTransaction(conn_ctx.GetClientContext()), info);
+  if (entry) {
+    catalog::AttachForeignServer(
+      entry->Cast<catalog::ForeignServerCatalogEntry>());
+  }
 }
 
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
@@ -85,9 +99,18 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   info.cascade = cascade;
   info.if_not_found = missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
                                  : duckdb::OnEntryNotFound::THROW_EXCEPTION;
+  auto& context = conn_ctx.GetClientContext();
   auto& catalog = CatalogOf(conn_ctx);
-  catalog.DropForeignServer(
-    catalog.GetCatalogTransaction(conn_ctx.GetClientContext()), info);
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  auto entry = catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+                 .GetEntry(transaction, duckdb::Identifier{name});
+  if (entry && !auth::ClosureFor(&context, conn_ctx.GetRoleId())
+                  ->Owns(entry->permissions.owner)) {
+    throw duckdb::PermissionException("must be owner of foreign server %s",
+                                      std::string{name});
+  }
+  catalog.DropForeignServer(transaction, info);
+  catalog::Detach(duckdb::Identifier{name});
 }
 
 }  // namespace sdb::pg

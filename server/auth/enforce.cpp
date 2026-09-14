@@ -31,6 +31,7 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
@@ -67,6 +68,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
+#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/commands/rbac.h"
@@ -568,6 +570,9 @@ class Enforcer {
       CheckIndexScan(get);
       return;
     }
+    if (!table->catalog.IsDuckCatalog()) {
+      RequireServerUsage(table->catalog.GetName());
+    }
     if (Unowned(*table)) {
       return;
     }
@@ -1009,9 +1014,6 @@ class Enforcer {
   }
 
   void ResolveGrant(duckdb::AlterPermissionsInfo& info) {
-    if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
-      NotSupported("GRANT ON FOREIGN SERVER");
-    }
     info.grantee_id = GranteeId(info.grantee);
     if (!info.granted_by.empty()) {
       const auto granted_by = RoleId(info.granted_by);
@@ -1037,6 +1039,18 @@ class Enforcer {
                         ERR_MSG("database \"", name, "\" does not exist"));
       }
       RequireGrantable(*database);
+      return;
+    }
+    if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
+      const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
+      const auto server = ServerEntry(name);
+      if (!server) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("server \"", name, "\" does not exist"));
+      }
+      info.SetQualifiedName(server->ParentCatalog().GetName(),
+                            duckdb::Identifier(), server->name);
+      RequireGrantable(*server);
       return;
     }
     RequireGrantable(ResolveTarget(info));
@@ -1143,6 +1157,36 @@ class Enforcer {
     auto database = DatabaseEntry(name);
     if (database && !_caller_closure.Owns(database->permissions.owner)) {
       MustOwn(*database);
+    }
+  }
+  duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
+    std::string_view name) {
+    auto& catalog = duckdb::Catalog::GetCatalog(
+                      _context, duckdb::Identifier{_connection.GetDatabase()})
+                      .Cast<duckdb::DuckCatalog>();
+    return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+      .GetEntry(catalog.GetCatalogTransaction(_context),
+                duckdb::Identifier{std::string{name}});
+  }
+  void RequireServerUsage(const duckdb::Identifier& name) {
+    for (const auto& db :
+         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
+      auto& catalog = db->GetCatalog();
+      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+        continue;
+      }
+      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+      auto server =
+        duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+          .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
+      if (!server) {
+        continue;
+      }
+      if (!_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                               server->permissions, AclMode::Usage)) {
+        Denied(*server);
+      }
+      return;
     }
   }
 

@@ -2,13 +2,10 @@ control substitution on
 
 # Foreign Data Wrapper DDL over the postgres_scanner (postgres_fdw): CREATE
 # SERVER, the postgres counterpart of sdb/clickhouse/create_server_chscan.test_slow.
-# This is the only test of the postgres branch of catalog::PrepareForeignServerAttach
-# -- it exercises the fdw-name map (postgres_fdw -> storage "postgres") AND the
-# `database` -> `dbname` option canonicalisation in the attach secret: the server
-# below declares `database 'postgres'`, and CreateForeignServer attaches eagerly
-# (RunAttach) to validate connectivity BEFORE persisting. The postgres secret
-# overlay only reads `dbname`, never `database`, so a green CREATE SERVER proves
-# the rename happened. In the ClickHouse-style model there are no USER MAPPINGs:
+# The server OPTIONS are libpq connection keywords, exactly as in postgres_fdw
+# (`dbname`, not `database`), and become the ATTACH connection string verbatim.
+# CREATE SERVER attaches eagerly to validate connectivity BEFORE persisting.
+# In the ClickHouse-style model there are no USER MAPPINGs:
 # credentials live in the server OPTIONS. Unlike ClickHouse (whose default user
 # needs no auth), postgres requires a real role even for this initial probe, so
 # `user` is in the server OPTIONS. Needs a postgres backend at ${PGHOST}:${PGPORT};
@@ -29,7 +26,7 @@ DROP SERVER IF EXISTS atomic_${__DATABASE__};
 
 statement ok
 CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
-  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
 
 
 # The server is visible in pg_foreign_server. (count, not the name: ${__DATABASE__}
@@ -103,7 +100,7 @@ anchin reads manga
 # the line readable as the pure no-op it is, with no false hint of new coverage.)
 statement ok
 CREATE SERVER IF NOT EXISTS srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
-  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
 
 
 # Clean up the remote objects through the server before detaching.
@@ -148,7 +145,7 @@ SELECT id FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff LIMIT 1;
 # server succeeds (a leaked attachment would make this fail "already attached").
 statement ok
 CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
-  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
 
 statement ok
 DROP SERVER srv_${__DATABASE__};
@@ -165,7 +162,7 @@ DROP SERVER IF EXISTS srv_${__DATABASE__};
 # what forces the connection failure -- and the whole CREATE is rejected.
 statement error
 CREATE SERVER atomic_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
-  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres',
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres',
            user 'sdb_nosuchrole_${__DATABASE__}');
 
 

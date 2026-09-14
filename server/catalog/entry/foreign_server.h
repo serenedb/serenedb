@@ -43,6 +43,8 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   const std::string& FdwName() const noexcept { return _fdw_name; }
   const ServerOptions& Options() const noexcept { return _options; }
 
+  void Attach() const;
+
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;

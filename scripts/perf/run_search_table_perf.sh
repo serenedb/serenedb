@@ -262,14 +262,19 @@ run_sql() {
 # Same as run_sql but never runs EXPLAIN -- VACUUM is not in the grammar's
 # ExplainableStmt allowlist, so EXPLAIN-ing it is a parse error.
 run_setup() {
-	local label="$1" threads="$2" sql="$3"
+	local label="$1" threads="$2" sql="$3" extra="${4:-}"
 	printf '\n=== %s (threads=%s) ===\n' "${label}" "${threads}" |
 		tee -a "${RUN_LOG}"
 	local out rc=0
-	if out=$(psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
-		-c "SET threads = ${threads};" \
-		-c '\timing on' \
-		-c "${sql}" 2>&1); then
+	# `extra` is session settings for `sql`, applied BEFORE it (last argument,
+	# earlier statement) and in its own -c: one psql message per statement, so
+	# the timed one still runs in autocommit. Folding it into `sql` would put
+	# both in a single implicit transaction, whose frozen snapshot changes what
+	# the statement does.
+	local -a args=(-v ON_ERROR_STOP=1 -X -c "SET threads = ${threads};")
+	[[ -n "${extra}" ]] && args+=(-c "${extra}")
+	args+=(-c '\timing on' -c "${sql}")
+	if out=$(psql "${PSQL_CONN}" "${args[@]}" 2>&1); then
 		rc=0
 	else
 		rc=$?
@@ -619,17 +624,25 @@ INSERT INTO hits_search_idx SELECT * FROM hits_view;
 	run_setup "idx_search_refresh" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search_idx;
 "
+	# Settled the same way as the backfill run's search table, or the two
+	# suites' size rows would mean different things: a parallel load leaves a
+	# segment set per writer, and this table disables background compaction.
+	# VacuumCompact merges and reclaims in one step.
+	run_setup "idx_search_compact" "${BUILD_THREADS}" "
+VACUUM (COMPACT_TABLE) hits_search_idx;
+"
 	# engine_search growth since the transactional index (a disjoint table_id
 	# subtree) is the search table's single store (columns + index).
 	local search_total
 	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
 
 	# --- report ---
-	local t_ins t_ref s_ins s_ref t_total s_total txn_total
+	local t_ins t_ref s_ins s_ref s_compact t_total s_total txn_total
 	t_ins="${TIMINGS[idx_txn_insert]:-}"
 	t_ref="${TIMINGS[idx_txn_refresh]:-}"
 	s_ins="${TIMINGS[idx_search_insert]:-}"
 	s_ref="${TIMINGS[idx_search_refresh]:-}"
+	s_compact="${TIMINGS[idx_search_compact]:-}"
 	isum() { [[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" 'BEGIN{printf "%s", a+b}'; }
 	t_total=$(isum "${t_ins}" "${t_ref}")
 	s_total=$(isum "${s_ins}" "${s_ref}")
@@ -645,6 +658,7 @@ VACUUM (REFRESH_TABLE) hits_search_idx;
 		irow "insert" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_ins}")" "$(ratio "${s_ins}" "${t_ins}")"
 		irow "refresh" "$(fmt_ms "${t_ref}")" "$(fmt_ms "${s_ref}")" "$(ratio "${s_ref}" "${t_ref}")"
 		irow "total (ins+ref)" "$(fmt_ms "${t_total}")" "$(fmt_ms "${s_total}")" "$(ratio "${s_total}" "${t_total}")"
+		irow "compact (settle)" "-" "$(fmt_ms "${s_compact}")" "-"
 		echo
 		printf "%-30s %14s   %s\n" "storage (committed, no WAL)" "bytes" "vs txn total"
 		printf "%-30s %14s   %s\n" "------------------------------" "--------------" "------------"
@@ -700,9 +714,9 @@ INSERT INTO hits_txn_bf SELECT * FROM hits_view;
 	run_setup "backfill_index" "${BUILD_THREADS}" "
 CREATE INDEX hits_txn_bf_inv ON hits_txn_bf USING inverted (${idx_cols});
 "
-	run_setup "backfill_txn_cleanup" "${BUILD_THREADS}" "
-VACUUM (REFRESH_TABLE) hits_txn_bf;
-"
+	# Nothing to settle on this side: CREATE INDEX builds the index once, with
+	# no prior version to leave behind. Compacting it would only strand the
+	# segments the merge retires -- CompactInvertedStorage never reclaims.
 	local txn_cols search_after_txn txn_index
 	txn_cols=$(($(store_used_bytes) - base_store))
 	search_after_txn=$(du_search_committed "${SEARCH_DIR}")
@@ -719,29 +733,36 @@ INSERT INTO hits_search_bf SELECT * FROM hits_view;
 	run_setup "backfill_search_refresh" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search_bf;
 "
+	# No group budget: the whole table is one group split across BUILD_THREADS
+	# workers, so the search build is constrained by thread count alone -- the
+	# same shape as the transactional one it is timed against. Peak disk is then
+	# the whole table's worth, which is what the size rows below report.
 	run_setup "backfill_search_index" "${BUILD_THREADS}" "
 CREATE INDEX hits_search_bf_inv ON hits_search_bf USING inverted (${idx_cols});
-"
+" "SET search_backfill_group_bytes = 0;"
 	# A backfill swaps new segments in but never reclaims: the segments it
 	# replaced stay on disk until maintenance or a VACUUM sweeps them, so the
 	# size right here is the build's peak, not its steady state. Both are
 	# reported.
 	local search_dirty
 	search_dirty=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
-	run_setup "backfill_search_cleanup" "${BUILD_THREADS}" "
-VACUUM (REFRESH_TABLE) hits_search_bf;
+	# The transactional index arrives as one build; a sliced backfill leaves a
+	# segment set per worker plus the ones it replaced, and this table disables
+	# background compaction. VacuumCompact merges AND reclaims (it ends in
+	# CleanupUnsafe), so this one step is the whole settling.
+	run_setup "backfill_search_compact" "${BUILD_THREADS}" "
+VACUUM (COMPACT_TABLE) hits_search_bf;
 "
 	local search_total
 	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
 
-	local b_ins b_idx b_total b_clean s_ins s_ref s_idx s_total s_clean txn_total
+	local b_ins b_idx b_total s_ins s_ref s_idx s_total s_compact txn_total
 	b_ins="${TIMINGS[backfill_insert]:-}"
 	b_idx="${TIMINGS[backfill_index]:-}"
-	b_clean="${TIMINGS[backfill_txn_cleanup]:-}"
 	s_ins="${TIMINGS[backfill_search_insert]:-}"
 	s_ref="${TIMINGS[backfill_search_refresh]:-}"
 	s_idx="${TIMINGS[backfill_search_index]:-}"
-	s_clean="${TIMINGS[backfill_search_cleanup]:-}"
+	s_compact="${TIMINGS[backfill_search_compact]:-}"
 	bsum() { [[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" -v c="${3:-0}" 'BEGIN{printf "%s", a+b+c}'; }
 	b_total=$(bsum "${b_ins}" "${b_idx}")
 	s_total=$(bsum "${s_ins}" "${s_idx}" "${s_ref:-0}")
@@ -758,7 +779,7 @@ VACUUM (REFRESH_TABLE) hits_search_bf;
 		brow "refresh (publish)" "-" "$(fmt_ms "${s_ref}")" "-"
 		brow "create index (backfill)" "$(fmt_ms "${b_idx}")" "$(fmt_ms "${s_idx}")" "$(ratio "${s_idx}" "${b_idx}")"
 		brow "total" "$(fmt_ms "${b_total}")" "$(fmt_ms "${s_total}")" "$(ratio "${s_total}" "${b_total}")"
-		brow "cleanup (reclaim)" "$(fmt_ms "${b_clean}")" "$(fmt_ms "${s_clean}")" "-"
+		brow "compact (settle)" "-" "$(fmt_ms "${s_compact}")" "-"
 		echo
 		printf "%-30s %14s   %s\n" "storage (committed, no WAL)" "bytes" "vs txn total"
 		printf "%-30s %14s   %s\n" "------------------------------" "--------------" "------------"

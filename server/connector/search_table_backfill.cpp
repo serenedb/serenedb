@@ -31,6 +31,8 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -187,39 +189,130 @@ void ReissueDeletes(search::SearchTable& shard, std::vector<int64_t> rowids) {
   Publish(shard);
 }
 
+struct Slice {
+  RowSource source;
+  irs::IndexWriter::Transaction trx;
+  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
+  std::vector<const irs::SubReader*> segments;
+  // Views into `trx`, which outlives them: it is aborted after the swap.
+  std::vector<std::string_view> adopted;
+};
+
+// By bytes, not by segment count: sizes are uneven, and a group is only as
+// fast as its heaviest slice.
+std::vector<std::vector<const irs::SubReader*>> BalanceSlices(
+  std::span<const irs::SubReader* const> group, size_t slices) {
+  std::vector<const irs::SubReader*> by_size{group.begin(), group.end()};
+  absl::c_sort(by_size, [](const irs::SubReader* l, const irs::SubReader* r) {
+    return l->Meta().byte_size > r->Meta().byte_size;
+  });
+  std::vector<std::vector<const irs::SubReader*>> out(slices);
+  std::vector<uint64_t> load(slices, 0);
+  for (const auto* sub : by_size) {
+    const auto lightest = static_cast<size_t>(
+      std::distance(load.begin(), absl::c_min_element(load)));
+    out[lightest].push_back(sub);
+    load[lightest] += sub->Meta().byte_size;
+  }
+  return out;
+}
+
+struct FeedSliceTask final : duckdb::BaseExecutorTask {
+  FeedSliceTask(duckdb::TaskExecutor& executor_in,
+                duckdb::ClientContext& context_in,
+                const SearchBackfillTarget& target_in, Slice& slice_in,
+                pg::ProgressMetrics* progress_in)
+    : BaseExecutorTask{executor_in},
+      context{context_in},
+      target{target_in},
+      slice{slice_in},
+      progress{progress_in} {}
+
+  void ExecuteTask() override {
+    for (const auto* sub : slice.segments) {
+      const auto fed =
+        FeedSegment(context, *sub, slice.source, *slice.sink, target);
+      if (progress != nullptr) {
+        pg::ProgressMetrics::Add(progress->tuples_processed,
+                                 static_cast<int64_t>(fed));
+      }
+      if (context.IsInterrupted()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
+                        ERR_MSG("canceled while rebuilding search table ",
+                                target.table_id.id()));
+      }
+    }
+    // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
+    // costs more than the feeding it follows.
+    for (const auto& segment : slice.trx.FlushAndFsync()) {
+      slice.adopted.push_back(segment.filename);
+    }
+  }
+
+  std::string TaskType() const override { return "SearchBackfillSlice"; }
+
+  duckdb::ClientContext& context;
+  const SearchBackfillTarget& target;
+  Slice& slice;
+  pg::ProgressMetrics* progress;
+};
+
 // Rewrites one group of stale segments into fresh ones and swaps them in.
 void RebuildGroup(duckdb::ClientContext& context,
-                  const SearchBackfillTarget& target, RowSource& source,
+                  const SearchBackfillTarget& target,
                   std::span<const irs::SubReader* const> group,
                   pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
-  // Exclusive: FlushAndFsync hands back exactly this build's segments, and
-  // they must not share one with a concurrent writer.
-  auto trx = shard.GetTransaction(/*exclusive_segment=*/true);
-  auto sink = MakeSearchTableInsertSink(trx, shard, context);
+  const auto slice_count = std::max<size_t>(
+    1, std::min<size_t>(
+         group.size(),
+         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads()));
+  auto assignment = BalanceSlices(group, slice_count);
+
+  // Built here, never on a worker: the sink factory reads the catalog and
+  // InitRowSource takes the context allocator.
+  std::vector<std::unique_ptr<Slice>> slices;
+  slices.reserve(slice_count);
+  for (size_t k = 0; k < slice_count; ++k) {
+    auto slice = std::make_unique<Slice>();
+    slice->segments = std::move(assignment[k]);
+    // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
+    // they must not share one with a concurrent writer.
+    slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
+    slice->sink = MakeSearchTableInsertSink(slice->trx, shard, context);
+    InitRowSource(context, target, slice->source);
+    slices.push_back(std::move(slice));
+  }
+
+  const auto abort_all = [&slices] {
+    for (auto& slice : slices) {
+      slice->trx.Abort();
+    }
+  };
+  // Abort is idempotent: this covers every throwing path, and is a no-op once
+  // the swap below has released them in order.
+  absl::Cleanup abort_slices = abort_all;
+
+  {
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+    for (auto& slice : slices) {
+      if (slice->segments.empty()) {
+        continue;
+      }
+      executor.ScheduleTask(duckdb::make_uniq<FeedSliceTask>(
+        executor, context, target, *slice, progress));
+    }
+    executor.WorkOnTasks();
+  }
 
   std::vector<std::string_view> replaced;
   replaced.reserve(group.size());
   for (const auto* sub : group) {
     replaced.push_back(sub->Meta().name);
-    const auto fed = FeedSegment(context, *sub, source, *sink, target);
-    if (progress != nullptr) {
-      pg::ProgressMetrics::Add(progress->tuples_processed,
-                               static_cast<int64_t>(fed));
-    }
-    if (context.IsInterrupted()) {
-      trx.Abort();
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                      ERR_MSG("canceled while rebuilding search table ",
-                              target.table_id.id()));
-    }
   }
-
-  const auto flushed = trx.FlushAndFsync();
   std::vector<std::string_view> adopted;
-  adopted.reserve(flushed.size());
-  for (const auto& segment : flushed) {
-    adopted.push_back(segment.filename);
+  for (auto& slice : slices) {
+    adopted.insert(adopted.end(), slice->adopted.begin(), slice->adopted.end());
   }
   // Every replacement may be empty (a group whose rows were all deleted), so
   // the codec comes from the writer rather than from the flushed set.
@@ -235,7 +328,8 @@ void RebuildGroup(duckdb::ClientContext& context,
   // refresh loop's cleanup would then be free to unlink them.
   const bool swapped = shard.ReplaceSegments(replaced, adopted, codec,
                                              irs::writer_limits::kMinTick);
-  trx.Abort();
+  // Need explicit call here so on Publish we don't have pending transactions.
+  abort_all();
   if (!swapped) {
     // A source going missing is tolerated (it means everything in it was
     // deleted), so what is left here is a codec or meta-file failure.
@@ -299,8 +393,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // Now nothing can still commit a pre-config segment below the floor.
   shard.DrainPriorWriters(cancelled);
 
-  RowSource source;
-  InitRowSource(context, target, source);
   // Groups by byte budget: peak disk is ~2x one group, and each publish is
   // proportional to one group rather than the table. A zero budget is "no
   // limit" -- one group, one swap, the whole table's worth of peak disk.
@@ -337,7 +429,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
-    RebuildGroup(context, target, source, group, progress);
+    RebuildGroup(context, target, group, progress);
     SDB_IF_FAILURE("crash_after_search_backfill_group") {
       SDB_IMMEDIATE_ABORT();
     }

@@ -513,7 +513,7 @@ class VectorSlots {
     return true;
   }
 
-  score_t Boost() const noexcept { return _distance; }
+  score_t Scale() const noexcept { return _distance; }
 
  private:
   VectorClusters<Cluster> _clusters;

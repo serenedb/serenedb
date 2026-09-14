@@ -714,8 +714,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
-  // bulk pos read check (for future optimization)
-  // sequence '' pattern '' -> longest is ''   and  boost 1 and frequency 1
+  // An empty n-gram matches an empty term with frequency and scale 1.
   {
     tests::JsonDocGenerator gen("[{ \"seq\" : 1, \"field\": [ \"\"] }]",
                                 &tests::GenericJsonFieldFactory);
@@ -729,27 +728,36 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
 
   CustomNGramScorer sort;
-  NGramAttrs attrs;
-  CaptureNGramAttrs(sort, attrs);
+  uint32_t frequency = 0;
+  irs::score_t scale = irs::kNoBoost;
+  // A single-term query with one matching document folds its score during
+  // planning. Copy the values while the temporary score attributes are alive.
+  sort.prepare_scorer = [&](const irs::ScoreContext& ctx) {
+    const auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    EXPECT_NE(nullptr, freq);
+    if (freq != nullptr) {
+      frequency = freq->value[0];
+    }
+    const auto* scale_attr = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
+    scale = scale_attr != nullptr ? scale_attr->value[0] : irs::kNoBoost;
+    return irs::ScoreFunction::Constant(0.f);
+  };
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
       auto score_function = docs->PrepareScore();
-      const auto* frequency = attrs.freq;
-      // ensure all iterators contain  attributes
-      EXPECT_TRUE(bool(frequency));
       EXPECT_TRUE(!irs::doc_limits::eof(docs->Next()));
       EXPECT_FALSE(irs::doc_limits::eof(docs->Value()));
-      EXPECT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
+      EXPECT_DOUBLE_EQ(1., scale);
       const std::string_view rhs = "";
       const std::string_view lhs = "";
-      EXPECT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
-                       (irs::ngram_similarity<char, true>(
-                         lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
+      EXPECT_DOUBLE_EQ(
+        scale, (irs::ngram_similarity<char, true>(lhs.data(), lhs.size(),
+                                                  rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
-      EXPECT_EQ(1, frequency->value[0]);
+      EXPECT_EQ(1, frequency);
       EXPECT_FALSE(!irs::doc_limits::eof(docs->Next()));
       ++i;
     }

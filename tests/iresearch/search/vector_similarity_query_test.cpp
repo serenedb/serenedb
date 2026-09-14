@@ -18,14 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <array>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -48,9 +51,8 @@ inline constexpr uint32_t kDim = 4;
 // sqllogic counterpart in inverted_index_ivf_filter.test); this drives the
 // node directly, with no SQL planner in between.
 //
-// `k` is intrinsic to a kNN query, so `lead::Node` has no plan for one and the
-// walk is `lead::Node`. Nothing here scores, so the context carries no
-// scorer and PrepareScore() is never called.
+// The iteration tests use no scorer. ScoredLeadAndProbe also checks that
+// both execution paths expose distances to the vector scorer.
 
 irs::IndexWriterOptions MakeWriterOptions(
   duckdb::CompressionType compression =
@@ -206,6 +208,51 @@ TEST_F(VectorSimilarityQueryTest, SeekOnly) {
 
   auto beyond = Execute();
   ASSERT_TRUE(irs::doc_limits::eof(beyond->Seek(101)));
+}
+
+TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
+  Build(300);
+  irs::ByRadius filter;
+  *filter.mutable_field_id() = kVec;
+  auto& opts = *filter.mutable_options();
+  opts.query.assign(kDim, 0.f);
+  opts.centroids_id = kVec;
+  opts.postings_id = kVec;
+  opts.metric = irs::VectorMetric::L2Sqr;
+  opts.quant = irs::VectorQuantization::SQ8;
+  opts.radius = 100000.f;
+  irs::VectorSimilarityScorer scorer;
+  tests::PreparedFilter prepared{filter, *_reader, &scorer};
+
+  const auto check_scores = [](auto& node, auto&& seek) {
+    constexpr std::array<irs::doc_id_t, 6> kDocs{1, 2, 127, 128, 129, 300};
+    auto score = node.PrepareScore();
+    // Save several slots across posting blocks before scoring the batch.
+    for (uint32_t slot = 0; slot < kDocs.size(); ++slot) {
+      ASSERT_EQ(kDocs[slot], seek(kDocs[slot]));
+      node.FetchScoreArgs(slot);
+    }
+    std::array<irs::score_t, kDocs.size()> scores;
+    score.Score(scores.data(), scores.size());
+    for (size_t slot = 0; slot < kDocs.size(); ++slot) {
+      const auto x = static_cast<float>(kDocs[slot]);
+      EXPECT_EQ(-x * x, scores[slot]);
+    }
+  };
+
+  {
+    SCOPED_TRACE("lead");
+    auto lead = prepared.ExecuteScored(0, _fetcher);
+    ASSERT_NE(nullptr, lead);
+    check_scores(*lead, [&](auto doc) { return lead->Seek(doc); });
+  }
+  {
+    SCOPED_TRACE("probe");
+    auto probe = prepared.Query(0)->PlanProbe(
+      {.scorer = &scorer, .fetcher = &_fetcher}, _docs);
+    ASSERT_NE(nullptr, probe);
+    check_scores(*probe, [&](auto doc) { return probe->Probe(doc); });
+  }
 }
 
 // Single posting leaf block (docs < 128): the first Next() buffers every

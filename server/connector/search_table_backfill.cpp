@@ -35,23 +35,23 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/system-compiler.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_exception_macro.h"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
 
@@ -69,10 +69,10 @@ bool SegmentIdOf(std::string_view name, uint64_t& id) {
 constexpr absl::Duration kArmRetry = absl::Milliseconds(50);
 
 struct RowSource {
-  std::vector<ColumnstoreProjection> projections;
+  std::vector<irs::ColumnstoreProjection> projections;
   duckdb::idx_t rowid_slot = 0;
   duckdb::DataChunk chunk;
-  ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE};
 };
 
@@ -83,7 +83,7 @@ void InitRowSource(duckdb::ClientContext& context,
   source.projections.reserve(target.column_ids.size() + 1);
   duckdb::vector<duckdb::LogicalType> types = target.column_types;
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
-    source.projections.push_back(ColumnstoreProjection{
+    source.projections.push_back(irs::ColumnstoreProjection{
       .output_slot = i,
       .column_id = static_cast<irs::field_id>(target.column_ids[i])});
   }
@@ -91,8 +91,8 @@ void InitRowSource(duckdb::ClientContext& context,
   // by definition), read here so each rebuilt row keeps its identity.
   source.rowid_slot = target.column_ids.size();
   source.projections.push_back(
-    ColumnstoreProjection{.output_slot = source.rowid_slot,
-                          .column_id = catalog::term_dict::kPKFieldId});
+    irs::ColumnstoreProjection{.output_slot = source.rowid_slot,
+                               .column_id = catalog::term_dict::kPKFieldId});
   types.push_back(duckdb::LogicalType::BIGINT);
   source.chunk.Initialize(duckdb::Allocator::Get(context), types);
 }

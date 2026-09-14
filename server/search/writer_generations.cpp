@@ -20,7 +20,7 @@
 
 #include "search/writer_generations.h"
 
-#include "basics/assert.h"
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::search {
 

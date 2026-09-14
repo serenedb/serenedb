@@ -669,4 +669,3 @@ SELECT ST_Area(ST_TileEnvelope(1, 0, 0))::bigint AS area;
 ----
 area
 401501740587349
-

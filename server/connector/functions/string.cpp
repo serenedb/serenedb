@@ -30,12 +30,12 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 
 #include "connector/pg_logical_types.h"
-#include "iresearch/utils/utf8_utils.hpp"
-#include "pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {

@@ -25,6 +25,10 @@
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -32,8 +36,6 @@
 
 #include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "basics/assert.h"
-#include "basics/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/duckdb_primary_key.h"
@@ -49,8 +51,6 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/search_table.h"
 
@@ -158,8 +158,8 @@ const SereneDBTableEntry* CreateTable(
   // Generated serial/PK sequences are owned by the table owner too (PG: ALTER
   // TABLE OWNER TO cascades to them, so they must start matching).
   const ObjectId owner = ax.role;
-  const Permissions perm{owner};
-  const Permissions sequence_perm{owner};
+  const Permissions perm{owner, {}, {}};
+  const Permissions sequence_perm{owner, {}, {}};
   std::vector<duckdb::unique_ptr<duckdb::CreateSequenceInfo>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
   const auto make_sequence = [&](SequenceOptions opts) {
@@ -387,7 +387,8 @@ bool DropTable(const AccessContext& ax, std::string_view database,
   }
   // Counters live outside the definition tree.
   for (const auto seq_id : owned_sequence_ids) {
-    GetCatalogStore().DropSequence(seq_id);
+    catalog::DeferDropAction(
+      ax.context, [seq_id] { GetCatalogStore().DropSequence(seq_id); });
   }
   // Check that SereneDB won't open this table after reboot
   SDB_IF_FAILURE("crash_on_drop") { return true; }
@@ -498,6 +499,7 @@ void DropTableColumn(const AccessContext& ax, ObjectId database_id,
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
+  EnsureWritableSchema(ax.context, catalog::ParentIdOf(table));
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
   const auto* col = catalog::ColumnByName(*live, column);

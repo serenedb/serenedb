@@ -1,0 +1,184 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# A rolled-back DROP SEQUENCE must not erase the sequence counter.
+#
+# DROP SEQUENCE has two halves. The catalog entry is dropped through
+# CatalogSet::DropEntry, which is MVCC, so a ROLLBACK brings it back. The
+# counter half -- CatalogStore::DropSequence, which wipes the counter and
+# appends a SequenceDropped record to the cluster log -- is deferred to the
+# commit through DeferDropAction, the same as the drop's artifact half, so a
+# rolled-back drop never runs it and the counter is left where it was.
+#
+# Only a restart shows it, because in memory the live counter is never touched;
+# this lives here for that reason.
+#
+# The SERIAL case is the one that would otherwise bite: a table nobody dropped
+# handing out a primary key it has already used. Its owned sequence keeps its
+# counter across the same rolled-back drop, so the next insert takes a fresh id.
+# ----------------------------------------------------------------------
+
+statement ok
+RESET sdb_faults;
+
+
+# ----------------------------------------------------------------------
+# A free-standing sequence. Three nextvals, then a rolled-back drop.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE scar_q;
+
+
+query
+SELECT nextval('scar_q'), nextval('scar_q'), nextval('scar_q');
+----
+nextval	nextval	nextval
+1	2	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP SEQUENCE scar_q;
+
+
+statement ok
+ROLLBACK;
+
+
+# The entry is back, and in memory so is the counter.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'scar_q';
+----
+n
+1
+
+
+query
+SELECT nextval('scar_q') AS v;
+----
+v
+4
+
+
+# ----------------------------------------------------------------------
+# A SERIAL column's owned sequence, same shape. The rows stay, so the ids
+# already handed out are still in the table.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE scar_t(id SERIAL PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO scar_t(v) VALUES (10), (20), (30);
+
+
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE scar_t;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+# ----------------------------------------------------------------------
+# A control sequence that no transaction ever dropped. Its counter must
+# survive the same crash, which is what separates this bug from "a crash
+# loses sequence counters".
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE scar_ctl;
+
+
+query
+SELECT nextval('scar_ctl'), nextval('scar_ctl'), nextval('scar_ctl');
+----
+nextval	nextval	nextval
+1	2	3
+
+
+# ----------------------------------------------------------------------
+# Restart. The durable half is only observable here.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+# The control sequence resumes past its durable horizon: the counter is
+# logged 32 values ahead, so a crash costs the tail of the reservation and
+# never the whole counter.
+connection after_crash
+query
+SELECT nextval('scar_ctl') > 3 AS resumed_ahead;
+----
+resumed_ahead
+t
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'scar_q';
+----
+n
+1
+
+
+# The rolled-back drop left the counter untouched, so it resumes past its
+# durable horizon, the same as the control sequence above.
+connection after_crash
+query
+SELECT nextval('scar_q') > 4 AS resumed_ahead;
+----
+resumed_ahead
+t
+
+
+connection after_crash
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+# The owned sequence kept its counter too, so the next insert takes an id past
+# the rows already there rather than colliding with one.
+connection after_crash
+statement ok
+INSERT INTO scar_t(v) VALUES (40);

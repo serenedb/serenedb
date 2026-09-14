@@ -38,6 +38,8 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -48,8 +50,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -395,16 +395,16 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const auto pk_columns = TableEntryPKColumns(table);
 
   // PK positions in key order, then indexed positions the key does not cover.
-  containers::FlatHashSet<size_t> pk_positions;
+  irs::containers::FlatHashSet<size_t> pk_positions;
   pk_positions.reserve(pk_columns.size());
   for (const auto key : pk_columns) {
     if (pk_positions.insert(key.index).second) {
-      result.push_back(duckdb::VIRTUAL_COLUMN_START + key.index);
+      result.push_back(PKVirtualColumnId(key.index));
     }
   }
   for (auto idx : indexed_col_indices) {
     if (!pk_positions.contains(idx)) {
-      result.push_back(duckdb::VIRTUAL_COLUMN_START + idx);
+      result.push_back(PKVirtualColumnId(idx));
     }
   }
 
@@ -423,7 +423,7 @@ duckdb::virtual_column_map_t BuildVirtualColumns(
 
   const auto add = [&](size_t position) {
     const auto& column = columns.GetColumn(duckdb::LogicalIndex{position});
-    result.insert({duckdb::VIRTUAL_COLUMN_START + position,
+    result.insert({PKVirtualColumnId(position),
                    duckdb::TableColumn(column.Name(), column.Type())});
   };
   for (const auto key : pk_columns) {
@@ -431,7 +431,7 @@ duckdb::virtual_column_map_t BuildVirtualColumns(
   }
 
   for (auto idx : indexed_col_indices) {
-    if (!result.contains(duckdb::VIRTUAL_COLUMN_START + idx)) {
+    if (!result.contains(PKVirtualColumnId(idx))) {
       add(idx);
     }
   }
@@ -483,9 +483,9 @@ duckdb::TableStorageInfo BuildStorageInfo(
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
   duckdb::column_t virtual_id) {
-  if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
-      virtual_id < kColumnIdentifierGeneratedPk) {
-    return virtual_id - duckdb::VIRTUAL_COLUMN_START;
+  if (virtual_id >= kColumnIdentifierPkVirtualStart &&
+      virtual_id < kColumnIdentifierPkRowNumber) {
+    return virtual_id - kColumnIdentifierPkVirtualStart;
   }
   return duckdb::DConstants::INVALID_INDEX;
 }
@@ -618,7 +618,7 @@ SereneDBTableEntry::SearchSegmentInfoBindings() const {
 duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table) {
   const auto pk_columns = TableEntryPKColumns(table);
   if (!pk_columns.empty()) {
-    return duckdb::VIRTUAL_COLUMN_START + pk_columns.front().index;
+    return PKVirtualColumnId(pk_columns.front().index);
   }
   return kColumnIdentifierGeneratedPk;
 }

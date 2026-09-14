@@ -25,6 +25,7 @@
 #include <string_view>
 
 #include "network/credentials.h"
+#include "network/http/common.h"
 
 namespace sdb::network::http {
 
@@ -80,9 +81,9 @@ class FlagBearerValidator final : public BearerValidator {
 };
 
 struct AuthResult {
-  // 0 = authenticated (context valid); otherwise the HTTP status to return
+  // None = authenticated (context valid); otherwise the HTTP status to return
   // (401 with WWW-Authenticate).
-  int status = 0;
+  HttpStatus status = HttpStatus::None;
   AuthContext context;
 };
 

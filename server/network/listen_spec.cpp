@@ -20,16 +20,17 @@
 
 #include "network/listen_spec.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <ada.h>
 #include <fast_float/fast_float.h>
 
 #include <charconv>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <set>
-
-#include "basics/log.h"
-#include "basics/string_utils.h"
 
 namespace sdb::network {
 namespace {
@@ -40,7 +41,7 @@ std::string PercentDecode(std::string_view s) {
 
 bool ParseBoolParam(std::string_view v, std::string_view key,
                     std::string_view url) {
-  if (const auto parsed = basics::ParseBool(v)) {
+  if (const auto parsed = irs::utils::ParseBool(v)) {
     return *parsed;
   }
   SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,
@@ -128,11 +129,18 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
       SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
     }
     for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      if (a != "es" && a != "test") {
+      const auto it = absl::c_find_if(
+        kHttpApis, [&](const auto& api) { return api.first == a; });
+      if (it == kHttpApis.end()) {
         SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: es, test)");
+                  "' (known: ",
+                  absl::StrJoin(kHttpApis, ", ",
+                                [](std::string* out, const auto& api) {
+                                  absl::StrAppend(out, api.first);
+                                }),
+                  ")");
       }
-      spec.apis.emplace_back(a);
+      spec.apis.push_back(it->second);
     }
   } else if (key == "mode") {
     if (!is_unix) {
@@ -215,7 +223,7 @@ std::vector<asio_ns::ip::tcp::endpoint> ResolveTcp(
     SDB_FATAL(GENERAL, "cannot resolve host '", host, "' in endpoint '", url,
               "': ", ec.message());
   }
-  containers::FlatHashSet<std::string> seen;
+  irs::containers::FlatHashSet<std::string> seen;
   for (const auto& entry : results) {
     auto ep = entry.endpoint();
     if (seen.emplace(ep.address().to_string()).second) {

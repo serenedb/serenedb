@@ -25,14 +25,14 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
@@ -79,7 +79,7 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // The ClientContext is required (reference, not pointer): the filter
 // builder needs it to resolve named catalog analyzers at filter-build
 // time (`TOKENIZE(text, 'english')` whose stub never runs) and to read
-// the `sdb_scored_terms_limit` session setting.
+// session settings.
 // A non-ok status means "the index cannot claim this predicate" and carries
 // the reason; the optimizer treats it as "decline, fall back" (`root` may
 // hold partially-added children the caller must roll back), ts_offsets
@@ -182,7 +182,7 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return;
   }
-  auto& node = sdb::basics::downCast<irs::BooleanFilter>(filter);
+  auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
   node.VisitChildren([](irs::Filter::ptr& child) {
     if (child) {
       EnsureIncludeSides(*child);

@@ -23,6 +23,10 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <optional>
 #include <ranges>
@@ -30,10 +34,6 @@
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/down_cast.h"
 #include "catalog/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -129,8 +129,8 @@ void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace ivf
 
+using persistence::AnnColumnConfig;
 using persistence::ExpressionKey;
-using persistence::IVFColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
@@ -141,34 +141,40 @@ struct InvertedIndexEntryInfo {
   bool hyperloglog = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<IVFColumnConfig> ivf_config;
+  std::optional<AnnColumnConfig> ann_config;
 
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
-  bool IsIVF() const noexcept { return ivf_config.has_value(); }
+  bool IsAnn() const noexcept { return ann_config.has_value(); }
+  bool IsIVF() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Ivf;
+  }
+  bool IsHNSW() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Hnsw;
+  }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }
   bool IsTermDict() const noexcept {
-    return !IsIVF() && (indexed_term_dict || HasTextDictionary());
+    return !IsAnn() && (indexed_term_dict || HasTextDictionary());
   }
-  bool IsStored() const noexcept { return store_values || IsIVF(); }
+  bool IsStored() const noexcept { return store_values || IsAnn(); }
 };
 
-// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// The ANN descriptor for an entry with an ann_config (nullopt otherwise), keyed
 // off `field_id` (its centroids/postings ids).
-std::optional<irs::IvfInfo> IvfInfoForEntry(
+std::optional<irs::AnnInfo> AnnInfoForEntry(
   irs::field_id field_id, const InvertedIndexEntryInfo& entry);
 
 // The text-search dictionaries an index's entries name, resolved once. The
 // definitions are catalog entries now, so a per-field lookup on a flush path
 // would be a catalog read per column per chunk; the tokenize paths take this
 // instead, built where a transaction is still in scope.
-using TokenizerMap = containers::FlatHashMap<ObjectId, TokenizerRef>;
+using TokenizerMap = irs::containers::FlatHashMap<ObjectId, TokenizerRef>;
 
 // Read through `context`'s own transaction, out of the catalog of the database
 // it is connected to -- the one holding both the index and them. Never through
@@ -188,13 +194,17 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  // No text dictionary: the whole value is one keyword term. The sink can
+  // invert it directly via Document::InsertKeyword, skipping the tokenizer.
+  bool verbatim = false;
 };
 
 // The analyzer + features for one entry: its text dictionary (the default
 // string tokenizer when absent) plus its synthetic tokenizer column.
 // Entry-level rather than index-level, for a config merged across several
 // indexes.
-ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+ColumnTokenizer TokenizerForEntry(duckdb::ClientContext& ctx,
+                                  const TokenizerMap& dicts,
                                   const InvertedIndexEntryInfo& entry);
 
 // One inverted index, in the form a catalog entry is built from -- and also an
@@ -206,7 +216,7 @@ ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
 class InvertedIndex final : public Index, public irs::IndexFieldOptions {
  public:
   using Entries =
-    containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
+    irs::containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
   // `columns` are the de-duped plain-column keys; `expression_keys` carry each
   // expression's payload + allocated field_id; `entries` is the per-field
@@ -217,12 +227,13 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // Search-table one, so several indexes on one column get distinct term fields
   // in the shared store; it is restored from the table's tag, not this index's
   // payload.
-  InvertedIndex(
-    ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    std::string_view name, std::string comment, std::vector<ColumnId> columns,
-    std::vector<ExpressionKey> expression_keys, Entries entries,
-    InvertedIndexOptions options, ExpressionData predicate,
-    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {})
+  InvertedIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+                std::string_view name, std::string comment,
+                std::vector<ColumnId> columns,
+                std::vector<ExpressionKey> expression_keys, Entries entries,
+                InvertedIndexOptions options, ExpressionData predicate,
+                irs::containers::FlatHashMap<ColumnId, irs::field_id>
+                  col_to_term_field = {})
     : Index{schema_id,
             id,
             relation_id,
@@ -256,8 +267,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   // The allocations themselves, for a rebuild that must carry them across (see
   // RebuiltWith): the payload's narrow layout has no room for them.
-  const containers::FlatHashMap<ColumnId, irs::field_id>& TermFieldsByColumn()
-    const noexcept {
+  const irs::containers::FlatHashMap<ColumnId, irs::field_id>&
+  TermFieldsByColumn() const noexcept {
     return _col_to_term_field;
   }
 
@@ -265,7 +276,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // The wider layout: every column paired with its allocated term field_id.
   persistence::SearchInvertedIndexData ToSearchData() const;
   void SerializePayload(duckdb::Serializer& sink) const final;
-  void WriteJson(basics::JsonSink& sink) const final;
+  void WriteJson(utils::JsonSink& sink) const final;
 
   // `column_term_fields` says which layout the payload holds -- it cannot be
   // derived here, since the map it would come from is what is being read. It
@@ -280,7 +291,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static duckdb::unique_ptr<InvertedIndex> FromData(
     ObjectId schema_id, ObjectId id, ObjectId relation_id,
     persistence::InvertedIndexData data,
-    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {});
+    irs::containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field =
+      {});
 
   // The allocated term field_id for a plain column.
   irs::field_id TermFieldForColumn(ColumnId column) const noexcept {
@@ -337,7 +349,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
 
-  ColumnTokenizer GetTokenizer(const TokenizerMap& dicts,
+  ColumnTokenizer GetTokenizer(duckdb::ClientContext& ctx,
+                               const TokenizerMap& dicts,
                                irs::field_id field_id) const;
 
   bool IsKeywordField(duckdb::ClientContext& context,
@@ -346,7 +359,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   irs::field_id FindFieldIdBySerialized(
     std::string_view serialized_expr) const noexcept;
 
-  std::optional<irs::IvfInfo> GetIvfInfo(irs::field_id field_id) const;
+  std::optional<irs::AnnInfo> GetAnnInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 
@@ -377,7 +390,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     return _options.topk_scorer;
   }
 
-  containers::FlatHashSet<ObjectId> GetTokenizers() const final;
+  irs::containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
   void BuildDerivedIndexes();
@@ -389,15 +402,15 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
   // Per-column allocated term field_id (Search-table indexes only).
-  containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
+  irs::containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).
-  containers::FlatHashMap<irs::field_id, const ExpressionData*>
+  irs::containers::FlatHashMap<irs::field_id, const ExpressionData*>
     _expr_by_field_id;
   // Reverse map: serialized expression -> field_id. Views point into the
   // durable storage in _expression_keys.
-  containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
-  containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
+  irs::containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
+  irs::containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   ExpressionData _predicate;
 };
@@ -405,7 +418,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 // The inverted info behind an index, for the readers whose facts are this
 // kind's only.
 inline const InvertedIndex& InvertedInfo(const Index& index) noexcept {
-  return basics::downCast<const InvertedIndex>(index);
+  return irs::utils::downCast<const InvertedIndex>(index);
 }
 
 }  // namespace sdb::catalog

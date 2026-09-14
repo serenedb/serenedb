@@ -29,19 +29,19 @@
 #include <algorithm>
 #include <duckdb/common/named_parameter_map.hpp>
 #include <functional>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <type_traits>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "pg/errcodes.h"
 #include "pg/option_help.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 
 using OptionEntry = std::unique_ptr<duckdb::Value>;
 
-using Options = containers::NodeHashMap<std::string, OptionEntry>;
+using Options = irs::containers::NodeHashMap<std::string, OptionEntry>;
 
 struct OptionsContext {
   std::string_view operation;

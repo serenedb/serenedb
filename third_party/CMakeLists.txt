@@ -157,13 +157,11 @@ set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
 ## BOOST
 ################################################################################
 
-# TODO(mbkkt) make it submodule
 sdb_update_module(${GIT_EXECUTABLE} "boost" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(boost)
-set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 # explicitly set since suppressing Boost search
-# needed for iresearch and boost::text
+# needed for iresearch
 set(Boost_INCLUDE_DIRS "${BOOST_INCLUDE_PATH}")
 set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 
@@ -289,15 +287,6 @@ set(OpenFST_sources
 
 add_library(iresearch-ofst OBJECT ${OpenFST_sources})
 
-# disable warnings for 3rd-party libs for a cleaner build
-if(MSVC)
-    target_compile_options(
-        iresearch-ofst
-        # MSVC2015-2017 require "/bigobj" to compile debug build
-        PRIVATE "$<$<CONFIG:Debug>:/bigobj>"
-    )
-endif()
-
 target_include_directories(
     iresearch-ofst
     SYSTEM
@@ -316,27 +305,6 @@ target_link_libraries(
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(simdcomp)
-
-################################################################################
-### frozen library
-################################################################################
-
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include)
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include PARENT_SCOPE)
-
-################################################################################
-### Boost::Text library
-################################################################################
-
-set(CXX_STD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-# TODO(mbkkt) make it submodule
-add_subdirectory(text)
-target_compile_definitions(
-    text
-    PUBLIC
-        -DBOOST_STL_INTERFACES_DISABLE_CONCEPTS=1
-        -DBOOST_STL_INTERFACES_DISABLE_DEDUCED_THIS=1
-)
 
 ################################################################################
 ### fastText library
@@ -373,7 +341,6 @@ target_link_libraries(sdb_blas INTERFACE openblas)
 ################################################################################
 ### faiss library
 ################################################################################
-set(FAISS_LIB "")
 set(FAISS_LIB faiss)
 if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
@@ -401,18 +368,8 @@ target_compile_options(
 ## snowball stemmer
 ################################################################################
 
-if(NOT PERL_FOUND)
-    set(PERL_FOUND TRUE) # suppress error for Perl not-found
-
-    # MSVC will execute ADD_CUSTOM_COMMAND even though OUTPUT is already present
-    if(MSVC)
-        set(PERL_EXECUTABLE echo)
-    endif()
-endif()
-
-set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
-find_package(SNOWBALL REQUIRED)
-add_library(stemmer::stemmer ALIAS stemmer-static)
+sdb_update_module(${GIT_EXECUTABLE} "libstemmer_c" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
+add_subdirectory(libstemmer_c-cmake)
 
 ################################################################################
 ## LZ4
@@ -587,12 +544,6 @@ target_link_libraries(
     PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
 )
 
-################################################################################
-## LINK_DIRECTORIES
-################################################################################
-
-set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
-
 ###############################################################################
 ## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
 ################################################################################
@@ -683,6 +634,31 @@ sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_D
 add_subdirectory(azure-cmake)
 
 ################################################################################
+## cmark-gfm
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
+set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
+set(CMARK_STATIC ON CACHE BOOL "" FORCE)
+
+add_subdirectory(cmark-gfm)
+
+target_include_directories(
+    libcmark-gfm_static
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
+        ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
+)
+target_include_directories(
+    libcmark-gfm-extensions_static
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
+)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -725,6 +701,7 @@ set(BUILD_EXTENSIONS
 # these files after the BUILD_EXTENSIONS list is resolved.
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -737,6 +714,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
@@ -776,6 +754,7 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        markdown_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).

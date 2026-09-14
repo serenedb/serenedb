@@ -28,17 +28,17 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <random>
 #include <thread>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "connector/inverted_store_index.h"
-#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"
@@ -166,7 +166,7 @@ void Transaction::CommitSearch(
   };
 
   // Phase 1, before the tick exists: drain the workers and pin every staged
-  // segment onto the flush context. Pinning must precede Advance -- otherwise a
+  // segment onto the flush context. Pinning must precede Next -- otherwise a
   // refresh whose tick snapshot lands in between could advance its committed
   // tick past an unpinned segment (lost insert / FlushPending assert). Returns
   // each feed's widest query count, so the reserved band leaves every writer's
@@ -184,8 +184,7 @@ void Transaction::CommitSearch(
       std::uniform_int_distribution<int>(0, 20000)(gRng)));
   }
 
-  const auto last_tick =
-    search::TickDomain::Instance().Advance(max_queries + 1);
+  const auto last_tick = search::TickDomain::Instance().Next(max_queries + 1);
 
   std::move(rollback).Cancel();
 

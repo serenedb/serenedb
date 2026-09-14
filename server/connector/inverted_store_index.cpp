@@ -44,15 +44,14 @@
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/log.h"
-#include "basics/primary_key.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -70,6 +69,7 @@
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
+#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -90,7 +90,7 @@ std::shared_ptr<const catalog::Index> FindInvertedDefinition(
 // so BoundIndex::BindExpression can turn them into chunk offsets.
 duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
   const duckdb::Expression& expr, ObjectId table_id,
-  const containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
+  const irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
     col_id_to_pos) {
   auto copy = expr.Copy();
   duckdb::ExpressionIterator::VisitExpressionMutable<
@@ -173,8 +173,7 @@ struct FeedScratch {
   // Rowids of a scanned range, which run contiguously from the range's first
   // row -- generated in place rather than materialized into a side buffer.
   duckdb::Vector scan_rowids{duckdb::LogicalType::ROW_TYPE};
-  std::vector<std::string> keys;
-  std::vector<std::string_view> key_views;
+  std::vector<duckdb::string_t> key_terms;
   std::string delete_key;
   std::vector<duckdb::Vector> sliced;
   std::vector<ExpressionValue> values;
@@ -245,14 +244,11 @@ duckdb::idx_t FeedFilteredChunk(
   feed_rows->ToUnifiedFormat(count, row_fmt);
   const auto* row_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
-  auto& keys = scratch.keys;
-  auto& key_views = scratch.key_views;
-  keys.resize(count);
-  key_views.resize(count);
+  auto& key_terms = scratch.key_terms;
+  key_terms.resize(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    keys[i].clear();
-    primary_key::AppendSigned(keys[i], row_data[row_fmt.sel->get_index(i)]);
-    key_views[i] = keys[i];
+    key_terms[i] = catalog::duckdb_primary_key::SignedKeyTerm(
+      row_data[row_fmt.sel->get_index(i)]);
   }
 
   // Expression values were computed over the unfiltered batch, so a filtered
@@ -277,7 +273,7 @@ duckdb::idx_t FeedFilteredChunk(
     values.push_back({fields[i].field_id, &sliced.back()});
   }
 
-  FeedChunk(writer, count, PkChunk{.keys = key_views, .column = feed_rows},
+  FeedChunk(writer, count, PkChunk{.key_terms = key_terms, .column = feed_rows},
             *feed_chunk, columns, values);
   return count;
 }
@@ -306,10 +302,12 @@ struct FeedPool {
   // the executor and its result chunk are per-worker.
   struct Bundle {
     Bundle(FeedPool& pool, irs::IndexWriter::Transaction& trx)
-      : insert_writer{pool.MakeInsertWriter(trx)},
+      : expr_conn{pool.instance},
+        insert_writer{pool.MakeInsertWriter(trx, *expr_conn.context)},
         delete_writer{std::make_unique<DuckDBSearchSinkDeleteWriter>(trx)},
         exprs{std::make_unique<IndexExpressions>(pool.owner)} {}
 
+    duckdb::Connection expr_conn;
     std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
     std::unique_ptr<IndexExpressions> exprs;
@@ -321,9 +319,9 @@ struct FeedPool {
   }
 
   std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
-    irs::IndexWriter::Transaction& trx) {
+    irs::IndexWriter::Transaction& trx, duckdb::ClientContext& ctx) {
     return std::make_unique<DuckDBSearchSinkInsertWriter>(
-      trx, MakeTokenizerProvider(dicts, Info()), index->GetColumns(),
+      trx, MakeTokenizerProvider(ctx, dicts, Info()), index->GetColumns(),
       MakeEntryInfoProvider(Info()),
       PkPolicy{.index_term = Info().GetOptions().pk_term,
                .column = Info().GetOptions().pk_column});
@@ -706,7 +704,7 @@ struct ReplayQueue {
       for (auto& trx : head.trxs) {
         queries = std::max<uint64_t>(queries, trx.GetQueries());
       }
-      const auto tick = search::TickDomain::Instance().Advance(queries + 1);
+      const auto tick = search::TickDomain::Instance().Next(queries + 1);
       // A small entry commits its one transaction; a range entry commits every
       // sub-range's transaction at this same tick (disjoint rowids, so equal
       // ticks are fine -- a later delete still masks them at a higher tick).
@@ -863,8 +861,8 @@ struct LiveFeed {
 
   // Phase 1 of the live commit, BEFORE the tick is allocated: finish
   // tokenization and pin every segment onto the flush context. RegisterFlush
-  // must precede TickDomain::Advance -- otherwise a refresh whose tick
-  // snapshot lands between the Advance and the pin could advance its committed
+  // must precede TickDomain::Next -- otherwise a refresh whose tick
+  // snapshot lands between the Next and the pin could advance its committed
   // tick past an unpinned segment (lost insert / FlushPending assert).
   // Returns the max per-segment query count for tick-range sizing.
   uint64_t Prepare() {
@@ -1648,7 +1646,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   // checks) sees exactly what the index reads. An expression's column
   // references are rewritten to positions in this list, which is what
   // BoundIndex::BindExpression turns into chunk offsets.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
+  irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
   // The store table holds the table's columns in catalog order, less the
   // generated primary key, which is an identity this side of the store and is
   // never a row value -- so a column's position is its id's mapping, computed
@@ -1657,7 +1655,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   // Position, not name: RENAME COLUMN hands the renamed entry the very same
   // DataTable, whose cached column definitions go on naming the old column, so
   // a name lookup here silently stops finding the field after a rename.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
+  irs::containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
   pos_by_id.reserve(table.columns.LogicalColumnCount());
   duckdb::idx_t store_pos = 0;
   for (const auto& column : table.columns.Logical()) {

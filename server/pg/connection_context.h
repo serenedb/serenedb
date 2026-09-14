@@ -21,15 +21,15 @@
 #pragma once
 
 #include <atomic>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
 #include <string_view>
 
-#include "basics/message_buffer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
-#include "pg/sql_error.h"
 #include "query/transaction.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::pg {
 
@@ -43,7 +43,7 @@ class CopyInBridge;
 struct LoginCheck {
   ObjectId role;
   bool superuser = false;
-  pg::SqlErrorData error;
+  irs::pg::SqlErrorData error;
 };
 
 // The connect-time login gate shared by the pg-wire and http sessions:
@@ -96,6 +96,10 @@ class ConnectionContext final : public query::Transaction {
   // serenedb mutators that emitted them.
   bool IsStorageConnection() const noexcept { return _storage_connection; }
   void MarkStorageConnection() noexcept { _storage_connection = true; }
+  // The embedded docs loader: the one writer the read-only sdb_docs schema
+  // admits.
+  bool IsSystemWriter() const noexcept { return _system_writer; }
+  void MarkSystemWriter() noexcept { _system_writer = true; }
 
   void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
   void SetSessionRole(ObjectId role) {
@@ -124,7 +128,7 @@ class ConnectionContext final : public query::Transaction {
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
   // the stack is empty -- no mutex, no allocation.
-  void AddNotice(pg::SqlErrorData notice) {
+  void AddNotice(irs::pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
     node->next = _notices.load(std::memory_order_relaxed);
     while (!_notices.compare_exchange_weak(
@@ -152,20 +156,21 @@ class ConnectionContext final : public query::Transaction {
 
  private:
   struct NoticeNode {
-    pg::SqlErrorData data;
+    irs::pg::SqlErrorData data;
     NoticeNode* next;
   };
 
+  bool _storage_connection = false;
+  bool _system_writer = false;
+  const int32_t _backend_pid;
   const std::string _user;
   const std::string _database_name;
   const ObjectId _database_id;
-  const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
   const ObjectId _login_role_id;
   ObjectId _session_role_id;
   ObjectId _effective_role_id;
-  bool _storage_connection = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

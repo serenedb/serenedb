@@ -1,0 +1,134 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA dcr_altered;
+
+
+statement ok
+CREATE TABLE dcr_altered.entries (id INT, note TEXT);
+
+
+statement ok
+ALTER TABLE dcr_altered.entries ADD COLUMN extra TEXT;
+
+
+statement count 1
+INSERT INTO dcr_altered.entries (note, extra) VALUES ('pre_crash', 'x');
+
+
+statement error (?i)table "entries" depends on schema "dcr_altered"
+DROP SCHEMA dcr_altered;
+
+
+statement error (?i)table "entries" depends on schema "dcr_altered"
+DROP SCHEMA dcr_altered RESTRICT;
+
+
+statement ok
+DROP SCHEMA dcr_altered CASCADE;
+
+
+statement ok
+CREATE SCHEMA dcr_seq_src;
+
+
+statement ok
+CREATE SCHEMA dcr_seq_user;
+
+
+statement ok
+CREATE SEQUENCE dcr_seq_src.shared_id_seq START 7000;
+
+
+statement ok
+CREATE TABLE dcr_seq_user.entries (
+  id INT DEFAULT nextval('dcr_seq_src.shared_id_seq'),
+  note TEXT
+);
+
+
+statement count 1
+INSERT INTO dcr_seq_user.entries (note) VALUES ('pre_crash');
+
+
+statement ok
+DROP SCHEMA dcr_seq_src CASCADE;
+
+
+statement error (?i)table "entries" depends on schema "dcr_seq_user"
+DROP SCHEMA dcr_seq_user;
+
+
+statement ok
+DROP SCHEMA dcr_seq_user CASCADE;
+
+
+statement ok
+CREATE SCHEMA dcr_witness;
+
+
+statement ok
+CREATE TABLE dcr_witness.entries (id INT, body TEXT);
+
+
+statement count 1
+INSERT INTO dcr_witness.entries VALUES (1, 'unaffected');
+
+
+statement ok
+ALTER TABLE dcr_witness.entries ADD COLUMN extra TEXT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_namespace
+  WHERE nspname IN ('dcr_altered', 'dcr_seq_src', 'dcr_seq_user');
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname IN ('dcr_altered', 'dcr_seq_src', 'dcr_seq_user');
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT id, body, extra FROM dcr_witness.entries;
+----
+id	body	extra
+1	unaffected	NULL
+
+
+connection after_crash
+statement ok
+CREATE SCHEMA dcr_altered;
+
+
+connection after_crash
+statement ok
+CREATE TABLE dcr_altered.entries (id INT);
+
+
+connection after_crash
+statement ok
+DROP SCHEMA dcr_altered CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA dcr_witness CASCADE;

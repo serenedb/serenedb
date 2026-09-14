@@ -25,20 +25,20 @@
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/search/geo_filter.hpp>
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/geo/coding.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/geo/shape_container.hpp>
+#include <iresearch/utils/geo/wkb.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "basics/assert.h"
 #include "catalog/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
-#include "geo/coding.h"
-#include "geo/geo_json.h"
-#include "geo/shape_container.h"
-#include "geo/wkb.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -66,22 +66,22 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
 }
 
 // Populate the iresearch geo filter base options from the column's geo
-// analyzer. Calls into GeoAnalyzer::prepare which fills in the indexer
+// analyzer. Calls into GeoTokenizer::prepare which fills in the indexer
 // terms-prefix, S2 indexer options, and the analyzer's stored-form coding,
 // then resolves the stored field id the filter reads per doc:
 //   - StoredType::Source: the force-included source column itself (its own
 //     field id); source_is_wkb selects WKB vs GeoJSON re-parsing.
-//   - S2 codings: the analyzer's synthetic StoreAttr blob column.
+//   - S2 codings: the analyzer's synthetic store blob column.
 void SetupGeoFilter(const SearchColumnInfo& column_info,
                     irs::GeoFilterOptionsBase& options) {
   const auto& a = *column_info.tokenizer.analyzer;
   const auto type_id = a.type();
-  if (type_id != irs::Type<irs::analysis::GeoJsonAnalyzer>::id() &&
-      type_id != irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
+  if (type_id != irs::Type<irs::analysis::GeoJsonTokenizer>::id() &&
+      type_id != irs::Type<irs::analysis::GeoPointTokenizer>::id()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Analyzer for field is not a geo analyzer"));
+                    ERR_MSG("Tokenizer for field is not a geo analyzer"));
   }
-  basics::downCast<irs::analysis::GeoAnalyzer>(a).prepare(options);
+  irs::analysis::GeoTokenizer::Cast(a).prepare(options);
   if (options.stored == irs::StoredType::Source) {
     options.store_field_id = column_info.field_id;
     options.source_is_wkb =
@@ -100,8 +100,8 @@ void SetupGeoFilter(const SearchColumnInfo& column_info,
 // GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
 //   when the bytes carry an EWKB SRID).
 void ParseGeoConstant(const duckdb::Value& value,
-                      sdb::geo::coding::Options coding,
-                      sdb::geo::ShapeContainer& shape) {
+                      irs::geo::coding::Options coding,
+                      irs::geo::ShapeContainer& shape) {
   switch (value.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR: {
       // StringValue::Get returns the raw stored bytes; for VARCHAR that's the
@@ -127,7 +127,7 @@ void ParseGeoConstant(const duckdb::Value& value,
       // ParseShape (geo_json.cpp) uses the cache as scratch for LatLng
       // pre-quantization; ParseShapeWKB no longer needs one.
       std::vector<S2LatLng> cache;
-      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(json, shape, cache,
+      if (!irs::geo::ParseShape<irs::geo::Parsing::GeoJson>(json, shape, cache,
                                                             coding, nullptr)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("Geo argument is not valid GeoJSON"));
@@ -137,7 +137,7 @@ void ParseGeoConstant(const duckdb::Value& value,
     case duckdb::LogicalTypeId::GEOMETRY: {
       sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       const auto& wkb_str = duckdb::StringValue::Get(value);
-      if (!sdb::geo::ParseShapeWKB(wkb_str, shape)) {
+      if (!irs::geo::ParseShapeWKB(wkb_str, shape)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("GEOMETRY constant is not valid WKB"));
       }
@@ -212,13 +212,13 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(parent, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer centroid_shape;
+  irs::geo::ShapeContainer centroid_shape;
   ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
   options->origin = centroid_shape.centroid();
 
@@ -313,13 +313,13 @@ void FromGeoInRange(BoolTarget filter, const FilterContext& ctx,
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer centroid_shape;
+  irs::geo::ShapeContainer centroid_shape;
   ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
   options->origin = centroid_shape.centroid();
 
@@ -392,13 +392,13 @@ void FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
 
   auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   SetupGeoFilter(*column_info, *options);
 
-  sdb::geo::ShapeContainer shape;
+  irs::geo::ShapeContainer shape;
   ParseGeoConstant(*shape_val, options->coding, shape);
   options->shape = std::move(shape);
 

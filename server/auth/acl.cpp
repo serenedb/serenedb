@@ -25,12 +25,11 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <optional>
 #include <string>
-
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/system-compiler.h"
 
 namespace sdb::auth {
 namespace {
@@ -40,7 +39,7 @@ using catalog::AclMode;
 using duckdb::CatalogType;
 
 // Lowercase keyword -> AclMode; callers lowercase the input before lookup.
-const containers::FlatHashMap<std::string_view, AclMode> kPrivNames{
+const irs::containers::FlatHashMap<std::string_view, AclMode> kPrivNames{
   {"select", AclMode::Select},     {"insert", AclMode::Insert},
   {"update", AclMode::Update},     {"delete", AclMode::Delete},
   {"truncate", AclMode::Truncate}, {"references", AclMode::References},

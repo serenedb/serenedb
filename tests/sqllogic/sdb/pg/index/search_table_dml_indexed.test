@@ -1,0 +1,198 @@
+# DML on a search table resolves its key through the scan's row-identity
+# columns. Those hold the PK virtuals first and then every indexed non-PK
+# column, so the key must be located by id rather than taken off the tail, and
+# the virtual ids must not overlap the multi-file reader's file_index.
+
+statement ok
+CREATE TABLE dml_t (id BIGINT PRIMARY KEY, n BIGINT, r TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX dml_t_r ON dml_t USING inverted (r);
+
+statement ok
+CREATE INDEX dml_t_n ON dml_t USING inverted (n);
+
+# n collides with another row's key: a delete keyed off the wrong column would
+# remove row 2 instead of row 1.
+statement ok
+INSERT INTO dml_t VALUES (1, 2, 'alpha cat'), (2, 3, 'beta dog'), (3, 1, 'gamma cat');
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+statement ok
+DELETE FROM dml_t WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+query
+SELECT id, n, r FROM dml_t ORDER BY id;
+----
+id	n	r
+2	3	beta dog
+3	1	gamma cat
+
+query
+SELECT id, r FROM dml_t_r WHERE r IN ('alpha cat', 'beta dog', 'gamma cat') ORDER BY id;
+----
+id	r
+2	beta dog
+3	gamma cat
+
+statement ok
+UPDATE dml_t SET r = 'beta cat', n = 30 WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+query
+SELECT id, n, r FROM dml_t ORDER BY id;
+----
+id	n	r
+2	30	beta cat
+3	1	gamma cat
+
+query
+SELECT id, r FROM dml_t_r WHERE r IN ('beta dog', 'beta cat', 'gamma cat') ORDER BY id;
+----
+id	r
+2	beta cat
+3	gamma cat
+
+query
+SELECT id FROM dml_t_n WHERE n = 30;
+----
+id
+2
+
+statement ok
+DELETE FROM dml_t WHERE r = 'gamma cat';
+
+query
+DELETE FROM dml_t WHERE id = 2 RETURNING id, r;
+----
+id	r
+2	beta cat
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+query
+SELECT count(*) AS remaining FROM dml_t;
+----
+remaining
+0
+
+statement ok
+INSERT INTO dml_t VALUES (7, 70, 'delta');
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE dml_t;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_t;
+
+query
+SELECT count(*) AS after_truncate FROM dml_t;
+----
+after_truncate
+0
+
+# The key as the third column: its virtual id used to coincide with the
+# multi-file reader's file_index.
+statement ok
+CREATE TABLE dml_p2 (a INT, b TEXT, id BIGINT PRIMARY KEY)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO dml_p2 VALUES (1, 'x', 100), (2, 'y', 200);
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_p2;
+
+statement ok
+DELETE FROM dml_p2 WHERE id = 100;
+
+statement ok
+UPDATE dml_p2 SET b = 'z' WHERE id = 200;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_p2;
+
+query
+SELECT a, b, id FROM dml_p2 ORDER BY id;
+----
+a	b	id
+2	z	200
+
+# Composite key with an index on a non-key column.
+statement ok
+CREATE TABLE dml_c (a INT, b INT, r TEXT, PRIMARY KEY (a, b))
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX dml_c_r ON dml_c USING inverted (r);
+
+statement ok
+INSERT INTO dml_c VALUES (1, 1, 'one one'), (1, 2, 'one two'), (2, 1, 'two one');
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_c;
+
+statement ok
+DELETE FROM dml_c WHERE a = 1 AND b = 1;
+
+statement ok
+UPDATE dml_c SET r = 'two ONE' WHERE a = 2 AND b = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_c;
+
+query
+SELECT a, b, r FROM dml_c ORDER BY a, b;
+----
+a	b	r
+1	2	one two
+2	1	two ONE
+
+# Generated key with an index: the generated PK stays the last row-identity
+# column.
+statement ok
+CREATE TABLE dml_g (r TEXT, n INT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX dml_g_r ON dml_g USING inverted (r);
+
+statement ok
+INSERT INTO dml_g VALUES ('a', 1), ('b', 2), ('c', 3);
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_g;
+
+statement ok
+DELETE FROM dml_g WHERE r = 'a';
+
+statement ok
+UPDATE dml_g SET n = 20 WHERE r = 'b';
+
+statement ok
+VACUUM (REFRESH_TABLE) dml_g;
+
+query
+SELECT r, n FROM dml_g ORDER BY r;
+----
+r	n
+b	20
+c	3

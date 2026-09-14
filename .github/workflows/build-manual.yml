@@ -98,7 +98,7 @@ jobs:
       LOCATION: ${{ matrix.location }}
       CONFIG: dev
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
@@ -118,7 +118,7 @@ jobs:
       CONFIG: asan
       RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_ASAN }}
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
@@ -138,7 +138,7 @@ jobs:
       CONFIG: tsan
       RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_TSAN }}
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}

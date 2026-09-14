@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include "basics/identifier.h"
+#include "server/utils/identifier.h"
 
 namespace sdb {
 
-class ObjectId : public basics::Identifier {
+class ObjectId : public utils::Identifier {
  public:
   using Identifier::Identifier;
 
@@ -60,6 +60,7 @@ inline constexpr ObjectId kUnionArray{kMinSystem.id() + 105};
 
 // OpClasses
 inline constexpr ObjectId kPgOpclassIvf{kMinSystem.id() + 200};
+inline constexpr ObjectId kPgOpclassHnsw{kMinSystem.id() + 202};
 inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 
 // The generated pg_catalog / information_schema views, numbered in the order

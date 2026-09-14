@@ -368,13 +368,13 @@ VACUUM (REFRESH_TABLE) geo_plain
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Analyzer for field is not a geo analyzer
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Contains(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Analyzer for field is not a geo analyzer
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 # --- GEOMETRY column ---
@@ -1299,7 +1299,7 @@ id
 # don't index arrays -- so paths must traverse object keys at every
 # step (e.g. `loc/lat` for `{"loc": {"lat": ...}}`). Documents that
 # don't have the configured paths or whose values aren't numbers are
-# silently skipped at index time (GeoPointAnalyzer::ParsePoint returns
+# silently skipped at index time (GeoPointTokenizer::ParsePoint returns
 # false, no terms emitted). The same query operators (ST_Intersects,
 # ST_Distance_Centroid, `<->`) work as on a `geojson_shape`-indexed
 # column -- the discriminator in TryGetGeoDistanceCall and friends is
@@ -1421,7 +1421,7 @@ id
 # --- geopoint analyzer: array mode (no paths) ---
 # When `latitude` and `longitude` are both omitted, the analyzer enters
 # `_from_array` mode: each indexed JSON value must be a 2-element
-# [lat, lng] array (NOT GeoJSON's [lng, lat]). GeoPointAnalyzer::
+# [lat, lng] array (NOT GeoJSON's [lng, lat]). GeoPointTokenizer::
 # ParsePoint reads element 0 as latitude and element 1 as longitude.
 # Wrong-arity / non-array values silently drop from the index.
 

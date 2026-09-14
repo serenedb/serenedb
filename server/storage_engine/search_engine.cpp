@@ -27,42 +27,35 @@
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
-#include <iresearch/analysis/classification_tokenizer.hpp>
-#include <iresearch/analysis/fast_text_model.hpp>
-#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/number_of_cores.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
 namespace sdb::search {
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
-  ::irs::analysis::ClassificationTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::FastText>);
-  ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::ImmutableFastText>);
-
   irs::formats::Init();
   irs::InitOptimizeRules();
 
@@ -79,6 +72,32 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
+}
+
+uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
+                              1, 16);
+}
+
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+const irs::AnnBuildEnv& AnnBuildEnv() {
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
 }
 
 void SearchEngine::start() {
@@ -122,7 +141,7 @@ template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= sdb::StaticStrings::kSearchRoot;
+  path /= irs::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }
@@ -134,7 +153,7 @@ SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
     // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
     // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
     auto& fs = duckdb::FileSystem::GetFileSystem(
-      sdb::DuckDBEngine::Instance().instance());
+      irs::DuckDBEngine::Instance().instance());
     auto wal_dir = GetPersistedPath(database_id) / "wal";
     it = _db_wals
            .emplace(database_id,

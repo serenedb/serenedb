@@ -29,6 +29,11 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -36,10 +41,6 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -63,7 +64,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   // A dedicated connection whose ClientContext drives indexed-expression
   // evaluation for replayed rows (the WAL stores raw columns; expressions must
   // be recomputed). Rolled back at the end -- it never writes anything.
-  duckdb::Connection expr_conn(DuckDBEngine::Instance().instance());
+  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
   expr_conn.BeginTransaction();
   absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
   auto& expr_context = *expr_conn.context;
@@ -104,7 +105,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                             database_ids.push_back(catalog::IdOf(db));
                           });
   for (const ObjectId db_id : database_ids) {
-    containers::NodeHashMap<ObjectId, ShardInfo> shards;
+    irs::containers::NodeHashMap<ObjectId, ShardInfo> shards;
     catalog::Visit<catalog::SereneDBTableEntry>(
       nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
         if (!entry.IsSearchTable()) {
@@ -127,7 +128,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     }
 
     auto& wal = engine.GetDbWal(db_id);
-    containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
+    irs::containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
     auto exists_of = [&](ObjectId table_id) {
       return shards.find(table_id) != shards.end();
     };
@@ -176,19 +177,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // TRUNCATE wipes the shard as of `tick`. Clear rolls back the open trx
-    // (discarding any pre-truncate replayed inserts -- superseded by the
-    // truncate) and drops on-disk published data <= tick; drop the sinks first
-    // so nothing pins the trx, then start a fresh trx. Post-truncate ops (in
-    // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
-    // is last, Finalize commits the empty trx so the cleared state publishes.
     auto replay_truncate = [&](uint64_t tick, ObjectId table_id) {
-      auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
-      ctx.insert_sink.reset();
-      ctx.delete_sink.reset();
-      info.search->Clear(tick);
-      ctx.trx = info.search->GetTransaction();
+      ctx.trx.Remove(std::make_shared<irs::All>());
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Re-attach the files the crashed process already flushed instead of
@@ -243,7 +234,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ++recovered_shards;
     }
 
-    // Advance every shard -- including ones with no replayed records -- to the
+    // Next every shard -- including ones with no replayed records -- to the
     // recovered max tick, so an idle shard doesn't pin this database WAL's GC
     // floor after recovery. FinishRecovery is per-shard for the same reason:
     // one that adopted nothing still has to reclaim what the crash left behind.

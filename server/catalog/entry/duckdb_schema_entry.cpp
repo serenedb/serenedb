@@ -42,9 +42,11 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 
 #include "auth/role_closure.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
@@ -66,8 +68,6 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"
@@ -502,7 +502,7 @@ class StaticRelationGenerator final : public duckdb::DefaultGenerator {
     : duckdb::DefaultGenerator{catalog},
       _schema{schema},
       _info_schema{schema.name.GetIdentifierName() ==
-                   StaticStrings::kInformationSchema} {}
+                   irs::StaticStrings::kInformationSchema} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction /*transaction*/,
@@ -551,7 +551,7 @@ class StaticFunctionGenerator final : public duckdb::DefaultGenerator {
     : duckdb::DefaultGenerator{catalog},
       _schema{schema},
       _info_schema{schema.name.GetIdentifierName() ==
-                   StaticStrings::kInformationSchema} {}
+                   irs::StaticStrings::kInformationSchema} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction /*transaction*/,
@@ -585,8 +585,8 @@ class StaticFunctionGenerator final : public duckdb::DefaultGenerator {
 };
 
 bool IsStaticSchema(std::string_view schema_name) noexcept {
-  return schema_name == StaticStrings::kPgCatalogSchema ||
-         schema_name == StaticStrings::kInformationSchema;
+  return schema_name == irs::StaticStrings::kPgCatalogSchema ||
+         schema_name == irs::StaticStrings::kInformationSchema;
 }
 
 duckdb::unique_ptr<duckdb::DefaultGenerator> MakeStaticRelationGenerator(
@@ -707,11 +707,11 @@ SereneDBSchemaEntry::LookupBuiltinFunction(
   const duckdb::EntryLookupInfo& lookup_info) {
   const auto type = lookup_info.GetCatalogType();
   if (!IsFunctionLookup(type) ||
-      name.GetIdentifierName() == StaticStrings::kPgCatalogSchema) {
+      name.GetIdentifierName() == irs::StaticStrings::kPgCatalogSchema) {
     return nullptr;
   }
   auto pg_catalog = catalog.Cast<SereneDBCatalog>().TryGetSchemaEntry(
-    StaticStrings::kPgCatalogSchema);
+    irs::StaticStrings::kPgCatalogSchema);
   if (!pg_catalog) {
     return nullptr;
   }
@@ -759,7 +759,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     return builtin;
   }
 
-  if (name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
+  if (name.GetIdentifierName() != irs::StaticStrings::kPgCatalogSchema) {
     return nullptr;
   }
 
@@ -1271,7 +1271,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto declared =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       info.Copy());
-  catalog::Permissions perm{role};
+  catalog::Permissions perm{role, {}, {}};
   if (existing) {
     catalog::RequireOwner(&context, role, existing->permissions, "function",
                           existing->name.GetIdentifierName());
@@ -1338,7 +1338,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   const auto* existing =
     Find<duckdb::ViewCatalogEntry>(&context, schema_id, view_name);
 
-  catalog::Permissions perm{role};
+  catalog::Permissions perm{role, {}, {}};
   if (replace && existing) {
     catalog::RequireOwner(&context, role, existing->permissions, "view",
                           existing->name.GetIdentifierName());
@@ -1431,7 +1431,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   }
   const auto id = catalog::NextId();
   const auto seed = options.Seed();
-  const catalog::Permissions perm{role};
+  const catalog::Permissions perm{role, {}, {}};
   // One definition, handed to the record and to the entry: nothing is derived
   // at append time.
   auto definition =
@@ -1500,7 +1500,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   copied->type = StampUserType(copied->type, type_name, id);
   catalog::SetIdentity(*copied, id, schema_id);
   PutEntry(&context, /*old_name=*/{}, std::move(copied),
-           catalog::Permissions{role});
+           catalog::Permissions{role, {}, {}});
   return nullptr;
 }
 

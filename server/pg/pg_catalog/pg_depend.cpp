@@ -22,9 +22,9 @@
 
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
 #include <duckdb/common/optional_ptr.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -80,7 +80,8 @@ struct Referenced {
 std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
                                    ObjectId db_id) {
   std::vector<PgDepend> edges;
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
+  irs::containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+    tables;
   catalog::Visit<catalog::SereneDBTableEntry>(
     context, db_id, [&](const catalog::SereneDBTableEntry& table) {
       tables.emplace(catalog::IdOf(table), &table);

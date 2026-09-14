@@ -1,0 +1,59 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2021 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+///
+/// @author Andrey Abramov
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string_view>
+#include <type_traits>
+
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
+
+namespace irs {
+
+enum class NormEncoding : uint8_t {
+  Byte = sizeof(uint8_t),
+  Short = sizeof(uint16_t),
+  Int = sizeof(uint32_t),
+};
+
+class Norm : public Attribute {
+ public:
+  using ValueType = uint32_t;
+
+  static constexpr std::string_view type_name() noexcept { return "norm"; }
+
+  ValueType value = 0;
+};
+
+static_assert(std::is_nothrow_move_constructible_v<Norm>);
+static_assert(std::is_nothrow_move_assignable_v<Norm>);
+
+inline constexpr std::array<uint32_t, kPostingBlock> kNorms{[] {
+  std::array<uint32_t, kPostingBlock> norms;
+  norms.fill(1);
+  return norms;
+}()};
+
+}  // namespace irs

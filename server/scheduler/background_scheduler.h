@@ -35,7 +35,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 #include <yaclib/util/intrusive_ptr.hpp>
 
-#include "basics/asio_ns.h"
+#include "server/utils/asio_ns.h"
 
 namespace sdb {
 
@@ -76,6 +76,10 @@ class BackgroundScheduler final {
 
   yaclib::IExecutor& executor() noexcept { return *_pool; }
 
+  yaclib::IExecutor& annExecutor() noexcept { return *_ann_pool; }
+
+  static std::uint64_t AnnBuildBudget() noexcept;
+
   // Completes after `d` (best-effort; immediate once CancelDelays() has run,
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
@@ -100,6 +104,7 @@ class BackgroundScheduler final {
  private:
   std::uint64_t _threads;
   yaclib::IntrusivePtr<yaclib::FairThreadPool> _pool;
+  yaclib::IntrusivePtr<yaclib::FairThreadPool> _ann_pool;
   std::atomic_bool _delays_cancelled = false;
   absl::Mutex _delays_mutex;
   absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> _delays;

@@ -60,7 +60,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
 - `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
-- `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
+- `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
 - `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
 
@@ -86,8 +86,8 @@ C++ unit tests:
 
 ```bash
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
-./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
-./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
+./build/bin/serenedb-tests "--gtest_filter=*VPackLoadInspectorTest*"
+./build/bin/serenedb-tests "--gtest_filter=*DataSourceWithSearchTest*"
 ```
 
 ### Testing CI workflows locally
@@ -141,6 +141,23 @@ sqllogic runner -- the `_pgscan.` filename suffix triggers
   - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
 - **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
 - **CI must pass** and one maintainer must approve before merge.
+
+## Documentation
+
+A user-visible change lands with its documentation in the same PR. New SQL syntax, functions, settings, CLI flags, catalog objects, wire-protocol behavior -- anything a user can reach -- is undocumented until `docs/` says so, and reviewers ask for the page before approving a `feat:`. Behavior that changes gets its existing page updated in the same PR.
+
+- **`docs/` is the source of truth**, and two consumers read it: the website, which renders it as its Docusaurus tree, and the server itself, which embeds it as the `sdb_docs` schema when built with `SDB_EMBEDDED_DOCS`.
+- **Frontmatter:** every page needs `title` and `split`, where `split` is `page` (index the whole page as one unit) or `headings` (index each heading separately -- use it for long reference pages). `scripts/generate_docs.py` rejects anything else, which fails the build.
+- **New folder:** add a `_category_.json` beside the pages with `label` and `position`, or the sidebar falls back to the folder name.
+
+### Documenting with runnable examples
+
+SQL examples are backed by sqllogic tests, so an example that stops working fails CI instead of shipping.
+
+- Put the example in a test under `tests/sqllogic/sdb/pg/site_docs/` (or `tests/sqllogic/recovery/site_docs/`) and mark its block with a `# DOCS_TEST: <name>` comment.
+- Reference it from the page as `<SqlLogicTest id="<file>/<name>" />`, where `<file>` is the test's path relative to `site_docs` with the extension dropped. So `tests/sqllogic/sdb/pg/site_docs/quick-start.test` plus `# DOCS_TEST: example_003` gives `id="quick-start/example_003"`.
+- Import the component once per page with `import SqlLogicTest from "@site/src/components/SqlLogicTest";`, and pass `hideResult` to render the query without its output.
+- An `id` that matches no marker renders **nothing** -- no error, no warning, just a missing example. Grep for the marker after you write the tag.
 
 ## VSCode Setup
 
@@ -328,7 +345,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Logging
 
-- Use `SDB_LOG(level, topic, ...)` macros from `basics/log.h`
+- Use `SDB_LOG(level, topic, ...)` macros from `iresearch/utils/log.hpp`
 - Shortcuts: `SDB_ERROR(topic, ...)`, `SDB_INFO(topic, ...)`
 
 ### Integer Types

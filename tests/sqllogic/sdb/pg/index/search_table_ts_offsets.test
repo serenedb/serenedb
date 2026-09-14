@@ -46,3 +46,68 @@ FROM d_off WHERE body @@ 'fox' ORDER BY id;
 ----
 id	hl
 1	the quick brown <b>fox</b>
+
+# The same through the bare table: the planner resolves the index covering
+# the column and reads the offsets from its allocated term field.
+query
+SELECT id, ts_offsets(body) AS bo FROM d WHERE body @@ 'quick' ORDER BY id;
+----
+id	bo
+1	{4,9}
+
+query
+SELECT id, ts_offsets(body) AS bo FROM d WHERE body @@ 'the' ORDER BY id;
+----
+id	bo
+1	{0,3}
+2	{0,3}
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS hl
+FROM d WHERE body @@ 'fox' ORDER BY id;
+----
+id	hl
+1	the quick brown <b>fox</b>
+
+
+# A dictionary that stores no offsets: ts_offsets re-tokenizes the body and
+# matches the claimed term query against it. On a search table that match runs
+# on the index's allocated term field, not the column id.
+statement ok
+CREATE TEXT SEARCH DICTIONARY no_offs_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE d2 (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX d2_idx ON d2 USING inverted (body no_offs_en);
+
+statement ok
+INSERT INTO d2 VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) d2;
+
+query
+SELECT id, ts_offsets(body) AS bo FROM d2_idx WHERE body @@ 'quick' ORDER BY id;
+----
+id	bo
+1	{4,9}
+
+query
+SELECT id, ts_offsets(body) AS bo FROM d2 WHERE body @@ 'the' ORDER BY id;
+----
+id	bo
+1	{0,3}
+2	{0,3}
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS hl
+FROM d2 WHERE body @@ 'fox' ORDER BY id;
+----
+id	hl
+1	the quick brown <b>fox</b>

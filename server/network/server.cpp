@@ -27,23 +27,24 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 
-#include "basics/duckdb_engine.h"
-#include "basics/log.h"
-#include "basics/number_of_cores.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
+#include "network/http/mcp/handlers.h"
 #include "network/http/test/handlers.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -194,7 +195,7 @@ void Server::SetupAuth() {
 
   // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
   // they authenticate as the bootstrap superuser.
-  const std::string token_user{StaticStrings::kDefaultUser};
+  const std::string token_user{irs::StaticStrings::kDefaultUser};
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');
     if (colon == std::string::npos) {
@@ -247,11 +248,17 @@ asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {
 
 network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
   network::HttpRouter& router = _routers.emplace_back();
-  for (const auto& api : spec.apis) {
-    if (api == "es") {
-      network::http::es::Register(router);
-    } else if (api == "test") {
-      network::http::test::Register(router);
+  for (const auto api : spec.apis) {
+    switch (api) {
+      case network::HttpApi::Es:
+        network::http::es::Register(router);
+        break;
+      case network::HttpApi::Test:
+        network::http::test::Register(router);
+        break;
+      case network::HttpApi::Mcp:
+        network::http::mcp::Register(router);
+        break;
     }
   }
   return router;

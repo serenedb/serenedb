@@ -23,14 +23,14 @@
 #include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
@@ -43,7 +43,7 @@ class ClientContext;
 namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::auth {
 
-using RoleIdSet = containers::FlatHashSet<ObjectId>;
+using RoleIdSet = irs::containers::FlatHashSet<ObjectId>;
 
 // The role graph, flattened out of the ROLE_ENTRY set: for each role, who it is
 // a member of and whether it is a superuser. Loaded once per generation (see
@@ -56,7 +56,7 @@ struct RoleGraph {
     bool is_superuser = false;
   };
 
-  containers::FlatHashMap<ObjectId, Node> nodes;
+  irs::containers::FlatHashMap<ObjectId, Node> nodes;
 
   const Node* Find(ObjectId role) const {
     auto it = nodes.find(role);

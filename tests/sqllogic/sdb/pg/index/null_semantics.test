@@ -140,7 +140,6 @@ QUERY PLAN
 │ ╭─ Terms ──┴─────────╮  ╭─ Starts With ────────╮ │
 │ │ Field: scope(null) │  │ Field: scope(string) │ │
 │ ╰────────────────────╯  │ Prefix: y            │ │
-│                         │ Limit: 1024          │ │
 │                         ╰──────────────────────╯ │
 │ Projections: id                                  │
 │ ~1 row                                           │

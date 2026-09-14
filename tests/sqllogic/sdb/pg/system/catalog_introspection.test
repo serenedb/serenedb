@@ -31,6 +31,7 @@ t
 query
 SELECT schema_name
 FROM information_schema.schemata
+WHERE schema_name <> 'sdb_docs'
 ORDER BY schema_name
 ----
 schema_name

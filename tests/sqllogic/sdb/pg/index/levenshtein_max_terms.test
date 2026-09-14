@@ -32,9 +32,9 @@ query
 SHOW sdb_levenshtein_max_terms;
 ----
 sdb_levenshtein_max_terms
-64
+50
 
-# All 13 terms sit within distance 1 of 'cat' and the default cap of 64
+# All 13 terms sit within distance 1 of 'cat' and the default cap of 50
 # leaves every one of them matching.
 query
 SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
@@ -76,20 +76,6 @@ count
 
 statement ok
 RESET sdb_levenshtein_max_terms;
-
-# sdb_scored_terms_limit bounds scoring work in multi-term filters and must
-# not move the fuzzy result set.
-statement ok
-SET sdb_scored_terms_limit = 2;
-
-query
-SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
-----
-count
-13
-
-statement ok
-RESET sdb_scored_terms_limit;
 
 statement error
 SET sdb_levenshtein_max_terms = -1;
@@ -153,7 +139,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮  ╭─ Levenshtein ──────╮ │
 │ │ Field: body(string) │  │ Field: cat(string) │ │
 │ │ Target: cat         │  │ Target: phon       │ │
-│ │ Max Terms: 64       │  │ Max Terms: 0       │ │
+│ │ Max Terms: 50       │  │ Max Terms: 0       │ │
 │ ╰─────────────────────╯  ╰────────────────────╯ │
 │ TsDict: cat                                     │
 │ Projections: sdb_inverted_index_term$cat        │

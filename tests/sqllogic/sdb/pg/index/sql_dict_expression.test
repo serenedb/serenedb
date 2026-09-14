@@ -1,0 +1,217 @@
+control substitution on
+
+# A sql dictionary composed with a multi-column expression index: the index
+# expression assembles the row (any incoming columns), the dictionary's
+# expression tokenizes the result. Updates to any referenced column reindex.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY row_sql(template = 'sql',
+    expression = 'regexp_split_to_array(lower(input), ''\W+'')',
+    frequency = true, position = true);
+
+statement ok
+CREATE TABLE articles(pk INTEGER PRIMARY KEY, title TEXT, body TEXT);
+
+statement ok
+CREATE INDEX articles_idx ON articles
+    USING inverted(pk, (title || ' ' || body) row_sql);
+
+statement ok
+INSERT INTO articles VALUES
+    (1, 'Quick Fox', 'jumps high'),
+    (2, 'Lazy Dog', 'sleeps quickly');
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+query
+SELECT count(*) FROM articles_idx;
+----
+count
+2
+
+# token from the title column
+
+query
+SELECT pk FROM articles_idx WHERE (title || ' ' || body) @@ 'quick' ORDER BY pk;
+----
+pk
+1
+
+# token from the body column
+
+query
+SELECT pk FROM articles_idx WHERE (title || ' ' || body) @@ 'jumps' ORDER BY pk;
+----
+pk
+1
+
+# phrase across the column boundary (title tail + body head)
+
+query
+SELECT pk FROM articles_idx
+WHERE (title || ' ' || body) @@ ts_phrase('fox', 'jumps') ORDER BY pk;
+----
+pk
+1
+
+# updating a referenced column reindexes the row
+
+statement ok
+UPDATE articles SET body = 'now runs fast' WHERE pk = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+query
+SELECT pk FROM articles_idx WHERE (title || ' ' || body) @@ 'runs' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM articles_idx WHERE (title || ' ' || body) @@ 'jumps' ORDER BY pk;
+----
+pk
+
+statement ok
+DROP TABLE articles CASCADE;
+
+# ---------------------------------------------------------------------------
+# concat_ws over three columns; a NULL column is skipped by concat_ws
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE parts(pk INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT);
+
+statement ok
+CREATE INDEX parts_idx ON parts
+    USING inverted(pk, (concat_ws(' ', a, b, c)) row_sql);
+
+statement ok
+INSERT INTO parts VALUES
+    (1, 'Alpha', 'Beta', 'Gamma'),
+    (2, 'delta', NULL, 'epsilon');
+
+statement ok
+VACUUM (REFRESH_TABLE) parts;
+
+query
+SELECT pk FROM parts_idx WHERE (concat_ws(' ', a, b, c)) @@ 'gamma' ORDER BY pk;
+----
+pk
+1
+
+# row 2's NULL middle column is skipped, both real columns still tokenized
+
+query
+SELECT pk FROM parts_idx WHERE (concat_ws(' ', a, b, c)) @@ 'delta' ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM parts_idx WHERE (concat_ws(' ', a, b, c)) @@ 'epsilon' ORDER BY pk;
+----
+pk
+2
+
+statement ok
+DROP TABLE parts CASCADE;
+
+# ---------------------------------------------------------------------------
+# mixed-type composition: text + coalesce over a nullable column + a numeric
+# column cast to text, all tokenized by the same sql dictionary
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE mixed(pk INTEGER PRIMARY KEY, name TEXT, tags TEXT, year INTEGER);
+
+statement ok
+CREATE INDEX mixed_idx ON mixed USING inverted(pk,
+    (lower(name) || ' ' || coalesce(tags, '') || ' y' || year::TEXT) row_sql);
+
+statement ok
+INSERT INTO mixed VALUES
+    (1, 'Quick Fox', 'red animal', 2024),
+    (2, 'Lazy Dog', NULL, 2023);
+
+statement ok
+VACUUM (REFRESH_TABLE) mixed;
+
+query
+SELECT pk FROM mixed_idx
+WHERE (lower(name) || ' ' || coalesce(tags, '') || ' y' || year::TEXT) @@ 'fox'
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM mixed_idx
+WHERE (lower(name) || ' ' || coalesce(tags, '') || ' y' || year::TEXT) @@ 'animal'
+ORDER BY pk;
+----
+pk
+1
+
+# the coalesce'd NULL row still indexes name + year
+
+query
+SELECT pk FROM mixed_idx
+WHERE (lower(name) || ' ' || coalesce(tags, '') || ' y' || year::TEXT) @@ 'y2023'
+ORDER BY pk;
+----
+pk
+2
+
+statement ok
+DROP TABLE mixed CASCADE;
+
+# ---------------------------------------------------------------------------
+# a `||` concat that is NULL for a row (NULL operand) rejects that value; the
+# doc still exists, other rows are unaffected
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE nullcat(pk INTEGER PRIMARY KEY, a TEXT, b TEXT);
+
+statement ok
+CREATE INDEX nullcat_idx ON nullcat USING inverted(pk, (a || b) row_sql);
+
+statement ok
+INSERT INTO nullcat VALUES (1, 'foo', 'bar'), (2, 'x', NULL), (3, 'baz', 'qux');
+
+statement ok
+VACUUM (REFRESH_TABLE) nullcat;
+
+query
+SELECT count(*) FROM nullcat_idx;
+----
+count
+3
+
+query
+SELECT pk FROM nullcat_idx WHERE (a || b) @@ 'foobar' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM nullcat_idx WHERE (a || b) @@ 'bazqux' ORDER BY pk;
+----
+pk
+3
+
+statement ok
+DROP TABLE nullcat CASCADE;
+
+# the dictionary expression itself sees only the pseudo-column `input`;
+# referencing a table column there is rejected at dictionary creation
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sql_badcol(template = 'sql',
+    expression = 'lower(name) || input');
+
+statement ok
+DROP TEXT SEARCH DICTIONARY row_sql;

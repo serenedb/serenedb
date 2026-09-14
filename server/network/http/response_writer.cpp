@@ -20,10 +20,12 @@
 
 #include "network/http/response_writer.h"
 
+#include <utility>
+
 namespace sdb::network::http {
 
-std::string_view ReasonPhrase(int status) noexcept {
-  switch (status) {
+std::string_view ReasonPhrase(HttpStatus status) noexcept {
+  switch (std::to_underlying(status)) {
     case 100:
       return "Continue";
     case 200:
@@ -65,7 +67,7 @@ std::string_view ReasonPhrase(int status) noexcept {
     case 503:
       return "Service Unavailable";
     default:
-      return status < 400 ? "OK" : "Error";
+      return std::to_underlying(status) < 400 ? "OK" : "Error";
   }
 }
 

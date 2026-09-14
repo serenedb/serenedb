@@ -20,11 +20,11 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -48,7 +48,6 @@ void FromPrefix(BoolTarget parent, const FilterContext& ctx,
   *filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& pf_opts = *filter.mutable_options();
-  pf_opts.scored_terms_limit = ctx.scored_terms_limit;
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{prefix}));
 }
 

@@ -1,9 +1,9 @@
 <div align=center>
 
 <picture align=center>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/43caf356-43d3-40e9-9295-712d3755a49e">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/4a6afd91-012d-48e6-b268-1efdae5916a6">
-    <img alt="The SereneDB company logo." src="https://github.com/user-attachments/assets/43caf356-43d3-40e9-9295-712d3755a49e">
+    <source media="(prefers-color-scheme: dark)" srcset="resources/images/serenedb-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="resources/images/serenedb-light.svg">
+    <img alt="The SereneDB company logo." src="resources/images/serenedb-light.svg">
 </picture>
 
 <h2>The First Real-Time Search Analytics Database</h2>
@@ -16,12 +16,12 @@
 
 SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics** in a single, **Postgres-compatible** database.
 
-Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](libs/iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
+Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
 
 ## Benchmarks
 
 * [SearchBench](https://serenedb.com/searchbench) - open benchmark for search and analytics: SereneDB, Elastic, OpenSearch, ParadeDB, ArangoDB
-* [Search Benchmark, The Game](https://serenedb.com/search-benchmark-game) - low-level search engine benchmark: [IResearch](libs/iresearch/README.md), Lucene, Tantivy
+* [Search Benchmark, The Game](https://serenedb.com/search-benchmark-game) - low-level search engine benchmark: [IResearch](iresearch/README.md), Lucene, Tantivy
 
 ## Links
 

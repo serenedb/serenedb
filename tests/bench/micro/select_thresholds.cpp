@@ -47,17 +47,16 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "basics/duckdb_engine.h"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/memory_directory.hpp"
 
 namespace {
 
@@ -65,7 +64,7 @@ constexpr irs::field_id kField = 0;
 constexpr std::string_view kSegName = "bench_seg";
 
 duckdb::DatabaseInstance& CsDb() {
-  return sdb::DuckDBEngine::Instance().instance();
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 struct Shape {
@@ -362,11 +361,11 @@ void RegisterAll() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

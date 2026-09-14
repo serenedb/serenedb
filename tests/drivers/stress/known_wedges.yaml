@@ -1,0 +1,13 @@
+# Findings this suite is known to produce that are not yet fixed.
+#
+# An entry suppresses a finding ONLY while it still reproduces and only until its
+# expiry date. Two rules keep the list from rotting:
+#
+#   - past `expires` the finding comes back AND the entry itself is reported, so a
+#     stale quarantine cannot sit here quietly;
+#   - if an entry claims a scenario and matches nothing in a run of that scenario,
+#     that is reported too -- a fixed bug must have its entry deleted, not left.
+#
+# `fingerprint` is required. An entry matching on `kinds` alone would hide unrelated
+# regressions that happen to share a finding kind.
+known_wedges: []

@@ -70,8 +70,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Automaton ─────────╮ │
 │ │ Field: body(string) │  │ Field: body(string) │ │
 │ │ Prefix: a           │  │ Pattern: a.*e       │ │
-│ │ Limit: 1024         │  ╰─────────────────────╯ │
-│ ╰─────────────────────╯                          │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
 │ TsDict: body                                     │
 │ Projections:                                     │
 │ sdb_inverted_index_term$body                     │
@@ -299,8 +298,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Automaton ─────────╮ │
 │ │ Field: body(string) │  │ Field: body(string) │ │
 │ │ Prefix: a           │  │ Pattern: .*e        │ │
-│ │ Limit: 1024         │  ╰─────────────────────╯ │
-│ ╰─────────────────────╯                          │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
 │ TsDict: body                                     │
 │ Projections:                                     │
 │ sdb_inverted_index_term$body                     │
@@ -384,7 +382,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Prefix: ap          │        │
-│ │ Limit: 1024         │        │
 │ ╰─────────────────────╯        │
 │ TsDict: body                   │
 │ Projections:                   │

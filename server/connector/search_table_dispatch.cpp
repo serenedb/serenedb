@@ -24,17 +24,17 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <string>
 
-#include "basics/assert.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/search_table.h"
 

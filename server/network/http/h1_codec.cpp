@@ -65,7 +65,7 @@ H1Codec::H1Codec(H1Limits limits) : _limits{limits} {
   _parser.data = this;
 }
 
-int H1Codec::Fail(int status) noexcept {
+int H1Codec::Fail(http::HttpStatus status) noexcept {
   _error_status = status;
   return HPE_USER;
 }
@@ -74,7 +74,7 @@ int H1Codec::OnUrl(llhttp_t* parser, const char* at, size_t length) {
   auto* self = static_cast<H1Codec*>(parser->data);
   self->_head_bytes += length;
   if (self->_head_bytes > self->_limits.max_head_bytes) {
-    return self->Fail(431);
+    return self->Fail(http::HttpStatus::RequestHeaderFieldsTooLarge);
   }
   self->_target.append(at, length);
   return HPE_OK;
@@ -84,7 +84,7 @@ int H1Codec::OnHeaderField(llhttp_t* parser, const char* at, size_t length) {
   auto* self = static_cast<H1Codec*>(parser->data);
   self->_head_bytes += length;
   if (self->_head_bytes > self->_limits.max_head_bytes) {
-    return self->Fail(431);
+    return self->Fail(http::HttpStatus::RequestHeaderFieldsTooLarge);
   }
   if (self->_last_was_value || self->_fields.empty()) {
     self->_fields.emplace_back();
@@ -98,7 +98,7 @@ int H1Codec::OnHeaderValue(llhttp_t* parser, const char* at, size_t length) {
   auto* self = static_cast<H1Codec*>(parser->data);
   self->_head_bytes += length;
   if (self->_head_bytes > self->_limits.max_head_bytes) {
-    return self->Fail(431);
+    return self->Fail(http::HttpStatus::RequestHeaderFieldsTooLarge);
   }
   self->_fields.back().value.append(at, length);
   self->_last_was_value = true;
@@ -111,7 +111,7 @@ int H1Codec::OnHeadersComplete(llhttp_t* parser) {
   self->_chunked = (parser->flags & F_CHUNKED) != 0;
   self->_content_length = self->_chunked ? 0 : parser->content_length;
   if (self->_content_length > self->_limits.max_body_bytes) {
-    return self->Fail(413);
+    return self->Fail(http::HttpStatus::ContentTooLarge);
   }
   std::string_view expect;
   for (auto& field : self->_fields) {
@@ -125,7 +125,7 @@ int H1Codec::OnHeadersComplete(llhttp_t* parser) {
   }
   if (!expect.empty()) {
     if (!absl::EqualsIgnoreCase(expect, "100-continue")) {
-      return self->Fail(417);
+      return self->Fail(http::HttpStatus::ExpectationFailed);
     }
     if (self->_content_length > 0 || self->_chunked) {
       self->_event = H1Event::Continue;
@@ -142,7 +142,7 @@ int H1Codec::OnBody(llhttp_t* parser, const char* at, size_t length) {
   // headers-complete, so the OnHeadersComplete check can't bound it.
   self->_body_bytes += length;
   if (self->_body_bytes > self->_limits.max_body_bytes) {
-    return self->Fail(413);
+    return self->Fail(http::HttpStatus::ContentTooLarge);
   }
   if (self->_body_out == nullptr) {
     return HPE_OK;
@@ -158,7 +158,7 @@ int H1Codec::OnMessageComplete(llhttp_t* parser) {
 }
 
 H1FeedResult H1Codec::ParseHead(std::string_view input) noexcept {
-  if (_error_status != 0) {
+  if (_error_status != http::HttpStatus::None) {
     return {0, H1Event::Error};
   }
   _event = H1Event::NeedMore;
@@ -171,8 +171,8 @@ H1FeedResult H1Codec::ParseHead(std::string_view input) noexcept {
     return {consumed, _event};
   }
   if (err != HPE_OK) {
-    if (_error_status == 0) {
-      _error_status = 400;
+    if (_error_status == http::HttpStatus::None) {
+      _error_status = http::HttpStatus::BadRequest;
     }
     const auto consumed =
       static_cast<size_t>(llhttp_get_error_pos(&_parser) - input.data());
@@ -183,7 +183,7 @@ H1FeedResult H1Codec::ParseHead(std::string_view input) noexcept {
 
 H1BodyResult H1Codec::DecodeBody(std::string_view input,
                                  message::Writer& out) noexcept {
-  if (_error_status != 0) {
+  if (_error_status != http::HttpStatus::None) {
     return {0, false, true};
   }
   _body_out = &out;
@@ -202,8 +202,8 @@ H1BodyResult H1Codec::DecodeBody(std::string_view input,
     return {consumed, _body_done, false};
   }
   if (err != HPE_OK) {
-    if (_error_status == 0) {
-      _error_status = 400;
+    if (_error_status == http::HttpStatus::None) {
+      _error_status = http::HttpStatus::BadRequest;
     }
     const auto consumed =
       static_cast<size_t>(llhttp_get_error_pos(&_parser) - input.data());
@@ -234,7 +234,7 @@ void H1Codec::Reset() noexcept {
   _keep_alive = true;
   _paused = false;
   _body_done = false;
-  _error_status = 0;
+  _error_status = http::HttpStatus::None;
   _event = H1Event::NeedMore;
 }
 

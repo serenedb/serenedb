@@ -11,6 +11,7 @@ target_sources(
         math.cpp
         string.cpp
         system.cpp
+        minhash.cpp
         search.cpp
         sequence.cpp
         split_by_non_alpha.cpp

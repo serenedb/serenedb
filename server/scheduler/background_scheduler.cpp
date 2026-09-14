@@ -26,16 +26,21 @@
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
-#include "basics/asio_ns.h"
-#include "basics/number_of_cores.h"
 #include "network/io_context.h"
 #include "network/server.h"
+#include "server/utils/asio_ns.h"
+#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(uint64_t, background_threads, 0,
           "Number of background worker threads (drop / cleanup / maintenance "
           "tasks; later object-store prefetch). 0 = auto-detect.");
 
 namespace sdb {
+
+std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
+  return std::max<std::uint64_t>(
+    1, static_cast<std::uint64_t>(CountLogicalCores()));
+}
 
 BackgroundScheduler::BackgroundScheduler()
   : _threads(absl::GetFlag(FLAGS_background_threads)) {
@@ -56,9 +61,16 @@ BackgroundScheduler::~BackgroundScheduler() { gInstance = nullptr; }
 
 void BackgroundScheduler::start() {
   _pool = yaclib::MakeFairThreadPool(_threads);
+  _ann_pool = yaclib::MakeFairThreadPool(
+    std::max<std::uint64_t>(1, AnnBuildBudget() - 1));
 }
 
 void BackgroundScheduler::stop() {
+  if (_ann_pool) {
+    _ann_pool->SoftStop();
+    _ann_pool->Wait();
+    _ann_pool = nullptr;
+  }
   if (_pool) {
     _pool->SoftStop();
     _pool->Wait();

@@ -27,8 +27,8 @@
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/debugging.hpp>
 
-#include "basics/debugging.h"
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"

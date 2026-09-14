@@ -24,6 +24,8 @@
 
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -31,8 +33,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/fwd.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_table_function.h"
@@ -52,9 +52,17 @@ std::vector<catalog::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
 
+void ResolveSearchTableIndexes(connector::SereneDBScanBindData& bind_data,
+                               duckdb::ClientContext& context);
+
+std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
+  const connector::SereneDBScanBindData& bind_data, catalog::ColumnId col_id);
+
 struct FoundScan {
   duckdb::LogicalGet* get;
   connector::SereneDBScanBindData* bind_data;
+
+  explicit operator bool() const noexcept { return get; }
 };
 
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op);
@@ -115,8 +123,8 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
 struct SearchGetters {
   const connector::ColumnGetter& getter;
   const connector::ExpressionGetter& expr_getter;
-  containers::FlatHashSet<irs::field_id>& analyzed_fields;
-  containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
 };
 
 bool WithSearchGetters(duckdb::LogicalGet& get,

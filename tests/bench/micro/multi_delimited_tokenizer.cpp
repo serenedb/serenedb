@@ -40,6 +40,7 @@
 
 #include <cstdint>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
 #include <vector>
@@ -86,15 +87,26 @@ std::vector<irs::bstring> MakeDelimiters(size_t n) {
   return out;
 }
 
-size_t Drain(irs::analysis::Analyzer& stream, std::string_view text) {
-  if (!stream.reset(text)) {
+struct CountingSink final : irs::TokenConsumer {
+  void Consume(irs::TokenBatch& batch, irs::DocRuns /*runs*/) final {
+    n += batch.count;
+  }
+
+  size_t n = 0;
+};
+
+size_t Drain(irs::analysis::Tokenizer& stream, std::string_view text) {
+  static thread_local irs::TokenSink sink;
+  CountingSink counter;
+  sink.Bind(counter, nullptr);
+  const duckdb::string_t value{text.data(), static_cast<uint32_t>(text.size())};
+  if (!stream.Fill(value, irs::doc_limits::min(), sink,
+                   {irs::TokenLayout::Terms})) {
+    sink.Discard();
     return 0;
   }
-  size_t n = 0;
-  while (stream.next()) {
-    ++n;
-  }
-  return n;
+  sink.Finish();
+  return counter.n;
 }
 
 void ReportTokens(benchmark::State& state, size_t tokens, size_t bytes) {

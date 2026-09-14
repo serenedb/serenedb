@@ -39,24 +39,27 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/async.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <system_error>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
-#include "basics/assert.h"
-#include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
-#include "basics/log.h"
-#include "basics/serializer.h"
-#include "basics/system-compiler.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/scorer_options.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -200,6 +203,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
@@ -210,7 +214,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
+  writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
@@ -397,14 +401,23 @@ ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
+  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                          field_options, /*env=*/nullptr));
+}
+
+auto InvertedIndexStorage::CompactUnsafeAsync(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
-  auto result =
-    CompactUnsafeImpl(policy, progress, empty_compaction, field_options);
+  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                                           field_options, env);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
   _maintenance.RecordCompaction(result, empty_compaction, time_ms);
-  return {std::move(result), time_ms};
+  co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
@@ -426,44 +439,46 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   return {std::move(result), time_ms};
 }
 
-absl::Status InvertedIndexStorage::CompactUnsafeImpl(
+auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<absl::Status> {
   empty_compaction = false;
 
   if (!policy) {
-    return absl::InvalidArgumentError(
+    co_return absl::InvalidArgumentError(
       absl::StrCat("unset compaction policy while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
 
   try {
-    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (res.error == irs::CompactionError::Fail) {
-      return absl::InternalError(absl::StrCat(
+      co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '",
         GetId().id(), "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
       empty_compaction = false;
-      return absl::OkStatus();
+      co_return absl::OkStatus();
     }
 
     empty_compaction = (res.size == 0);
   } catch (const std::exception& e) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "': ", e.what()));
   } catch (...) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
-  return absl::OkStatus();
+  co_return absl::OkStatus();
 }
 
 absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
@@ -582,7 +597,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
               "', last operation tick '", _last_durable_tick, "'");
-  } catch (const SqlException& e) {
+  } catch (const irs::SqlException& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '",
                    GetId().id(), "': ", e.message()));

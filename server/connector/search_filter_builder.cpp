@@ -34,40 +34,44 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/unscored.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/queries/ngram_similarity_query.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "functions/search.h"
@@ -75,8 +79,6 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace magic_enum {
 
@@ -173,16 +175,15 @@ bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.assign(irs::ViewCast<irs::byte_type>(
-      irs::BooleanTokenizer::value(value.GetValue<bool>())));
+    out.assign(
+      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value.GetValue<bool>())));
     return true;
   }
   if (IsNumericTypeId(type_id)) {
-    irs::NumericTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    ResetNumericStream(stream, type_id, value);
-    stream.next();
-    out.assign(token->value);
+    WithNumericValue(type_id, value, [&](auto v) {
+      irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+      out.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
+    });
     return true;
   }
   return false;
@@ -341,7 +342,7 @@ absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
                                     std::string_view hint) {
   if (info.logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
       info.tokenizer.analyzer->type() !=
-        irs::Type<irs::StringTokenizer>::id()) {
+        irs::Type<irs::KeywordTokenizer>::id()) {
     return absl::InvalidArgumentError(
       absl::StrCat("Field is not indexed by keyword analyzer. ", hint));
   }
@@ -378,14 +379,14 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
 void RejectSlopOnNonPhrase(const FilterContext& ctx);
 
 irs::bytes_view NullMarkerTerm() noexcept {
-  return irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null());
+  return irs::ViewCast<irs::byte_type>(irs::kNullTerm);
 }
 
 }  // namespace
 
 void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id) {
   AddTerm(parent, null_field_id, NullMarkerTerm(), irs::kNoBoost,
-          &irs::DefaultConstScore());
+          &irs::ForceConstScore());
 }
 
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
@@ -625,7 +626,7 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
       "legacy index)");
   }
   AddTerm(ctx.negated ? Negate(filter) : filter, column_info->null_field_id,
-          NullMarkerTerm(), ctx.boost, &irs::DefaultConstScore());
+          NullMarkerTerm(), ctx.boost, &irs::ForceConstScore());
   return absl::OkStatus();
 }
 
@@ -736,7 +737,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     *range_filter.mutable_field_id() =
       PickPerKindFieldId(*column_info, type_id);
     range_filter.SetBoost(ctx.boost);
-    range_filter.SetScorer(LeafScorer(*column_info));
+    SetLeafScorer(range_filter, *column_info);
     switch (op) {
       case ComparisonOp::Lt:
         range_filter.mutable_options()->range.max_type =
@@ -767,20 +768,17 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter).assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter)
       .assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
+        irs::BooleanTerm(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
-    irs::NumericTokenizer stream;
-    ResetNumericStream(stream, type_id, *const_val);
-    irs::SetGranularTerm(setup_base_filter(range_filter), stream);
+    WithNumericValue(type_id, *const_val, [&](auto v) {
+      irs::SetGranularNumericTerm(setup_base_filter(range_filter), v);
+    });
   } else {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for range comparison: ", static_cast<int>(type_id)));
@@ -986,7 +984,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-const containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
+const irs::containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
     {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
     {kNGramMatches, BuildPassthrough<kTSQNGram>},
@@ -1068,15 +1066,15 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
 using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
 
 bool IsKeywordAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::StringTokenizer>::id();
+  return t == irs::Type<irs::KeywordTokenizer>::id();
 }
 
 bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::StringTokenizer>::id() ||
-         t == irs::Type<irs::analysis::WildcardAnalyzer>::id();
+  return t == irs::Type<irs::KeywordTokenizer>::id() ||
+         t == irs::Type<irs::analysis::WildcardTokenizer>::id();
 }
 
-const containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
+const irs::containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
   kBuiltinBuilder = {
     {"contains", &BuildTSContainsLike},
     {"^@", &BuildTSStartsWith},
@@ -1340,15 +1338,15 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
 
 bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
-    return filter.GetScorer() != &irs::DefaultConstScore();
+    return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
-  const auto& node = basics::downCast<irs::BooleanFilter>(filter);
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
   if (node.GetScorer() != nullptr) {
-    return node.GetScorer() != &irs::DefaultConstScore();
+    return !irs::IsConstScoreSingleton(node.GetScorer());
   }
   for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
     for (const auto& clause : node.Bucket(occur).terms) {
-      if (clause.scorer != &irs::DefaultConstScore()) {
+      if (!irs::IsConstScoreSingleton(clause.scorer)) {
         return true;
       }
     }
@@ -1364,6 +1362,15 @@ bool HasScorableLeaf(const irs::Filter& filter) {
 void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
+  if (scored_clauses == 1) {
+    for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
+      for (const auto& child : scope.Filters(occur)) {
+        if (child->GetScorer() == &irs::DefaultConstScore()) {
+          child->SetScorer(scorer);
+        }
+      }
+    }
+  }
   if (irs::NeedsTermStats(*scorer) && scored_clauses != 0 &&
       !HasScorableLeaf(scope)) {
     THROW_SQL_ERROR(
@@ -1409,7 +1416,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
         clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
       break;
     }
-    group = &sdb::basics::downCast<irs::BooleanFilter>(*clauses[0]);
+    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
     node = group;
   }
   if (!group) {
@@ -1531,7 +1538,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
   if (tokenizer.empty()) {
     return false;
   }
-  if (tokenizer == irs::StringTokenizer::type_name()) {
+  if (tokenizer == irs::KeywordTokenizer::type_name()) {
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
       RejectSlopOnNonPhrase(ctx);
@@ -1838,35 +1845,6 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
   }
 }
 
-void ResetNumericStream(irs::NumericTokenizer& stream,
-                        duckdb::LogicalTypeId type_id,
-                        const duckdb::Value& value) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
-      stream.reset(value.GetValue<int32_t>());
-      break;
-    case catalog::term_dict::Kind::NumericI64:
-      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
-        stream.reset(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
-        // Raw value, exactly what the sink indexed; GetValue() would cast to
-        // BIGINT (unimplemented for TIME_NS / TIMESTAMPTZ_NS).
-        stream.reset(value.GetValueUnsafe<int64_t>());
-      } else {
-        stream.reset(value.GetValue<int64_t>());
-      }
-      break;
-    case catalog::term_dict::Kind::NumericF32:
-      stream.reset(value.GetValue<float>());
-      break;
-    case catalog::term_dict::Kind::NumericF64:
-      stream.reset(value.GetValue<double>());
-      break;
-    default:
-      SDB_ASSERT(false, "ResetNumericStream called with non-numeric type");
-  }
-}
-
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
   return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
@@ -2103,7 +2081,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     parts->scorer.empty() ? nullptr : ResolveScoreOverride(ctx, parts->scorer);
   if (parts->tokenizer.empty()) {
     emit(boosted);
-  } else if (parts->tokenizer == irs::StringTokenizer::type_name()) {
+  } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
     emit(boosted.WithTokenizer(boosted.identity));
   } else {
     auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
@@ -2302,18 +2280,12 @@ absl::Status MakeSearchFilter(
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter, FilterScorers* scorers) {
-  irs::StringTokenizer identity;
+  irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  uint32_t scored_terms_limit = 1024;
   duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
-      !v.IsNull()) {
-    scored_terms_limit = static_cast<uint32_t>(v.GetValue<int32_t>());
-  }
-
-  uint32_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 50;
   if (context.TryGetCurrentSetting("sdb_levenshtein_max_terms", v) &&
       !v.IsNull()) {
     levenshtein_max_terms = static_cast<uint32_t>(v.GetValue<int32_t>());
@@ -2328,7 +2300,6 @@ absl::Status MakeSearchFilter(
     .identity = identity,
     .tokenizer = identity,
     .client_context = context,
-    .scored_terms_limit = scored_terms_limit,
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
   };

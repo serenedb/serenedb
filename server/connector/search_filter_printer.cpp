@@ -24,39 +24,38 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/geo_filter.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/nested_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/search_range.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/nested_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/vector_radius_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
-
-#include "basics/down_cast.h"
-#include "pg/sql_exception_macro.h"
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace irs {
 namespace {
 
 using duckdb::ExplainNode;
-using sdb::basics::downCast;
+using irs::utils::downCast;
 using sdb::catalog::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
-  return scorer == &DefaultConstScore() ? nullptr : scorer;
+  return IsConstScoreSingleton(scorer) ? nullptr : scorer;
 }
 
 void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
@@ -86,7 +85,7 @@ std::string TermToString(Term term) {
   return s;
 }
 
-// Decodes a NumericTokenizer term back to the number it encodes. The leading
+// Decodes a numeric trie term back to the number it encodes. The leading
 // byte is `shift + TYPE_MAGIC` with disjoint magic ranges per width, so the
 // value type is recovered from the term itself (which also disambiguates the
 // shared JSON-leaf numeric field).
@@ -227,8 +226,8 @@ std::string_view GeoFilterTypeName(GeoFilterType type) {
   return "?";
 }
 
-std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
-  using T = sdb::geo::ShapeContainer::Type;
+std::string_view GeoShapeTypeName(irs::geo::ShapeContainer::Type type) {
+  using T = irs::geo::ShapeContainer::Type;
   switch (type) {
     case T::Empty:
       return "Empty";
@@ -486,7 +485,6 @@ struct FilterPrinter {
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Prefix"] = TermToString(f.options().term);
-      node.attributes["Limit"] = absl::StrCat(f.options().scored_terms_limit);
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {

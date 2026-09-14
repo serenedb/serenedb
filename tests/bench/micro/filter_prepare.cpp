@@ -26,6 +26,28 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_features.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,28 +55,7 @@
 #include <system_error>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
-#include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/bm25.hpp"
-#include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/levenshtein_filter.hpp"
-#include "iresearch/search/phrase_filter.hpp"
-#include "iresearch/search/prefix_filter.hpp"
-#include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/search_range.hpp"
-#include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/term_set.hpp"
-#include "iresearch/search/tfidf.hpp"
-#include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "insert_field.hpp"
 
 namespace {
 
@@ -68,10 +69,9 @@ constexpr irs::field_id kBodyFieldId = 2;
 struct KeywordField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
@@ -81,16 +81,15 @@ struct KeywordField {
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
-  mutable irs::StringTokenizer stream;
+  mutable irs::KeywordTokenizer stream;
 };
 
 struct TextField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(value);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
@@ -101,7 +100,7 @@ struct TextField {
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
-  irs::analysis::Analyzer::ptr tokenizer =
+  irs::analysis::Tokenizer::ptr tokenizer =
     irs::analysis::SegmentationTokenizer::Make({});
 };
 
@@ -198,7 +197,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::create_directories(_dir_path);
   _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
 
-  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
@@ -225,8 +224,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
         body_field.value = kBodyPool[i % kBodyPool.size()];
 
         auto doc = trx.Insert();
-        doc.Insert(kw_field);
-        doc.Insert(body_field);
+        tests::InsertField(doc, kw_field);
+        tests::InsertField(doc, body_field);
       }
       trx.Commit();
     }
@@ -436,7 +435,7 @@ DEFINE_FILTER_VARIANTS(Not, irs::BooleanFilter, SetUpNot);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
-  sdb::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -445,6 +444,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
 
-  sdb::DuckDBEngine::Instance().Shutdown();
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

@@ -26,19 +26,20 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
 #include "catalog/table_options.h"
 #include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
 
-struct IVFColumnConfig {
+struct AnnColumnConfig {
+  irs::AnnKind kind = irs::AnnKind::Ivf;
   int d = 0;
   irs::VectorMetric metric = irs::VectorMetric::L2Sqr;
   irs::VectorQuantization quant = irs::VectorQuantization::None;
@@ -46,6 +47,8 @@ struct IVFColumnConfig {
   uint32_t rabitq_bits = 0;
   float sample_factor = 0;
   uint32_t posting_size = 0;
+  uint32_t m = 0;
+  uint32_t ef_construction = 0;
   bool compression = true;
 };
 
@@ -60,7 +63,7 @@ struct EntryConfigSerialized {
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
-  std::optional<IVFColumnConfig> ivf_config;
+  std::optional<AnnColumnConfig> ann_config;
   irs::field_id synthetic_column = irs::field_limits::invalid();
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
@@ -94,7 +97,7 @@ struct InvertedIndexDataT {
   std::vector<ColumnEntry> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
-  containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
+  irs::containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
   InvertedIndexOptions options;
   // Partial-index predicate (CREATE INDEX ... WHERE): rows are indexed and
   // maintained only when it evaluates to true. An empty serialized_expr

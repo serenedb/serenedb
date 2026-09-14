@@ -86,10 +86,10 @@ statement error
 CREATE TEXT SEARCH DICTIONARY t_err8(
     template = 'text',
     locale = 'en_US.UTF-8',
-    numhashes = 5
+    ngramsize = 5
 )
 ----
-db error: ERROR: option "numhashes" is not applicable in this context
+db error: ERROR: option "ngramsize" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
@@ -191,17 +191,6 @@ CREATE TEXT SEARCH DICTIONARY t_err15(
 )
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxgram": "three"
-
-
-statement error
-CREATE TEXT SEARCH DICTIONARY t_err16(
-    template = 'minhash',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = '|',
-    numhashes = 'two'
-)
-----
-db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "numhashes": "two"
 
 
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
@@ -653,6 +642,69 @@ ts_lexize
 {"Hello World"}
 
 
+
+# --- form = nfkc: compatibility folding (ligatures, enclosed, full-width) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfkc(
+    template = 'norm',
+    case = 'lower',
+    accent = true,
+    form = 'nfkc'
+)
+
+
+query
+SELECT ts_lexize('norm_nfkc', 'ﬁnancial ① ＦＵＬＬ 2²');
+----
+ts_lexize
+{"financial 1 full 22"}
+
+
+# --- locale is optional: omitted means locale-independent simple case
+# --- (final sigma stays plain sigma) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_no_locale(
+    template = 'norm',
+    case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('norm_no_locale', 'ΟΔΟΣ AbC');
+----
+ts_lexize
+{"οδοσ abc"}
+
+
+# --- providing a locale opts into tailored casing (Turkish dotless i) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_tr(
+    template = 'norm',
+    case = 'lower',
+    locale = 'tr_TR'
+)
+
+
+query
+SELECT ts_lexize('norm_tr', 'ISPARTA');
+----
+ts_lexize
+{ısparta}
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY norm_bad_form(
+    template = 'norm',
+    form = 'nfd'
+)
+----
+db error: ERROR: invalid value in "form" parameter
+HINT: Unicode normalization form: nfc, nfkc
+
+
 # COLLATION TEMPLATE
 
 statement ok
@@ -815,74 +867,6 @@ ts_lexize
 {abcf,bar}
 
 
-# MINHASH TEMPLATE
-
-# --- Inner delimiter analyzer, numhashes=2 ---
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY t12(
-    template = 'minhash',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ',',
-    numhashes = 2
-)
-
-
-query
-SELECT ts_lexize('t12', 'abaca,aba,caaa');
-----
-ts_lexize
-{ooh9OW4bsnE,gpxnmE69/UA}
-
-
-# --- numhashes=0: CREATE succeeds, ts_lexize fails ---
-statement error
-CREATE TEXT SEARCH DICTIONARY minhash_zero_hashes(
-    template = 'minhash',
-    numhashes = 0
-)
-----
-db error: ERROR: required parameter "template" was not found
-
-
-# --- Custom inner analyzer: segmentation with explicit break and case ---
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
-    template = 'minhash',
-    numhashes = 3,
-    tokenizer_template = 'segmentation',
-    tokenizer_break = 'alpha',
-    tokenizer_case = 'lower'
-)
-
-
-query
-SELECT ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!');
-----
-ts_lexize
-{3Nw3PlObK0w,9zSo3KwmNhA,U9QEhWO/5Dw}
-
-
-
-# --- Custom inner analyzer: text tokenizer ---
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_with_text(
-    template = 'minhash',
-    numhashes = 6,
-    tokenizer_template = 'text',
-    tokenizer_locale = 'en_US.UTF-8',
-    tokenizer_case = 'lower',
-    tokenizer_stemming = false
-)
-
-
-query
-SELECT ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX');
-----
-ts_lexize
-{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
-
-
 # SEGMENTATION TEMPLATE
 
 statement ok
@@ -900,6 +884,13 @@ SELECT ts_lexize('seg_graphic_lower', 'File:Constantinople(1878)-Turkish Goverme
 ----
 ts_lexize
 {file:constantinople,1878,turkish,goverment,information,brocure,1950s,istanbul,coffee,house.png}
+
+
+query
+SELECT typeof(ts_lexize('seg_graphic_lower', 'a quick fox')) AS type;
+----
+type
+VARCHAR[]
 
 
 # --- break = graphic: keeps all non-whitespace tokens, drops spaces ---
@@ -954,6 +945,106 @@ SELECT ts_lexize('seg_graphic_none', 'Test - ReTeSt');
 ----
 ts_lexize
 {Test,ReTeSt}
+
+
+# --- non-ascii: UAX#29 word breaks + simple case mapping (CJK per glyph,
+# --- final sigma stays plain sigma, eszett has no simple uppercase) ---
+
+query
+SELECT ts_lexize('seg_graphic_lower', 'Café MENÚ 北京 москва Ωμέγα ΟΔΟΣ 3.14');
+----
+ts_lexize
+{café,menú,北,京,москва,ωμέγα,οδοσ,3.14}
+
+
+query
+SELECT ts_lexize('seg_graphic_upper', 'straße ΟΔΟΣ');
+----
+ts_lexize
+{STRAßE,ΟΔΟΣ}
+
+
+
+# --- break = sentence: whitespace-trimmed UAX#29 sentences ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_sentence(
+    template = 'segmentation',
+    break = 'sentence'
+)
+
+
+query
+SELECT ts_lexize('seg_sentence', 'Hello world. Second sentence! Third?');
+----
+ts_lexize
+{"Hello world.","Second sentence!",Third?}
+
+
+# --- break = sentence composes with case ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_sentence_lower(
+    template = 'segmentation',
+    break = 'sentence',
+    case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('seg_sentence_lower', 'Hello World. CAFÉ Time!');
+----
+ts_lexize
+{"hello world.","café time!"}
+
+
+# --- break = line: one token per line, CRLF is a single break ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_line(
+    template = 'segmentation',
+    break = 'line'
+)
+
+
+query
+SELECT ts_lexize('seg_line', E'first line\r\nsecond\nthird');
+----
+ts_lexize
+{"first line",second,third}
+
+
+# --- break = paragraph: blank lines split, single newlines glue ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_paragraph(
+    template = 'segmentation',
+    break = 'paragraph'
+)
+
+
+query
+SELECT ts_lexize('seg_paragraph', E'one\n\ntwo\n\n\nthree');
+----
+ts_lexize
+{one,two,three}
+
+
+query
+SELECT array_length(ts_lexize('seg_paragraph', E'glued\nlines\n\nnext'), 1);
+----
+array_length
+2
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY seg_bad_break(
+    template = 'segmentation',
+    break = 'word'
+)
+----
+db error: ERROR: invalid value in "break" parameter
+HINT: Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
 
 
 # STOPWORDS TOKENIZER TEMPLATE
@@ -1351,10 +1442,10 @@ statement error
 CREATE TEXT SEARCH DICTIONARY copy_err(
     template = 'copy_from',
     from = 't1',
-    numhashes = 2
+    ngramsize = 2
 )
 ----
-db error: ERROR: option "numhashes" is not applicable in this context
+db error: ERROR: option "ngramsize" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
@@ -1408,34 +1499,19 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_minhash(
-    template = 'copy_from',
-    from = 'minhash_with_text',
-    tokenizer_stopwords = '"fox"'
-)
-
-
-query
-SELECT ts_lexize('copy_minhash', 'A QUICK Jumping Brownish FOX');
-----
-ts_lexize
-{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs}
-
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
     template = 'copy_from',
     from = 'copy_pipe2',
     step4_template = 'copy_from',
-    step4_from = 'copy_minhash',
-    step4_tokenizer_stopwords = '"quick"'
+    step4_from = 'stopwords_filter',
+    step4_stopwords = '"quick"'
 )
 
 query
 SELECT ts_lexize('copy_copy_pipe', 'A|QUICK|Jumping|Brownish|FOX');
 ----
 ts_lexize
-{3Nw3PlObK0w,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+{a,jumping,brownish,fox}
 
 
 statement ok
@@ -1470,22 +1546,6 @@ SELECT ts_lexize('too_many_pipes', 'a|quick|Brown|FOX!');
 ----
 ts_lexize
 {QUICK,BROWN,FOX!}
-
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_copy5(
-    template = 'minhash',
-    numHashes = 5,
-    tokenizer_template = 'copy_from',
-    tokenizer_from = 'too_many_pipes'
-)
-
-
-query
-SELECT ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!');
-----
-ts_lexize
-{CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
 
 
 # ========================
@@ -2258,6 +2318,7 @@ Text Search Dictionary:
     inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
     startmarker (string) - Prefix marker appended at n-gram boundary
     endmarker (string) - Suffix marker appended at n-gram boundary
+    mode (string) [default: all] - Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
   nearest_neighbors:
     modellocation (string) - Path to the ML model file
     topk (integer) [default: 1] - Number of top results to return
@@ -2276,17 +2337,21 @@ Text Search Dictionary:
     delimiter[required] (string) [default: none] - Token delimiter character or string
   multi_delimiter:
     delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
-  minhash:
-    numhashes (integer) [default: 1] - Number of hash functions to use
   wildcard:
     ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
   norm:
-    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+    locale (string) - ICU locale for case conversion; omit for locale-independent simple case
     case (string) [default: none] - Text case conversion: none, lower, upper
     accent (boolean) [default: true] - Preserve accent marks
+    form (string) [default: nfc] - Unicode normalization form: nfc, nfkc
   segmentation:
     case (string) [default: none] - Text case conversion: none, lower, upper
-    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha
+    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+  icu_text:
+    locale[required] (string) [default: none] - ICU locale string (e.g. en_US.UTF-8)
+    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence
+  split_by_non_alpha:
+    case (string) [default: none] - Text case conversion: none, lower, upper
   pipeline:
     (no additional options)
   pattern:
@@ -2297,7 +2362,6 @@ Text Search Dictionary:
     replacement (string) - Replacement for delimiter in tokens
     reverse (boolean) [default: false] - Use reverse tokenization for domain-like hierarchies
     skip (integer) [default: 0] - Number of initial tokens to skip
-    buffersize (integer) [default: 1024] - Term buffer size hint (characters per pass)
   union:
     (no additional options)
   copy_from:
@@ -2322,6 +2386,16 @@ Text Search Dictionary:
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   keyword:
     (no additional options)
+  sql:
+    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR or BLOB (one token per value) or a list of them (token list); built-in functions only, no subqueries, no volatile functions
+  shingle:
+    mingram (integer) [default: 2] - Minimum shingle (word n-gram) size (minimum 2)
+    maxgram (integer) [default: 2] - Maximum shingle (word n-gram) size (>= mingram)
+    outputunigrams (boolean) [default: true] - Index individual tokens alongside the shingles
+    outputunigramsifnoshingles (boolean) [default: false] - Index unigrams only when the input is too short to form a shingle
+    storetokens (boolean) [default: true] - Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
+    frequentwords (string) - Comma-separated words (typically stopwords). When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
+    fillertoken (string) - Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   solr_synonyms:
     synonyms[required] (string) [default: none] - Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
   wordnet_synonyms:

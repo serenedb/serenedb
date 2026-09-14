@@ -4,16 +4,21 @@ function(add_bench FILE_NAME)
     set(NAME serenedb-bench-micro-${FILE_NAME})
     add_executable(${NAME} ${FILE_NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE sereneserver benchmark)
-    if(VELOX_ENABLE_FAISS)
-        target_compile_definitions(${NAME} PRIVATE VELOX_ENABLE_FAISS)
-    endif()
+    target_include_directories(
+        ${NAME}
+        PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
+    )
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(ascii_probe)
 add_bench(crc32c)
+add_bench(delimited_scan)
 add_bench(function)
 add_bench(hash_map)
+add_bench(tokenizer_pool)
+add_bench(invert_kernels)
 add_bench(lower_bound)
 add_bench(memory_file)
 add_bench(multi_delimited_tokenizer)
@@ -30,6 +35,7 @@ add_bench(uuid_print)
 add_bench(json_functions)
 add_bench(config_var_lookup)
 add_bench(norm_gather)
+add_bench(word_bloom)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(sloppy_phrase_vs_disjunction)
@@ -48,11 +54,12 @@ add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
 add_bench(virtual_column_map)
+add_bench(tokenizer_fill)
+add_bench(stemming)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)
     add_bench(ci_fold128)
-    add_bench(frozen_vs_alternatives)
 endif()
 
 # SIMD string-encoding benches: link the candidate libraries directly.
@@ -75,12 +82,7 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 
-target_compile_options(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    PRIVATE -fno-lto
-)
-
-# Same relaxed FP search/bm25.cpp is built with, otherwise the kernels here
+# Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
 # aren't the ones we ship.
 target_compile_options(
     serenedb-bench-micro-bm25_byte_norm
@@ -94,28 +96,6 @@ target_compile_options(
         -fno-rounding-math
         -ffp-contract=fast
 )
-target_link_options(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    PRIVATE -fno-lto
-)
-
-# frozen_vs_alternatives measures the boost::text frozen::set use-cases against
-# what we already vendor; needs frozen headers + the boost::text data tables.
-if(ARCH_AMD64)
-    target_link_libraries(
-        serenedb-bench-micro-frozen_vs_alternatives
-        PRIVATE text
-    )
-    target_compile_definitions(
-        serenedb-bench-micro-frozen_vs_alternatives
-        PRIVATE BOOST_TEXT_DISABLE_CONCEPTS
-    )
-    target_include_directories(
-        serenedb-bench-micro-frozen_vs_alternatives
-        SYSTEM
-        PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
-    )
-endif()
 
 # regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
 target_link_libraries(serenedb-bench-micro-regexp_vs_wildcard PRIVATE simdutf)
@@ -136,18 +116,6 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
-target_include_directories(
-    serenedb-bench-micro-literal_lookup
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
-)
-# frozen's compile-time perfect-hash construction at N=1000 exceeds the default
-# constexpr step budget.
-target_compile_options(
-    serenedb-bench-micro-literal_lookup
-    PRIVATE -fconstexpr-steps=200000000
-)
-
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)
 target_compile_options(
@@ -155,11 +123,8 @@ target_compile_options(
     PRIVATE -fassociative-math -fno-signed-zeros
 )
 
-target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)
-if(VELOX_ENABLE_FAISS)
-    target_compile_definitions(
-        vector-distances-bench
-        PRIVATE VELOX_ENABLE_FAISS
-    )
-endif()
+target_link_libraries(
+    vector-distances-bench
+    PRIVATE sereneserver benchmark ${FAISS_LIB}
+)
 add_dependencies(serenedb-bench-micro vector-distances-bench)

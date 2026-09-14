@@ -20,6 +20,10 @@ FORCE INSTALL inet;
 
 
 statement ok
+LOAD markdown;
+
+
+statement ok
 INSTALL httpfs FROM community;
 
 

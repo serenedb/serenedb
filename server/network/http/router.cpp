@@ -22,11 +22,10 @@
 
 #include <ada.h>
 
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include "basics/assert.h"
 
 namespace sdb::network {
 
@@ -75,6 +74,9 @@ bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
       slash == std::string_view::npos ? rest : rest.substr(0, slash);
     const Segment& pat = segments[i];
     if (pat.param) {
+      if (seg.starts_with('_')) {
+        return false;
+      }
       request.params.emplace_back(pat.text, std::string{seg});
     } else if (seg != pat.text) {
       return false;

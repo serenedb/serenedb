@@ -11,6 +11,8 @@ version branches). For each checked submodule the staged gitlink must
      and within the same branch it must descend from main's gitlink.
      Switching to a newer version branch is fine even though rebased
      lineages share no ancestry.
+A submodule origin/main does not have yet (a new dependency) only has to
+satisfy rule 1.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
@@ -63,12 +65,17 @@ def staged_gitlink(path: str) -> str | None:
 
 
 def main_gitlink(path: str) -> str | None:
-    sha = git("rev-parse", f"origin/main:{path}")
-    if sha:
-        return sha
-    if git("fetch", "--quiet", "--depth=1", "origin", "main") is None:
-        return None
-    return git("rev-parse", f"FETCH_HEAD:{path}")
+    out = git("ls-tree", "origin/main", "--", path)
+    if out is None:
+        if git("fetch", "--quiet", "--depth=1", "origin", "main") is None:
+            return None
+        out = git("ls-tree", "FETCH_HEAD", "--", path)
+        if out is None:
+            return None
+    if not out:
+        return ""
+    mode, _, sha = out.split()[:3]
+    return sha if mode == "160000" else ""
 
 
 def submodule_url(path: str) -> str | None:
@@ -101,6 +108,8 @@ def verdict(
     ver_new = next((n for n in names if contains(n, gitlink)), None)
     if ver_new is None:
         return False, "not reachable from any version branch"
+    if not main_sha:
+        return True, f"on {ver_new}"
     ver_main = next((n for n in names if contains(n, main_sha)), None)
     if ver_main is None or ver_new > ver_main:
         return True, f"on {ver_new}"
@@ -133,7 +142,9 @@ def validate_local(
     """Validate with the local submodule clone; None if it cannot decide."""
     if git("rev-parse", "--git-dir", cwd=path) is None:
         return None
-    needed = [gitlink, main_sha, *heads.values()]
+    needed = [gitlink, *heads.values()]
+    if main_sha:
+        needed.append(main_sha)
     if not all(local_has_commit(path, s) for s in needed):
         git("fetch", "--quiet", "origin", cwd=path)
         if not all(local_has_commit(path, s) for s in needed):
@@ -176,11 +187,13 @@ def validate_api(
     repo = github_repo(url)
     if repo is None:
         return None
-    probe = api_compare(repo, main_sha, gitlink)
-    if probe is None:
-        return None
-    if probe == "unknown":
-        return False, f"is unknown to {repo} (unpushed or dangling commit?)"
+    probe = None
+    if main_sha:
+        probe = api_compare(repo, main_sha, gitlink)
+        if probe is None:
+            return None
+        if probe == "unknown":
+            return False, f"is unknown to {repo} (unpushed or dangling commit?)"
     indeterminate = False
 
     def contains(name: str, sha: str) -> bool:

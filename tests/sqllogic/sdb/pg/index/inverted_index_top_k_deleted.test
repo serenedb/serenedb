@@ -117,12 +117,14 @@ VACUUM (REFRESH_TABLE) topk_del;
 
 
 query
-SELECT id FROM topk_del_idx
-WHERE body @@ 'cat red alpha apple dog blue'
-ORDER BY BM25(topk_del_idx.tableoid) DESC, id
-LIMIT 3;
+SELECT id FROM (
+  SELECT id, BM25(topk_del_idx.tableoid) AS score FROM topk_del_idx
+  WHERE body @@ 'cat red alpha apple dog blue'
+  ORDER BY score DESC, id
+  LIMIT 3
+) t ORDER BY id;
 ----
 id
-7
 2
+7
 8

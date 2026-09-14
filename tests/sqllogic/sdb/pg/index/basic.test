@@ -24,7 +24,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 statement error
 CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
 ----
-db error: ERROR: Unknown built-in opclass 'test_english' on 'r' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'test_english' on 'r' (known: included, ivf, hnsw)
 
 
 statement error
@@ -71,7 +71,7 @@ db error: ERROR: relation "index_t" does not exist<slt:ignore>
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
 ----
 indexname
 index_t
@@ -93,7 +93,7 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 );
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
 ----
 indexname
 
@@ -107,7 +107,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
 ----
 indexname
 index_t
@@ -118,7 +118,7 @@ DROP TABLE t;
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid;
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
 ----
 indexname
 
@@ -172,7 +172,7 @@ oid	relname	relkind
 
 
 query
-select indexrelid, indrelid FROM pg_index
+select indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
 ----
 indexrelid	indrelid
 <slt:ignore>	<slt:ignore>
@@ -183,7 +183,7 @@ DROP INDEX test_index;
 
 
 query
-SELECT indexrelid, indrelid FROM pg_index
+SELECT indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
 ----
 indexrelid	indrelid
 
@@ -209,7 +209,7 @@ oid	relname	relkind
 
 
 query
-SELECT indexrelid, indrelid FROM pg_index
+SELECT indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
 ----
 indexrelid	indrelid
 
@@ -264,7 +264,7 @@ db error: ERROR: Opclass option must be a constant value
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 ----
-db error: ERROR: Unknown built-in opclass 'test_english' on 'c' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'test_english' on 'c' (known: included, ivf, hnsw)
 
 
 

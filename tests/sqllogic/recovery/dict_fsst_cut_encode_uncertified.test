@@ -1,0 +1,65 @@
+# dict_fsst cut sizing: the first cleave after EncodeAll already does not fit.
+#
+# Before a segment is FSST-encoded only the raw DICTIONARY layout is watched, with ENCODE_HEADROOM (16KB)
+# of slack. One NEW entry that pushes the entry count across a selection-bitpacking width boundary
+# re-prices every row at once: at ~267k rows the 7 -> 8 bit bump is ~33KB, past the headroom, so the
+# encode trigger fires on a layout that is already over the block, and the freshly encoded segment is
+# over it too. Nothing may then leave that segment uncertified: the encode-time cleave has to resolve
+# the overshoot on the spot (flush without the bumping row), because an uncertified segment has no
+# rewind target -- before the fix FlushRewind on it was a silent no-op and the row-group end threw
+# "dict_fsst: refusing to write a ... segment layout ... past the ...-byte block".
+#
+# Shape: 143 distinct 48-char values in runs of 2100 rows. A new value every 2100 rows keeps the
+# dictionary below DICT_STABLE_ROWS so it does not encode early; entry #128 arrives at row 266,700. The
+# raw dictionary passes ENCODE_THRESHOLD at entry #86, so the encode-trigger branch (not the small-
+# dictionary branch, which handles this bump for tiny dictionaries) is the one in charge. ROW_GROUP_SIZE
+# is raised so one row group holds the whole run; the 122,880-row default never reaches the bump.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfeu.db' AS dfeu (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+CREATE TABLE dfeu.t AS
+  SELECT ord, 'k' || lpad((ord // 2100)::VARCHAR, 3, '0') || repeat('x', 36) || substr(md5((ord // 2100)::VARCHAR), 1, 8) AS s
+  FROM range(300000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfeu;
+
+
+# every row survived with its exact value
+query
+SELECT count(*) AS n, count(DISTINCT s) AS dn,
+       bool_and(s = 'k' || lpad((ord // 2100)::VARCHAR, 3, '0') || repeat('x', 36) || substr(md5((ord // 2100)::VARCHAR), 1, 8)) AS rows_match
+  FROM dfeu.t;
+----
+n	dn	rows_match
+300000	143	t
+
+
+# the column landed in dict_fsst and the segment was cut rather than written past the block
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfeu.t', include_segment_info=true)
+         WHERE column_name='s' AND compression='DICT_FSST') AS has_dict_fsst,
+       (SELECT count(*) >= 2 FROM pragma_storage_info('dfeu.t', include_segment_info=true)
+         WHERE column_name='s' AND segment_type='VARCHAR') AS was_cut;
+----
+has_dict_fsst	was_cut
+t	t
+
+
+statement ok
+DROP TABLE dfeu.t;
+
+
+statement ok
+DETACH dfeu;

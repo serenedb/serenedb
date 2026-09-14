@@ -21,14 +21,14 @@
 #pragma once
 
 #include <cstdio>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/docs/root.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <optional>
 #include <span>
@@ -54,7 +54,7 @@ struct Report {
   bool print = false;
 };
 
-// What a line asks of its query, spelled as `count`, `docs`, `scored` or
+// What a line asks of its query, spelled as `count`, `docs`, `hits` or
 // `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
 // and anything that is not a bare count may end in `_hash` for a checksum
 // over what it found and `_print` for all of it -- either, both, in either
@@ -63,15 +63,16 @@ enum class Kind : uint8_t {
   Unsupported,
   Count,
   Docs,
-  Scored,
-  TopK,
+  Hits,
+  Top,
 };
 
 struct Command {
   Kind kind = Kind::Unsupported;
   Report report;
-  bool prune = true;  // top-k only: `_count` takes the exact total instead
-  uint32_t k = 0;     // top-k only
+  // TODO: hits with prune?
+  bool prune = true;  // top only: `_count` takes the exact total instead
+  uint32_t k = 0;     // top only
 };
 
 static_assert(sizeof(Command) == 8);
@@ -91,13 +92,14 @@ class Executor {
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
+  size_t HashResultsWithCount(size_t count) const;
   void PrintResults() const;
 
   // Where `Report::print` writes. The benchmark harness reads stderr; a test
   // that only asserts on the documents can point this at /dev/null.
   void SetPrintSink(std::FILE* out) noexcept { _print_out = out; }
   EmitResult ExecuteEmitDocs(std::string_view query, Report report = {});
-  EmitResult ExecuteEmitScoredDocs(std::string_view query, Report report = {});
+  EmitResult ExecuteEmitHits(std::string_view query, Report report = {});
 
   const irs::DirectoryReader& GetReader() const { return _reader; }
   auto GetResults(this auto& self) {
@@ -124,7 +126,7 @@ class Executor {
   size_t _result_count{0};
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::analysis::Analyzer::ptr _tokenizer;
+  irs::analysis::Tokenizer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;

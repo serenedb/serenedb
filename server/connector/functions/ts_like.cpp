@@ -20,14 +20,14 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/wildcard_analyzer.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "basics/down_cast.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -50,16 +50,16 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
   }
 
   if (column_info.tokenizer.analyzer->type() ==
-      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+      irs::Type<irs::analysis::WildcardTokenizer>::id()) {
     auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
-    wf.SetScorer(&irs::DefaultConstScore());
+    wf.SetScorer(&irs::ForceConstScore());
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
-      basics::downCast<irs::analysis::WildcardAnalyzer>(
+      irs::utils::downCast<irs::analysis::WildcardTokenizer>(
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,
@@ -71,8 +71,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
   }
   auto wildcard = irs::CreateByWildcard(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
-    ctx.scored_terms_limit, ctx.boost);
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(wildcard));
     return;

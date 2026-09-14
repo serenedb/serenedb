@@ -1,0 +1,89 @@
+# dict_fsst analyze: the string-size gate honours a small configured block size.
+#
+# dict_fsst declines a row group when any string is at least STRING_SIZE_LIMIT (16KB) long; longer
+# strings go to uncompressed storage, which spills them into overflow blocks. That limit was a constant
+# sized for the default 256KB block. With ATTACH ... BLOCK_SIZE 16384 a 16,200-byte string passes it,
+# yet a segment holding that one row is only guaranteed to fit if FSST shrinks it: a string encodes to
+# up to 2x its length (every byte without a symbol is escaped), and the segment also carries the symbol
+# table and its metadata, so a 16KB row in a 16,376-byte block writes or throws at FSST's mercy -- the
+# compressor cannot split a row. The gate now scales: a string is rejected when its worst-case encoding
+# plus the fixed per-segment overhead cannot fit the block, which leaves the 16KB limit untouched at the
+# default block and lowers it to ~6.9KB at 16KB blocks.
+#
+# Shape: every 50th row is 16,200 pseudo-random printable chars, the rest are short; that column must
+# now be declined. The control table uses 6,000-char strings, under the scaled limit, so dict_fsst still
+# takes it and each big row fits a block on its own even at 2x.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfsb.db' AS dfsb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', BLOCK_SIZE 16384);
+
+
+statement ok
+CREATE TABLE dfsb.big AS
+  SELECT ord, CASE WHEN ord % 50 = 7
+    THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16200) r(i))
+    ELSE 'v' || ord::VARCHAR END AS s
+  FROM range(2000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfsb.ctrl AS
+  SELECT ord, CASE WHEN ord % 50 = 7
+    THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(6000) r(i))
+    ELSE 'v' || ord::VARCHAR END AS s
+  FROM range(2000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfsb;
+
+
+# every row survived with its exact value
+query
+SELECT count(*) AS n,
+       bool_and(s = CASE WHEN ord % 50 = 7
+         THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16200) r(i))
+         ELSE 'v' || ord::VARCHAR END) AS rows_match,
+       max(length(s)) AS max_len
+  FROM dfsb.big;
+----
+n	rows_match	max_len
+2000	t	16200
+
+
+query
+SELECT count(*) AS n,
+       bool_and(s = CASE WHEN ord % 50 = 7
+         THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(6000) r(i))
+         ELSE 'v' || ord::VARCHAR END) AS rows_match,
+       max(length(s)) AS max_len
+  FROM dfsb.ctrl;
+----
+n	rows_match	max_len
+2000	t	6000
+
+
+# the oversized column was declined by dict_fsst; the control column was not
+query
+SELECT (SELECT count(*) = 0 FROM pragma_storage_info('dfsb.big')
+         WHERE column_name='s' AND segment_type='VARCHAR' AND compression='DICT_FSST') AS big_not_dict_fsst,
+       (SELECT count(*) > 0 FROM pragma_storage_info('dfsb.ctrl')
+         WHERE column_name='s' AND segment_type='VARCHAR' AND compression='DICT_FSST') AS ctrl_dict_fsst;
+----
+big_not_dict_fsst	ctrl_dict_fsst
+t	t
+
+
+statement ok
+DROP TABLE dfsb.big;
+
+
+statement ok
+DROP TABLE dfsb.ctrl;
+
+
+statement ok
+DETACH dfsb;

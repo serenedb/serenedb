@@ -20,12 +20,14 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
@@ -39,8 +41,6 @@
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/read/duckdb_dependency.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -61,6 +61,7 @@ duckdb::unique_ptr<CreateIndexInfo> CreateIndexOnRelation(
   }
   JoinStoreTransaction(ax.context);
   const auto schema_id = catalog::ParentIdOf(relation);
+  catalog::EnsureWritableSchema(ax.context, schema_id);
   // The noun the refusal names is the relation's own kind: a view and a table
   // are both indexable and postgres says which one it refused.
   catalog::RequireOwner(ax.context, ax.role, relation.permissions,
@@ -103,6 +104,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   duckdb::ClientContext* context, CreateIndexInfo& index,
   CreateIndexOperationOptions operation_options) {
   const auto schema_id = index.GetSchemaId();
+  catalog::EnsureWritableSchema(context, schema_id);
   if (catalog::FindRelation(context, schema_id, index.GetName())) {
     ThrowDuplicateName(NameKind::Relation, index.GetName());
   }

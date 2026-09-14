@@ -24,13 +24,12 @@
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/memory.hpp>
 #include <memory>
 #include <optional>
 #include <vector>
-
-#include "basics/assert.h"
-#include "basics/memory.hpp"
 
 namespace sdb::connector {
 
@@ -66,7 +65,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
-  irs::doc_id_t Advance() final;
+  irs::doc_id_t Next() final;
 
   // The removal walk reads a segment front to back, so nothing seeks it.
   irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
@@ -75,6 +74,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   }
 
  private:
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
   const irs::field_id _pk_field_id;
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::DocumentMask* _pending_mask{};
@@ -119,7 +119,7 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
                                 const irs::DocumentMask* pending) const;
 
-  irs::doc_id_t Advance() final;
+  irs::doc_id_t Next() final;
 
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<SearchRemovePrefixFilter>::id();
@@ -134,6 +134,8 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   }
 
  private:
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
+
   struct Entry {
     irs::bstring prefix;
     // nullopt = whole file.

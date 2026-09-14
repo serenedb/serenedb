@@ -20,10 +20,10 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search.h"
 #include "ts_common.hpp"
 
@@ -45,7 +45,7 @@ void FromTokenize(BoolTarget parent, const FilterContext& ctx,
   std::string analyzer_name;
   GetVarcharArg(*func.GetChildren()[1], analyzer_name,
                 {"ts_tokenize analyzer name", kSyntaxHint});
-  if (analyzer_name == irs::StringTokenizer::type_name()) {
+  if (analyzer_name == irs::KeywordTokenizer::type_name()) {
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }

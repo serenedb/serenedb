@@ -47,6 +47,18 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   });
 
   values.push_back({
+    .oid = id::kPgOpclassHnsw.id(),
+    .opcmethod = id::kPgAmInverted.id(),
+    .opcname = catalog::kHNSWKind,
+    .opcnamespace = id::kPgCatalogSchema.id(),
+    .opcowner = id::kRootUser.id(),
+    .opcfamily = 0,
+    .opcintype = PgTypeOID::kFloat4Array,
+    .opcdefault = false,
+    .opckeytype = 0,
+  });
+
+  values.push_back({
     .oid = id::kPgOpclassIncluded.id(),
     .opcmethod = id::kPgAmInverted.id(),
     .opcname = catalog::kIncludedKind,

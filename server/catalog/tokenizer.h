@@ -23,8 +23,14 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/parser/parsed_data/create_info.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <expected>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/analysis/tokenizer_pool.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -38,15 +44,16 @@
 
 namespace duckdb {
 
+class ClientContext;
 class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
-namespace sdb::basics {
+namespace sdb::utils {
 
 class JsonSink;
 
-}  // namespace sdb::basics
+}  // namespace sdb::utils
 namespace sdb::catalog {
 
 // One tokenizer as everything but the catalog log sees it: the analyzer config
@@ -61,43 +68,35 @@ class Tokenizer {
   // does not rebuild one. A null owner means the analyzer was not pooled (the
   // built-in string tokenizer, which has no catalog object).
   struct Deleter {
-    const Tokenizer* tokenizer{nullptr};
+    duckdb::shared_ptr<irs::analysis::TokenizerPool> pool{};
 
-    void operator()(irs::analysis::Analyzer* analyzer) {
-      // TODO(mbkkt) Revert this when global identity will be available
-      if (tokenizer != nullptr) {
-        tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+    void operator()(irs::analysis::Tokenizer* analyzer) {
+      if (pool) {
+        pool->Release(irs::analysis::Tokenizer::ptr{analyzer});
       } else {
         delete analyzer;
       }
     }
   };
 
-  using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
+  using TokenizerWrapper = std::unique_ptr<irs::analysis::Tokenizer, Deleter>;
 
   Tokenizer(ObjectId id, search::Features features,
-            irs::analysis::TokenizerConfig config)
-    : _id{id}, _config{std::move(config)}, _features{features} {}
+            irs::analysis::TokenizerConfig config);
 
   ObjectId GetId() const noexcept { return _id; }
 
-  TokenizerWrapper GetTokenizer() const;
-
-  void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) const noexcept;
+  TokenizerWrapper GetTokenizer(duckdb::ClientContext& ctx) const;
 
   const auto& Config() const noexcept { return _config; }
 
   const search::Features& GetFeatures() const noexcept { return _features; }
 
  private:
-  irs::analysis::Analyzer::ptr CreateAnalyzer() const;
-
   ObjectId _id;
-  // A cache of built analyzers: every reader of this tokenizer shares it.
-  mutable absl::Mutex _m;
-  mutable std::vector<irs::analysis::Analyzer::ptr> _pool ABSL_GUARDED_BY(_m);
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
+  duckdb::shared_ptr<irs::analysis::TokenizerPool> _pool;
 };
 
 class CreateTokenizerInfo final : public duckdb::CreateInfo {
@@ -115,7 +114,7 @@ class CreateTokenizerInfo final : public duckdb::CreateInfo {
 
   void Serialize(duckdb::Serializer& sink) const final;
   // The analyzer config is an option structure, not a statement.
-  void WriteJson(basics::JsonSink& sink) const;
+  void WriteJson(utils::JsonSink& sink) const;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
 
   static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(

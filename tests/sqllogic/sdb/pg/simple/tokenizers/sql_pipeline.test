@@ -1,0 +1,60 @@
+control substitution on
+
+
+# sql tokenizer as a mid-chain pipeline stage: the expression executes over
+# the batched token stream produced by the preceding stage.
+
+# --- 1:1 rewrite mid-chain ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_mid_norm(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ',',
+    step2_template = 'sql',
+    step2_expression = 'upper(trim(input))'
+)
+
+query
+SELECT ts_lexize('sql_mid_norm', 'red, green ,blue');
+----
+ts_lexize
+{RED,GREEN,BLUE}
+
+
+# --- fan-out mid-chain: the expression returns a list per token ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_mid_split(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ' ',
+    step2_template = 'sql',
+    step2_expression = 'string_split(input, ''-'')'
+)
+
+query
+SELECT ts_lexize('sql_mid_split', 'a-b c-d');
+----
+ts_lexize
+{a,b,c,d}
+
+
+# --- sql stage followed by another stage ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_mid_then_stop(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ',',
+    step2_template = 'sql',
+    step2_expression = 'lower(input)',
+    step3_template = 'stopwords',
+    step3_stopwords = '"the"'
+)
+
+query
+SELECT ts_lexize('sql_mid_then_stop', 'The,Fox');
+----
+ts_lexize
+{fox}

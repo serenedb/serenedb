@@ -28,9 +28,11 @@
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
@@ -43,9 +45,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
 #include "pg/serialize.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 
@@ -431,10 +431,10 @@ std::string RegtypeOut(uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-static const containers::FlatHashMap<std::string_view, PgTypeOID>
+static const irs::containers::FlatHashMap<std::string_view, PgTypeOID>
   kTypeNameToOid = [] {
     struct Builder {
-      containers::FlatHashMap<std::string_view, PgTypeOID> map;
+      irs::containers::FlatHashMap<std::string_view, PgTypeOID> map;
       Builder& Case(std::string_view name, PgTypeOID oid) {
         map.emplace(name, oid);
         return *this;

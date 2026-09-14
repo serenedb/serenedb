@@ -1,0 +1,95 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_words (
+    template = 'sql',
+    expression = 'regexp_split_to_array(lower(input), ''\W+'')'
+);
+
+query
+SELECT ts_lexize('sql_words', 'Hello, World! FOO bar');
+----
+ts_lexize
+{hello,world,foo,bar}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_norm (
+    template = 'sql',
+    expression = 'upper(trim(input))'
+);
+
+query
+SELECT ts_lexize('sql_norm', '  hello  ');
+----
+ts_lexize
+{HELLO}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_pipe (
+    template = 'pipeline',
+    step1_template = 'sql',
+    step1_expression = 'string_split(lower(input), '' '')',
+    step2_template = 'stopwords',
+    step2_stopwords = '"the"'
+);
+
+query
+SELECT ts_lexize('sql_pipe', 'The Quick Fox');
+----
+ts_lexize
+{quick,fox}
+
+# DOCS_TEST_END
+
+# copy_from inherits the expression
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_copy (
+    template = 'copy_from',
+    from = 'sql_words'
+);
+
+query
+SELECT ts_lexize('sql_copy', 'A-B c');
+----
+ts_lexize
+{a,b,c}
+
+# NULL result rejects the value (ts_lexize surfaces rejection as an error)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_nullif (
+    template = 'sql',
+    expression = 'nullif(lower(input), ''skip'')'
+);
+
+query
+SELECT ts_lexize('sql_nullif', 'keep');
+----
+ts_lexize
+{keep}
+
+statement error error while preparing tokenizer
+SELECT ts_lexize('sql_nullif', 'SKIP');
+
+# A sql tokenizer expression may not call text-search functions: they would
+# re-enter the tokenizer machinery (unbounded recursion when self-referencing).
+
+statement error is not allowed in a sql tokenizer expression
+CREATE TEXT SEARCH DICTIONARY sql_recurse (
+    template = 'sql',
+    expression = 'ts_lexize(''sql_recurse'', input)'
+);
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sql_nullif;

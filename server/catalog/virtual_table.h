@@ -22,8 +22,8 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
-#include "basics/system-compiler.h"
 #include "catalog/entry.h"
 #include "query/config.h"
 

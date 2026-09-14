@@ -24,6 +24,7 @@
 #include <absl/strings/str_join.h>
 #include <simdjson.h>
 
+#include "network/http/common.h"
 #include "network/http/es/common.h"
 
 namespace sdb::network::http::es {
@@ -589,10 +590,10 @@ bool ParseBody(std::string_view body, HttpResponseWriter& writer, F&& fill) {
     }
     return true;
   } catch (const DslError& e) {
-    WriteError(writer, 400, e.type, e.reason);
+    WriteError(writer, HttpStatus::BadRequest, e.type, e.reason);
     return false;
   } catch (const std::exception& e) {
-    WriteError(writer, 400, "parsing_exception", e.what());
+    WriteError(writer, HttpStatus::BadRequest, "parsing_exception", e.what());
     return false;
   }
 }
@@ -706,13 +707,13 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
     return false;
   }
   if (out.size < 0 || out.from < 0) {
-    WriteError(writer, 400, "illegal_argument_exception",
+    WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                "[size] and [from] must be non-negative");
     return false;
   }
   if (out.from + out.size > kMaxResultWindow) {
     WriteError(
-      writer, 400, "illegal_argument_exception",
+      writer, HttpStatus::BadRequest, "illegal_argument_exception",
       absl::StrCat("Result window is too large, from + size must be less "
                    "than or equal to: [",
                    kMaxResultWindow, "] but was [", out.from + out.size, "]"));
@@ -745,10 +746,10 @@ bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
     out.uses_match = clause.uses_match;
     return true;
   } catch (const DslError& e) {
-    WriteError(writer, 400, e.type, e.reason);
+    WriteError(writer, HttpStatus::BadRequest, e.type, e.reason);
     return false;
   } catch (const std::exception& e) {
-    WriteError(writer, 400, "parsing_exception", e.what());
+    WriteError(writer, HttpStatus::BadRequest, "parsing_exception", e.what());
     return false;
   }
 }

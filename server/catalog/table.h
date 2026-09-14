@@ -29,6 +29,7 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,7 +37,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/search_table_options.h"
 #include "catalog/sequence.h"

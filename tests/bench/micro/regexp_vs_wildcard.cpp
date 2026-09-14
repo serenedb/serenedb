@@ -34,14 +34,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -51,6 +51,8 @@
 #include <utility>
 #include <vector>
 
+#include "insert_field.hpp"
+#include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"
 
 namespace bench_regexp {
@@ -59,7 +61,7 @@ inline constexpr irs::field_id kFieldId = 1;
 
 // Indexing helpers
 //
-// Trimmed copy of tests/libs/iresearch/index/doc_generator.{hpp,cpp}.
+// Trimmed copy of tests/iresearch/index/doc_generator.{hpp,cpp}.
 // Only the bits required to index europarl into a single analyzed
 // body_anl field. Original supports many fields (title, date, id, body
 // in several variants, with payloads); the bench needs none of that.
@@ -72,7 +74,8 @@ struct IField {
 
   virtual irs::field_id Id() const = 0;
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
-  virtual irs::Tokenizer& GetTokens() const = 0;
+  virtual irs::analysis::Tokenizer& GetTokens() const = 0;
+  virtual std::string_view Value() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
 
@@ -100,12 +103,14 @@ class FieldBase : public IField {
 class TextField final : public FieldBase {
  public:
   TextField(irs::field_id id, irs::IndexFeatures extra_features)
-    : _stream(irs::analysis::TextTokenizer::Make([] {
-        irs::analysis::TextTokenizer::Options opts;
-        opts.locale = icu::Locale::createFromName("C");
-        opts.explicit_stopwords_set = true;
-        return opts;
-      }())) {
+    : _stream(irs::analysis::TextTokenizer::Make(
+        [] {
+          irs::analysis::TextTokenizer::Options opts;
+          opts.locale = icu::Locale::createFromName("C");
+          opts.explicit_stopwords_set = true;
+          return opts;
+        }(),
+        tests::Cache())) {
     SetId(id);
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);
@@ -113,15 +118,14 @@ class TextField final : public FieldBase {
 
   void SetValue(std::string_view value) noexcept { _value = value; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput&) const final { return false; }
 
  private:
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
   std::string_view _value;
 };
 
@@ -204,7 +208,7 @@ class EuroparlBodyTemplate {
 };
 
 // Splits a UTF-8 byte range on a delimiter rune, yielding string columns.
-// Copied from tests/libs/iresearch/index/doc_generator.cpp; iterates
+// Copied from tests/iresearch/index/doc_generator.cpp; iterates
 // codepoints via duckdb's utf8proc wrapper.
 template<typename OctetIterator>
 class BreakIterator {
@@ -369,7 +373,8 @@ Corpus BuildIndex() {
     auto trx = writer->GetBatch();
     {
       auto inserter = trx.Insert();
-      if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
+      if (!tests::InsertFields(inserter, doc->indexed.begin(),
+                               doc->indexed.end())) {
         Die("Insert returned false");
       }
     }

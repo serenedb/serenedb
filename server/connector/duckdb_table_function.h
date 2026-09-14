@@ -26,17 +26,17 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>
 
-#include "basics/assert.h"
-#include "basics/bit_utils.hpp"
-#include "basics/down_cast.h"
-#include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
@@ -44,7 +44,7 @@
 
 namespace irs {
 
-class IndexReader;
+struct IndexReader;
 }
 
 #include "search/inverted_index_storage.h"
@@ -94,6 +94,8 @@ struct VectorScorerOptions {
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 16;
+  uint32_t ef_search = 0;
+  uint32_t min_ef = 0;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 
@@ -267,13 +269,20 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   }
   std::vector<const catalog::InvertedIndex*> InvertedIndexes() const;
 
+  // True when this scan scores through an HNSW ANN index. HNSW is ANN-only:
+  // it has no postings to intersect and does not filter during traversal, so
+  // any predicate must keep the index out of the plan entirely -- a claimed
+  // conjunct would be silently dropped, and a pushed pre-filter would prune an
+  // already-localized candidate set down to nothing.
+  bool IsHnswScored() const noexcept;
+
   template<typename T>
   T& As() & {
-    return basics::downCast<T>(*this);
+    return irs::utils::downCast<T>(*this);
   }
   template<typename T>
   const T& As() const& {
-    return basics::downCast<const T>(*this);
+    return irs::utils::downCast<const T>(*this);
   }
 
   virtual duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(

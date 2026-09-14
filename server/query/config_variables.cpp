@@ -31,6 +31,12 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
@@ -38,16 +44,10 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "basics/debugging.h"
-#include "basics/serializer.h"
-#include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "iresearch/index/column_info.hpp"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 
@@ -83,7 +83,7 @@ std::optional<std::string> SetHbaFromTextString(std::string_view text);
 }  // namespace network::pg::hba
 namespace {
 
-template<basics::detail::FixedString Name>
+template<irs::utils::detail::FixedString Name>
 void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
                 duckdb::Value& value) {
   if (value.GetValue<uint64_t>() == 0) {
@@ -94,7 +94,7 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-template<basics::detail::FixedString Name>
+template<irs::utils::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -306,22 +306,23 @@ constexpr std::pair<std::string_view, VariableDescription>
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
+            if (!irs::RemoveFailurePointDebugging(
+                  std::string_view{s}.substr(1))) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
-            if (!AddFailurePointDebugging(s)) {
+            if (!irs::AddFailurePointDebugging(s)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
           }
-          auto points = GetFailurePointsDebugging();
+          auto points = irs::GetFailurePointsDebugging();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
-          ClearFailurePointsDebugging();
+          irs::ClearFailurePointsDebugging();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a
@@ -405,6 +406,26 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_hnsw_ef_search",
+      {
+        LogicalTypeId::INTEGER,
+        "Search-time beam width (ef) for HNSW vector indexes. Higher values "
+        "improve recall at the cost of latency. The beam is also the result "
+        "ceiling: a value below the query's LIMIT returns fewer rows than "
+        "asked for. Default 64.",
+        [] { return duckdb::Value::INTEGER(64); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n <= 0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_hnsw_ef_search\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_ivf_sample_factor",
       {
         LogicalTypeId::DOUBLE,
@@ -467,26 +488,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_scored_terms_limit",
-      {
-        LogicalTypeId::INTEGER,
-        "The maximum number of terms to consider for scoring in multi-term "
-        "filters. Higher values give more accurate IDF-style scoring at the "
-        "cost of memory and per-query work. 0 disables scored-term collection "
-        "entirely.",
-        [] { return duckdb::Value::INTEGER(1024); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_scored_terms_limit\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
       "sdb_levenshtein_max_terms",
       {
         LogicalTypeId::INTEGER,
@@ -495,8 +496,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "query survive; the rest neither match nor contribute to scoring. "
         "Higher values improve recall on wide expansions at the cost of "
         "per-query work. 0 removes the cap, so every term within the edit "
-        "distance matches. Default 64.",
-        [] { return duckdb::Value::INTEGER(64); },
+        "distance matches. Default 50.",
+        [] { return duckdb::Value::INTEGER(50); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 0) {
@@ -807,7 +808,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
+        [] {
+          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
+        },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },

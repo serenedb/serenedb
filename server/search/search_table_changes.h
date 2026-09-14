@@ -24,13 +24,13 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
@@ -44,6 +44,7 @@ struct LocalTableChangesEntry {
     std::vector<SearchDbWal::SegmentRef> segments;
     std::vector<std::string> delete_pks;
     bool truncate = false;
+    bool clears_shard = false;
 
     bool IsDelete() const noexcept { return !delete_pks.empty(); }
     bool IsTruncate() const noexcept { return truncate; }
@@ -98,18 +99,18 @@ struct LocalTableChangesEntry {
     ops.emplace_back().delete_pks.assign(pks.begin(), pks.end());
   }
 
-  // Append a TRUNCATE op (wipe the shard). Autocommit-only, so it is the sole
-  // op in the transaction; it still seals any current run defensively.
-  void AppendTruncate() { ops.emplace_back().truncate = true; }
+  void AppendTruncate(bool clears_shard) {
+    auto& op = ops.emplace_back();
+    op.truncate = true;
+    op.clears_shard = clears_shard;
+  }
 
-  // A TRUNCATE is always the sole op (autocommit-only), so the first op decides
-  // it; assert that invariant.
-  bool HasTruncate() const noexcept {
-    if (ops.empty() || !ops.front().IsTruncate()) {
+  bool ClearsShard() const noexcept {
+    if (ops.empty() || !ops.front().clears_shard) {
       return false;
     }
     SDB_ASSERT(ops.size() == 1,
-               "TRUNCATE must be the only op in its transaction");
+               "a clearing TRUNCATE must be the only op in its transaction");
     return true;
   }
 
@@ -125,6 +126,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

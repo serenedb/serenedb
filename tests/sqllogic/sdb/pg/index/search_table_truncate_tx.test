@@ -1,0 +1,104 @@
+# TRUNCATE on a search table inside a transaction. Autocommit TRUNCATE clears
+# the store; inside a transaction it has to take its place among the
+# transaction's other writes: rows written before it (published or not) go,
+# rows written after it stay, and ROLLBACK undoes it.
+
+statement ok
+CREATE TABLE tt (id BIGINT PRIMARY KEY, r TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX tt_r ON tt USING inverted (r);
+
+statement ok
+INSERT INTO tt VALUES (1, 'a'), (2, 'b');
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE tt;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT count(*) AS unpublished_rows_truncated FROM tt;
+----
+unpublished_rows_truncated
+0
+
+statement ok
+INSERT INTO tt VALUES (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO tt VALUES (4, 'd');
+
+statement ok
+TRUNCATE tt;
+
+statement ok
+INSERT INTO tt VALUES (5, 'e'), (6, 'f');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT id, r FROM tt ORDER BY id;
+----
+id	r
+5	e
+6	f
+
+query
+SELECT id FROM tt_r WHERE r IN ('a', 'b', 'c', 'd', 'e', 'f') ORDER BY id;
+----
+id
+5
+6
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE tt;
+
+statement ok
+INSERT INTO tt VALUES (7, 'g');
+
+statement ok
+ROLLBACK;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT id, r FROM tt ORDER BY id;
+----
+id	r
+5	e
+6	f
+
+statement ok
+TRUNCATE tt;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT count(*) AS autocommit_truncated FROM tt;
+----
+autocommit_truncated
+0

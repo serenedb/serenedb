@@ -43,16 +43,22 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_set.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/search/detail/term_set.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -62,9 +68,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -73,10 +76,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/search_filter_builder.hpp"
-#include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::optimizer {
 namespace {
@@ -269,7 +269,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, "(): column not found in index"));
   }
-  const auto* info = found.bind_data->ScannedIndex().FindColumnInfo(col_id);
+  ResolveSearchTableIndexes(*found.bind_data, context);
+  const auto index = TermDictIndexFor(*found.bind_data, col_id);
+  const auto* info = index ? index->FindColumnInfo(col_id) : nullptr;
   const auto& col_type = col_ref->GetReturnType();
   const auto text_type = [&] {
     switch (col_type.id()) {
@@ -294,8 +296,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  const auto read_field =
-    found.bind_data->ScannedIndex().TermFieldForColumn(col_id);
+  const auto read_field = index->TermFieldForColumn(col_id);
   return MakeTsDictAggregate(root, context, found, read_field,
                              static_cast<irs::field_id>(col_id), kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());
@@ -429,7 +430,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
         : get_ti;
     const auto source = ExposeGetColumnAt(
       *child, anchor, *found->get, req.term_col_idx,
-      TsDictColName(*found->bind_data, req.field_id, TsDictColKind::Term),
+      TsDictColName(*found->bind_data, req.display_id, TsDictColKind::Term),
       duckdb::LogicalType::VARCHAR);
     entries.push_back({.source = source,
                        .source_type = duckdb::LogicalType::VARCHAR,
@@ -582,6 +583,7 @@ namespace {
 struct KeywordDictAgg {
   duckdb::ColumnBinding binding;
   irs::field_id field_id;
+  catalog::ColumnId col_id;
   std::string_view agg;
 };
 
@@ -600,7 +602,7 @@ struct EnumFieldRefs {
 
 void CollectEnumFieldRefs(
   const duckdb::Expression& expr,
-  const containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
+  const irs::containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get, EnumFieldRefs& refs) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
@@ -697,6 +699,7 @@ struct TsDictFacetKey {
   irs::field_id field_id = irs::field_limits::invalid();
   catalog::ColumnId col_id = catalog::kInvalidColumnId;
   irs::field_id null_field_id = irs::field_limits::invalid();
+  const catalog::InvertedIndex* index = nullptr;
   duckdb::TableIndex anchor;
 
   bool nullable() const { return irs::field_limits::valid(null_field_id); }
@@ -735,6 +738,10 @@ class TsDictFacetPushdown {
 
   bool ShapeOk() const;
   bool AdoptScan(std::optional<FoundScan> here);
+  const catalog::InvertedIndex* ColumnIndex(catalog::ColumnId col_id) const;
+  const catalog::InvertedIndex& FacetIndex() const {
+    return _index ? *_index : *_keys.front().index;
+  }
   bool ResolveExpressionKey(const duckdb::Expression& expr,
                             TsDictFacetKey& key);
   bool ResolveKeys();
@@ -887,17 +894,19 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   if (col_id == catalog::kInvalidColumnId) {
     return std::nullopt;
   }
-  if (!found.bind_data->IsIndexRelation()) {
+  ResolveSearchTableIndexes(*found.bind_data, context);
+  const auto index = TermDictIndexFor(*found.bind_data, col_id);
+  if (!index) {
     return std::nullopt;
   }
-  const auto field_id = static_cast<irs::field_id>(col_id);
-  if (!found.bind_data->ScannedIndex().IsKeywordField(context, field_id)) {
+  const auto field_id = index->TermFieldForColumn(col_id);
+  if (!index->IsKeywordField(context, field_id)) {
     return std::nullopt;
   }
   if (is_list && !found.bind_data->IsColumnNotNull(col_id)) {
     return std::nullopt;
   }
-  return KeywordDictAgg{col_ref.Binding(), field_id, agg_name};
+  return KeywordDictAgg{col_ref.Binding(), field_id, col_id, agg_name};
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
@@ -905,7 +914,8 @@ duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   duckdb::ClientContext& context, const duckdb::Identifier& alias,
   FoundScan& target) {
   return MakeTsDictAggregate(root, context, target, match.field_id,
-                             match.field_id, TsDictColKind::Term, match.agg,
+                             static_cast<irs::field_id>(match.col_id),
+                             TsDictColKind::Term, match.agg,
                              match.binding.table_index, alias);
 }
 
@@ -937,15 +947,27 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
   if (!here || here->get != &_target) {
     return false;
   }
-  if (_index) {
+  if (_found) {
     return true;
   }
-  if (!here->bind_data->IsIndexRelation()) {
-    return false;
+  if (here->bind_data->IsIndexRelation()) {
+    _index = &here->bind_data->ScannedIndex();
+  } else {
+    ResolveSearchTableIndexes(*here->bind_data, _context);
+    if (here->bind_data->indexes.empty()) {
+      return false;
+    }
   }
   _found = *here;
-  _index = &here->bind_data->ScannedIndex();
   return true;
+}
+
+const catalog::InvertedIndex* TsDictFacetPushdown::ColumnIndex(
+  catalog::ColumnId col_id) const {
+  if (_index) {
+    return _index;
+  }
+  return TermDictIndexFor(*_found.bind_data, col_id).get();
 }
 
 // Expression keys have no NOT NULL proof, so they always carry the
@@ -959,18 +981,31 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
   if (!_projected_ids) {
     _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
-  auto normalized = connector::NormalizeBoundExpression(
-    expr, _index->GetRelationId(), *_projected_ids, _context);
-  const auto serialized = connector::SerializeBoundExpression(*normalized);
-  key.field_id = _index->FindFieldIdBySerialized(serialized);
-  if (!irs::field_limits::valid(key.field_id)) {
+  const auto resolve_in = [&](const catalog::InvertedIndex& index) {
+    auto normalized = connector::NormalizeBoundExpression(
+      expr, index.GetRelationId(), *_projected_ids, _context);
+    const auto serialized = connector::SerializeBoundExpression(*normalized);
+    const auto field_id = index.FindFieldIdBySerialized(serialized);
+    if (!irs::field_limits::valid(field_id)) {
+      return false;
+    }
+    const auto* info = index.FindEntry(field_id);
+    if (!info || !irs::field_limits::valid(info->null_field_id)) {
+      return false;
+    }
+    key.field_id = field_id;
+    key.null_field_id = info->null_field_id;
+    key.index = &index;
+    return true;
+  };
+  const auto resolved =
+    _index
+      ? resolve_in(*_index)
+      : absl::c_any_of(_found.bind_data->InvertedIndexes(),
+                       [&](const auto* index) { return resolve_in(*index); });
+  if (!resolved) {
     return false;
   }
-  const auto* info = _index->FindEntry(key.field_id);
-  if (!info || !irs::field_limits::valid(info->null_field_id)) {
-    return false;
-  }
-  key.null_field_id = info->null_field_id;
   key.anchor = _found.get->table_index;
   return true;
 }
@@ -1002,10 +1037,14 @@ bool TsDictFacetPushdown::ResolveKeys() {
           ResolveColumnId(walked.binding, *_found.bind_data, *_found.get);
       }
       if (col_id != catalog::kInvalidColumnId) {
-        key.field_id = static_cast<irs::field_id>(col_id);
+        key.index = ColumnIndex(col_id);
+        if (!key.index) {
+          return false;
+        }
+        key.field_id = key.index->TermFieldForColumn(col_id);
         key.col_id = col_id;
         if (!_found.bind_data->IsColumnNotNull(col_id)) {
-          const auto* col_info = _index->FindColumnInfo(col_id);
+          const auto* col_info = key.index->FindColumnInfo(col_id);
           if (!col_info || !irs::field_limits::valid(col_info->null_field_id)) {
             return false;
           }
@@ -1017,7 +1056,7 @@ bool TsDictFacetPushdown::ResolveKeys() {
       }
       key.anchor = ref.Binding().table_index;
     }
-    if (!_index->IsKeywordField(_context, key.field_id) ||
+    if (!key.index->IsKeywordField(_context, key.field_id) ||
         absl::c_any_of(_keys, [&](const TsDictFacetKey& k) {
           return k.field_id == key.field_id;
         })) {
@@ -1066,15 +1105,18 @@ void TsDictFacetPushdown::EmitScanColumns() {
   for (size_t g = 0; g < _aggr.groups.size(); ++g) {
     const auto& key = _keys[g];
     auto& req = _found.bind_data->TsDictFor(key.field_id);
+    if (key.col_id != catalog::kInvalidColumnId) {
+      req.display_id = static_cast<irs::field_id>(key.col_id);
+    }
     EnsureTsDictCol(*_found.bind_data, *_found.get, req, TsDictColKind::Term);
     EnsureTsDictCol(*_found.bind_data, *_found.get, req, TsDictColKind::Count);
     req.term_uses |= connector::TsDictTermUses::kFull;
     req.null_field_id = key.null_field_id;
 
     auto term_name =
-      TsDictColName(*_found.bind_data, key.field_id, TsDictColKind::Term);
+      TsDictColName(*_found.bind_data, req.display_id, TsDictColKind::Term);
     auto count_name =
-      TsDictColName(*_found.bind_data, key.field_id, TsDictColKind::Count);
+      TsDictColName(*_found.bind_data, req.display_id, TsDictColKind::Count);
     const auto term_binding =
       ExposeGetColumnAt(_root, key.anchor, *_found.get, req.term_col_idx,
                         term_name, duckdb::LogicalType::VARCHAR);
@@ -1364,7 +1406,8 @@ bool KeywordAggsConvertible(
   }
   const auto& bind_data =
     target.bind_data->Cast<connector::SereneDBScanBindData>();
-  const containers::FlatHashMap<irs::field_id, size_t> key_by_field{{field, 0}};
+  const irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field{
+    {field, 0}};
   for (auto& expr : filter->expressions) {
     EnumFieldRefs refs;
     CollectEnumFieldRefs(*expr, key_by_field, bind_data, target, refs);
@@ -1524,7 +1567,7 @@ template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
   return ((type == irs::Type<Fs>::id() &&
-           basics::downCast<Fs>(filter).field_id() == field) ||
+           irs::utils::downCast<Fs>(filter).field_id() == field) ||
           ...);
 }
 
@@ -1546,7 +1589,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
   if (type == irs::Type<irs::BooleanFilter>::id()) {
     // A node's term clauses are leaves of its own rather than children, so
     // the buckets are checked here and `VisitChildren` covers the rest.
-    auto& node = basics::downCast<irs::BooleanFilter>(filter);
+    auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
     size_t clauses = 0;
     // A threshold above one asks for several terms of the field at once, and
     // the enumeration answers about one term at a time.
@@ -1591,8 +1634,8 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  containers::FlatHashSet<irs::field_id>& analyzed_fields,
-  containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
   duckdb::ClientContext& context) {
   auto root = std::make_unique<irs::BooleanFilter>();
   if (!TryClaimIResearchConjunct(*root, conjunct, getter, expr_getter,
@@ -1614,8 +1657,8 @@ bool IsCompilableAcceptorOn(irs::Filter& filter, irs::field_id field) {
 
 bool ContainsNegation(irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::BooleanFilter>::id() &&
-      basics::downCast<irs::BooleanFilter>(filter).Size(irs::Occur::MustNot) !=
-        0) {
+      irs::utils::downCast<irs::BooleanFilter>(filter).Size(
+        irs::Occur::MustNot) != 0) {
     return true;
   }
   bool found = false;
@@ -1635,13 +1678,14 @@ bool TsDictFacetPushdown::WhereOk() {
     return true;
   }
   bool term_conjunct = false;
-  containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+  irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
   key_by_field.reserve(_keys.size());
   for (size_t k = 0; k < _keys.size(); ++k) {
     key_by_field[_keys[k].field_id] = k;
   }
+  const auto indexes = _found.bind_data->InvertedIndexes();
   const bool claimable = WithSearchGetters(
-    *_found.get, *_found.bind_data, std::array{_index}, _context,
+    *_found.get, *_found.bind_data, indexes, _context,
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
       size_t computed_residuals = 0;
@@ -1657,7 +1701,7 @@ bool TsDictFacetPushdown::WhereOk() {
         }
         if (!refs.matched_key && !refs.term_virtual && !refs.multi_enum &&
             IsCoveredColumnResidual(*expr, *_found.bind_data, *_found.get,
-                                    *_index)) {
+                                    FacetIndex())) {
           if (ResidualComputesOverColumn(*expr) && ++computed_residuals > 1) {
             return false;
           }
@@ -1826,8 +1870,11 @@ class TsDictFilterClaim {
         }
         return true;
       }
-      const auto field = static_cast<irs::field_id>(col_id);
-      if (col_id == catalog::kInvalidColumnId || !Enumerated(field)) {
+      if (col_id == catalog::kInvalidColumnId) {
+        return false;
+      }
+      const auto field = _index.TermFieldForColumn(col_id);
+      if (!Enumerated(field)) {
         return false;
       }
       const auto type = _bind_data.ColumnTypeById(col_id).id();
@@ -1857,9 +1904,9 @@ class TsDictFilterClaim {
       info->null_field_id = irs::field_limits::invalid();
     }
     if (info->tokenizer.analyzer && info->tokenizer.analyzer->type() !=
-                                      irs::Type<irs::StringTokenizer>::id()) {
+                                      irs::Type<irs::KeywordTokenizer>::id()) {
       info->tokenizer.analyzer =
-        catalog::Tokenizer::TokenizerWrapper{new irs::StringTokenizer(), {}};
+        catalog::Tokenizer::TokenizerWrapper{new irs::KeywordTokenizer(), {}};
     }
     return info;
   }
@@ -1887,8 +1934,8 @@ class TsDictFilterClaim {
     const auto field = _ss.ts_dicts[term_ref->req_index].field_id;
     auto info = MakeSearchColumnInfo(
       field, _index.FindEntry(field), duckdb::LogicalType::VARCHAR,
-      {.analyzer =
-         catalog::Tokenizer::TokenizerWrapper{new irs::StringTokenizer(), {}}});
+      {.analyzer = catalog::Tokenizer::TokenizerWrapper{
+         new irs::KeywordTokenizer(), {}}});
     info.null_field_id = irs::field_limits::invalid();
     return info;
   }
@@ -1942,7 +1989,7 @@ class TsDictFilterClaim {
   }
 
   void ValidateResiduals() {
-    containers::FlatHashMap<irs::field_id, size_t> key_by_field;
+    irs::containers::FlatHashMap<irs::field_id, size_t> key_by_field;
     if (EnumeratedFieldCount() == 1) {
       key_by_field.emplace(_ss.ts_dicts.front().field_id, 0);
     }
@@ -1974,7 +2021,7 @@ class TsDictFilterClaim {
       irs::Filter::ptr fused = std::move(_having_and[f]);
       Optimize(fused, true);
       if (fused->type() == irs::Type<irs::BooleanFilter>::id()) {
-        auto& children = basics::downCast<irs::BooleanFilter>(*fused)
+        auto& children = irs::utils::downCast<irs::BooleanFilter>(*fused)
                            .Bucket(irs::Occur::Must)
                            .filters;
         std::stable_sort(children.begin(), children.end(),
@@ -2078,7 +2125,7 @@ class TsDictFilterClaim {
   std::vector<bool> _row_origin;
   std::vector<std::unique_ptr<irs::BooleanFilter>> _having_and;
   std::unique_ptr<irs::BooleanFilter> _where_and;
-  containers::FlatHashSet<irs::field_id> _enum_fields;
+  irs::containers::FlatHashSet<irs::field_id> _enum_fields;
 };
 
 }  // namespace
@@ -2093,7 +2140,11 @@ void ClaimTsDictFilter(
       .Claim();
     return true;
   };
-  WithSearchGetters(get, bind_data, std::array{&index}, context, claim);
+  auto indexes = bind_data.InvertedIndexes();
+  if (indexes.empty()) {
+    indexes.push_back(&index);
+  }
+  WithSearchGetters(get, bind_data, indexes, context, claim);
 }
 
 }  // namespace sdb::optimizer

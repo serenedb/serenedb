@@ -24,22 +24,25 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/term_filter.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "basics/containers/node_hash_map.h"
+#include "catalog/tokenizer.h"
+#include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 
@@ -53,15 +56,14 @@ struct FilterContext {
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
-  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
-  irs::analysis::Analyzer& identity;
-  irs::analysis::Analyzer& tokenizer;
+  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
+  irs::analysis::Tokenizer& identity;
+  irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;
-  uint32_t scored_terms_limit = 1024;
-  uint32_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
 
-  FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
+  FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
       .negated = negated,
       .boost = boost,
@@ -73,7 +75,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -91,7 +92,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -109,7 +109,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -126,7 +125,13 @@ inline const irs::Scorer* LeafScorer(const SearchColumnInfo& info) {
   return type == duckdb::LogicalTypeId::VARCHAR ||
              type == duckdb::LogicalTypeId::BLOB
            ? nullptr
-           : &irs::DefaultConstScore();
+           : &irs::ForceConstScore();
+}
+
+inline void SetLeafScorer(irs::Filter& filter, const SearchColumnInfo& info) {
+  if (const auto* scorer = LeafScorer(info)) {
+    filter.SetScorer(scorer);
+  }
 }
 
 template<typename Filter, typename... Args>
@@ -168,9 +173,39 @@ void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
-void ResetNumericStream(irs::NumericTokenizer& stream,
-                        duckdb::LogicalTypeId type_id,
-                        const duckdb::Value& value);
+// Dispatches `value` as the numeric type the sink indexed for `type_id`
+// (TIME_TZ order-preserving remap, raw INT64 for types BIGINT casts can't
+// represent) and invokes `f` with it.
+template<typename F>
+void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
+                      F&& f) {
+  switch (catalog::term_dict::Classify(type_id)) {
+    case catalog::term_dict::Kind::NumericI32:
+      f(value.GetValue<int32_t>());
+      break;
+    case catalog::term_dict::Kind::NumericI64:
+      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
+        f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+        f(value.GetValueUnsafe<int64_t>());
+      } else {
+        f(value.GetValue<int64_t>());
+      }
+      break;
+    case catalog::term_dict::Kind::NumericF32:
+      f(value.GetValue<float>());
+      break;
+    case catalog::term_dict::Kind::NumericF64:
+      f(value.GetValue<double>());
+      break;
+    default:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Expected a numeric value, got type id ",
+                static_cast<int>(type_id)),
+        ERR_HINT("The value's type must match the column's indexed type."));
+  }
+}
 
 // Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
 // reachable through the inverted index, so there is no fallback plan.

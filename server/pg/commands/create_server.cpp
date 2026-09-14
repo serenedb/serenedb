@@ -24,20 +24,20 @@
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "basics/duckdb_engine.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/log/data_store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 namespace {
@@ -73,7 +73,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> MakeServerOptions(
 
 // Establish the live attachment for a server (validates connectivity too).
 uint64_t RunAttach(const catalog::CreateForeignServerInfo& server) {
-  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   const auto res = catalog::RunForeignServerAttach(*conn, server);
   using Status = catalog::ForeignServerAttachResult::Status;
   if (res.status == Status::Unsupported) {
@@ -112,7 +112,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
   if (!catalog.CreateForeignServer(
         catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()),
-        db_id, server, catalog::Permissions{conn_ctx.GetRoleId()},
+        db_id, server, catalog::Permissions{conn_ctx.GetRoleId(), {}, {}},
         if_not_exists)) {
     return;
   }

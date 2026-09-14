@@ -41,9 +41,11 @@
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/vector_similarity_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/vector_radius_filter.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
 #include <span>
 
@@ -56,8 +58,6 @@
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -93,7 +93,7 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
     return 0;
   }
   // if (type == irs::Type<irs::ByVectorSimilarity>::id()) {
-  //   auto& f = basics::downCast<irs::ByVectorSimilarity>(filter);
+  //   auto& f = irs::utils::downCast<irs::ByVectorSimilarity>(filter);
   //   if options no radius and no top, we need just return live_docs
   // }
   // DuckDB's RelationStatisticsHelper::DEFAULT_SELECTIVITY
@@ -366,6 +366,20 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
+bool SereneDBScanBindData::IsHnswScored() const noexcept {
+  if (!vector_scorer) {
+    return false;
+  }
+  for (const auto& index : indexes) {
+    const auto info =
+      catalog::InvertedInfo(*index).GetAnnInfo(vector_scorer->field_id);
+    if (info) {
+      return info->kind == irs::AnnKind::Hnsw;
+    }
+  }
+  return false;
+}
+
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
@@ -393,6 +407,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
   o->max_search_fanout = vs.max_search_fanout;
+  o->ef_search = vs.ef_search;
+  o->min_ef = vs.min_ef;
   o->inner = std::move(inner);
   return f;
 }
@@ -614,7 +630,7 @@ void SereneDBScanBindData::AppendSummary(
         ? std::string{"Index Filter"}
         : absl::StrCat(
             "Index Filter(",
-            display_field(static_cast<catalog::ColumnId>(req.field_id)), ")");
+            display_field(static_cast<catalog::ColumnId>(req.display_id)), ")");
     out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
                                  *req.having_filter, name_of, kind_of)));
   }
@@ -667,7 +683,7 @@ void SereneDBScanBindData::AppendSummary(
   if (TsDictMode()) {
     auto names =
       absl::StrJoin(ts_dicts | std::views::transform([&](const auto& req) {
-                      return display_field(catalog::ColumnId{req.field_id});
+                      return display_field(catalog::ColumnId{req.display_id});
                     }),
                     ", ");
     out.insert("TsDict", std::move(names));

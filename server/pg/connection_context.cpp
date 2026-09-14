@@ -20,7 +20,9 @@
 
 #include "pg/connection_context.h"
 
-#include "app/app_server.h"
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+
 #include "auth/role_closure.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
@@ -28,9 +30,8 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
+#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 
@@ -68,10 +69,10 @@ ConnectionContext::ConnectionContext(
   std::string_view dbname, ObjectId database_id, message::Buffer* send_buffer,
   int32_t backend_pid, network::CancelRegistry* cancel_registry)
   : Transaction{duckdb_ctx},
+    _backend_pid{backend_pid},
     _user{user},
     _database_name{dbname},
     _database_id{database_id},
-    _backend_pid{backend_pid},
     _cancel_registry{cancel_registry},
     _send_buffer{send_buffer},
     _login_role_id{role_id},

@@ -20,11 +20,11 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace magic_enum {
@@ -84,7 +84,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
   auto regexp = irs::CreateByRegexp(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
-    ctx.scored_terms_limit, ctx.boost);
+    ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(regexp));
     return;

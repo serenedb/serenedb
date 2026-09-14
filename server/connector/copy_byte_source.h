@@ -34,7 +34,7 @@ namespace sdb::connector {
 
 // Zero-copy byte source for a COPY FROM stream: a decoder reads STRAIGHT out of
 // the source's current view. `View()` returns the bytes on hand (blocking /
-// refilling when empty; empty == clean EOF). `Advance(n)` consumes within the
+// refilling when empty; empty == clean EOF). `Next(n)` consumes within the
 // current view. `Fill(dst, len)` copies a value that straddles a view boundary
 // into `dst` -- the only copies are the unavoidable across-boundary stitch.
 // Shared by the binary (PGCOPY) and text COPY FROM table functions.
@@ -43,7 +43,7 @@ struct ByteSource {
   // Current view; blocks/refills if empty. Empty == clean EOF.
   virtual std::string_view View() = 0;
   // Consume `n` bytes of the current view (n <= View().size()).
-  virtual void Advance(size_t n) = 0;
+  virtual void Next(size_t n) = 0;
   // Copy exactly `len` bytes into `dst`, spanning views as needed. Returns the
   // number actually copied (< len only at premature EOF).
   virtual size_t Fill(char* dst, size_t len) = 0;
@@ -54,7 +54,7 @@ struct ByteSource {
 
 // pg-stdin source: borrows the recv-buffer view the CopyInBridge holds. The
 // common case reads straight out of the live bridge window (zero-copy) and
-// Advance drives the bridge in lock-step -- one want-more per drained CopyData
+// Next drives the bridge in lock-step -- one want-more per drained CopyData
 // frame. A value/row that straddles a frame boundary is pulled across it (the
 // Fill loop or the decoder's accumulator), so want-more still fires once per
 // frame. There is NO field-level scratch in the source.
@@ -70,7 +70,7 @@ class BridgeByteSource final : public ByteSource {
     return _view;
   }
 
-  void Advance(size_t n) final {
+  void Next(size_t n) final {
     if (n == 0) {
       return;  // never Consume(0): it could fire a spurious want-more
     }
@@ -88,7 +88,7 @@ class BridgeByteSource final : public ByteSource {
       const auto take = std::min(len - done, v.size());
       std::memcpy(dst + done, v.data(), take);
       done += take;
-      Advance(take);
+      Next(take);
     }
     return done;
   }
@@ -99,7 +99,7 @@ class BridgeByteSource final : public ByteSource {
       if (v.empty()) {
         return;  // feeder reached CopyDone
       }
-      Advance(v.size());
+      Next(v.size());
     }
   }
 
@@ -125,7 +125,7 @@ class HandleByteSource final : public ByteSource {
     return _view;
   }
 
-  void Advance(size_t n) final { _view.remove_prefix(n); }
+  void Next(size_t n) final { _view.remove_prefix(n); }
 
   size_t Fill(char* dst, size_t len) final {
     size_t done = 0;
@@ -137,7 +137,7 @@ class HandleByteSource final : public ByteSource {
       const auto take = std::min(len - done, v.size());
       std::memcpy(dst + done, v.data(), take);
       done += take;
-      Advance(take);
+      Next(take);
     }
     return done;
   }

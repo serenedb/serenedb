@@ -24,17 +24,18 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <span>
+
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
-#include "iresearch/search/detail/term_set.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
@@ -43,45 +44,31 @@
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
 namespace {
 
-enum class PhraseQueryKind {
-  Empty,
-  SingleWord,
-  Fixed,
-  Variadic,
+struct TopTerms {
+  static bytes_view Term(const TopTerm<score_t>& term) noexcept {
+    return term.term;
+  }
+  static score_t Boost(const TopTerm<score_t>& term) noexcept {
+    return term.key;
+  }
 };
 
-std::unique_ptr<Filter> MakeSinglePartFilter(irs::field_id field,
-                                             const ByPhraseOptions& options) {
-  const auto make = [&]<typename F, typename T>(const T& opts) {
-    auto filter = std::make_unique<F>();
-    *filter->mutable_field_id() = field;
-    *filter->mutable_options() = opts;
-    return filter;
-  };
-  return std::visit(
-    [&]<typename T>(const T& opts) -> std::unique_ptr<Filter> {
-      if constexpr (std::is_same_v<T, ByTermOptions>) {
-        return make.template operator()<ByTerm>(opts);
-      } else if constexpr (std::is_same_v<T, ByPrefixOptions>) {
-        return make.template operator()<ByPrefix>(opts);
-      } else if constexpr (std::is_same_v<T, ByRangeOptions>) {
-        return make.template operator()<ByRange>(opts);
-      } else if constexpr (std::is_same_v<T, AutomatonOptions>) {
-        return make.template operator()<AutomatonFilter>(opts);
-      } else if constexpr (std::is_same_v<T, LevenshteinAutomatonOptions>) {
-        return make.template operator()<LevenshteinAutomatonFilter>(opts);
-      } else {
-        SDB_UNREACHABLE();
-      }
-    },
-    options.begin()->part);
+void VisitTopTerms(const SubReader& segment, const TermReader& field,
+                   std::span<const TopTerm<score_t>> terms,
+                   FilterVisitor& visitor) {
+  SeekTermsIterator<const TopTerm<score_t>*, TopTerms> itr{
+    field, terms.data(), terms.data() + terms.size()};
+  visitor.Prepare(segment, field, itr.GetImpl());
+  if (!itr.next()) {
+    return;
+  }
+  VisitTerms(itr, visitor);
 }
 
 struct TopTermsVisitor final : FilterVisitor {
@@ -98,14 +85,17 @@ struct TopTermsVisitor final : FilterVisitor {
   }
 
   field_visitor ToVisitor() {
-    TermSetOptions options;
-    _impl.Visit([&](TopTerm<score_t>& term) {
-      options.terms.emplace(std::move(term.term), term.key);
-    });
-    return [options = std::move(options)](const SubReader& segment,
-                                          const TermReader& field,
-                                          FilterVisitor& visitor) {
-      return VisitTermSet(segment, field, options, visitor);
+    std::vector<TopTerm<score_t>> terms;
+    _impl.Visit(
+      [&](TopTerm<score_t>& term) { terms.push_back(std::move(term)); });
+    absl::c_sort(terms,
+                 [](const TopTerm<score_t>& lhs, const TopTerm<score_t>& rhs) {
+                   return lhs.term < rhs.term;
+                 });
+    return [terms = std::move(terms)](const SubReader& segment,
+                                      const TermReader& field,
+                                      FilterVisitor& visitor) {
+      return VisitTopTerms(segment, field, terms, visitor);
     };
   }
 
@@ -114,13 +104,6 @@ struct TopTermsVisitor final : FilterVisitor {
 };
 
 struct GetVisitor {
-  field_visitor operator()(const ByTermOptions& options) const {
-    return [&](const SubReader& segment, const TermReader& field,
-               FilterVisitor& visitor) {
-      return ByTerm::Visit(segment, field, options, visitor);
-    };
-  }
-
   field_visitor operator()(const ByPrefixOptions& options) const {
     return [&](const SubReader& segment, const TermReader& field,
                FilterVisitor& visitor) {
@@ -141,13 +124,6 @@ struct GetVisitor {
     return LevenshteinAutomatonFilter::visitor(options);
   }
 
-  field_visitor operator()(const TermSetOptions& options) const {
-    return [&](const SubReader& segment, const TermReader& field,
-               FilterVisitor& visitor) {
-      return VisitTermSet(segment, field, options, visitor);
-    };
-  }
-
   field_visitor operator()(const ByRangeOptions& options) const {
     return [&](const SubReader& segment, const TermReader& field,
                FilterVisitor& visitor) {
@@ -156,68 +132,54 @@ struct GetVisitor {
   }
 };
 
-template<typename PhraseStates>
 class PhraseTermVisitor final : public FilterVisitor,
                                 private util::Noncopyable {
  public:
-  explicit PhraseTermVisitor(PhraseStates& phrase_states) noexcept
-    : _phrase_states(phrase_states) {}
+  PhraseTermVisitor(PhraseState& state, bool boosted) noexcept
+    : _state(state), _boosted{boosted} {}
 
-  void Prepare(const SubReader& segment, const TermReader& field,
+  void Prepare(const SubReader&, const TermReader&,
                TermIterator& terms) noexcept final {
-    _segment = &segment;
-    _reader = &field;
     _terms = &terms;
-    _found = true;
   }
 
   bool Visit(score_t boost) final {
-    SDB_ASSERT(_terms && _segment && _reader);
+    SDB_ASSERT(_terms);
 
     boost = std::max(0.f, boost);
 
     const auto& meta = _terms->cookie();
-
-    if (_part) {
-      if (_term_offset >= _part->size()) {
-        _part->emplace_back();
-      }
-      (*_part)[_term_offset].Collect(meta);
-      ++_term_offset;
-      _has_boosts |= (boost != kNoBoost);
+    const auto term = _terms->value();
+    if (_expanded) {
+      _expanded->try_emplace(term).first->second.Collect(meta);
     }
+    _has_boosts |= (boost != kNoBoost);
+
     if (_visited_terms) {
-      const auto term = _terms->value();
       _visited_terms->emplace_back(term.data(), term.size());
     }
-    _phrase_states.emplace_back(meta, boost);
+    _state.metas.emplace_back(meta);
+    if (_boosted) {
+      _state.boosts.emplace_back(boost);
+    }
     return true;
   }
 
-  void Reset() noexcept { _has_boosts = false; }
-
-  void Reset(std::vector<TermCollector>* part,
-             std::vector<bstring>* visited_terms = nullptr) noexcept {
-    _found = false;
+  void Reset(ExpandedSlotsCollector::Terms* expanded,
+             std::vector<bstring>* visited_terms) noexcept {
     _terms = nullptr;
-    _part = part;
-    _term_offset = 0;
+    _expanded = expanded;
     _visited_terms = visited_terms;
   }
-
-  bool Found() const noexcept { return _found; }
 
   bool HasBoosts() const noexcept { return _has_boosts; }
 
  private:
-  const SubReader* _segment{};
-  const TermReader* _reader{};
-  PhraseStates& _phrase_states;
-  std::vector<TermCollector>* _part = nullptr;
+  PhraseState& _state;
+  ExpandedSlotsCollector::Terms* _expanded = nullptr;
   std::vector<bstring>* _visited_terms = nullptr;
   TermIterator* _terms = nullptr;
-  size_t _term_offset = 0;
-  bool _found = false;
+  bool _boosted;
   bool _has_boosts = false;
 };
 
@@ -230,321 +192,253 @@ bool HasIntervalOffsets(const ByPhraseOptions& options) noexcept {
   return false;
 }
 
-PhraseQueryKind GetKind(irs::field_id field, const ByPhraseOptions& options) {
-  if (!irs::field_limits::valid(field) || options.empty()) {
-    return PhraseQueryKind::Empty;
-  }
-  if (1 == options.size()) {
-    const auto& part = options.begin()->part;
-    if (!std::get_if<TermSetOptions>(&part)) {
-      return PhraseQueryKind::SingleWord;
-    }
-  }
-  if (options.simple()) {
-    return PhraseQueryKind::Fixed;
-  }
-  return PhraseQueryKind::Variadic;
+bool IsEmpty(irs::field_id field, const ByPhraseOptions& options) noexcept {
+  return !irs::field_limits::valid(field) || options.empty();
 }
 
-FixedPhraseQuery::positions_t MakeFixedPositions(
-  const ByPhraseOptions& options) {
-  FixedPhraseQuery::positions_t positions(options.size());
-  auto pos_itr = positions.begin();
-  PosAttr::value_t look_back = 0;
-  const bool group = options.slop() != 0;
-  std::vector<bytes_view> seen_terms;
-  if (group) {
-    seen_terms.reserve(options.size());
-  }
-  for (const auto& term : options) {
-    pos_itr->offs_max = term.offs_max;
-    pos_itr->offs_min = term.offs_min;
-    pos_itr->lead_offset = look_back += term.offs_max;
-    if (group) {
-      const bytes_view term_bytes{std::get<ByTermOptions>(term.part).term};
-      uint32_t id = static_cast<uint32_t>(seen_terms.size());
-      for (uint32_t k = 0; k < seen_terms.size(); ++k) {
-        if (seen_terms[k] == term_bytes) {
-          id = k;
-          break;
-        }
-      }
-      seen_terms.push_back(term_bytes);
-      pos_itr->term_group = id;
+struct SlotCounts {
+  size_t terms = 0;
+  size_t expanded = 0;
+  bool boosted = false;
+};
+
+SlotCounts CountSlots(const ByPhraseOptions& options) {
+  SlotCounts counts;
+  for (const auto& word : options) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        ++counts.terms;
+        break;
+      case SlotKind::Set:
+        counts.terms += std::get<TermSetOptions>(word.part).terms.size();
+        break;
+      case SlotKind::Expansion:
+        ++counts.expanded;
+        counts.boosted |=
+          std::holds_alternative<LevenshteinAutomatonOptions>(word.part);
+        break;
     }
-    ++pos_itr;
+  }
+  return counts;
+}
+
+PhraseQuery::Positions MakePositions(const ByPhraseOptions& options) {
+  PhraseQuery::Positions positions(options.size());
+  auto position = positions.begin();
+  PosAttr::value_t look_back = 0;
+  for (const auto& word : options) {
+    position->offs_max = word.offs_max;
+    position->offs_min = word.offs_min;
+    position->lead_offset = look_back += word.offs_max;
+    ++position;
   }
   return positions;
 }
 
-ManagedVector<uint32_t> ComputeTermGroups(
-  const ByPhraseOptions& options,
-  const std::vector<std::vector<bstring>>& part_terms,
-  IResourceManager& memory) {
-  const auto n = options.size();
-  std::vector<uint32_t> parent(n);
-  for (size_t i = 0; i < n; ++i) {
-    parent[i] = static_cast<uint32_t>(i);
+void ApplyTermGroups(const ByPhraseOptions& options,
+                     std::span<const std::vector<bstring>> part_terms,
+                     std::span<TermInterval> positions) {
+  const auto n = positions.size();
+  for (size_t i = 0; i != n; ++i) {
+    positions[i].term_group = static_cast<uint32_t>(i);
   }
   const auto find = [&](uint32_t x) {
-    while (parent[x] != x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
+    while (positions[x].term_group != x) {
+      positions[x].term_group = positions[positions[x].term_group].term_group;
+      x = positions[x].term_group;
     }
     return x;
   };
 
   absl::flat_hash_map<bytes_view, uint32_t> first_owner;
-  const auto add_term = [&](bytes_view term, uint32_t part) {
-    const auto [it, inserted] = first_owner.emplace(term, part);
+  const auto add_term = [&](bytes_view term, uint32_t slot) {
+    const auto [it, inserted] = first_owner.emplace(term, slot);
     if (!inserted) {
       const auto a = find(it->second);
-      const auto b = find(part);
+      const auto b = find(slot);
       if (a != b) {
-        parent[b] = a;
+        positions[b].term_group = a;
       }
     }
   };
 
-  uint32_t part = 0;
+  uint32_t slot = 0;
   for (const auto& word : options) {
-    if (const auto* t = std::get_if<ByTermOptions>(&word.part)) {
-      add_term(t->term, part);
-    } else if (const auto* ts = std::get_if<TermSetOptions>(&word.part)) {
-      for (const auto& st : ts->terms) {
-        add_term(st.term, part);
-      }
-    } else {
-      for (const auto& term : part_terms[part]) {
-        add_term(term, part);
-      }
-    }
-    ++part;
-  }
-
-  ManagedVector<uint32_t> groups(n, {memory});
-  for (size_t i = 0; i < n; ++i) {
-    groups[i] = find(static_cast<uint32_t>(i));
-  }
-  return groups;
-}
-
-QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
-                                      const PrepareContext& ctx,
-                                      irs::field_id field,
-                                      const ByPhraseOptions& options) {
-  const auto phrase_size = options.size();
-  auto* collector = ctx.collector
-                      ? &irs::utils::downCast<PhraseCollector>(*ctx.collector)
-                      : nullptr;
-  const auto* scorer = collector ? collector->GetScorer() : nullptr;
-  const auto is_ord_empty = !scorer;
-
-  FixedPhraseState state{ctx.memory};
-  const auto* reader = segment.field(field);
-  state.reader = reader;
-  if (!detail::ResolvePhrase(reader, state.handles)) {
-    return QueryBuilder::Empty();
-  }
-
-  state.terms.reserve(phrase_size);
-  if (collector) {
-    collector->Field(ctx.thread).Collect(*reader);
-  }
-
-  PhraseTermVisitor<decltype(state.terms)> ptv(state.terms);
-
-  size_t part = 0;
-  for (const auto& word : options) {
-    SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
-    ptv.Reset(collector ? &collector->Part(ctx.thread, part++) : nullptr);
-    ByTerm::Visit(segment, *reader, std::get<ByTermOptions>(word.part), ptv);
-    if (!ptv.Found() && is_ord_empty) {
-      break;
-    }
-  }
-
-  if (state.terms.size() != phrase_size) {
-    return QueryBuilder::Empty();
-  }
-
-  SDB_ASSERT(phrase_size > 1);
-
-  state.metas.reserve(state.terms.size());
-  for (const auto& term : state.terms) {
-    state.metas.emplace_back(&term.first);
-  }
-
-  auto query = memory::make_tracked<FixedPhraseQuery>(
-    ctx.memory, segment, std::move(state), MakeFixedPositions(options),
-    ctx.boost, options.slop());
-  query->SetStats(ctx.Record());
-  return query;
-}
-
-QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
-                                         const PrepareContext& ctx,
-                                         irs::field_id field,
-                                         const ByPhraseOptions& options) {
-  const auto phrase_size = options.size();
-  auto* collector = ctx.collector
-                      ? &irs::utils::downCast<PhraseCollector>(*ctx.collector)
-                      : nullptr;
-  const auto* scorer = collector ? collector->GetScorer() : nullptr;
-  const auto is_ord_empty = !scorer;
-
-  VariadicPhraseState state{ctx.memory};
-  const auto* reader = segment.field(field);
-  state.reader = reader;
-  if (!detail::ResolvePhrase(reader, state.handles)) {
-    return QueryBuilder::Empty();
-  }
-
-  state.terms.reserve(phrase_size);
-  ManagedVector<uint32_t> num_terms(phrase_size, {ctx.memory});
-  if (collector) {
-    collector->Field(ctx.thread).Collect(*reader);
-  }
-
-  std::vector<field_visitor> phrase_part_visitors;
-  phrase_part_visitors.reserve(phrase_size);
-  std::vector<field_visitor*> all_terms_visitors;
-  std::vector<TopTermsVisitor> top_terms_visitors;
-
-  for (const auto& word : options) {
-    auto& visitor =
-      phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
-    if (!visitor) {
-      auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
-      visitor = LevenshteinAutomatonFilter::visitor(opts);
-      all_terms_visitors.push_back(&visitor);
-      top_terms_visitors.emplace_back(opts.max_terms);
-    }
-  }
-
-  if (!all_terms_visitors.empty()) {
-    auto it = top_terms_visitors.begin();
-    for (auto* visitor : all_terms_visitors) {
-      (*visitor)(segment, *reader, *it++);
-    }
-    it = top_terms_visitors.begin();
-    for (auto* visitor : all_terms_visitors) {
-      *visitor = it++->ToVisitor();
-    }
-  }
-
-  const bool collect_groups = options.slop() > 0;
-  std::vector<std::vector<bstring>> part_terms;
-  std::vector<bool> needs_expansion;
-  if (collect_groups) {
-    part_terms.resize(phrase_size);
-    needs_expansion.reserve(phrase_size);
-    for (const auto& word : options) {
-      needs_expansion.push_back(
-        !std::holds_alternative<ByTermOptions>(word.part) &&
-        !std::holds_alternative<TermSetOptions>(word.part));
-    }
-  }
-
-  PhraseTermVisitor<decltype(state.terms)> ptv(state.terms);
-  ptv.Reset();
-
-  size_t found_parts = 0;
-  size_t part_idx = 0;
-  for (auto& visitor : phrase_part_visitors) {
-    const auto was_terms_count = state.terms.size();
-    std::vector<bstring>* visited = nullptr;
-    if (collect_groups && needs_expansion[part_idx]) {
-      part_terms[part_idx].clear();
-      visited = &part_terms[part_idx];
-    }
-    ptv.Reset(collector ? &collector->Part(ctx.thread, part_idx) : nullptr,
-              visited);
-    ++part_idx;
-    visitor(segment, *reader, ptv);
-    const auto new_terms_count = state.terms.size() - was_terms_count;
-    if (new_terms_count != 0) {
-      num_terms[found_parts++] = static_cast<uint32_t>(new_terms_count);
-    } else if (is_ord_empty) {
-      break;
-    }
-  }
-
-  if (found_parts != phrase_size) {
-    return QueryBuilder::Empty();
-  }
-  state.num_terms = std::move(num_terms);
-  if (collect_groups) {
-    state.term_groups = ComputeTermGroups(options, part_terms, ctx.memory);
-  }
-  state.has_boosts = !is_ord_empty && ptv.HasBoosts();
-  SDB_ASSERT(phrase_size == state.num_terms.size());
-
-  state.metas.reserve(state.terms.size());
-  for (const auto& term : state.terms) {
-    SDB_ASSERT(term.first.docs_count != 0);
-    state.metas.emplace_back(&term.first);
-  }
-  if (state.has_boosts) {
-    state.boosts.reserve(state.terms.size());
-    for (const auto& term : state.terms) {
-      state.boosts.emplace_back(term.second);
-    }
-  }
-
-  VariadicPhraseQuery::positions_t positions(phrase_size);
-  auto position = positions.begin();
-  PosAttr::value_t look_back = 0;
-  size_t slot = 0;
-  for (const auto& term : options) {
-    SDB_ASSERT(position != positions.end());
-    position->offs_max = term.offs_max;
-    position->offs_min = term.offs_min;
-    position->lead_offset = look_back += term.offs_max;
-    if (collect_groups) {
-      SDB_ASSERT(slot < state.term_groups.size());
-      position->term_group = state.term_groups[slot];
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        add_term(std::get<ByTermOptions>(word.part).term, slot);
+        break;
+      case SlotKind::Set:
+        for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
+          add_term(term, slot);
+        }
+        break;
+      case SlotKind::Expansion:
+        for (const auto& term : part_terms[slot]) {
+          add_term(term, slot);
+        }
+        break;
     }
     ++slot;
-    ++position;
   }
 
-  if (phrase_size == 1 && state.terms.size() == 1) {
-    return MakeTermQuery(ctx.memory, segment, state.reader,
-                         state.terms.front().first,
-                         ctx.boost * state.terms.front().second, ctx.Record());
+  for (size_t i = 0; i != n; ++i) {
+    positions[i].term_group = find(static_cast<uint32_t>(i));
+  }
+}
+
+QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
+                                       const PrepareContext& ctx,
+                                       irs::field_id field,
+                                       const ByPhraseOptions& options) {
+  const auto phrase_size = options.size();
+  auto* collector = ctx.collector
+                      ? &irs::utils::downCast<SlotsCollector>(*ctx.collector)
+                      : nullptr;
+  const auto is_ord_empty = !collector || !collector->GetScorer();
+
+  PhraseState state{ctx.memory};
+  const auto* reader = segment.field(field);
+  state.reader = reader;
+  if (!detail::ResolvePhrase(reader, state.handles)) {
+    return QueryBuilder::Empty();
+  }
+  if (collector) {
+    collector->Field(ctx.thread).Collect(*reader);
   }
 
-  if (absl::c_all_of(state.num_terms,
-                     [](uint32_t count) noexcept { return count == 1; })) {
-    auto boost = ctx.boost;
-    if (state.has_boosts) {
-      score_t sum = 0.f;
-      for (const auto& term : state.terms) {
-        sum += term.second;
+  const auto counts = CountSlots(options);
+
+  std::vector<field_visitor> expand_visitors;
+  std::vector<field_visitor*> all_terms_visitors;
+  std::vector<TopTermsVisitor> top_terms_visitors;
+  std::vector<std::vector<bstring>> part_terms;
+  if (counts.expanded != 0) {
+    expand_visitors.reserve(counts.expanded);
+    for (const auto& word : options) {
+      if (ByPhraseOptions::KindOf(word.part) != SlotKind::Expansion) {
+        continue;
       }
-      boost *= sum / static_cast<score_t>(state.terms.size());
+      auto& visitor =
+        expand_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
+      if (!visitor) {
+        auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
+        visitor = LevenshteinAutomatonFilter::visitor(opts);
+        all_terms_visitors.push_back(&visitor);
+        top_terms_visitors.emplace_back(opts.max_terms);
+      }
     }
-    FixedPhraseState fixed{ctx.memory};
-    fixed.reader = state.reader;
-    fixed.handles = state.handles;
-    fixed.terms.reserve(state.terms.size());
-    for (const auto& term : state.terms) {
-      fixed.terms.emplace_back(term.first, term.second);
+
+    if (!all_terms_visitors.empty()) {
+      auto it = top_terms_visitors.begin();
+      for (auto* visitor : all_terms_visitors) {
+        (*visitor)(segment, *reader, *it++);
+      }
+      it = top_terms_visitors.begin();
+      for (auto* visitor : all_terms_visitors) {
+        *visitor = it++->ToVisitor();
+      }
     }
-    fixed.metas.reserve(fixed.terms.size());
-    for (const auto& term : fixed.terms) {
-      fixed.metas.emplace_back(&term.first);
+
+    if (options.slop() != 0) {
+      part_terms.resize(phrase_size);
     }
-    auto folded = memory::make_tracked<FixedPhraseQuery>(
-      ctx.memory, segment, std::move(fixed), std::move(positions), boost,
+  }
+
+  state.metas.reserve(counts.terms);
+  const bool boosted = counts.boosted && !is_ord_empty;
+  if (boosted) {
+    state.boosts.reserve(counts.terms);
+  }
+  state.offsets.reserve(phrase_size + 1);
+  state.offsets.emplace_back(0);
+
+  PhraseTermVisitor ptv{state, boosted};
+  auto terms = reader->iterator();
+
+  bool any_empty = false;
+  size_t counter_idx = 0;
+  size_t expanded_idx = 0;
+  size_t slot = 0;
+  for (const auto& word : options) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term: {
+        if (terms->seek(std::get<ByTermOptions>(word.part).term)) {
+          const auto& meta = terms->cookie();
+          if (collector) {
+            collector->Term(ctx.thread, counter_idx).Collect(meta);
+          }
+          state.metas.emplace_back(meta);
+          if (boosted) {
+            state.boosts.emplace_back(kNoBoost);
+          }
+        }
+        ++counter_idx;
+      } break;
+      case SlotKind::Set: {
+        const auto& set = std::get<TermSetOptions>(word.part).terms;
+        size_t i = 0;
+        for (const auto& term : set) {
+          if (terms->seek(term)) {
+            const auto& meta = terms->cookie();
+            if (collector) {
+              collector->Term(ctx.thread, counter_idx + i).Collect(meta);
+            }
+            state.metas.emplace_back(meta);
+            if (boosted) {
+              state.boosts.emplace_back(kNoBoost);
+            }
+          }
+          ++i;
+        }
+        counter_idx += set.size();
+      } break;
+      case SlotKind::Expansion: {
+        ptv.Reset(collector
+                    ? &irs::utils::downCast<ExpandedSlotsCollector>(*collector)
+                         .Expanded(ctx.thread, expanded_idx)
+                    : nullptr,
+                  part_terms.empty() ? nullptr : &part_terms[slot]);
+        expand_visitors[expanded_idx](segment, *reader, ptv);
+        ++expanded_idx;
+      } break;
+    }
+    state.offsets.emplace_back(static_cast<uint32_t>(state.metas.size()));
+    any_empty |= state.offsets[slot] == state.offsets[slot + 1];
+    if (any_empty && is_ord_empty) {
+      return QueryBuilder::Empty();
+    }
+    ++slot;
+  }
+  if (any_empty) {
+    return QueryBuilder::Empty();
+  }
+
+  if (!ptv.HasBoosts()) {
+    state.boosts.clear();
+  }
+
+  if (phrase_size == 1 && state.metas.size() == 1) {
+    return MakeTermQuery(ctx.memory, segment, state.reader, state.metas.front(),
+                         ctx.boost, ctx.Record());
+  }
+
+  auto positions = MakePositions(options);
+  if (options.slop() != 0) {
+    ApplyTermGroups(options, part_terms, positions);
+  }
+
+  const auto boost = ctx.boost;
+  if (state.Fixed()) {
+    auto query = memory::make_tracked<FixedPhraseQuery>(
+      ctx.memory, segment, std::move(state), std::move(positions), boost,
       options.slop());
-    folded->SetStats(ctx.Record());
-    return folded;
+    query->SetStats(ctx.Record());
+    return query;
   }
 
   auto query = memory::make_tracked<VariadicPhraseQuery>(
-    ctx.memory, segment, std::move(state), std::move(positions), ctx.boost,
+    ctx.memory, segment, std::move(state), std::move(positions), boost,
     options.slop());
   query->SetStats(ctx.Record());
   return query;
@@ -556,81 +450,54 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());
-  const auto kind = GetKind(field_id(), options());
-  if (kind == PhraseQueryKind::Fixed || kind == PhraseQueryKind::Variadic) {
-    SDB_ENSURE(options().slop() == 0 || !HasIntervalOffsets(options()),
-               "slop and intervals are mutually exclusive");
+  if (IsEmpty(field_id(), options())) {
+    return QueryBuilder::Empty();
   }
-  switch (kind) {
-    case PhraseQueryKind::Empty:
-      return QueryBuilder::Empty();
-    case PhraseQueryKind::SingleWord:
-      return MakeSinglePartFilter(field_id(), options())
-        ->PrepareSegment(segment, sub_ctx);
-    case PhraseQueryKind::Fixed:
-      return FixedPrepareSegment(segment, sub_ctx, field_id(), options());
-    case PhraseQueryKind::Variadic:
-      return VariadicPrepareSegment(segment, sub_ctx, field_id(), options());
-  }
-  return QueryBuilder::Empty();
+  SDB_ENSURE(options().slop() == 0 || !HasIntervalOffsets(options()),
+             "slop and intervals are mutually exclusive");
+  return PhrasePrepareSegment(segment, sub_ctx, field_id(), options());
 }
 
 PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {
-  switch (GetKind(field_id(), options())) {
-    case PhraseQueryKind::Empty:
-      return nullptr;
-    case PhraseQueryKind::SingleWord:
-      return MakeSinglePartFilter(field_id(), options())
-        ->MakeCollector(*scorer, stats, threads);
-    case PhraseQueryKind::Fixed:
-    case PhraseQueryKind::Variadic:
-      return std::make_unique<PhraseCollector>(scorer, options().size(), stats,
-                                               threads);
+  if (IsEmpty(field_id(), options())) {
+    return nullptr;
   }
-  return nullptr;
+  const auto counts = CountSlots(options());
+  if (counts.expanded == 0) {
+    return std::make_unique<SlotsCollector>(scorer, counts.terms, stats,
+                                            threads);
+  }
+  return std::make_unique<ExpandedSlotsCollector>(
+    scorer, counts.terms, counts.expanded, stats, threads);
 }
 
 bool ByPhraseOptions::LowerParts() {
   bool changed = false;
   for (auto& info : _phrase) {
-    if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
+    if (const auto* t = std::get_if<TermSetOptions>(&info.part);
+        t != nullptr && t->terms.size() == 1) {
+      ByTermOptions opts;
+      opts.term = *t->terms.begin();
+      info.part = std::move(opts);
+      changed = true;
+    } else if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
       info.part = ExecuteWildcard(
         buf, bytes_view{w->term},
-        [](bytes_view term) -> phrase_part {
+        [](bytes_view term) -> PhrasePart {
           ByTermOptions opts;
           opts.term = term;
           return opts;
         },
-        [](bytes_view prefix) -> phrase_part {
+        [](bytes_view prefix) -> PhrasePart {
           ByPrefixOptions opts;
           opts.term = prefix;
           return opts;
         },
-        [](bytes_view term) -> phrase_part {
+        [](bytes_view term) -> PhrasePart {
           return AutomatonOptions{FromWildcard(term), term};
-        });
-      changed = true;
-    } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
-      bstring buf;
-      const auto syntax = r->syntax;
-      info.part = ExecuteRegexp(
-        buf, bytes_view{r->pattern},
-        [](bytes_view term) -> phrase_part {
-          ByTermOptions opts;
-          opts.term = term;
-          return opts;
-        },
-        [](bytes_view prefix) -> phrase_part {
-          ByPrefixOptions opts;
-          opts.term = prefix;
-          return opts;
-        },
-        [syntax](bytes_view pattern) -> phrase_part {
-          return AutomatonOptions{
-            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
@@ -638,8 +505,8 @@ bool ByPhraseOptions::LowerParts() {
       const auto max_terms = e->max_terms;
       info.part = ExecuteLevenshtein(
         e->max_distance, e->provider, e->with_transpositions, e->prefix,
-        e->term, [] -> phrase_part { return TermSetOptions{}; },
-        [&] -> phrase_part {
+        e->term, [] -> PhrasePart { return TermSetOptions{}; },
+        [&] -> PhrasePart {
           ByTermOptions opts;
           opts.term.reserve(e->prefix.size() + e->term.size());
           opts.term += e->prefix;
@@ -647,7 +514,7 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [max_terms](const ParametricDescription& d, bytes_view prefix,
-                    bytes_view term) -> phrase_part {
+                    bytes_view term) -> PhrasePart {
           return LevenshteinAutomatonOptions{d, prefix, term, max_terms};
         });
       changed = true;

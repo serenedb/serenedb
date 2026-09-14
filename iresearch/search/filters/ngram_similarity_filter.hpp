@@ -36,11 +36,6 @@ struct ByNGramSimilarityOptions {
 
   std::vector<bstring> ngrams;
   float_t threshold{1.F};
-#ifdef SDB_GTEST
-  bool allow_phrase{true};
-#else
-  static constexpr bool allow_phrase{true};
-#endif
 
   bool operator==(const ByNGramSimilarityOptions& rhs) const noexcept {
     return ngrams == rhs.ngrams && threshold == rhs.threshold;

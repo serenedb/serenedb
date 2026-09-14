@@ -1366,7 +1366,7 @@ TEST(ngram_token_stream_test, test_load) {
 
 namespace {
 
-struct PulledNgram {
+struct PulledNGram {
   irs::bstring term;
   uint32_t pos;
   uint32_t start;
@@ -1374,11 +1374,11 @@ struct PulledNgram {
 };
 
 template<irs::analysis::NGramTokenizer::InputType StreamType>
-std::vector<PulledNgram> PullNgrams(irs::analysis::NGramTokenizer::Options opts,
+std::vector<PulledNGram> PullNGrams(irs::analysis::NGramTokenizer::Options opts,
                                     std::string_view data) {
   opts.stream_bytes_type = StreamType;
   irs::analysis::NGramTokenizer stream{std::move(opts)};
-  std::vector<PulledNgram> out;
+  std::vector<PulledNGram> out;
   auto tokens = tests::Analyze(stream, data);
   EXPECT_TRUE(tokens.has_value());
   if (!tokens) {
@@ -1394,11 +1394,11 @@ std::vector<PulledNgram> PullNgrams(irs::analysis::NGramTokenizer::Options opts,
 }
 
 template<irs::analysis::NGramTokenizer::InputType StreamType>
-std::vector<PulledNgram> FillNgrams(irs::analysis::NGramTokenizer::Options opts,
+std::vector<PulledNGram> FillNGrams(irs::analysis::NGramTokenizer::Options opts,
                                     std::string_view data) {
   opts.stream_bytes_type = StreamType;
   irs::analysis::NGramTokenizer stream{std::move(opts)};
-  std::vector<PulledNgram> out;
+  std::vector<PulledNGram> out;
   const auto collect = [&](irs::TokenBatch& batch, irs::DocRuns runs) {
     EXPECT_TRUE(runs.empty());
     const bool dense = !stream.Traits().explicit_pos;
@@ -1420,7 +1420,7 @@ std::vector<PulledNgram> FillNgrams(irs::analysis::NGramTokenizer::Options opts,
 }
 
 template<irs::analysis::NGramTokenizer::InputType StreamType>
-void AssertNgramFillsMatchPull() {
+void AssertNGramFillsMatchPull() {
   const std::string big(300, 'x');
   std::string mixed;
   for (size_t i = 0; i < 100; ++i) {
@@ -1458,8 +1458,8 @@ void AssertNgramFillsMatchPull() {
                        << "min=" << mn << " max=" << mx << " po=" << preserve
                        << " sm=" << sm << " em=" << em
                        << " value.size=" << v.size());
-          const auto pulled = PullNgrams<StreamType>(opts, v);
-          const auto filled = FillNgrams<StreamType>(opts, v);
+          const auto pulled = PullNGrams<StreamType>(opts, v);
+          const auto filled = FillNGrams<StreamType>(opts, v);
           ASSERT_EQ(pulled.size(), filled.size());
           for (size_t i = 0; i < pulled.size(); ++i) {
             SCOPED_TRACE(testing::Message() << "token=" << i);
@@ -1481,11 +1481,11 @@ TEST(ngram_token_stream_test, native_fills_match_pull_binary) {
     irs::analysis::NGramTokenizer{irs::analysis::NGramTokenizer::Options{}}
       .Traits()
       .explicit_pos);
-  AssertNgramFillsMatchPull<irs::analysis::NGramTokenizer::InputType::Binary>();
+  AssertNGramFillsMatchPull<irs::analysis::NGramTokenizer::InputType::Binary>();
 }
 
 TEST(ngram_token_stream_test, native_fills_match_pull_utf8) {
-  AssertNgramFillsMatchPull<irs::analysis::NGramTokenizer::InputType::UTF8>();
+  AssertNGramFillsMatchPull<irs::analysis::NGramTokenizer::InputType::UTF8>();
 }
 
 TEST(ngram_token_stream_test, column_fill_runs) {
@@ -1509,7 +1509,7 @@ TEST(ngram_token_stream_test, column_fill_runs) {
   std::vector<std::vector<irs::bstring>> expected(values.size());
   for (size_t v = 0; v < values.size(); ++v) {
     auto opts_copy = opts;
-    for (auto& t : FillNgrams<irs::analysis::NGramTokenizer::InputType::UTF8>(
+    for (auto& t : FillNGrams<irs::analysis::NGramTokenizer::InputType::UTF8>(
            std::move(opts_copy), values[v])) {
       expected[v].push_back(std::move(t.term));
     }
@@ -1564,9 +1564,9 @@ TEST(ngram_token_stream_test, ascii_shortcut_matches_binary) {
            {std::string_view{"quick brown fox"}, std::string_view{"a"},
             std::string_view{""}}) {
         const auto via_binary =
-          FillNgrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, v);
+          FillNGrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, v);
         const auto via_utf8 =
-          FillNgrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, v);
+          FillNGrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, v);
         ASSERT_EQ(via_binary.size(), via_utf8.size());
         for (size_t i = 0; i < via_binary.size(); ++i) {
           ASSERT_EQ(via_binary[i].term, via_utf8[i].term);
@@ -1593,9 +1593,9 @@ TEST(ngram_token_stream_test, utf8_block_boundary_symbols) {
     opts.max_gram = mx;
     opts.preserve_original = false;
     const auto pulled =
-      PullNgrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, data);
+      PullNGrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, data);
     const auto filled =
-      FillNgrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, data);
+      FillNGrams<irs::analysis::NGramTokenizer::InputType::UTF8>(opts, data);
     ASSERT_EQ(pulled.size(), filled.size());
     for (size_t i = 0; i < pulled.size(); ++i) {
       ASSERT_EQ(pulled[i].term, filled[i].term);
@@ -1620,9 +1620,9 @@ TEST(ngram_token_stream_test, long_grams_out_of_line) {
     data += "abcdefghij";
   }
   const auto pulled =
-    PullNgrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, data);
+    PullNGrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, data);
   const auto filled =
-    FillNgrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, data);
+    FillNGrams<irs::analysis::NGramTokenizer::InputType::Binary>(opts, data);
   ASSERT_EQ(pulled.size(), filled.size());
   bool saw_out_of_line = false;
   for (size_t i = 0; i < pulled.size(); ++i) {
@@ -1653,7 +1653,7 @@ TEST(ngram_token_stream_test, column_flush_structure) {
   };
   std::vector<std::vector<Tok>> expected(values.size());
   for (size_t v = 0; v < values.size(); ++v) {
-    for (auto& t : FillNgrams<irs::analysis::NGramTokenizer::InputType::Binary>(
+    for (auto& t : FillNGrams<irs::analysis::NGramTokenizer::InputType::Binary>(
            opts, values[v])) {
       expected[v].push_back({std::move(t.term), t.pos, t.start, t.end});
     }
@@ -1711,7 +1711,7 @@ TEST(ngram_token_stream_test, column_flush_structure) {
 
 namespace {
 
-struct ExpectedNgram {
+struct ExpectedNGram {
   std::string_view term;
   uint32_t pos;
   uint32_t start;
@@ -1720,12 +1720,12 @@ struct ExpectedNgram {
 
 void AssertModeFill(irs::analysis::NGramTokenizer::Options opts,
                     std::string_view data,
-                    const std::vector<ExpectedNgram>& expected) {
+                    const std::vector<ExpectedNGram>& expected) {
   using UTF8 =
     std::integral_constant<irs::analysis::NGramTokenizer::InputType,
                            irs::analysis::NGramTokenizer::InputType::UTF8>;
-  const auto filled = FillNgrams<UTF8::value>(opts, data);
-  const auto pulled = PullNgrams<UTF8::value>(opts, data);
+  const auto filled = FillNGrams<UTF8::value>(opts, data);
+  const auto pulled = PullNGrams<UTF8::value>(opts, data);
   ASSERT_EQ(expected.size(), filled.size());
   ASSERT_EQ(expected.size(), pulled.size());
   for (size_t i = 0; i < expected.size(); ++i) {
@@ -1876,7 +1876,7 @@ TEST(ngram_token_stream_test, only_prefix_and_suffix_preserve) {
 
 TEST(ngram_token_stream_test, only_prefix_and_suffix_overlapping) {
   using Mode = irs::analysis::NGramTokenizer::NGramMode;
-  const std::vector<ExpectedNgram> expected = {{"a", 1, 0, 1},
+  const std::vector<ExpectedNGram> expected = {{"a", 1, 0, 1},
                                                {"ab", 1, 0, 2},
                                                {"abc", 1, 0, 3},
                                                {"bc", 2, 1, 3},
@@ -1917,7 +1917,7 @@ TEST(ngram_token_stream_test, only_prefix_and_suffix_markers) {
                   {"abcd$", 2, 0, 4},
                   {"cd$", 2, 2, 4},
                   {"d$", 2, 3, 4}});
-  const std::vector<ExpectedNgram> whole_in_range = {
+  const std::vector<ExpectedNGram> whole_in_range = {
     {"^a", 1, 0, 1},   {"^ab", 1, 0, 2}, {"^abc", 1, 0, 3},
     {"abc$", 1, 0, 3}, {"bc$", 2, 1, 3}, {"c$", 2, 2, 3}};
   AssertModeFill(marked(1, 3, false), "abc", whole_in_range);

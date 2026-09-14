@@ -35,17 +35,18 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/queries/term_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
@@ -133,7 +134,7 @@ irs::BooleanFilter& AsComplement(irs::BooleanFilter& node) {
 
 size_t CountChildren(irs::Filter& filter) {
   size_t count = 0;
-  filter.VisitChildren([&](irs::Filter::ptr&) { ++count; });
+  filter.VisitChildren([&](irs::Filter::ptr&, bool) { ++count; });
   return count;
 }
 
@@ -2467,6 +2468,314 @@ TEST(AndRangeMerge_test, merges_complementary_bounds) {
   EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max);
   EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.max_type);
   EXPECT_EQ(5.f, merged.GetBoost());
+}
+
+TEST(BooleanLowering_test, excluded_subtree_lowers_while_scored) {
+  const auto make = [] {
+    auto phrase = std::make_unique<irs::ByPhrase>();
+    *phrase->mutable_field_id() = kFieldTestField;
+    phrase->mutable_options()->push_back<irs::ByPrefixOptions>().term =
+      irs::bstring{B("qui")};
+    return phrase;
+  };
+
+  irs::Filter::ptr as_required = make();
+  irs::Optimize(as_required, {.scored = true});
+  EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), as_required->type());
+
+  auto excluded = std::make_unique<irs::BooleanFilter>();
+  excluded->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+  excluded->Add(make(), irs::Occur::MustNot);
+  irs::Filter::ptr as_excluded = std::move(excluded);
+  irs::Optimize(as_excluded, {.scored = true});
+  const auto& lowered = irs::utils::downCast<irs::BooleanFilter>(*as_excluded);
+  ASSERT_EQ(1, lowered.Size(irs::Occur::MustNot));
+  EXPECT_EQ(irs::Type<irs::ByPrefix>::id(),
+            lowered.Filters(irs::Occur::MustNot).front()->type());
+}
+
+TEST(BooleanLowering_test, drops_unscored_all_beside_a_required_clause) {
+  const auto build = [](bool alone) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    if (!alone) {
+      AddTerm(*root, irs::Occur::Must, kFieldTestField, "a");
+    }
+    auto all = std::make_unique<irs::All>();
+    all->SetScorer(&irs::Unscored::Instance());
+    root->Add(std::move(all), irs::Occur::Must);
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = true});
+    return filter;
+  };
+
+  EXPECT_EQ(irs::Type<irs::ByTerm>::id(), build(false)->type());
+  EXPECT_EQ(irs::Type<irs::All>::id(), build(true)->type());
+}
+
+TEST(BooleanLowering_test, unobservable_merge_type_becomes_sum) {
+  const auto build = [](size_t nested_clauses) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    AddTerm(*root, irs::Occur::Should, kFieldTestField, "a");
+    auto nested = std::make_unique<irs::BooleanFilter>();
+    nested->SetMergeType(irs::ScoreMergeType::Max);
+    AddTerm(*nested, irs::Occur::Should, kFieldTestField, "b");
+    if (nested_clauses > 1) {
+      AddTerm(*nested, irs::Occur::Should, kFieldTestField, "c");
+    }
+    nested->SetMinShouldMatch(1);
+    root->Add(std::move(nested), irs::Occur::Should);
+    root->SetMinShouldMatch(1);
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = true});
+    return filter;
+  };
+
+  auto one = build(1);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), one->type());
+  const auto& flattened = irs::utils::downCast<irs::BooleanFilter>(*one);
+  EXPECT_EQ(2, flattened.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(0, flattened.Size(irs::Occur::Must));
+
+  auto two = build(2);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), two->type());
+  const auto& kept = irs::utils::downCast<irs::BooleanFilter>(*two);
+  EXPECT_EQ(1, kept.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(1, kept.Filters(irs::Occur::Should).size());
+}
+
+irs::ByPrefix& AddPrefix(irs::BooleanFilter& root, irs::Occur occur,
+                         irs::field_id field, std::string_view term) {
+  auto& prefix = AddChild<irs::ByPrefix>(root, occur);
+  *prefix.mutable_field_id() = field;
+  prefix.mutable_options()->term =
+    irs::bstring{irs::ViewCast<irs::byte_type>(term)};
+  return prefix;
+}
+
+irs::bstring OnlyTerm(const irs::BooleanFilter& node) {
+  std::vector<irs::bstring> found;
+  for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
+    for (const auto& clause : node.Terms(occur)) {
+      found.emplace_back(clause.term);
+    }
+  }
+  EXPECT_EQ(1, found.size());
+  return found.empty() ? irs::bstring{} : found.front();
+}
+
+TEST(CrossSubsume_test, excluded_prefix_kills_a_required_term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "abc");
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "ab");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(CrossSubsume_test, excluded_prefix_drops_an_optional_term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "abc");
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "zzz");
+  root->SetMinShouldMatch(1);
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "ab");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("zzz")},
+            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+}
+
+TEST(CrossSubsume_test, excluded_prefixes_keep_the_wider) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "zzz");
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "a");
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "ab");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  ASSERT_EQ(1, node.Filters(irs::Occur::MustNot).size());
+  EXPECT_EQ(irs::bstring{B("a")}, irs::utils::downCast<irs::ByPrefix>(
+                                    *node.Filters(irs::Occur::MustNot).front())
+                                    .options()
+                                    .term);
+}
+
+TEST(CrossSubsume_test, required_prefix_drops_an_optional_term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "ab");
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "abc");
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "zzz");
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("zzz")},
+            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+}
+
+TEST(AndSubsume_test, required_term_drops_a_wider_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "abc");
+  auto prefix = std::make_unique<irs::ByPrefix>();
+  *prefix->mutable_field_id() = kFieldTestField;
+  prefix->mutable_options()->term = irs::bstring{B("ab")};
+  root->Add(std::move(prefix), irs::Occur::Must);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
+}
+
+TEST(AndSubsume_test, required_term_keeps_an_unrelated_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "abc");
+  auto prefix = std::make_unique<irs::ByPrefix>();
+  *prefix->mutable_field_id() = kFieldTestField;
+  prefix->mutable_options()->term = irs::bstring{B("zz")};
+  root->Add(std::move(prefix), irs::Occur::Must);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(1, node.Terms(irs::Occur::Must).size());
+  EXPECT_EQ(1, node.Filters(irs::Occur::Must).size());
+}
+
+TEST(AndSubsume_test, required_prefixes_keep_the_narrower) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"a", "ab"}) {
+    auto prefix = std::make_unique<irs::ByPrefix>();
+    *prefix->mutable_field_id() = kFieldTestField;
+    prefix->mutable_options()->term =
+      irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{term})};
+    root->Add(std::move(prefix), irs::Occur::Must);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ab")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(OrSubsume_test, optional_prefix_drops_a_covered_term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "abc");
+  auto prefix = std::make_unique<irs::ByPrefix>();
+  *prefix->mutable_field_id() = kFieldTestField;
+  prefix->mutable_options()->term = irs::bstring{B("ab")};
+  root->Add(std::move(prefix), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ab")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(OrSubsume_test, optional_prefixes_keep_the_wider) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"a", "ab"}) {
+    auto prefix = std::make_unique<irs::ByPrefix>();
+    *prefix->mutable_field_id() = kFieldTestField;
+    prefix->mutable_options()->term =
+      irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{term})};
+    root->Add(std::move(prefix), irs::Occur::Should);
+  }
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("a")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(AndRangeMerge_test, merges_two_lower_bounds) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  {
+    auto& lo = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+    lo.SetBoost(2.f);
+  }
+  {
+    auto& hi = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    hi.mutable_options()->range.min = irs::bstring{B("m")};
+    hi.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+    hi.SetBoost(3.f);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true});
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  const auto& merged = irs::utils::downCast<irs::ByRange>(*filter);
+  EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.min);
+  EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.min_type);
+  EXPECT_EQ(irs::BoundType::Unbounded, merged.options().range.max_type);
+  EXPECT_EQ(5.f, merged.GetBoost());
+}
+
+TEST(AndRangeMerge_test, merges_two_upper_bounds) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  {
+    auto& lhs = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    lhs.mutable_options()->range.max = irs::bstring{B("m")};
+    lhs.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& rhs = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    rhs.mutable_options()->range.max = irs::bstring{B("b")};
+    rhs.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true});
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  const auto& merged = irs::utils::downCast<irs::ByRange>(*filter);
+  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.max);
+  EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.max_type);
+  EXPECT_EQ(irs::BoundType::Unbounded, merged.options().range.min_type);
+}
+
+TEST(AndRangeMerge_test, equal_bounds_take_the_strict_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  {
+    auto& lhs = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    lhs.mutable_options()->range.min = irs::bstring{B("b")};
+    lhs.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& rhs = AddRange(*root, irs::Occur::Must, kFieldTestField);
+    rhs.mutable_options()->range.min = irs::bstring{B("b")};
+    rhs.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true});
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  const auto& merged = irs::utils::downCast<irs::ByRange>(*filter);
+  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min);
+  EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.min_type);
 }
 
 TEST(AndRangeMerge_test, max_merge_type_takes_max_boost) {

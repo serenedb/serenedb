@@ -24,8 +24,11 @@
 
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/filters/filter_optimizer.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/search/scorers/unscored.hpp"
 
 namespace irs::optimizer {
 
@@ -44,6 +47,37 @@ inline score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
       break;
   }
   return lo + hi;
+}
+
+inline bool ScoreDependsOnTerms(const Filter& node,
+                                const OptimizeContext& ctx) noexcept {
+  if (!ctx.scored) {
+    return false;
+  }
+  const auto* const scorer = node.GetScorer();
+  if (scorer == nullptr) {
+    return true;
+  }
+  return !IsUnscored(*scorer) &&
+         scorer->type() != irs::Type<ConstantScore>::id();
+}
+
+inline bool ScoreIsIgnored(const Filter& node,
+                           const OptimizeContext& ctx) noexcept {
+  if (!ctx.scored) {
+    return true;
+  }
+  const auto* const scorer = node.GetScorer();
+  return scorer != nullptr && IsUnscored(*scorer);
+}
+
+inline bool ScoreIsConstant(const Filter& node,
+                            const OptimizeContext& ctx) noexcept {
+  if (!ctx.scored) {
+    return false;
+  }
+  const auto* const scorer = node.GetScorer();
+  return scorer != nullptr && scorer->type() == irs::Type<ConstantScore>::id();
 }
 
 inline void FoldBoost(Filter& survivor, score_t boost, bool scored) {

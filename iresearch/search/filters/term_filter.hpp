@@ -47,9 +47,6 @@ struct TermAcceptor {
 
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
-  static void Visit(const SubReader& segment, const TermReader& field,
-                    const ByTermOptions& options, FilterVisitor& visitor);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;

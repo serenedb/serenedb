@@ -106,7 +106,6 @@ set(IResearch_core_sources
     ./search/filters/filter.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
-    ./search/detail/term_set.cpp
     ./search/filters/prefix_filter.cpp
     ./search/filters/range_filter.cpp
     ./search/filters/phrase_filter.cpp

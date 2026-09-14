@@ -42,22 +42,6 @@
 
 namespace irs {
 
-struct TermHash {
-  using is_transparent = void;
-
-  size_t operator()(bytes_view term) const noexcept {
-    return absl::HashOf(term);
-  }
-};
-
-struct TermEq {
-  using is_transparent = void;
-
-  bool operator()(bytes_view lhs, bytes_view rhs) const noexcept {
-    return lhs == rhs;
-  }
-};
-
 class MultiTermCollector final : public FieldPrepareCollector {
  public:
   MultiTermCollector(const Scorer* scorer, StatsArena& stats, uint32_t threads)
@@ -86,7 +70,7 @@ class MultiTermCollector final : public FieldPrepareCollector {
       TermCollector counter;
       std::vector<byte_type*> slots;
     };
-    irs::containers::NodeHashMap<bstring, Merged, TermHash, TermEq> merged;
+    TermMap<Merged> merged;
     for (auto& own : _threads) {
       for (auto& [term, slot] : own.terms) {
         auto& one = merged[term];
@@ -113,7 +97,7 @@ class MultiTermCollector final : public FieldPrepareCollector {
   };
 
   struct Thread {
-    irs::containers::NodeHashMap<bstring, Slot, TermHash, TermEq> terms;
+    TermMap<Slot> terms;
     std::vector<std::unique_ptr<byte_type[]>> chunks;
     size_t used = 0;
   };
@@ -172,8 +156,7 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
   }
 
  private:
-  using Terms =
-    irs::containers::NodeHashMap<bstring, TermCollector, TermHash, TermEq>;
+  using Terms = TermMap<TermCollector>;
 
   containers::Fixed<Terms> _threads;
 };

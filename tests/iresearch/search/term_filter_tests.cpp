@@ -656,9 +656,7 @@ TEST_P(TermFilterTestCase, visit) {
   // get term dictionary for field
   const auto* reader = segment.field(field);
   ASSERT_NE(nullptr, reader);
-  irs::ByTermOptions options;
-  options.term = irs::bstring{term};
-  irs::ByTerm::Visit(segment, *reader, options, visitor);
+  tests::VisitTerm(segment, *reader, term, visitor);
   ASSERT_EQ(1, visitor.prepare_calls_counter());
   ASSERT_EQ(1, visitor.visit_calls_counter());
   ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

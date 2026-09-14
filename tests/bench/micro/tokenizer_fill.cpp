@@ -1142,7 +1142,7 @@ Tokenizer::ptr MakeNGram(NGramTokenizer::InputType input) {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramVariable() {
+Tokenizer::ptr MakeNGramVariable() {
   NGramTokenizer::Options opts;
   opts.min_gram = 2;
   opts.max_gram = 4;
@@ -1151,7 +1151,7 @@ Tokenizer::ptr MakeNgramVariable() {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramMode(NGramTokenizer::NGramMode mode) {
+Tokenizer::ptr MakeNGramMode(NGramTokenizer::NGramMode mode) {
   NGramTokenizer::Options opts;
   opts.min_gram = 2;
   opts.max_gram = 4;
@@ -1161,19 +1161,19 @@ Tokenizer::ptr MakeNgramMode(NGramTokenizer::NGramMode mode) {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramPrefix() {
-  return MakeNgramMode(NGramTokenizer::NGramMode::Prefix);
+Tokenizer::ptr MakeNGramPrefix() {
+  return MakeNGramMode(NGramTokenizer::NGramMode::Prefix);
 }
 
-Tokenizer::ptr MakeNgramSuffix() {
-  return MakeNgramMode(NGramTokenizer::NGramMode::Suffix);
+Tokenizer::ptr MakeNGramSuffix() {
+  return MakeNGramMode(NGramTokenizer::NGramMode::Suffix);
 }
 
-Tokenizer::ptr MakeNgramPrefixSuffix() {
-  return MakeNgramMode(NGramTokenizer::NGramMode::PrefixAndSuffix);
+Tokenizer::ptr MakeNGramPrefixSuffix() {
+  return MakeNGramMode(NGramTokenizer::NGramMode::PrefixAndSuffix);
 }
 
-Tokenizer::ptr MakeNgramVariableMarked() {
+Tokenizer::ptr MakeNGramVariableMarked() {
   NGramTokenizer::Options opts;
   opts.min_gram = 2;
   opts.max_gram = 4;
@@ -1183,7 +1183,7 @@ Tokenizer::ptr MakeNgramVariableMarked() {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramFixedMarked() {
+Tokenizer::ptr MakeNGramFixedMarked() {
   NGramTokenizer::Options opts;
   opts.min_gram = 3;
   opts.max_gram = 3;
@@ -1194,7 +1194,7 @@ Tokenizer::ptr MakeNgramFixedMarked() {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramPrefixSuffixMarked() {
+Tokenizer::ptr MakeNGramPrefixSuffixMarked() {
   NGramTokenizer::Options opts;
   opts.min_gram = 2;
   opts.max_gram = 4;
@@ -1206,17 +1206,17 @@ Tokenizer::ptr MakeNgramPrefixSuffixMarked() {
   return NGramTokenizer::Make(std::move(opts));
 }
 
-Tokenizer::ptr MakeNgramBinary() {
+Tokenizer::ptr MakeNGramBinary() {
   return MakeNGram(NGramTokenizer::InputType::Binary);
 }
 
-Tokenizer::ptr MakeNgramUtf8() {
+Tokenizer::ptr MakeNGramUtf8() {
   return MakeNGram(NGramTokenizer::InputType::UTF8);
 }
 
-Tokenizer::ptr MakeSparseNgram() { return SparseNGramTokenizer::Make({}); }
+Tokenizer::ptr MakeSparseNGram() { return SparseNGramTokenizer::Make({}); }
 
-Tokenizer::ptr MakeSparseNgramCovering() {
+Tokenizer::ptr MakeSparseNGramCovering() {
   return SparseNGramTokenizer::Make({.covering = true});
 }
 
@@ -1282,7 +1282,7 @@ Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
 Tokenizer::ptr MakePipelineText() { return MakePipelineTextImpl(false); }
 Tokenizer::ptr MakePipelineTextSegLower() { return MakePipelineTextImpl(true); }
 
-Tokenizer::ptr MakePipelineSegNgram() {
+Tokenizer::ptr MakePipelineSegNGram() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
   NGramTokenizer::Options o;
@@ -1316,7 +1316,7 @@ Tokenizer::ptr MakePipelineT2() {
   return CreateTokenizer(std::move(cfg), tests::Cache());
 }
 
-Tokenizer::ptr MakePipelineT2Ngram() {
+Tokenizer::ptr MakePipelineT2NGram() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(DelimitedTokenizer::Make({","}));
   NGramTokenizer::Options o;
@@ -1500,30 +1500,30 @@ TOKENIZER_BENCH(path_hierarchy_reverse, MakePathHierarchyReverse, PathCorpus);
 TOKENIZER_BENCH(path_hierarchy_replace, MakePathHierarchyReplace, PathCorpus);
 TOKENIZER_BENCH(path_hierarchy_reverse_replace, MakePathHierarchyReverseReplace,
                 PathCorpus);
-TOKENIZER_BENCH(ngram_binary, MakeNgramBinary, TextCorpus);
-TOKENIZER_BENCH(ngram_variable, MakeNgramVariable, TextCorpus);
-TOKENIZER_BENCH(ngram_variable_words, MakeNgramVariable, WordCorpus);
-TOKENIZER_BENCH(ngram_variable_long, MakeNgramVariable, LongTextCorpus);
-TOKENIZER_BENCH(ngram_variable_marked, MakeNgramVariableMarked, TextCorpus);
-TOKENIZER_BENCH(ngram_variable_marked_long, MakeNgramVariableMarked,
+TOKENIZER_BENCH(ngram_binary, MakeNGramBinary, TextCorpus);
+TOKENIZER_BENCH(ngram_variable, MakeNGramVariable, TextCorpus);
+TOKENIZER_BENCH(ngram_variable_words, MakeNGramVariable, WordCorpus);
+TOKENIZER_BENCH(ngram_variable_long, MakeNGramVariable, LongTextCorpus);
+TOKENIZER_BENCH(ngram_variable_marked, MakeNGramVariableMarked, TextCorpus);
+TOKENIZER_BENCH(ngram_variable_marked_long, MakeNGramVariableMarked,
                 LongTextCorpus);
-TOKENIZER_BENCH(ngram_fixed_marked, MakeNgramFixedMarked, TextCorpus);
-TOKENIZER_BENCH(ngram_prefix_suffix_marked, MakeNgramPrefixSuffixMarked,
+TOKENIZER_BENCH(ngram_fixed_marked, MakeNGramFixedMarked, TextCorpus);
+TOKENIZER_BENCH(ngram_prefix_suffix_marked, MakeNGramPrefixSuffixMarked,
                 TextCorpus);
-TOKENIZER_BENCH(ngram_prefix, MakeNgramPrefix, TextCorpus);
-TOKENIZER_BENCH(ngram_suffix, MakeNgramSuffix, TextCorpus);
-TOKENIZER_BENCH(ngram_prefix_suffix, MakeNgramPrefixSuffix, TextCorpus);
-TOKENIZER_BENCH(ngram_utf8, MakeNgramUtf8, TextCorpus);
-BENCHMARK_CAPTURE(BM_Fill, ngram_utf8_unicode, &MakeNgramUtf8,
+TOKENIZER_BENCH(ngram_prefix, MakeNGramPrefix, TextCorpus);
+TOKENIZER_BENCH(ngram_suffix, MakeNGramSuffix, TextCorpus);
+TOKENIZER_BENCH(ngram_prefix_suffix, MakeNGramPrefixSuffix, TextCorpus);
+TOKENIZER_BENCH(ngram_utf8, MakeNGramUtf8, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, ngram_utf8_unicode, &MakeNGramUtf8,
                   &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
-TOKENIZER_BENCH(sparse_ngram, MakeSparseNgram, TextCorpus);
-BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_covering, &MakeSparseNgramCovering,
+TOKENIZER_BENCH(sparse_ngram, MakeSparseNGram, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_covering, &MakeSparseNGramCovering,
                   &TextCorpus)
   ->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long, &MakeSparseNgram, &LongTextCorpus)
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long, &MakeSparseNGram, &LongTextCorpus)
   ->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_covering, &MakeSparseNgramCovering,
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_covering, &MakeSparseNGramCovering,
                   &LongTextCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(wildcard, MakeWildcard, TextCorpus);
@@ -1545,7 +1545,7 @@ BENCHMARK_CAPTURE(BM_FillColumn, pipeline_text_en_mixed, &MakePipelineText,
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(pipeline_text_en_seglower, MakePipelineTextSegLower,
                 TextCorpus);
-TOKENIZER_BENCH(pipeline_seg_ngram, MakePipelineSegNgram, TextCorpus);
+TOKENIZER_BENCH(pipeline_seg_ngram, MakePipelineSegNGram, TextCorpus);
 TOKENIZER_BENCH(pipeline_seg_stop, MakePipelineSegStop, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, pipeline_t2coll, &MakePipelineT2Coll, &CsvCorpus)
   ->Unit(benchmark::kMillisecond);
@@ -1560,8 +1560,8 @@ BENCHMARK_CAPTURE(BM_Fill, text_en_unicode, &MakeTextEn, &TextUnicodeCorpus)
 TOKENIZER_BENCH(solr_synonyms, MakeSolrSynonyms, SynonymCorpus);
 TOKENIZER_BENCH(solr_synonyms_large, MakeSolrSynonymsLarge, LargeSynonymCorpus);
 TOKENIZER_BENCH(pipeline_t2, MakePipelineT2, CsvCorpus);
-TOKENIZER_BENCH(pipeline_t2_ngram, MakePipelineT2Ngram, CsvCorpus);
-BENCHMARK_CAPTURE(BM_FillColumn, pipeline_t2_ngram_long, &MakePipelineT2Ngram,
+TOKENIZER_BENCH(pipeline_t2_ngram, MakePipelineT2NGram, CsvCorpus);
+BENCHMARK_CAPTURE(BM_FillColumn, pipeline_t2_ngram_long, &MakePipelineT2NGram,
                   &LongCsvCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(pipeline_t2syn, MakePipelineT2Syn, CsvCorpus);

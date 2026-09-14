@@ -36,6 +36,7 @@
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/offsets/root.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
+#include <set>
 
 #include "filter_test_case_base.hpp"
 #include "tests_shared.hpp"
@@ -415,6 +416,143 @@ TEST_P(PhraseSlopMatcherTestCase, multi_block_postings) {
     auto prepared = make({"xxx", "bbb", "aaa"}, 1);
     ASSERT_EQ(2u, CollectDocs(prepared).size());  // D1 and D3
     ASSERT_FALSE(CollectOffsets<irs::FixedPhraseQuery>(prepared, rdr).empty());
+  }
+}
+
+// A variadic slot's term statistics must describe the terms the slot actually
+// matched. They are collected per segment and merged, and the merge has to know
+// which statistic belongs to which term -- segments do not agree on how many
+// terms a prefix expands to, nor on their order beyond the dictionary's.
+//
+// Here "re*" is {red, ref} in the first segment and {red, reo, rep} in the
+// second, and every term has a different document frequency, so any merge that
+// pairs them up by position rather than by term produces a frequency that
+// belongs to no term at all.
+TEST_P(PhraseSlopMatcherTestCase, set_slot_stats_keep_terms_apart) {
+  {
+    tests::JsonDocGenerator g1(
+      R"([{"name":"A","phrase":"aa red"},{"name":"B","phrase":"aa red"},)"
+      R"({"name":"C","phrase":"aa ref"}])",
+      &tests::PayloadedJsonFieldFactory);
+    add_segment(g1);
+  }
+  {
+    tests::JsonDocGenerator g2(
+      R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa reo"},)"
+      R"({"name":"F","phrase":"aa reo"}])",
+      &tests::PayloadedJsonFieldFactory);
+    add_segment(g2, irs::kOmAppend);
+  }
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  const std::multiset<uint64_t> expected{6, 2, 1, 3};
+
+  for (const auto mode : {tests::PreparedFilter::CollectMode::Single,
+                          tests::PreparedFilter::CollectMode::PerSegment}) {
+    std::multiset<uint64_t> collected;
+    tests::sort::CustomSort sort;
+    sort.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                  const irs::TermCollector* term) {
+      if (term != nullptr) {
+        collected.insert(term->docs_with_term);
+      }
+    };
+
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kField;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term = Term("aa");
+    auto& set = q.mutable_options()->push_back<irs::TermSetOptions>();
+    set.terms.emplace(Term("red"));
+    set.terms.emplace(Term("ref"));
+    set.terms.emplace(Term("reo"));
+
+    tests::PreparedFilter prepared{
+      q, rdr, &sort, irs::IResourceManager::gNoop, nullptr, mode};
+
+    EXPECT_EQ(expected, collected)
+      << "mode " << static_cast<int>(mode)
+      << ": a collected document frequency belongs to no term in the set";
+  }
+}
+
+TEST_P(PhraseSlopMatcherTestCase, set_slot_skips_terms_no_segment_has) {
+  {
+    tests::JsonDocGenerator g1(
+      R"([{"name":"A","phrase":"aa red"},{"name":"B","phrase":"aa red"}])",
+      &tests::PayloadedJsonFieldFactory);
+    add_segment(g1);
+  }
+  auto rdr = open_reader();
+
+  const std::multiset<uint64_t> expected{2, 2};
+
+  std::multiset<uint64_t> collected;
+  tests::sort::CustomSort sort;
+  sort.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                const irs::TermCollector* term) {
+    if (term != nullptr) {
+      collected.insert(term->docs_with_term);
+    }
+  };
+
+  irs::ByPhrase q;
+  *q.mutable_field_id() = kField;
+  q.mutable_options()->push_back<irs::ByTermOptions>().term = Term("aa");
+  auto& set = q.mutable_options()->push_back<irs::TermSetOptions>();
+  set.terms.emplace(Term("red"));
+  set.terms.emplace(Term("gone"));
+
+  tests::PreparedFilter prepared{q, rdr, &sort};
+
+  EXPECT_EQ(expected, collected);
+}
+
+TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
+  {
+    tests::JsonDocGenerator g1(
+      R"([{"name":"A","phrase":"aa red"},{"name":"B","phrase":"aa red"},)"
+      R"({"name":"C","phrase":"aa ref"}])",
+      &tests::PayloadedJsonFieldFactory);
+    add_segment(g1);
+  }
+  {
+    tests::JsonDocGenerator g2(
+      R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa rep"},)"
+      R"({"name":"F","phrase":"aa rep"},{"name":"G","phrase":"aa rep"}])",
+      &tests::PayloadedJsonFieldFactory);
+    add_segment(g2, irs::kOmAppend);
+  }
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  // Slot "aa" holds one term present in every document, so its statistics
+  // merge across the two segments into 3 + 4. Slot "re*" holds four distinct
+  // terms: red=2 and ref=1 in the first segment, reo=1 and rep=3 in the second.
+  const std::multiset<uint64_t> expected{7, 2, 1, 1, 3};
+
+  for (const auto mode : {tests::PreparedFilter::CollectMode::Single,
+                          tests::PreparedFilter::CollectMode::PerSegment}) {
+    std::multiset<uint64_t> collected;
+    tests::sort::CustomSort sort;
+    sort.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                  const irs::TermCollector* term) {
+      if (term != nullptr) {
+        collected.insert(term->docs_with_term);
+      }
+    };
+
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kField;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term = Term("aa");
+    q.mutable_options()->push_back<irs::ByPrefixOptions>().term = Term("re");
+
+    tests::PreparedFilter prepared{
+      q, rdr, &sort, irs::IResourceManager::gNoop, nullptr, mode};
+
+    EXPECT_EQ(expected, collected)
+      << "mode " << static_cast<int>(mode)
+      << ": a collected document frequency belongs to no term in the slot";
   }
 }
 

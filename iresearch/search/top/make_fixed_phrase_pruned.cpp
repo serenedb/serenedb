@@ -37,7 +37,7 @@ namespace {
 
 template<typename Leaf, size_t Slots, typename... Prefix>
 Root::ptr MakeSlots(const FixedPhraseQuery& query,
-                    std::span<const PostingMeta* const> metas,
+                    std::span<const PostingMeta> metas,
                     const irs::detail::PhraseHandles& h, const Context& ctx,
                     Prefix&&... prefix) {
   using Matcher = FixedPhraseMatcher<false, true, false, Slots>;

@@ -391,7 +391,6 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
       opts.ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
     }
     opts.threshold = 0.5f;
-    opts.allow_phrase = false;
     return filter;
   };
 

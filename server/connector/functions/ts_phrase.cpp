@@ -211,9 +211,8 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
   }
 
   if (opts->size() > 1 &&
-      (column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+      (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) !=
+        irs::PhraseQuery::kRequiredFeatures) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_phrase field should have Positions and Frequency features "
@@ -287,9 +286,8 @@ void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
   auto* opts = phrase.mutable_options();
   EmitPhraseTokens(*opts, ctx, column_info, text, PhraseGap{});
   if (opts->size() > 1 &&
-      (column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+      (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) !=
+        irs::PhraseQuery::kRequiredFeatures) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_phrase field should have Positions and Frequency features "
@@ -612,7 +610,6 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         }
         auto& terms_opts =
           options->push_back<irs::TermSetOptions>(gap.min, gap.max);
-        terms_opts.min_match = 1;
         for (const auto* arg : sub_args) {
           std::string term_text;
           GetVarcharArg(UnwrapTSQueryCast(*arg), term_text,
@@ -656,9 +653,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     }
   }
   if (options->size() > 1 &&
-      (column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+      (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) !=
+        irs::PhraseQuery::kRequiredFeatures) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## field should have Positions and Frequency features "

@@ -104,8 +104,7 @@ template<PhraseMatch M, typename Leaf, typename Result,
          template<typename> class Impl, bool Scored = false,
          template<typename> class Wrap = DeducedNode, typename Query,
          typename... Prefix>
-Result MakePhraseNodeOf(const Query& query,
-                        std::span<const PostingMeta* const> metas,
+Result MakePhraseNodeOf(const Query& query, std::span<const PostingMeta> metas,
                         std::span<const TermInterval> intervals,
                         const PhraseHandles& h, Prefix&&... prefix) {
   return ResolveArity<kSlotArity, kSlotFloor>(
@@ -128,7 +127,8 @@ template<PhraseMatch M, template<typename> class Impl, typename Result,
 Result MakeFixedPhraseOf(const FixedPhraseQuery& query, Prefix&&... prefix) {
   const auto& state = query.state;
   const auto& h = state.handles;
-  const std::span metas{state.metas.data(), state.metas.size()};
+  const std::span<const PostingMeta> metas{state.metas.data(),
+                                           state.metas.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> Result {
     return ResolveInput(*h.doc, [&]<typename Input> -> Result {
       using Leaf = detail::PostingPos<Input, Bounds>;
@@ -145,15 +145,16 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
                             Prefix&&... prefix) {
   const auto& state = query.state;
   const auto& h = state.handles;
-  const std::span metas{state.metas.data(), state.metas.size()};
-  const std::span widths{state.num_terms.data(), state.num_terms.size()};
+  const std::span<const PostingMeta> metas{state.metas.data(),
+                                           state.metas.size()};
+  const std::span offsets{state.offsets.data(), state.offsets.size()};
   const std::span intervals{query.positions};
-  SDB_ASSERT(metas.size() != widths.size());
+  SDB_ASSERT(!state.Fixed());
 
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> Result {
     return ResolveInput(*h.doc, [&]<typename Input> -> Result {
       return ResolveBool(
-        Scored && state.has_boosts, [&]<bool HasBoosts> -> Result {
+        Scored && !state.boosts.empty(), [&]<bool HasBoosts> -> Result {
           return ResolveSlotMatcherOf < M, Bounds, Input, Scored, false,
                  Scored &&
                    HasBoosts >
@@ -174,10 +175,10 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
                         return memory::make_managed<Impl<Node>>(
                           std::forward<Prefix>(prefix)..., metas.size(),
                           [&](Leaf& leaf, size_t i) {
-                            leaf.Prepare(*metas[i], *h.doc, h.Layout(), *h.pos,
+                            leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos,
                                          h.pay);
                           },
-                          widths, boosts, intervals,
+                          offsets, boosts, intervals,
                           std::forward<decltype(args)>(args)...);
                       });
         });

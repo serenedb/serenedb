@@ -27,6 +27,7 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/queries/ngram_similarity_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
@@ -49,8 +50,7 @@ namespace {
 
 irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
                                   const std::vector<std::string_view>& ngrams,
-                                  float_t threshold = 1.f,
-                                  bool allow_phrase = true) {
+                                  float_t threshold = 1.f) {
   irs::ByNGramSimilarity filter;
   *filter.mutable_field_id() = field_id;
   auto* opts = filter.mutable_options();
@@ -58,7 +58,6 @@ irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
     opts->ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
   }
   opts->threshold = threshold;
-  opts->allow_phrase = allow_phrase;
   return filter;
 }
 
@@ -145,6 +144,22 @@ TEST(ngram_similarity_base_test, equal) {
 }
 
 class NGramSimilarityFilterTestCase : public tests::FilterTestCaseBase {};
+
+TEST_P(NGramSimilarityFilterTestCase, all_ngrams_allow_gaps) {
+  {
+    tests::JsonDocGenerator gen(R"([{ "seq" : 1, "field": [ "1", "9", "2"] }])",
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  const Docs expected{1};
+  CheckQuery(MakeFilter(kFieldFieldId, {"1", "2"}, 1.f), expected, Costs{1},
+             rdr);
+
+  CheckQuery(*tests::Optimized(MakeFilter(kFieldFieldId, {"1", "2"}, 1.f)),
+             expected, Costs{1}, rdr);
+}
 
 TEST_P(NGramSimilarityFilterTestCase, boost) {
   // no boost
@@ -1169,7 +1184,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     SCOPED_TRACE(testing::Message("i=") << i);
     ASSERT_DOUBLE_EQ(expected_scale[i], scale_values[i]);
   }
-  ASSERT_EQ(6, finish_count);
+  ASSERT_EQ(5, finish_count);
   ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
   ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
@@ -1226,7 +1241,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     SCOPED_TRACE(testing::Message("i=") << i);
     ASSERT_DOUBLE_EQ(expected_scale[i], scale_values[i]);
   }
-  ASSERT_EQ(6, finish_count);
+  ASSERT_EQ(5, finish_count);
   ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
   ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
@@ -1278,9 +1293,14 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
   std::vector<irs::doc_id_t> phrase;
   for (auto& scorer : scorers) {
     irs::ByNGramSimilarity ngram_filter =
-      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, false);
-    irs::ByNGramSimilarity phrase_filter =
-      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F, true);
+      MakeFilter(kFieldFieldId, {"at", "tl", "la", "as"}, 1.F);
+
+    irs::ByPhrase phrase_filter;
+    *phrase_filter.mutable_field_id() = kFieldFieldId;
+    for (const auto term : {"at", "tl", "la", "as"}) {
+      phrase_filter.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view{term});
+    }
 
     MakeResult(ngram_filter, std::span{&scorer, 1}, rdr, ngram);
     MakeResult(phrase_filter, std::span{&scorer, 1}, rdr, phrase);

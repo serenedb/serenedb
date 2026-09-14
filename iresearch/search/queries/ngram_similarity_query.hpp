@@ -27,7 +27,7 @@
 
 #include "iresearch/search/detail/estimate.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/queries/ngram_state.hpp"
+#include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 
@@ -39,14 +39,16 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
     IndexFeatures::Freq | IndexFeatures::Pos;
 
   NGramSimilarityQuery(const SubReader& segment, size_t min_match_count,
-                       NGramState&& state, score_t boost = kNoBoost)
+                       size_t total_terms, NGramState&& state,
+                       score_t boost = kNoBoost)
     : QueryBuilderImpl{segment},
       _min_match_count{min_match_count},
+      _total_terms{total_terms},
       _state{std::move(state)},
       _boost{boost} {
-    SDB_ASSERT(_state.terms.size() >= _min_match_count);
+    SDB_ASSERT(_state.metas.size() >= _min_match_count);
     uint64_t sum = 0;
-    for (const auto& meta : _state.terms) {
+    for (const auto& meta : _state.metas) {
       sum += meta.docs_count;
     }
     _estimate_max =
@@ -59,11 +61,13 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
 
   size_t MinMatchCount() const noexcept { return _min_match_count; }
 
-  size_t Present() const noexcept { return _state.terms.size(); }
+  size_t Present() const noexcept { return _state.metas.size(); }
 
   bool Every() const noexcept { return Present() == _min_match_count; }
 
   const NGramState& State() const noexcept { return _state; }
+
+  size_t TotalTerms() const noexcept { return _total_terms; }
 
   score_t Boost() const noexcept final { return _boost; }
 
@@ -71,6 +75,7 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
 
  private:
   size_t _min_match_count;
+  size_t _total_terms;
   NGramState _state;
   score_t _boost;
 };

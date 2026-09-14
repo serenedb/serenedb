@@ -36,22 +36,15 @@
 
 namespace irs {
 
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
-
-template<typename StateType>
 class PhraseQuery : public QueryBuilder {
-  static_assert(std::is_same_v<StateType, FixedPhraseState> ||
-                std::is_same_v<StateType, VariadicPhraseState>);
-
  public:
-  using positions_t = containers::Fixed<TermInterval>;
+  using Positions = containers::Fixed<TermInterval>;
 
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
-  PhraseQuery(const SubReader& segment, StateType&& state,
-              positions_t&& positions, score_t boost,
+  PhraseQuery(const SubReader& segment, PhraseState&& state,
+              Positions&& positions, score_t boost,
               PosAttr::value_t slop = 0) noexcept
     : QueryBuilder{segment},
       state{std::move(state)},
@@ -67,53 +60,46 @@ class PhraseQuery : public QueryBuilder {
       static_cast<double>(std::max<uint64_t>(segment.docs_count(), 1));
     double density = 1.0;
     uint64_t postings = 0;
-    if constexpr (std::is_same_v<StateType, FixedPhraseState>) {
-      for (const auto& term : this->state.terms) {
-        least = std::min(least, term.first.docs_count);
-        density *= std::sqrt(term.first.docs_count / docs_count);
-        postings += term.first.docs_count;
+    for (size_t i = 0, n = this->state.Slots(); i != n; ++i) {
+      uint64_t slot = 0;
+      for (auto j = this->state.offsets[i]; j != this->state.offsets[i + 1];
+           ++j) {
+        slot += this->state.metas[j].docs_count;
       }
-    } else {
-      size_t begin = 0;
-      for (const auto count : this->state.num_terms) {
-        uint64_t slot = 0;
-        for (size_t i = begin; i != begin + count; ++i) {
-          slot += this->state.terms[i].first.docs_count;
-        }
-        begin += count;
-        least = std::min(least, ClampEstimate(slot, segment));
-        density *= std::sqrt(std::min(static_cast<double>(slot), docs_count) /
-                             docs_count);
-        postings += slot;
-      }
+      least = std::min(least, ClampEstimate(slot, segment));
+      density *=
+        std::sqrt(std::min(static_cast<double>(slot), docs_count) / docs_count);
+      postings += slot;
     }
     _kind = QueryKind::Phrase;
     _estimate_max = least == std::numeric_limits<uint32_t>::max() ? 0 : least;
     _estimate_matches = static_cast<uint32_t>(std::ceil(
       std::sqrt(static_cast<double>(_estimate_max) * docs_count) * density));
     _postings = postings;
-    _leaves = static_cast<uint32_t>(this->state.terms.size());
+    _leaves = static_cast<uint32_t>(this->state.metas.size());
   }
 
   score_t Boost() const noexcept final { return boost; }
 
   void SetBoost(score_t value) noexcept final { boost = value; }
 
-  StateType state;
-  positions_t positions;
+  PhraseState state;
+  Positions positions;
   score_t boost;
   PosAttr::value_t slop{0};
   bool has_intervals;
 };
 
 class FixedPhraseQuery
-  : public QueryBuilderImpl<FixedPhraseQuery, PhraseQuery<FixedPhraseState>> {
+  : public QueryBuilderImpl<FixedPhraseQuery, PhraseQuery> {
  public:
-  FixedPhraseQuery(const SubReader& segment, FixedPhraseState&& state,
-                   positions_t&& positions, score_t boost,
+  FixedPhraseQuery(const SubReader& segment, PhraseState&& state,
+                   Positions&& positions, score_t boost,
                    PosAttr::value_t slop = 0) noexcept
     : QueryBuilderImpl{segment, std::move(state), std::move(positions), boost,
-                       slop} {}
+                       slop} {
+    SDB_ASSERT(this->state.Fixed());
+  }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, state, boost * this->boost);
@@ -121,14 +107,15 @@ class FixedPhraseQuery
 };
 
 class VariadicPhraseQuery
-  : public QueryBuilderImpl<VariadicPhraseQuery,
-                            PhraseQuery<VariadicPhraseState>> {
+  : public QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery> {
  public:
-  VariadicPhraseQuery(const SubReader& segment, VariadicPhraseState&& state,
-                      positions_t&& positions, score_t boost,
+  VariadicPhraseQuery(const SubReader& segment, PhraseState&& state,
+                      Positions&& positions, score_t boost,
                       PosAttr::value_t slop = 0) noexcept
     : QueryBuilderImpl{segment, std::move(state), std::move(positions), boost,
-                       slop} {}
+                       slop} {
+    SDB_ASSERT(!this->state.Fixed());
+  }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, state, boost * this->boost);

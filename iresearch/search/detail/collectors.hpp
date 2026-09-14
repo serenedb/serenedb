@@ -23,10 +23,10 @@
 #pragma once
 
 #include <absl/base/optimization.h>
+#include <absl/hash/hash.h>
 
 #include <algorithm>
 #include <memory>
-#include <span>
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
@@ -34,6 +34,7 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -53,6 +54,25 @@ struct FieldCollector {
   uint64_t docs_with_field = 0;
   uint64_t total_term_freq = 0;
 };
+
+struct TermHash {
+  using is_transparent = void;
+
+  size_t operator()(bytes_view term) const noexcept {
+    return absl::HashOf(term);
+  }
+};
+
+struct TermEq {
+  using is_transparent = void;
+
+  bool operator()(bytes_view lhs, bytes_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+};
+
+template<typename T>
+using TermMap = irs::containers::NodeHashMap<bstring, T, TermHash, TermEq>;
 
 struct TermCollector {
   void Collect(const PostingMeta& meta) noexcept {
@@ -83,6 +103,8 @@ class CounterSlots {
   }
 
   uint32_t Threads() const noexcept { return _threads; }
+
+  size_t Terms() const noexcept { return _terms; }
 
   FieldCollector& Field(uint32_t thread) noexcept {
     SDB_ASSERT(thread < _threads);
@@ -210,26 +232,39 @@ class ByTermsCollector final : public FieldPrepareCollector {
   size_t _slot;
 };
 
-class PhraseCollector final : public FieldPrepareCollector {
+class SlotsCollector : public FieldPrepareCollector {
  public:
-  PhraseCollector(const Scorer* scorer, size_t size, StatsArena& stats,
-                  uint32_t threads)
-    : FieldPrepareCollector{scorer, stats, threads, 0, true},
-      _size{size},
-      _parts(static_cast<size_t>(threads) * size) {}
+  SlotsCollector(const Scorer* scorer, size_t terms, StatsArena& stats,
+                 uint32_t threads)
+    : FieldPrepareCollector{scorer, stats, threads, terms, true} {}
 
-  std::vector<TermCollector>& Part(uint32_t thread, size_t i) noexcept {
-    SDB_ASSERT(i < _size);
-    return _parts[thread * _size + i];
+  TermCollector& Term(uint32_t thread, size_t i) noexcept {
+    return _counters.Term(thread, i);
   }
 
-  size_t Size() const noexcept { return _size; }
+  void Finish(StatsArena& stats) override;
+};
+
+class ExpandedSlotsCollector final : public SlotsCollector {
+ public:
+  using Terms = TermMap<TermCollector>;
+
+  ExpandedSlotsCollector(const Scorer* scorer, size_t terms, size_t expanded,
+                         StatsArena& stats, uint32_t threads)
+    : SlotsCollector{scorer, terms, stats, threads},
+      _expanded_size{expanded},
+      _expanded(static_cast<size_t>(threads) * expanded) {}
+
+  Terms& Expanded(uint32_t thread, size_t i) noexcept {
+    SDB_ASSERT(i < _expanded_size);
+    return _expanded[thread * _expanded_size + i];
+  }
 
   void Finish(StatsArena& stats) final;
 
  private:
-  size_t _size;
-  containers::Fixed<std::vector<TermCollector>> _parts;
+  size_t _expanded_size;
+  containers::Fixed<Terms> _expanded;
 };
 
 class AllCollector final : public PrepareCollector {

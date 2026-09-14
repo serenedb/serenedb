@@ -53,6 +53,7 @@ struct PrefixEntry {
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext& ctx) {
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
+  const bool scores = !ScoreIsIgnored(node, ctx);
   auto& children = node.Bucket(Occur::Must).filters;
 
   std::vector<PrefixEntry> prefixes;
@@ -89,12 +90,12 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
       if (entry.field != filter.field_id() ||
-          (ctx.scored && entry.scorer != child->GetScorer()) ||
+          (scores && entry.scorer != child->GetScorer()) ||
           !bytes_view{target}.starts_with(entry.term)) {
         continue;
       }
       changed = true;
-      if (remove_prefixes.insert(entry.node).second && ctx.scored) {
+      if (remove_prefixes.insert(entry.node).second && scores) {
         child->SetBoost(
           MergedBoost(node.MergeType(), child->GetBoost(), entry.boost));
       }

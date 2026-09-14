@@ -25,7 +25,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -53,7 +52,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   }
 
   auto* ngram_collector =
-    ctx.collector ? &irs::utils::downCast<PhraseCollector>(*ctx.collector)
+    ctx.collector ? &irs::utils::downCast<SlotsCollector>(*ctx.collector)
                   : nullptr;
 
   const TermReader* field = segment.field(field_name);
@@ -72,43 +71,36 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
     ngram_collector->Field(ctx.thread).Collect(*field);
   }
 
-  state.total_terms = terms_count;
-  state.terms.reserve(terms_count);
+  state.metas.reserve(terms_count);
 
   size_t term_idx = 0;
   auto term = field->iterator();
   for (const auto& ngram : ngrams) {
-    std::vector<TermCollector>* part = nullptr;
-    if (ngram_collector) {
-      part = &ngram_collector->Part(ctx.thread, term_idx);
-      if (part->empty()) {
-        part->emplace_back();
-      }
-    }
     if (term->seek(ngram)) {
-      const auto& term_state = state.terms.emplace_back(term->cookie());
-      if (part) {
-        part->front().Collect(term_state);
+      const auto& meta = state.metas.emplace_back(term->cookie());
+      if (ngram_collector) {
+        ngram_collector->Term(ctx.thread, term_idx).Collect(meta);
       }
     }
     ++term_idx;
     if (!ngram_collector &&
-        state.terms.size() + (terms_count - term_idx) < min_match_count) {
+        state.metas.size() + (terms_count - term_idx) < min_match_count) {
       return QueryBuilder::Empty();
     }
   }
 
-  if (state.terms.size() < min_match_count) {
+  if (state.metas.size() < min_match_count) {
     return QueryBuilder::Empty();
   }
 
-  if (state.terms.size() == 1) {
-    return MakeTermQuery(ctx.memory, segment, field, state.terms.front(),
+  if (state.metas.size() == 1) {
+    return MakeTermQuery(ctx.memory, segment, field, state.metas.front(),
                          ctx.boost * boost, ctx.Record());
   }
 
   auto query = memory::make_tracked<NGramSimilarityQuery>(
-    ctx.memory, segment, min_match_count, std::move(state), ctx.boost * boost);
+    ctx.memory, segment, min_match_count, terms_count, std::move(state),
+    ctx.boost * boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -121,7 +113,7 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
   if (terms_count == 1) {
     return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
   }
-  return std::make_unique<PhraseCollector>(scorer, terms_count, stats, threads);
+  return std::make_unique<SlotsCollector>(scorer, terms_count, stats, threads);
 }
 
 }  // namespace irs

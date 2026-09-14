@@ -134,11 +134,7 @@ bool IsNegation(const BooleanFilter& node) noexcept {
 
 bool ClauseScores(const Filter& child, Occur occur,
                   const OptimizeContext& ctx) noexcept {
-  if (!ctx.scored || occur == Occur::MustNot) {
-    return false;
-  }
-  const auto* const scorer = child.GetScorer();
-  return scorer == nullptr || !IsUnscored(*scorer);
+  return occur != Occur::MustNot && !ScoreIsIgnored(child, ctx);
 }
 
 BooleanFilter* AsNested(Filter& child, const BooleanFilter& parent, Occur occur,
@@ -287,7 +283,14 @@ bool NormalizeTerms(BooleanFilter& node, bool scored) {
 
 bool BooleanNormalizeTermsRule::Apply(Filter::ptr& slot,
                                       const OptimizeContext& ctx) {
-  return NormalizeTerms(irs::utils::downCast<BooleanFilter>(*slot), ctx.scored);
+  auto& node = irs::utils::downCast<BooleanFilter>(*slot);
+  bool changed = NormalizeTerms(node, !ScoreIsIgnored(node, ctx));
+  if (node.MergeType() == ScoreMergeType::Max &&
+      node.Size(Occur::Must) + node.Size(Occur::Should) <= 1) {
+    node.SetMergeType(ScoreMergeType::Sum);
+    changed = true;
+  }
+  return changed;
 }
 
 bool BooleanMinShouldMatchRule::Apply(Filter::ptr& slot,
@@ -329,7 +332,21 @@ bool BooleanAbsorbRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return true;
   }
 
-  if (!ctx.scored) {
+  {
+    auto& required = node.Bucket(Occur::Must);
+    const auto spare = [&](const Filter& child) {
+      return IsAllDocs(child) && !ClauseScores(child, Occur::Must, ctx);
+    };
+    const auto keeps =
+      !required.terms.empty() ||
+      absl::c_any_of(required.filters,
+                     [&](const Filter::ptr& child) { return !spare(*child); });
+    if (keeps) {
+      changed |= EraseFilters(required.filters, spare) != 0;
+    }
+  }
+
+  if (ScoreIsIgnored(node, ctx)) {
     auto& required = node.Bucket(Occur::Must);
     const auto includes_only_all =
       node.Size(Occur::MustNot) != 0 && required.terms.empty() &&
@@ -382,7 +399,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& should = node.Bucket(Occur::Should);
   for (const auto occur : {Occur::Must, Occur::MustNot}) {
     const bool required = occur == Occur::Must;
-    const bool by_posting = !required || !ctx.scored;
+    const bool by_posting = !required || ScoreIsIgnored(node, ctx);
     const auto less = [by_posting](const TermClause& lhs,
                                    const TermClause& rhs) noexcept {
       return by_posting ? TermPostingLess{}(lhs, rhs)
@@ -411,7 +428,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     }
     should.terms.erase(out, should.terms.end());
 
-    const bool by_scorer = required && ctx.scored;
+    const bool by_scorer = required && !ScoreIsIgnored(node, ctx);
     dropped += EraseFilters(should.filters, [&](const Filter& child) {
       const auto survivor =
         absl::c_find_if(other.filters, [&](const Filter::ptr& candidate) {
@@ -421,7 +438,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
       if (survivor == other.filters.end()) {
         return false;
       }
-      if (required && ctx.scored) {
+      if (required && !ScoreIsIgnored(node, ctx)) {
         auto boost = (**survivor).GetBoost();
         MergeBoost(boost, child.GetBoost(), node.MergeType());
         (**survivor).SetBoost(boost);
@@ -447,9 +464,10 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
 
   const auto merge = node.MergeType();
-  changed |= DedupTerms(node.Bucket(Occur::Must).terms, merge, ctx.scored) != 0;
+  const bool scores = !ScoreIsIgnored(node, ctx);
+  changed |= DedupTerms(node.Bucket(Occur::Must).terms, merge, scores) != 0;
   if (node.MinShouldMatch() <= 1) {
-    const auto dropped = DedupTerms(should.terms, merge, ctx.scored);
+    const auto dropped = DedupTerms(should.terms, merge, scores);
     changed |= dropped != 0;
     if (Unreachable(node)) {
       slot = std::make_unique<Empty>();
@@ -458,7 +476,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
 
   changed |= DedupFilters(node.Bucket(Occur::MustNot).filters) != 0;
-  if (!ctx.scored) {
+  if (!scores) {
     changed |= DedupFilters(node.Bucket(Occur::Must).filters) != 0;
     if (node.MinShouldMatch() <= 1) {
       changed |= DedupFilters(should.filters) != 0;
@@ -830,6 +848,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   if (count < 2 || !IsAlternation(node)) {
     return false;
   }
+  const bool scores = !ScoreIsIgnored(node, ctx);
   const auto terms = node.Terms(Occur::Should);
   const auto filters = node.Filters(Occur::Should);
 
@@ -850,20 +869,20 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
 
   size_t seekable = terms.size();
   for (const auto& term : terms) {
-    if (term.field != field || (ctx.scored && term.scorer != scorer)) {
+    if (term.field != field || (scores && term.scorer != scorer)) {
       return false;
     }
-    if (ctx.scored && term.boost != boost) {
+    if (scores && term.boost != boost) {
       return false;
     }
   }
   for (const auto& child : filters) {
     const auto info = InfoOf(*child);
     if (!info || info->field != field ||
-        (ctx.scored && child->GetScorer() != scorer)) {
+        (scores && child->GetScorer() != scorer)) {
       return false;
     }
-    if (ctx.scored && info->boost != boost) {
+    if (scores && info->boost != boost) {
       return false;
     }
     seekable += child->type() == Type<ByPrefix>::id();
@@ -898,7 +917,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   auto fused = std::make_unique<AutomatonFilter>();
   *fused->mutable_field_id() = field;
   *fused->mutable_options() = AutomatonOptions{std::move(dfa), pattern};
-  fused->SetBoost(ctx.scored ? node.GetBoost() * boost : node.GetBoost());
+  fused->SetBoost(scores ? node.GetBoost() * boost : node.GetBoost());
   fused->SetScorer(scorer);
   slot = std::move(fused);
   return true;
@@ -967,10 +986,13 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
 
 bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
                                   const OptimizeContext& ctx) {
-  if (!ctx.fuse_acceptor_intersections || ctx.scored) {
+  if (!ctx.fuse_acceptor_intersections) {
     return false;
   }
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
+  if (!ScoreIsIgnored(node, ctx)) {
+    return false;
+  }
   if (node.Size(Occur::Must) < 2 || !IsAllRequired(node)) {
     return false;
   }
@@ -1087,9 +1109,11 @@ void FuseConjunctions(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root || !ctx.fuse_acceptor_intersections) {
     return;
   }
-  TraverseFilter(root, [&](Filter::ptr& slot) {
+  auto negated_ctx = ctx;
+  negated_ctx.scored = false;
+  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
     if (slot->type() == Type<BooleanFilter>::id()) {
-      AndAcceptorFusionRule::Apply(slot, ctx);
+      AndAcceptorFusionRule::Apply(slot, negated ? negated_ctx : ctx);
     }
   });
 }

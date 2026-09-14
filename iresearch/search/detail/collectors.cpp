@@ -69,28 +69,41 @@ void ByTermsCollector::Finish(StatsArena&) {
   }
 }
 
-void PhraseCollector::Finish(StatsArena&) {
+void SlotsCollector::Finish(StatsArena&) {
+  if (_scorer == nullptr) {
+    return;
+  }
+  const auto field = _counters.TotalField();
+  auto* const slot = Mutable(_stats);
+  for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
+    const auto term = _counters.TotalTerm(i);
+    if (term.docs_with_term == 0) {
+      continue;
+    }
+    _scorer->collect(slot, &field, &term);
+  }
+}
+
+void ExpandedSlotsCollector::Finish(StatsArena& stats) {
+  SlotsCollector::Finish(stats);
   if (_scorer == nullptr) {
     return;
   }
   const auto threads = _counters.Threads();
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
-  for (size_t p = 0; p != _size; ++p) {
-    size_t terms = 0;
+  Terms merged;
+  for (size_t i = 0; i != _expanded_size; ++i) {
+    merged.clear();
     for (uint32_t t = 0; t != threads; ++t) {
-      terms = std::max(terms, Part(t, p).size());
-    }
-    for (size_t i = 0; i != terms; ++i) {
-      TermCollector term;
-      for (uint32_t t = 0; t != threads; ++t) {
-        const auto& part = Part(t, p);
-        if (i < part.size()) {
-          term.docs_with_term += part[i].docs_with_term;
-          term.total_term_freq += part[i].total_term_freq;
-        }
+      for (const auto& [term, counter] : Expanded(t, i)) {
+        auto& one = merged[term];
+        one.docs_with_term += counter.docs_with_term;
+        one.total_term_freq += counter.total_term_freq;
       }
-      _scorer->collect(slot, &field, &term);
+    }
+    for (const auto& [term, counter] : merged) {
+      _scorer->collect(slot, &field, &counter);
     }
   }
 }

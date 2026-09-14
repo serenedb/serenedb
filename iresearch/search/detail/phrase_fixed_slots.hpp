@@ -41,7 +41,7 @@ template<typename Matcher, typename Leaf, size_t N = 0>
 class PhraseFixedSlots {
  public:
   template<typename... Args>
-  PhraseFixedSlots(std::span<const PostingMeta* const> metas,
+  PhraseFixedSlots(std::span<const PostingMeta> metas,
                    std::span<const TermInterval> intervals,
                    const IndexInput& doc_in, IndexFeatures layout,
                    const IndexInput& pos_in, const IndexInput* pay_in,

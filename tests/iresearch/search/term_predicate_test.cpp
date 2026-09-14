@@ -21,7 +21,6 @@
 #include <gtest/gtest.h>
 
 #include <iresearch/search/detail/term_predicate.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>

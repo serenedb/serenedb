@@ -48,15 +48,15 @@ class PhraseVariadicSlots {
 
   template<typename Init, typename... Args>
   PhraseVariadicSlots(size_t size, Init&& init,
-                      std::span<const uint32_t> widths,
+                      std::span<const uint32_t> offsets,
                       std::span<const score_t> boosts,
                       std::span<const TermInterval> intervals, Args&&... args)
     : _terms{size, std::forward<Init>(init)},
-      _slots{widths.size(), std::piecewise_construct,
+      _slots{offsets.size() - 1, std::piecewise_construct,
              [&](size_t i) {
-               const auto offset = Offset(widths, i);
+               const auto offset = offsets[i];
                return std::tuple<Leaf*, uint32_t, const score_t*, TermInterval>{
-                 _terms.data() + offset, widths[i],
+                 _terms.data() + offset, offsets[i + 1] - offset,
                  boosts.empty() ? nullptr : boosts.data() + offset,
                  intervals[i]};
              }},
@@ -68,11 +68,12 @@ class PhraseVariadicSlots {
       _matcher.Position(i) = {&_slots[i].leaf.Positions(), _slots[i].interval};
     }
     _matcher.Finish();
-    SDB_ASSERT(widths.size() == intervals.size());
+    SDB_ASSERT(_slots.size() == intervals.size());
     SDB_ASSERT(boosts.empty() == !HasBoost);
     SDB_ASSERT(boosts.empty() || boosts.size() == size);
-    SDB_ASSERT(!widths.empty());
-    SDB_ASSERT(widths.size() > 1 || _terms.size() > 1);
+    SDB_ASSERT(!_slots.empty());
+    SDB_ASSERT(offsets.back() == size);
+    SDB_ASSERT(_slots.size() > 1 || _terms.size() > 1);
     absl::c_sort(_probes, [](const Slot* lhs, const Slot* rhs) noexcept {
       return lhs->Estimate() < rhs->Estimate();
     });
@@ -156,14 +157,6 @@ class PhraseVariadicSlots {
     }
     return doc;
   }
-  static uint32_t Offset(std::span<const uint32_t> widths, size_t i) noexcept {
-    uint32_t offset = 0;
-    for (size_t j = 0; j != i; ++j) {
-      offset += widths[j];
-    }
-    return offset;
-  }
-
   containers::Fixed<Leaf> _terms;
   containers::Fixed<Entry> _slots;
   containers::Fixed<Slot*> _probes;

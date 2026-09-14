@@ -37,7 +37,6 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
@@ -839,11 +838,12 @@ class SearchFilterBuilderTest : public ::testing::Test {
           }
           return;
         }
-        const_cast<irs::Filter&>(f).VisitChildren([&](irs::Filter::ptr& child) {
-          if (child) {
-            self(*child, out, depth + 1);
-          }
-        });
+        const_cast<irs::Filter&>(f).VisitChildren(
+          [&](irs::Filter::ptr& child, bool) {
+            if (child) {
+              self(*child, out, depth + 1);
+            }
+          });
       };
       const auto dump_of = [&](const irs::Filter& f) {
         std::string out;
@@ -4736,7 +4736,6 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAnyOfPart) {
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   auto& terms = phrase.mutable_options()->push_back<irs::TermSetOptions>(1, 1);
-  terms.min_match = 1;
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"b"}));
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"c"}));
   AssertFilter(expected,
@@ -4756,7 +4755,6 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAnyOfPartExplicit1) {
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   auto& terms = phrase.mutable_options()->push_back<irs::TermSetOptions>(1, 1);
-  terms.min_match = 1;
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"b"}));
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"c"}));
   AssertFilter(expected,

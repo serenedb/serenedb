@@ -28,6 +28,7 @@
 #include <string_view>
 
 #include "basics/duckdb_engine.h"
+#include "basics/static_strings.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "pg/pg_types.h"
@@ -53,16 +54,6 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 ClusterCatalog::ClusterCatalog(duckdb::AttachedDatabase& db)
   : duckdb::DuckCatalog{db} {}
 
-duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
-  duckdb::CreateRoleInfo& info) {
-  return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
-}
-
-duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeDatabaseEntry(
-  duckdb::CreateDatabaseInfo& info) {
-  return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
-}
-
 void ClusterCatalog::FinalizeLoad(
   duckdb::optional_ptr<duckdb::ClientContext> context) {
   duckdb::DuckCatalog::FinalizeLoad(context);
@@ -71,18 +62,26 @@ void ClusterCatalog::FinalizeLoad(
   }
   const auto transaction = GetCatalogTransaction(*context);
   const duckdb::Identifier root{kRootRole};
-  if (GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-        .GetEntry(transaction, root)) {
-    return;
+  if (!GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+         .GetEntry(transaction, root)) {
+    duckdb::CreateRoleInfo info;
+    info.SetName(root);
+    info.oid = pg::kRootUser;
+    info.options = RoleOption::Superuser | RoleOption::Inherit |
+                   RoleOption::CreateRole | RoleOption::CreateDb |
+                   RoleOption::Login | RoleOption::Replication |
+                   RoleOption::BypassRls;
+    CreateRole(transaction, info);
   }
-  duckdb::CreateRoleInfo info;
-  info.SetName(root);
-  info.oid = pg::kRootUser;
-  info.options = RoleOption::Superuser | RoleOption::Inherit |
-                 RoleOption::CreateRole | RoleOption::CreateDb |
-                 RoleOption::Login | RoleOption::Replication |
-                 RoleOption::BypassRls;
-  CreateRole(transaction, info);
+  const duckdb::Identifier postgres{StaticStrings::kDefaultDatabase};
+  if (!GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+         .GetEntry(transaction, postgres)) {
+    duckdb::CreateDatabaseInfo info;
+    info.SetName(postgres);
+    info.oid = pg::kPgPostgresDatabase;
+    info.permissions.owner = pg::kRootUser;
+    CreateDatabase(transaction, info);
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(

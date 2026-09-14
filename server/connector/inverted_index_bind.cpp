@@ -25,10 +25,13 @@
 #include <absl/strings/str_join.h>
 
 #include <array>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/function/compression_function.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -145,46 +148,21 @@ uint32_t ParsePositiveUintOption(std::string_view kind,
 // "auto" is the writer default (analyze tournament). Other names map
 // 1:1 to duckdb codecs; the writer throws at flush time if the named
 // codec doesn't accept the column's physical type.
-duckdb::CompressionType ParseCompressionName(std::string_view column_name,
+duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
+                                             std::string_view column_name,
                                              std::string_view name) {
-  std::string n{name};
-  absl::AsciiStrToLower(&n);
-  // Excluded on purpose:
-  //   `dictionary` / `fsst` -- storage_version VERSION_NUMBER_UPPER
-  //     disables them upstream (replaced by `dict_fsst`); init_analyze
-  //     returns nullptr at runtime so accepting the name here would
-  //     defer the failure to the async commit path.
-  //   `chimp` / `patas` -- DuckDB throws InternalException at
-  //     init_compression for both ("has been deprecated, can no longer
-  //     be used to compress data"). Same async-error issue as the pair
-  //     above.
-  //   `constant` -- internal-only codec selected by the analyzer when a
-  //     row group is all-equal; CompressionFunction has init_analyze ==
-  //     nullptr, so the validation gate below would reject it anyway.
-  //     Kept out of kMap so the parse error is up front.
-  static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
-    {
-      {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
-      {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
-      {"rle", duckdb::CompressionType::COMPRESSION_RLE},
-      {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING},
-      {"zstd", duckdb::CompressionType::COMPRESSION_ZSTD},
-      {"alp", duckdb::CompressionType::COMPRESSION_ALP},
-      {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD},
-      {"roaring", duckdb::CompressionType::COMPRESSION_ROARING},
-      {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST},
-    };
-  for (const auto& [k, v] : kMap) {
-    if (n == k) {
-      return v;
-    }
+  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+    std::string{name}.c_str());
+  auto& storage =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
+      .GetAttached()
+      .GetStorageManager();
+  if (!duckdb::CompressionTypeIsAvailable(type, &storage).IsAvailable()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name, "': compression '", name,
+                            "' is not available"));
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("Column '", column_name, "': unknown compression '", name,
-            "'. Accepted: auto, uncompressed, rle, "
-            "bitpacking, zstd, alp, alprd, roaring, "
-            "dict_fsst"));
+  return type;
 }
 
 // The "data" physical type that a forced codec must support. Composite
@@ -231,20 +209,13 @@ duckdb::CompressionType ParseCompressionOption(
   std::string_view owner_label, std::string_view key, const duckdb::Value& v,
   const duckdb::LogicalType& value_type) {
   auto str = GetIndexStringOption(kind, owner_label, key, v);
-  auto parsed = ParseCompressionName(owner_label, str);
+  auto parsed = ParseCompressionName(context, owner_label, str);
   ValidateColumnCompression(context, owner_label, parsed, value_type);
   return parsed;
 }
 
 std::string DescribeKnownOpclassTypes() {
-  std::string out;
-  for (size_t i = 0; i < kKnownOpclassTypes.size(); ++i) {
-    if (i) {
-      out += ", ";
-    }
-    out += kKnownOpclassTypes[i];
-  }
-  return out;
+  return absl::StrJoin(kKnownOpclassTypes, ", ");
 }
 
 std::string DescribeIVFOptions() {
@@ -476,10 +447,6 @@ void ApplyIVFOpclass(
   const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   catalog::InvertedIndexField& entry) {
-  SDB_ASSERT(opts);
-  SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
-  SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
-             duckdb::LogicalTypeId::FLOAT);
   irs::IvfInfo cfg{
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
@@ -884,13 +851,10 @@ InvertedIndexSettings ResolveSettings(
     return connector::ResolveUbigintWithOption(context, name, nullptr);
   };
 
-  // The periodic reindex is a view-only concept: on a table-backed
-  // index an explicit WITH is an error, and an inherited session default
-  // is dropped (never persisted, never ticks).
-  if (table_backed && FindOption(with, kReindexIntervalSetting)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("option \"", kReindexIntervalSetting,
-                            "\" only applies to view-backed inverted indexes"));
+  // On a table-backed index an explicit WITH is an error, and an inherited
+  // session default is dropped (never persisted, never ticks).
+  if (FindOption(with, kReindexIntervalSetting)) {
+    catalog::RequireViewBackedOption(table_backed, kReindexIntervalSetting);
   }
   return {
     .row_group_size = resolve_uint(kRowGroupSizeSetting),
@@ -923,18 +887,7 @@ PkPolicy ResolvePkPolicy(
       store_pk = "none";
     }
   }
-  bool reindex = true;
-  if (auto* v = FindOption(with, "reindex")) {
-    auto value = *v;
-    if (!value.DefaultTryCastAs(duckdb::LogicalType::BOOLEAN)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("invalid value for parameter \"reindex\": \"",
-                              v->ToString(), "\""));
-    }
-    reindex = value.GetValue<bool>();
-  }
-
-  PkPolicy policy{.index_term = table_backed || (file_row && reindex),
+  PkPolicy policy{.index_term = table_backed || file_row,
                   .column = PkColumnKind::Has};
   if (store_pk == "none") {
     policy.index_term = false;

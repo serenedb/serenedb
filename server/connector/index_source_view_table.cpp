@@ -38,7 +38,6 @@ namespace {
 
 duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
                                              const ViewFastPath& fast_path) {
-  SDB_ASSERT(fast_path.catalog_ref);
   auto& entry =
     duckdb::Catalog::GetEntry(
       context, duckdb::CatalogType::TABLE_ENTRY,
@@ -59,7 +58,7 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 
 duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
   const duckdb::ColumnDefinition& col) {
-  if (col.Generated()) {
+  if (col.Category() == duckdb::TableColumnType::GENERATED_VIRTUAL) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot materialise generated column \"",
@@ -127,20 +126,11 @@ ViewTableIndexSource::ViewTableIndexSource(
   // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
-  if (!_fast_path.projection_columns.empty()) {
-    name_to_col.reserve(columns.LogicalColumnCount());
-    duckdb::idx_t logical = 0;
-    for (const auto& col : columns.Logical()) {
-      name_to_col.emplace(col.Name().GetIdentifierName(), logical++);
-    }
-  }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     [&](std::string_view name) {
-      auto it = name_to_col.find(name);
-      SDB_ASSERT(it != name_to_col.end());
-      return it->second;
+      duckdb::Identifier column{name};
+      return columns.GetColumnIndex(column).index;
     },
     [&](duckdb::idx_t table_col_idx) {
       SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());

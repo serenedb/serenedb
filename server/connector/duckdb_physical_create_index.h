@@ -137,7 +137,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
-  bool ParallelSink() const final;
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
@@ -163,8 +163,10 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
  private:
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
-  duckdb::TableCatalogEntry* TableOrNull() const noexcept;
-  bool IsDuckDBTable() const noexcept;
+  duckdb::TableCatalogEntry* TableOrNull() const noexcept {
+    return dynamic_cast<duckdb::TableCatalogEntry*>(&_relation);
+  }
+  bool IsDuckDBTable() const noexcept { return TableOrNull(); }
 
   // Not const: the build reads and publishes into the relation's own storage.
   duckdb::CatalogEntry& _relation;

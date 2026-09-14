@@ -15457,26 +15457,26 @@
   },
   {
     "query": "fn:ngram(1.0 milwaukee newspaper)",
-    "count": 10,
-    "top_100": 10,
+    "count": 377,
+    "top_100": 377,
     "result_type": "Hash",
     "top_100_result": [
-      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+      "62f22df8001fe83d82a514decbb7453255cb7d39587727d3547c3f7ba9a393ce"
     ],
     "top_100_count_result": [
-      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+      "62f22df8001fe83d82a514decbb7453255cb7d39587727d3547c3f7ba9a393ce"
     ]
   },
   {
     "query": "fn:ngram(1.0 new york population)",
-    "count": 11,
-    "top_100": 11,
+    "count": 9722,
+    "top_100": 9722,
     "result_type": "Hash",
     "top_100_result": [
-      "61b6b1356372d96e9e0a25f85459386ecb7d55e8a6231eff4d29572ef8b23f99"
+      "9ab2eb424ba5e1026aae3f2216adf22fbc195d5613e4c3b51aefd0262331b807"
     ],
     "top_100_count_result": [
-      "61b6b1356372d96e9e0a25f85459386ecb7d55e8a6231eff4d29572ef8b23f99"
+      "9ab2eb424ba5e1026aae3f2216adf22fbc195d5613e4c3b51aefd0262331b807"
     ]
   },
   {
@@ -15517,26 +15517,26 @@
   },
   {
     "query": "fn:ngram(1.0 italy digital)",
-    "count": 2,
-    "top_100": 2,
+    "count": 1168,
+    "top_100": 1168,
     "result_type": "Hash",
     "top_100_result": [
-      "2806a6af9e57ea1576fb7e824cfc4687dbfab5ed318c857fe0f3e6fc2242d2a1"
+      "12a67d77ac6d06d8a72a7e29f8a028db9b003a00cfe352d5533d54dde590d91c"
     ],
     "top_100_count_result": [
-      "2806a6af9e57ea1576fb7e824cfc4687dbfab5ed318c857fe0f3e6fc2242d2a1"
+      "12a67d77ac6d06d8a72a7e29f8a028db9b003a00cfe352d5533d54dde590d91c"
     ]
   },
   {
     "query": "fn:ngram(1.0 robert green ingersoll)",
-    "count": 11,
-    "top_100": 11,
+    "count": 15,
+    "top_100": 15,
     "result_type": "Hash",
     "top_100_result": [
-      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+      "43d158a3fd3f706e769cfb2f2ecfc76fca82bc69230d93c19e1a62357252d2c3"
     ],
     "top_100_count_result": [
-      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+      "43d158a3fd3f706e769cfb2f2ecfc76fca82bc69230d93c19e1a62357252d2c3"
     ]
   },
   {
@@ -15577,26 +15577,26 @@
   },
   {
     "query": "fn:ngram(1.0 size clothing)",
-    "count": 20,
-    "top_100": 20,
+    "count": 1647,
+    "top_100": 1647,
     "result_type": "Hash",
     "top_100_result": [
-      "bff295118edb5ec054228693d0e802e9abe58ead0b6ad76f6d19e0e6523dfc3e"
+      "1b894dad16471ba200abb1682e34562c573acaee368b2602a8cd074041baaa01"
     ],
     "top_100_count_result": [
-      "bff295118edb5ec054228693d0e802e9abe58ead0b6ad76f6d19e0e6523dfc3e"
+      "1b894dad16471ba200abb1682e34562c573acaee368b2602a8cd074041baaa01"
     ]
   },
   {
     "query": "fn:ngram(1.0 people having sex)",
-    "count": 15,
-    "top_100": 15,
+    "count": 3187,
+    "top_100": 3187,
     "result_type": "Hash",
     "top_100_result": [
-      "67ed251c6b3253a2d86c7175dc6cf2685711988bad13df16e0670c780bf94f97"
+      "3488d3cc47b6fc84face7b0852dc3d5934adb714e645a77a6ccc08a4e478b82f"
     ],
     "top_100_count_result": [
-      "67ed251c6b3253a2d86c7175dc6cf2685711988bad13df16e0670c780bf94f97"
+      "3488d3cc47b6fc84face7b0852dc3d5934adb714e645a77a6ccc08a4e478b82f"
     ]
   },
   {
@@ -15637,26 +15637,26 @@
   },
   {
     "query": "fn:ngram(1.0 american funds)",
-    "count": 23,
-    "top_100": 23,
+    "count": 11129,
+    "top_100": 11129,
     "result_type": "Hash",
     "top_100_result": [
-      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+      "ab2a2a73002c212bddbcb42a95621d0c19dd882815474323dcd9810253a1390a"
     ],
     "top_100_count_result": [
-      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+      "ab2a2a73002c212bddbcb42a95621d0c19dd882815474323dcd9810253a1390a"
     ]
   },
   {
     "query": "fn:ngram(1.0 texas death row)",
-    "count": 22,
-    "top_100": 22,
+    "count": 252,
+    "top_100": 252,
     "result_type": "Hash",
     "top_100_result": [
-      "34e676bc234cbe0c36527f463d77c5fe1153d13e5a21382435a4cd9348822402"
+      "e5258b64cf1ea7d3bd19f6b5b53fb9cb1e86ce4cac317c40d1e957741aabedd8"
     ],
     "top_100_count_result": [
-      "34e676bc234cbe0c36527f463d77c5fe1153d13e5a21382435a4cd9348822402"
+      "e5258b64cf1ea7d3bd19f6b5b53fb9cb1e86ce4cac317c40d1e957741aabedd8"
     ]
   },
   {
@@ -15697,26 +15697,26 @@
   },
   {
     "query": "fn:ngram(1.0 attorney general)",
-    "count": 13386,
-    "top_100": 613,
+    "count": 17705,
+    "top_100": 17705,
     "result_type": "Hash",
     "top_100_result": [
-      "6463f708edab982d8a541647da13915af5991c9cbb1ca0b7598d4b4701384a69"
+      "84aad919dc7b1ba1e89d374c5ce515ecd187f485eafc17e4acf78b4d01b803b4"
     ],
     "top_100_count_result": [
-      "6463f708edab982d8a541647da13915af5991c9cbb1ca0b7598d4b4701384a69"
+      "84aad919dc7b1ba1e89d374c5ce515ecd187f485eafc17e4acf78b4d01b803b4"
     ]
   },
   {
     "query": "fn:ngram(1.0 ford modeling agency)",
-    "count": 53,
-    "top_100": 53,
+    "count": 79,
+    "top_100": 79,
     "result_type": "Hash",
     "top_100_result": [
-      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+      "f33e93e9a816999102a78a3ffbb0fea83c2a6b866957db4fe343a49157e39818"
     ],
     "top_100_count_result": [
-      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+      "f33e93e9a816999102a78a3ffbb0fea83c2a6b866957db4fe343a49157e39818"
     ]
   },
   {
@@ -15757,26 +15757,26 @@
   },
   {
     "query": "fn:ngram(1.0 freelance work)",
-    "count": 307,
-    "top_100": 228,
+    "count": 3344,
+    "top_100": 3344,
     "result_type": "Hash",
     "top_100_result": [
-      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+      "14c6facb3b08a5bd3756708daf512d7a98acfe6f39a56e5b058d1689fd0689c6"
     ],
     "top_100_count_result": [
-      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+      "14c6facb3b08a5bd3756708daf512d7a98acfe6f39a56e5b058d1689fd0689c6"
     ]
   },
   {
     "query": "fn:ngram(1.0 cured of cancer)",
-    "count": 13,
-    "top_100": 13,
+    "count": 282,
+    "top_100": 282,
     "result_type": "Hash",
     "top_100_result": [
-      "8d0ebe7075f5d277c5135673aa8bae7b5dc5ff12e3edc07d4939ebd80a954abb"
+      "e8adf1b2a691bb3d046950e17e1843b9d6288cae6c0db897ceb8eea586e63cc6"
     ],
     "top_100_count_result": [
-      "8d0ebe7075f5d277c5135673aa8bae7b5dc5ff12e3edc07d4939ebd80a954abb"
+      "e8adf1b2a691bb3d046950e17e1843b9d6288cae6c0db897ceb8eea586e63cc6"
     ]
   },
   {
@@ -15817,26 +15817,26 @@
   },
   {
     "query": "fn:ngram(1.0 omaha symphony)",
-    "count": 25,
-    "top_100": 25,
+    "count": 55,
+    "top_100": 55,
     "result_type": "Hash",
     "top_100_result": [
-      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+      "8133af5b1961813193c25f613a16ec62af4f1c4227aa79ac1eb7a9ebfb006618"
     ],
     "top_100_count_result": [
-      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+      "8133af5b1961813193c25f613a16ec62af4f1c4227aa79ac1eb7a9ebfb006618"
     ]
   },
   {
     "query": "fn:ngram(1.0 georgia public broadcasting)",
-    "count": 61,
-    "top_100": 61,
+    "count": 229,
+    "top_100": 229,
     "result_type": "Hash",
     "top_100_result": [
-      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+      "fcd5723adc6721e95a76f75f7a40a7aa9ba33d8b20cf6c28483fc6ed1dbeb0bc"
     ],
     "top_100_count_result": [
-      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+      "fcd5723adc6721e95a76f75f7a40a7aa9ba33d8b20cf6c28483fc6ed1dbeb0bc"
     ]
   },
   {
@@ -15877,26 +15877,26 @@
   },
   {
     "query": "fn:ngram(1.0 catholic answers)",
-    "count": 23,
-    "top_100": 23,
+    "count": 417,
+    "top_100": 417,
     "result_type": "Hash",
     "top_100_result": [
-      "28456271d550dfb57ad28840cd85e5f99e027fe87afb4359330ea52a036c0ded"
+      "c9c81f1c9464979b7259347b115965805918def397149ac675a5839a375c8a14"
     ],
     "top_100_count_result": [
-      "28456271d550dfb57ad28840cd85e5f99e027fe87afb4359330ea52a036c0ded"
+      "c9c81f1c9464979b7259347b115965805918def397149ac675a5839a375c8a14"
     ]
   },
   {
     "query": "fn:ngram(1.0 the globe newspaper)",
-    "count": 22,
-    "top_100": 22,
+    "count": 1151,
+    "top_100": 1151,
     "result_type": "Hash",
     "top_100_result": [
-      "f97f848f80de72114fa0e180968cd96a37fe787ad50507de3fd31213f781d758"
+      "856eefb469abcce34aeb4167dcce103ed8c2cef23a71d2fefad3c4962f16d5ce"
     ],
     "top_100_count_result": [
-      "f97f848f80de72114fa0e180968cd96a37fe787ad50507de3fd31213f781d758"
+      "856eefb469abcce34aeb4167dcce103ed8c2cef23a71d2fefad3c4962f16d5ce"
     ]
   },
   {
@@ -15937,26 +15937,26 @@
   },
   {
     "query": "fn:ngram(1.0 green ingersoll)",
-    "count": 11,
-    "top_100": 11,
+    "count": 29,
+    "top_100": 29,
     "result_type": "Hash",
     "top_100_result": [
-      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+      "bea449eeeff6b3f4e1aa7a6092f869d40bd6da5025f4b24f734bc694dab89726"
     ],
     "top_100_count_result": [
-      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+      "bea449eeeff6b3f4e1aa7a6092f869d40bd6da5025f4b24f734bc694dab89726"
     ]
   },
   {
     "query": "fn:ngram(1.0 world bank president)",
-    "count": 57,
-    "top_100": 57,
+    "count": 4112,
+    "top_100": 4112,
     "result_type": "Hash",
     "top_100_result": [
-      "d453e18c36e5ca242f20348bc46769ecabafa4cd83465cf0618f58543811b26e"
+      "2f258da1ca2e846bc4444ce9201f95c8fae80829d26d50792bce7ef4d5c3e323"
     ],
     "top_100_count_result": [
-      "d453e18c36e5ca242f20348bc46769ecabafa4cd83465cf0618f58543811b26e"
+      "2f258da1ca2e846bc4444ce9201f95c8fae80829d26d50792bce7ef4d5c3e323"
     ]
   },
   {

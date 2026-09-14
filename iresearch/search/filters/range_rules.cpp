@@ -21,6 +21,7 @@
 #include "iresearch/search/filters/range_rules.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
 #include <iterator>
@@ -208,9 +209,15 @@ bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
 }
 
 size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
-  const auto tail =
-    std::remove_if(filters.begin(), filters.end(),
-                   [&](const Filter::ptr& child) { return predicate(*child); });
+  auto tail = filters.begin();
+  for (auto it = tail, end = filters.end(); it != end; ++it) {
+    if (!predicate(**it)) {
+      if (tail != it) {
+        std::iter_swap(tail, it);
+      }
+      ++tail;
+    }
+  }
   const auto erased = static_cast<size_t>(std::distance(tail, filters.end()));
   filters.erase(tail, filters.end());
   return erased;
@@ -265,12 +272,73 @@ bool CoveredTerm(std::span<const Filter::ptr> filters,
     filters, [&](const Filter& child) { return CoversTerm(child, clause); });
 }
 
-bool WiderPrefix(const Filter& lhs, const Filter& rhs) noexcept {
-  const auto* wide = AsPrefix(lhs);
-  const auto* narrow = AsPrefix(rhs);
-  return wide != nullptr && narrow != nullptr && FieldOf(lhs) == FieldOf(rhs) &&
-         bytes_view{narrow->term}.starts_with(wide->term);
-}
+class PrefixIndex {
+ public:
+  bool Build(std::span<const Filter::ptr> filters, size_t min_count) {
+    size_t count = 0;
+    for (const auto& child : filters) {
+      count += static_cast<size_t>(AsPrefix(*child) != nullptr);
+    }
+    if (count < min_count) {
+      return false;
+    }
+    _map.reserve(count);
+    for (const auto& child : filters) {
+      if (const auto* prefix = AsPrefix(*child); prefix != nullptr) {
+        _map.try_emplace(Key{FieldOf(*child), prefix->term},
+                         Entry{child.get()});
+      }
+    }
+    for (auto& [key, entry] : _map) {
+      const auto term = key.second;
+      for (size_t size = 0; size < term.size(); ++size) {
+        const auto it = _map.find(Key{key.first, term.substr(0, size)});
+        if (it != _map.end()) {
+          entry.has_wider = true;
+          it->second.has_narrower = true;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool Subsumed(const Filter& child, bool required) const noexcept {
+    const auto* prefix = AsPrefix(child);
+    if (prefix == nullptr) {
+      return false;
+    }
+    const auto it = _map.find(Key{FieldOf(child), prefix->term});
+    SDB_ASSERT(it != _map.end());
+    const auto& entry = it->second;
+    return entry.first != &child ||
+           (required ? entry.has_narrower : entry.has_wider);
+  }
+
+  bool Covers(const Filter& child) const noexcept {
+    const auto* prefix = AsPrefix(child);
+    if (prefix == nullptr) {
+      return false;
+    }
+    const bytes_view term{prefix->term};
+    const auto field = FieldOf(child);
+    for (size_t size = 0; size <= term.size(); ++size) {
+      if (_map.contains(Key{field, term.substr(0, size)})) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  struct Entry {
+    const Filter* first{};
+    bool has_wider{false};
+    bool has_narrower{false};
+  };
+  using Key = std::pair<field_id, bytes_view>;
+
+  absl::flat_hash_map<Key, Entry> _map;
+};
 
 bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
                   bool& empty_node) {
@@ -279,6 +347,8 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
   }
   bool changed = false;
   auto& excluded = node.Bucket(Occur::MustNot);
+  PrefixIndex excluded_index;
+  const bool has_excluded = excluded_index.Build(excluded.filters, 1);
   for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
     if (occur == Occur::Should && node.MinShouldMatch() > 1) {
       continue;
@@ -299,19 +369,25 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
         }
         changed = true;
       }
-      changed |= EraseFilters(bucket.filters, [&](const Filter& child) {
-                   return AnyFilter(excluded.filters, [&](const Filter& other) {
-                     return WiderPrefix(other, child);
-                   });
-                 }) != 0;
+      if (has_excluded &&
+          EraseFilters(bucket.filters, [&](const Filter& child) {
+            return excluded_index.Covers(child);
+          }) != 0) {
+        if (required) {
+          empty_node = true;
+          return true;
+        }
+        changed = true;
+      }
     }
 
     if (required) {
-      for (const auto& clause : bucket.terms) {
-        changed |= EraseFilters(bucket.filters, [&](const Filter& child) {
-                     return CoversTerm(child, clause);
-                   }) != 0;
-      }
+      changed |=
+        EraseFilters(bucket.filters, [&](const Filter& child) {
+          return absl::c_any_of(bucket.terms, [&](const TermClause& clause) {
+            return CoversTerm(child, clause);
+          });
+        }) != 0;
     } else {
       const auto before = bucket.terms.size();
       std::erase_if(bucket.terms, [&](const TermClause& clause) {
@@ -320,15 +396,11 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
       changed |= bucket.terms.size() != before;
     }
 
-    changed |= EraseFilters(bucket.filters, [&](const Filter& child) {
-                 return AnyFilter(bucket.filters, [&](const Filter& other) {
-                   if (&other == &child) {
-                     return false;
-                   }
-                   return required ? WiderPrefix(child, other)
-                                   : WiderPrefix(other, child);
-                 });
-               }) != 0;
+    if (PrefixIndex index; index.Build(bucket.filters, 2)) {
+      changed |= EraseFilters(bucket.filters, [&](const Filter& child) {
+                   return index.Subsumed(child, required);
+                 }) != 0;
+    }
     if (optional) {
       auto& must = node.Bucket(Occur::Must);
       const auto before = bucket.terms.size();

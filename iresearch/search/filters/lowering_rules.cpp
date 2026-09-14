@@ -255,16 +255,13 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     slot = std::move(by_term);
     return true;
   }
-  if (!ScoreDependsOnTerms(node, ctx) && min_match == 1) {
+  if (ScoreIsIgnored(node, ctx) && min_match == 1) {
     auto disjunction_node = std::make_unique<BooleanFilter>();
     for (const auto& ngram : ngrams) {
       disjunction_node->Add(TermClause{.field = node.field_id(), .term = ngram},
                             Occur::Should);
     }
     disjunction_node->SetMinShouldMatch(1);
-    if (ScoreIsConstant(node, ctx)) {
-      disjunction_node->SetMergeType(ScoreMergeType::Max);
-    }
     disjunction_node->SetBoost(node.GetBoost());
     disjunction_node->SetScorer(node.GetScorer());
     slot = std::move(disjunction_node);

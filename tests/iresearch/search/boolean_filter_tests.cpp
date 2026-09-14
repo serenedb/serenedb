@@ -2707,6 +2707,97 @@ TEST(OrSubsume_test, optional_prefixes_keep_the_wider) {
             irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
 }
 
+TEST(CrossSubsume_test, excluded_prefix_kills_a_required_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "ab");
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "a");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(CrossSubsume_test, excluded_prefix_drops_an_optional_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "ab");
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "yy");
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "zz");
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "a");
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  const auto& should = node.Filters(irs::Occur::Should);
+  ASSERT_EQ(2, should.size());
+  EXPECT_EQ(
+    irs::bstring{B("yy")},
+    irs::utils::downCast<irs::ByPrefix>(*should.front()).options().term);
+  EXPECT_EQ(irs::bstring{B("zz")},
+            irs::utils::downCast<irs::ByPrefix>(*should.back()).options().term);
+}
+
+TEST(AndSubsume_test, required_prefix_chain_keeps_the_narrowest) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"ab", "a", "abc"}) {
+    AddPrefix(*root, irs::Occur::Must, kFieldTestField, term);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("abc")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(AndSubsume_test, equal_required_prefixes_keep_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"ab", "a", "ab"}) {
+    AddPrefix(*root, irs::Occur::Must, kFieldTestField, term);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ab")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(OrSubsume_test, optional_prefix_chain_keeps_the_widest) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"ab", "abc", "a"}) {
+    AddPrefix(*root, irs::Occur::Should, kFieldTestField, term);
+  }
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("a")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(OrSubsume_test, equal_optional_prefixes_keep_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"ab", "ab"}) {
+    AddPrefix(*root, irs::Occur::Should, kFieldTestField, term);
+  }
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ab")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
 TEST(AndRangeMerge_test, merges_two_lower_bounds) {
   auto root = std::make_unique<irs::BooleanFilter>();
   {

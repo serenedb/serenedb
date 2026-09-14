@@ -41,7 +41,6 @@
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "pg/sql_exception_macro.h"
-#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -94,19 +93,11 @@ SearchTable::~SearchTable() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  // Shutdown may already have torn the pool down; the removal then waits for
-  // boot's orphan sweep, exactly like a crash between the commit and here.
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    return;
+  if (!lifecycle::IsStopping()) {
+    GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   }
-  GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
-  BackgroundScheduler::instance()
-    .Run([chunk_dir = GetChunkDir(_db_id, _table_id),
-          index_dir = GetPath(_db_id, _schema_id, _table_id)] {
-      RemoveDroppedStorageDir(chunk_dir, 2);
-      RemoveDroppedStorageDir(index_dir, 2);
-    })
-    .Detach();
+  RemoveDroppedStorageDir(GetChunkDir(_db_id, _table_id), 2);
+  RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
 }
 
 void SearchTable::OpenWriter() {

@@ -396,7 +396,7 @@ PublishedInvertedIndex PublishInvertedIndex(
   const auto options = catalog::ResolveSettings(entry.options);
   auto storage = search::InvertedIndexStorage::Create(
     entry.catalog.GetOid(), entry.schema.oid, relation.oid, entry.oid, options,
-    entry.TopKScorer(context), /*is_new=*/true);
+    entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);
   auto* table = dynamic_cast<duckdb::DuckTableEntry*>(&relation);

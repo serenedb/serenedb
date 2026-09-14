@@ -74,8 +74,8 @@ struct WalCursor {
 
 // Removes a dropped storage's directory tree, then up to `parent_levels`
 // ancestors that emptied out with it -- a still-populated ancestor stops the
-// walk. A failed removal is only logged: boot's orphan sweep reclaims whatever
-// is left, because a dropped object's ids are never reissued.
+// walk. A failed removal is only logged, because a dropped object's ids are
+// never reissued.
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels);
 

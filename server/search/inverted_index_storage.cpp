@@ -45,7 +45,6 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
@@ -53,7 +52,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
-#include "scheduler/background_scheduler.h"
 #include "search/scorer_options.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
@@ -320,17 +318,9 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
-  if (!_dropped.load(std::memory_order_acquire)) {
-    return;
+  if (_dropped.load(std::memory_order_acquire)) {
+    RemoveDroppedStorageDir(_path, 3);
   }
-  // Shutdown may already have torn the pool down; the removal then waits for
-  // boot's orphan sweep, exactly like a crash between the commit and here.
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    return;
-  }
-  BackgroundScheduler::instance()
-    .Run([path = _path] { RemoveDroppedStorageDir(path, 3); })
-    .Detach();
 }
 
 void InvertedIndexStorage::ApplyOptions(

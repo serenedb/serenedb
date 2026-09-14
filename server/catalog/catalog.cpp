@@ -76,6 +76,7 @@
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
+#include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
 namespace sdb::catalog {
@@ -112,10 +113,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         info.dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
-      auto storage = search::SearchTable::Create(
-        GetOid(), schema.oid, entry->oid, true, entry->Options());
-      storage->StartTasks();
-      entry->AdoptStorage(std::move(storage));
+      entry->Storage()->StartTasks();
     }
     return std::move(entry);
   }
@@ -126,10 +124,17 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
   duckdb::TableCatalogEntry& table) {
-  if (info.index_type == kInvertedIndexTypeName) {
-    return duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, &table);
+  if (info.index_type != kInvertedIndexTypeName) {
+    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, table);
   }
-  return duckdb::DuckCatalog::MakeIndexEntry(schema, info, table);
+  auto entry =
+    duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, &table);
+  if (info.oid != 0) {
+    entry->AdoptStorage(search::InvertedIndexStorage::Create(
+      GetOid(), schema.oid, table.oid, entry->oid,
+      ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
+  }
+  return std::move(entry);
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
@@ -243,12 +248,48 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
-  if (table.type != duckdb::CatalogType::VIEW_ENTRY) {
-    return duckdb::DuckCatalog::BindCreateIndex(binder, stmt, table,
-                                                std::move(plan));
+  auto& info = stmt.info->Cast<duckdb::CreateIndexInfo>();
+  const bool inverted = info.index_type == kInvertedIndexTypeName;
+  const auto unknown =
+    absl::c_find_if_not(info.options, [&](const auto& option) {
+      return inverted && IsKnownInvertedIndexOption(option.first);
+    });
+  if (unknown != info.options.end()) {
+    throw duckdb::BinderException("unrecognized parameter \"%s\"",
+                                  unknown->first);
   }
-  return connector::BindCreateIndexOnView(
-    binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
+  if (inverted) {
+    BindInvertedIndexOptions(binder.context, info.options);
+  }
+  for (const auto& opclass : info.column_opclasses) {
+    if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind) {
+      continue;
+    }
+    const duckdb::EntryLookupInfo dictionary{
+      duckdb::CatalogType::TOKENIZER_ENTRY,
+      duckdb::QualifiedName::Parse(opclass)};
+    auto entry = duckdb::Catalog::GetEntry(
+      binder.context, dictionary, duckdb::OnEntryNotFound::RETURN_NULL);
+    if (entry && &entry->ParentCatalog() == this) {
+      info.dependencies.AddDependency(*entry);
+    }
+  }
+  if (table.type == duckdb::CatalogType::VIEW_ENTRY) {
+    return connector::BindCreateIndexOnView(
+      binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
+  }
+  if (!table.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+    throw duckdb::BinderException(
+      "CREATE INDEX on a search-backed table is not yet supported");
+  }
+  auto& scan = plan->Cast<duckdb::LogicalGet>()
+                 .bind_data->Cast<duckdb::TableScanBindData>();
+  auto result =
+    duckdb::DuckCatalog::BindCreateIndex(binder, stmt, table, std::move(plan));
+  if (inverted) {
+    scan.is_create_index = false;
+  }
+  return result;
 }
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
@@ -323,6 +364,20 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   duckdb::CreateForeignServerInfo& info) {
   DeclareModified(transaction, *this);
   return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+}
+
+void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
+                            duckdb::AlterInfo& info) {
+  const auto type = info.GetCatalogType();
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+    duckdb::DuckCatalog::Alter(transaction, info);
+    return;
+  }
+  DeclareModified(transaction, *this);
+  const auto& name = info.GetQualifiedName().Name();
+  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
+    throw duckdb::CatalogException::MissingEntry(type, name, std::string{});
+  }
 }
 
 void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,

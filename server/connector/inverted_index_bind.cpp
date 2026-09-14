@@ -1027,6 +1027,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   auto config = std::make_shared<InvertedIndexConfig>();
   config->row_group_size =
     catalog::ResolveSettings(entry.options).row_group_size;
+  config->top_k_scorer = catalog::TopKScorer(context, entry.options);
   config->pk = ResolvePkPolicy(
     entry.options, table_backed,
     table_backed || generated_pk_type.id() != duckdb::LogicalTypeId::INVALID,

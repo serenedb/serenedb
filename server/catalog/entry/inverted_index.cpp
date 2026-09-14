@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_split.h>
@@ -31,12 +31,21 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <string>
 
 #include "basics/serializer.h"
+#include "catalog/catalog.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
+#include "query/config.h"
+#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 
@@ -81,7 +90,7 @@ const duckdb::Value* FindOption(
 std::string TopKScorerOption(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   const auto* value = FindOption(options, kTopKScorerOption);
-  if (value == nullptr || value->IsNull()) {
+  if (!value || value->IsNull()) {
     return {};
   }
   return value->DefaultCastAs(duckdb::LogicalType::VARCHAR)
@@ -89,28 +98,27 @@ std::string TopKScorerOption(
 }
 
 std::shared_ptr<const InvertedIndexConfig> FromPersisted(
-  persistence::InvertedIndexData data) {
+  persistence::InvertedIndexData data,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   auto config = std::make_shared<InvertedIndexConfig>();
-  config->row_group_size = data.settings.row_group_size;
-  config->settings = data.settings;
+  config->row_group_size = ResolveSettings(options).row_group_size;
   config->pk = data.pk;
   config->fields.reserve(data.fields.size());
   for (auto& [field_id, record] : data.fields) {
-    config->fields.emplace(
-      field_id, InvertedIndexField{
-                  .numeric_field_id = record.numeric_field_id,
-                  .bool_field_id = record.bool_field_id,
-                  .null_field_id = record.null_field_id,
-                  .synthetic_column = record.synthetic_column,
-                  .features = record.features,
-                  .store_values = record.store_values,
-                  .indexed_term_dict = record.indexed_term_dict,
-                  .whole_value = record.whole_value,
-                  .is_keyword = record.is_keyword,
-                  .column_options = record.column_options,
-                  .text_dictionary =
-                    duckdb::Identifier{std::move(record.text_dictionary)},
-                });
+    config->fields.emplace(field_id,
+                           InvertedIndexField{
+                             .numeric_field_id = record.numeric_field_id,
+                             .bool_field_id = record.bool_field_id,
+                             .null_field_id = record.null_field_id,
+                             .synthetic_column = record.synthetic_column,
+                             .features = record.features,
+                             .store_values = record.store_values,
+                             .indexed_term_dict = record.indexed_term_dict,
+                             .whole_value = record.whole_value,
+                             .is_keyword = record.is_keyword,
+                             .column_options = record.column_options,
+                             .text_dictionary = record.text_dictionary,
+                           });
   }
   config->keys.reserve(data.keys.size());
   for (auto& record : data.keys) {
@@ -142,7 +150,70 @@ const InvertedIndexKey* FindKey(const InvertedIndexConfig& config,
   return it == config.keys.end() ? nullptr : &*it;
 }
 
+constexpr auto kCreateOnlyOptions = std::to_array({
+  kRowGroupSizeSetting,
+  std::string_view{"store_pk"},
+  kKeyColumnsOption,
+  kTopKScorerOption,
+  kPayloadOption,
+});
+
+void RequireAlterableOption(std::string_view name) {
+  if (absl::c_contains(kCreateOnlyOptions, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("option \"", name, "\" cannot be changed with ALTER INDEX"));
+  }
+  if (!absl::c_contains(kInvertedIndexSettings, name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"", name, "\""));
+  }
+}
+
 }  // namespace
+
+bool IsKnownInvertedIndexOption(std::string_view name) {
+  return absl::c_contains(kInvertedIndexSettings, name) ||
+         absl::c_contains(kCreateOnlyOptions, name);
+}
+
+void BindInvertedIndexOptions(
+  duckdb::ClientContext& context,
+  duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  for (const auto name : kInvertedIndexSettings) {
+    const auto it = options.find(name);
+    if (it == options.end()) {
+      context.TryGetCurrentSetting(std::string{name},
+                                   options[std::string{name}]);
+    } else {
+      it->second = connector::ValidateSetting(context, name, it->second);
+    }
+  }
+}
+
+InvertedIndexSettings ResolveSettings(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  const auto get = [&](std::string_view name) -> const duckdb::Value& {
+    return options.find(name)->second;
+  };
+  return {
+    .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
+    .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
+    .reindex_interval_ms = get(kReindexIntervalSetting).GetValue<uint32_t>(),
+    .compaction_interval_ms =
+      get(kCompactionIntervalSetting).GetValue<uint32_t>(),
+    .cleanup_interval_step =
+      get(kCleanupIntervalStepSetting).GetValue<uint32_t>(),
+    .segment_memory_max = get(kSegmentMemoryMaxSetting).GetValue<uint64_t>(),
+    .segment_docs_max = get(kSegmentDocsMaxSetting).GetValue<uint32_t>(),
+    .compaction_max_segments =
+      get(kCompactionMaxSegmentsSetting).GetValue<uint32_t>(),
+    .compaction_max_segments_bytes =
+      get(kCompactionMaxSegmentsBytesSetting).GetValue<uint64_t>(),
+    .compaction_floor_segment_bytes =
+      get(kCompactionFloorSegmentBytesSetting).GetValue<uint64_t>(),
+  };
+}
 
 std::vector<std::string> ParseKeyColumns(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
@@ -163,15 +234,6 @@ std::vector<std::string> ParseKeyColumns(
     cols.emplace_back(absl::StripAsciiWhitespace(part));
   }
   return cols;
-}
-
-duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassDict(
-  duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
-  std::string_view opclass) {
-  auto found =
-    schema.GetEntry(transaction, duckdb::CatalogType::TOKENIZER_ENTRY,
-                    duckdb::Identifier{std::string{opclass}});
-  return found ? &found->Cast<TokenizerCatalogEntry>() : nullptr;
 }
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
@@ -196,14 +258,15 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
-IndexTokenizers::IndexTokenizers(duckdb::CatalogTransaction transaction,
-                                 duckdb::SchemaCatalogEntry& schema,
+IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
+                                 duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config) {
+  auto& serene = catalog.Cast<SereneDBCatalog>();
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict = ResolveOpclassDict(
-        transaction, schema, field.text_dictionary.GetIdentifierName());
+      const auto dict =
+        serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
       if (!dict) {
         continue;
       }
@@ -255,11 +318,6 @@ const InvertedIndexField* InvertedIndexConfig::FindEntry(
   return it == fields.end() ? nullptr : &it->second;
 }
 
-const InvertedIndexField* InvertedIndexConfig::FindColumnInfo(
-  irs::field_id column_id) const noexcept {
-  return LookupField(column_id).entry;
-}
-
 InvertedIndexFieldLookup InvertedIndexConfig::LookupField(
   irs::field_id field_id) const noexcept {
   if (const auto* own = FindEntry(field_id)) {
@@ -279,7 +337,7 @@ InvertedIndexFieldLookup InvertedIndexConfig::LookupField(
 bool InvertedIndexConfig::IsKeywordField(
   irs::field_id field_id) const noexcept {
   const auto lookup = LookupField(field_id);
-  if (lookup.entry == nullptr || !lookup.entry->IsTermDict()) {
+  if (!lookup.entry || !lookup.entry->IsTermDict()) {
     return false;
   }
   return !lookup.entry->HasTextDictionary() || lookup.entry->is_keyword;
@@ -289,11 +347,6 @@ duckdb::LogicalType InvertedIndexConfig::ExpressionType(
   irs::field_id field_id) const noexcept {
   const auto* key = FindKey(*this, field_id);
   return key ? key->type : duckdb::LogicalType::INVALID;
-}
-
-IndexTokenizers InvertedIndexEntry::ResolveTokenizers(
-  duckdb::ClientContext& context) const {
-  return {catalog.GetCatalogTransaction(context), schema, *_config};
 }
 
 std::string InvertedIndexEntry::ExpressionText(irs::field_id field_id) const {
@@ -316,8 +369,7 @@ std::optional<ScorerOptions> InvertedIndexEntry::TopKScorer(
 }
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
-  persistence::InvertedIndexData data{.settings = _config->settings,
-                                      .pk = _config->pk};
+  persistence::InvertedIndexData data{.pk = _config->pk};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
     data.keys.push_back({
@@ -328,20 +380,20 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   }
   data.fields.reserve(_config->fields.size());
   for (const auto& [field_id, field] : _config->fields) {
-    data.fields.emplace(
-      field_id, persistence::FieldRecord{
-                  .numeric_field_id = field.numeric_field_id,
-                  .bool_field_id = field.bool_field_id,
-                  .null_field_id = field.null_field_id,
-                  .synthetic_column = field.synthetic_column,
-                  .features = field.features,
-                  .store_values = field.store_values,
-                  .indexed_term_dict = field.indexed_term_dict,
-                  .whole_value = field.whole_value,
-                  .is_keyword = field.is_keyword,
-                  .column_options = field.column_options,
-                  .text_dictionary = field.text_dictionary.GetIdentifierName(),
-                });
+    data.fields.emplace(field_id,
+                        persistence::FieldRecord{
+                          .numeric_field_id = field.numeric_field_id,
+                          .bool_field_id = field.bool_field_id,
+                          .null_field_id = field.null_field_id,
+                          .synthetic_column = field.synthetic_column,
+                          .features = field.features,
+                          .store_values = field.store_values,
+                          .indexed_term_dict = field.indexed_term_dict,
+                          .whole_value = field.whole_value,
+                          .is_keyword = field.is_keyword,
+                          .column_options = field.column_options,
+                          .text_dictionary = field.text_dictionary,
+                        });
   }
   return data;
 }
@@ -353,7 +405,7 @@ InvertedIndexEntry::InvertedIndexEntry(
   : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table, info)},
     _relation_name{info.table} {
   if (auto data = Unpack(info.options)) {
-    _config = FromPersisted(std::move(*data));
+    _config = FromPersisted(std::move(*data), options);
     options.erase(std::string{kPayloadOption});
   }
 }
@@ -372,8 +424,45 @@ duckdb::Identifier InvertedIndexEntry::GetTableName() const {
   return duckdb::DuckIndexEntry::GetTableName();
 }
 
-duckdb::Identifier InvertedIndexEntry::GetSchemaName() const {
-  return schema.name;
+duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
+  duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
+  if (info.type != duckdb::AlterType::ALTER_INDEX) {
+    return duckdb::CatalogEntry::AlterEntry(transaction, info);
+  }
+  auto& index_alter = info.Cast<duckdb::AlterIndexInfo>();
+  auto info_copy = GetInfo();
+  auto& index_info = info_copy->Cast<duckdb::CreateIndexInfo>();
+  auto& context = transaction.GetContext();
+  switch (index_alter.alter_index_type) {
+    case duckdb::AlterIndexType::SET_INDEX_OPTIONS:
+      for (const auto& [name, value] :
+           index_alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
+        RequireAlterableOption(name);
+        index_info.options[name] =
+          connector::ValidateSetting(context, name, value);
+      }
+      break;
+    case duckdb::AlterIndexType::RESET_INDEX_OPTIONS:
+      for (const auto& identifier :
+           index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
+        const auto& name = identifier.GetIdentifierName();
+        RequireAlterableOption(name);
+        context.TryGetCurrentSetting(name, index_info.options[name]);
+      }
+      break;
+    default:
+      return duckdb::CatalogEntry::AlterEntry(transaction, info);
+  }
+  auto result =
+    duckdb::make_uniq<InvertedIndexEntry>(catalog, schema, index_info, nullptr);
+  result->info = this->info;
+  result->initial_index_size = initial_index_size;
+  result->_storage = _storage;
+  result->_relation_name = _relation_name;
+  if (_storage) {
+    _storage->ApplyOptions(ResolveSettings(result->options));
+  }
+  return std::move(result);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
@@ -388,6 +477,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   result->_config = _config;
   result->_relation_name = _relation_name;
   return std::move(result);
+}
+
+void InvertedIndexEntry::OnDrop() {
+  if (_storage) {
+    _storage->MarkDropped();
+  }
 }
 
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {

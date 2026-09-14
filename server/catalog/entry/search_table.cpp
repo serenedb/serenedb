@@ -24,10 +24,8 @@
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/string_util.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -37,12 +35,11 @@
 #include <duckdb/storage/table_storage_info.hpp>
 #include <utility>
 
-#include "basics/serializer.h"
 #include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/primary_key.h"
-#include "connector/with_option_resolver.h"
+#include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/search_table.h"
 
@@ -65,48 +62,28 @@ duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
   return &it->second->Cast<duckdb::ConstantExpression>();
 }
 
-std::optional<SearchTableOptions> Unpack(const WithOptions& options) {
-  const auto payload = FindConstant(options, kPayloadOption);
-  if (!payload) {
-    return std::nullopt;
-  }
-  const auto& bytes = duckdb::StringValue::Get(payload->GetValue());
-  duckdb::MemoryStream stream{
-    const_cast<duckdb::data_ptr_t>(
-      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
-    bytes.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  SearchTableOptions result;
-  basics::ReadTuple(deserializer, result);
-  return result;
-}
-
-duckdb::unique_ptr<duckdb::ParsedExpression> Pack(
-  const SearchTableOptions& options) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  basics::WriteTuple(serializer, options);
-  return duckdb::make_uniq<duckdb::ConstantExpression>(
-    duckdb::Value::BLOB(stream.GetData(), stream.GetPosition()));
-}
-
-SearchTableOptions ResolveOptions(
-  duckdb::optional_ptr<duckdb::ClientContext> context,
-  const WithOptions& options) {
-  SearchTableOptions result;
-  const auto resolve = [&](std::string_view key, uint32_t& out) {
-    if (const auto value = FindConstant(options, key)) {
-      out = value->GetValue()
-              .DefaultCastAs(duckdb::LogicalType::UINTEGER)
-              .GetValue<uint32_t>();
-    } else if (context) {
-      out = connector::ResolveUintWithOption(*context, key, nullptr);
+void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
+  for (const auto name : kSearchTableSettings) {
+    duckdb::Value value;
+    if (const auto constant = FindConstant(options, name)) {
+      value = connector::ValidateSetting(context, name, constant->GetValue());
+    } else {
+      context.TryGetCurrentSetting(std::string{name}, value);
     }
+    options[std::string{name}] =
+      duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+  }
+}
+
+SearchTableOptions ResolveOptions(const WithOptions& options) {
+  const auto get = [&](std::string_view name) {
+    return FindConstant(options, name)->GetValue().GetValue<uint32_t>();
   };
-  resolve(kRefreshIntervalSetting, result.refresh_interval_ms);
-  resolve(kCompactionIntervalSetting, result.compaction_interval_ms);
-  resolve(kCleanupIntervalStepSetting, result.cleanup_interval_step);
-  return result;
+  return {
+    .refresh_interval_ms = get(kRefreshIntervalSetting),
+    .compaction_interval_ms = get(kCompactionIntervalSetting),
+    .cleanup_interval_step = get(kCleanupIntervalStepSetting),
+  };
 }
 
 }  // namespace
@@ -149,11 +126,10 @@ SearchTableEntry::SearchTableEntry(
   comment = base.comment;
   tags = base.tags;
   dependencies = info.dependencies;
-  if (auto persisted = Unpack(base.options)) {
-    _options = std::move(*persisted);
-  } else {
-    _options = ResolveOptions(transaction.context, base.options);
+  if (base.oid == 0) {
+    BindOptions(*transaction.context, base.options);
   }
+  _options = ResolveOptions(base.options);
 }
 
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
@@ -234,18 +210,18 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
-  options[std::string{kStorageOption}] =
-    duckdb::make_uniq<duckdb::ConstantExpression>(
-      duckdb::Value{std::string{kEngineSearch}});
-  options[std::string{kPayloadOption}] = Pack(_options);
+  const auto set = [&](std::string_view name, duckdb::Value value) {
+    options[std::string{name}] =
+      duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+  };
+  set(kStorageOption, duckdb::Value{std::string{kEngineSearch}});
+  set(kRefreshIntervalSetting,
+      duckdb::Value::UINTEGER(_options.refresh_interval_ms));
+  set(kCompactionIntervalSetting,
+      duckdb::Value::UINTEGER(_options.compaction_interval_ms));
+  set(kCleanupIntervalStepSetting,
+      duckdb::Value::UINTEGER(_options.cleanup_interval_step));
   return info;
-}
-
-std::string SearchTableEntry::ToSQL() const {
-  auto info = GetInfo();
-  info->Cast<duckdb::CreateTableInfo>().options.erase(
-    std::string{kPayloadOption});
-  return info->ToString();
 }
 
 duckdb::TableFunction SearchTableEntry::GetScanFunction(

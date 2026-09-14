@@ -55,7 +55,6 @@
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
-#include "connector/with_option_resolver.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
@@ -66,7 +65,6 @@ namespace {
 using catalog::InvertedIndexConfig;
 using catalog::InvertedIndexFields;
 using catalog::InvertedIndexKey;
-using catalog::InvertedIndexSettings;
 using catalog::PkColumnKind;
 using catalog::PkPolicy;
 using catalog::TokenizerCatalogEntry;
@@ -832,47 +830,6 @@ constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
   return kExpressionFieldBase + key * kExpressionFieldStride;
 }
 
-// Omitted options resolve from the session settings (validated on SET).
-InvertedIndexSettings ResolveSettings(
-  duckdb::ClientContext& context,
-  const duckdb::case_insensitive_map_t<duckdb::Value>& with,
-  bool table_backed) {
-  auto resolve_uint = [&](std::string_view name) -> uint32_t {
-    if (const auto* v = FindOption(with, name)) {
-      return static_cast<uint32_t>(
-        catalog::ValidateInvertedIndexOption(name, *v));
-    }
-    return connector::ResolveUintWithOption(context, name, nullptr);
-  };
-  auto resolve_ubigint = [&](std::string_view name) -> uint64_t {
-    if (const auto* v = FindOption(with, name)) {
-      return catalog::ValidateInvertedIndexOption(name, *v);
-    }
-    return connector::ResolveUbigintWithOption(context, name, nullptr);
-  };
-
-  // On a table-backed index an explicit WITH is an error, and an inherited
-  // session default is dropped (never persisted, never ticks).
-  if (FindOption(with, kReindexIntervalSetting)) {
-    catalog::RequireViewBackedOption(table_backed, kReindexIntervalSetting);
-  }
-  return {
-    .row_group_size = resolve_uint(kRowGroupSizeSetting),
-    .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
-    .reindex_interval_ms =
-      table_backed ? 0 : resolve_uint(kReindexIntervalSetting),
-    .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
-    .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
-    .segment_memory_max = resolve_ubigint(kSegmentMemoryMaxSetting),
-    .segment_docs_max = resolve_uint(kSegmentDocsMaxSetting),
-    .compaction_max_segments = resolve_uint(kCompactionMaxSegmentsSetting),
-    .compaction_max_segments_bytes =
-      resolve_ubigint(kCompactionMaxSegmentsBytesSetting),
-    .compaction_floor_segment_bytes =
-      resolve_ubigint(kCompactionFloorSegmentBytesSetting),
-  };
-}
-
 // `store_pk` is checked against the key shape the index will actually have.
 PkPolicy ResolvePkPolicy(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
@@ -1068,8 +1025,8 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const bool table_backed =
     dynamic_cast<const duckdb::TableCatalogEntry*>(&relation) != nullptr;
   auto config = std::make_shared<InvertedIndexConfig>();
-  config->settings = ResolveSettings(context, entry.options, table_backed);
-  config->row_group_size = config->settings.row_group_size;
+  config->row_group_size =
+    catalog::ResolveSettings(entry.options).row_group_size;
   config->pk = ResolvePkPolicy(
     entry.options, table_backed,
     table_backed || generated_pk_type.id() != duckdb::LogicalTypeId::INVALID,

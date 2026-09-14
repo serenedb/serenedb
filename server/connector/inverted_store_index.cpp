@@ -38,8 +38,8 @@
 
 #include "basics/assert.h"
 #include "basics/primary_key.hpp"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -115,20 +115,20 @@ InvertedStoreIndex::InvertedStoreIndex(
   duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
   std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const InvertedIndexConfig> config,
-  catalog::IndexTokenizers tokenizers)
+  catalog::IndexTokenizers tokenizers, bool has_predicate)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
                input.table_io_manager, input.unbound_expressions, input.db),
     _index_id{index_id},
     _storage{std::move(storage)},
     _config{std::move(config)},
-    _tokenizers{std::move(tokenizers)} {
+    _tokenizers{std::move(tokenizers)},
+    _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
 }
 
 InvertedStoreIndex::~InvertedStoreIndex() = default;
 
 irs::IndexWriter::Transaction InvertedStoreIndex::NewTransaction() {
-  SDB_ENSURE(_storage, "inverted index ", _index_id, ": storage missing");
   auto trx = _storage->GetTransaction();
   trx.SetFieldOptions(_config);
   return trx;
@@ -160,7 +160,7 @@ void InvertedStoreIndex::WriteChunk(DuckDBSearchSinkInsertWriter& writer,
   }
   duckdb::SelectionVector sel;
   auto count = total;
-  if (bound_expressions.size() > keys.size()) {
+  if (_has_predicate) {
     sel.Initialize(total);
     count = SelectRows(results.data.back(), total, sel);
   }
@@ -219,10 +219,6 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
   return *_replay;
 }
 
-void InvertedStoreIndex::OnReplayRange(duckdb::idx_t commit_offset) {
-  _replay_commit_offset = commit_offset;
-}
-
 void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
                                       duckdb::Vector& row_ids) {
   auto& session = EnsureReplaySession();
@@ -279,24 +275,11 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     ReplayAppend(chunk, row_ids);
     return {};
   }
-  SDB_ENSURE(_storage, "inverted index ", _index_id, ": storage missing");
   auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
   const auto writer = MakeInsertWriter(trx);
   WriteChunk(*writer, trx, chunk, row_ids);
   conn->RegisterSearchFlush();
   return {};
-}
-
-duckdb::ErrorData InvertedStoreIndex::Append(duckdb::IndexLock&,
-                                             duckdb::DataChunk& chunk,
-                                             duckdb::Vector& row_ids) {
-  return AppendImpl(chunk, row_ids);
-}
-
-duckdb::ErrorData InvertedStoreIndex::Insert(duckdb::IndexLock&,
-                                             duckdb::DataChunk& chunk,
-                                             duckdb::Vector& row_ids) {
-  return AppendImpl(chunk, row_ids);
 }
 
 void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
@@ -319,7 +302,6 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
               "the index first or recreate it without store_pk = "
               "'none'"));
   }
-  SDB_ENSURE(_storage, "inverted index ", _index_id, ": storage missing");
   auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
   const auto remove = [&](size_t n, auto&& row_at) {
     DuckDBSearchSinkDeleteWriter writer{trx};
@@ -368,15 +350,6 @@ idx_t InvertedStoreIndex::TryDelete(
   return chunk.size();
 }
 
-std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
-  return "inverted store index";
-}
-
-std::string InvertedStoreIndex::GetConstraintViolationMessage(
-  duckdb::VerifyExistenceType, idx_t, duckdb::DataChunk&) {
-  return "inverted store index constraint violation";
-}
-
 duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   duckdb::CreateIndexInput& input) {
   // Everything this needs is in the record duckdb read back: the id names the
@@ -390,16 +363,15 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   SDB_ENSURE(index_entry.Storage());
   return duckdb::make_uniq<InvertedStoreIndex>(
     input, index_id, index_entry.Storage(), index_entry.Config(),
-    index_entry.ResolveTokenizers(input.context));
+    index_entry.ResolveTokenizers(input.context),
+    static_cast<bool>(index_entry.where_clause));
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
   duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
-  if (_storage) {
-    SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
-               " is out of sync with its store table; refusing to checkpoint");
-    _storage->CheckpointRefresh();
-  }
+  SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
+             " is out of sync with its store table; refusing to checkpoint");
+  _storage->CheckpointRefresh();
   return StorageRecord(*this);
 }
 
@@ -417,11 +389,11 @@ duckdb::IndexType InvertedStoreIndex::GetInvertedIndexType() {
   return type;
 }
 
-std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
+PublishedInvertedIndex PublishInvertedIndex(
   duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs) {
-  const auto& options = entry.Config()->settings;
+  const auto options = catalog::ResolveSettings(entry.options);
   auto storage = search::InvertedIndexStorage::Create(
     entry.catalog.GetOid(), entry.schema.oid, relation.oid, entry.oid, options,
     entry.TopKScorer(context), /*is_new=*/true);
@@ -429,7 +401,7 @@ std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
   entry.AdoptStorage(storage);
   auto* table = dynamic_cast<duckdb::DuckTableEntry*>(&relation);
   if (table == nullptr) {
-    return storage;
+    return {std::move(storage), 0};
   }
   auto& data = table->GetStorage();
   duckdb::CreateIndexInput input{
@@ -438,11 +410,12 @@ std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
     entry.name,   entry.column_ids,
     bound_exprs,  duckdb::IndexStorageInfo{entry.name},
     entry.options};
-  data.GetDataTableInfo()->GetIndexes().AddIndex(
-    duckdb::make_uniq<InvertedStoreIndex>(input, entry.oid, storage,
-                                          entry.Config(),
-                                          entry.ResolveTokenizers(context)));
-  return storage;
+  auto index = duckdb::make_uniq<InvertedStoreIndex>(
+    input, entry.oid, storage, entry.Config(), entry.ResolveTokenizers(context),
+    static_cast<bool>(entry.where_clause));
+  auto publish_lock = data.GetCheckpointLock();
+  data.GetDataTableInfo()->GetIndexes().AddIndex(std::move(index));
+  return {std::move(storage), data.GetNextRowId()};
 }
 
 }  // namespace sdb::connector

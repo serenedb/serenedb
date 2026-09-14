@@ -40,6 +40,8 @@ std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
                      stream.GetPosition()};
 }
 
+namespace {
+
 irs::analysis::TokenizerConfig UnpackTokenizerConfig(const std::string& bytes) {
   duckdb::MemoryStream stream{
     const_cast<duckdb::data_ptr_t>(
@@ -50,6 +52,8 @@ irs::analysis::TokenizerConfig UnpackTokenizerConfig(const std::string& bytes) {
   basics::ReadTuple(deserializer, config);
   return config;
 }
+
+}  // namespace
 
 TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              duckdb::SchemaCatalogEntry& schema,

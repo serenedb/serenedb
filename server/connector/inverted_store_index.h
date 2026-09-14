@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_index_utils.h"
 #include "search/inverted_index_storage.h"
 
@@ -64,13 +64,17 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   InvertedStoreIndex(duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
                      std::shared_ptr<search::InvertedIndexStorage> storage,
                      std::shared_ptr<const InvertedIndexConfig> config,
-                     catalog::IndexTokenizers tokenizers);
+                     catalog::IndexTokenizers tokenizers, bool has_predicate);
   ~InvertedStoreIndex() override;
 
-  duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
-                           duckdb::Vector& row_ids) override;
-  duckdb::ErrorData Insert(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
-                           duckdb::Vector& row_ids) override;
+  duckdb::ErrorData Append(duckdb::IndexLock&, duckdb::DataChunk& chunk,
+                           duckdb::Vector& row_ids) override {
+    return AppendImpl(chunk, row_ids);
+  }
+  duckdb::ErrorData Insert(duckdb::IndexLock&, duckdb::DataChunk& chunk,
+                           duckdb::Vector& row_ids) override {
+    return AppendImpl(chunk, row_ids);
+  }
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
               duckdb::Vector& row_ids) override;
   duckdb::idx_t TryDelete(
@@ -78,7 +82,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
 
-  void OnReplayRange(duckdb::idx_t commit_offset) override;
+  void OnReplayRange(duckdb::idx_t commit_offset) override {
+    _replay_commit_offset = commit_offset;
+  }
   void FinishReplay() override;
 
   duckdb::IndexStorageInfo SerializeToDisk(
@@ -94,12 +100,16 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   void Vacuum(duckdb::IndexLock&) override {}
   duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) override { return 0; }
   void Verify(duckdb::IndexLock&) override {}
-  std::string ToString(duckdb::IndexLock&, bool) override;
+  std::string ToString(duckdb::IndexLock&, bool) override {
+    return "inverted store index";
+  }
   void VerifyAllocations(duckdb::IndexLock&) override {}
   void VerifyBuffers(duckdb::IndexLock&) override {}
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
                                             duckdb::idx_t,
-                                            duckdb::DataChunk&) override;
+                                            duckdb::DataChunk&) override {
+    return "inverted store index constraint violation";
+  }
 
  public:
   const auto& Storage() const noexcept { return _storage; }
@@ -128,12 +138,18 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
+  bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;
   duckdb::idx_t _replay_commit_offset = 0;
 };
 
-std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
+struct PublishedInvertedIndex {
+  std::shared_ptr<search::InvertedIndexStorage> storage;
+  duckdb::idx_t rowid_horizon = 0;
+};
+
+PublishedInvertedIndex PublishInvertedIndex(
   duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs);

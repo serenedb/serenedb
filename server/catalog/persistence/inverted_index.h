@@ -79,7 +79,6 @@ struct FieldRecord {
 };
 
 struct InvertedIndexData {
-  InvertedIndexSettings settings;
   PkPolicy pk;
   std::vector<KeyRecord> keys;
   containers::NodeHashMap<irs::field_id, FieldRecord> fields;

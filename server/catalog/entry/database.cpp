@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/database.h"
+#include "catalog/entry/database.h"
 
 #include <duckdb/catalog/catalog.hpp>
 #include <utility>
 
-#include "catalog1/boot.h"
+#include "catalog/boot.h"
 
 namespace sdb::catalog {
 
@@ -51,12 +51,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
     catalog, info->Cast<duckdb::CreateDatabaseInfo>());
 }
 
-std::string DatabaseCatalogEntry::ToSQL() const {
-  return GetInfo()->ToString();
+DatabaseCatalogEntry::~DatabaseCatalogEntry() {
+  if (_dropped) {
+    RemoveDatabaseFiles(catalog.GetAttached(), oid);
+  }
 }
 
-void DatabaseCatalogEntry::OnDrop() {
-  RemoveDatabaseFiles(catalog.GetAttached(), oid);
+void DatabaseCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
+  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+    RemoveDatabaseFiles(catalog.GetAttached(), oid);
+  }
 }
 
 }  // namespace sdb::catalog

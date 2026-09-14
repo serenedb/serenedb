@@ -52,7 +52,6 @@
 #include "pg/pg_types.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
-#include "query/config_variable_names.h"
 
 namespace sdb::pg {
 namespace {
@@ -132,31 +131,6 @@ PgClass MakeBaseRow(duckdb::idx_t schema_id, duckdb::idx_t oid,
     .relfrozenxid = 0,
     .relminmxid = 0,
   };
-}
-
-// reloptions: the persisted storage parameters as a text[] of k=v. Options
-// always hold concrete values (resolved from WITH / session settings when
-// they were set), so every option is rendered; segment_docs_max=0 means
-// unlimited.
-std::vector<std::string> RenderInvertedIndexSettings(
-  const catalog::InvertedIndexSettings& options) {
-  std::vector<std::string> rendered;
-  const auto add = [&](std::string_view name, uint64_t value) {
-    rendered.push_back(absl::StrCat(name, "=", value));
-  };
-  add(kRowGroupSizeSetting, options.row_group_size);
-  add(kRefreshIntervalSetting, options.refresh_interval_ms);
-  add(kReindexIntervalSetting, options.reindex_interval_ms);
-  add(kCompactionIntervalSetting, options.compaction_interval_ms);
-  add(kCleanupIntervalStepSetting, options.cleanup_interval_step);
-  add(kSegmentMemoryMaxSetting, options.segment_memory_max);
-  add(kSegmentDocsMaxSetting, options.segment_docs_max);
-  add(kCompactionMaxSegmentsSetting, options.compaction_max_segments);
-  add(kCompactionMaxSegmentsBytesSetting,
-      options.compaction_max_segments_bytes);
-  add(kCompactionFloorSegmentBytesSetting,
-      options.compaction_floor_segment_bytes);
-  return rendered;
 }
 
 void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
@@ -277,17 +251,16 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
-      auto rendered = RenderInvertedIndexSettings(inverted->Config()->settings);
-      if (!rendered.empty()) {
-        const auto& strings =
-          reloptions_storage.emplace_back(std::move(rendered));
-        auto& views = reloptions_views.emplace_back();
-        views.reserve(strings.size());
-        for (const auto& option : strings) {
-          views.emplace_back(option);
-        }
-        row.reloptions = views;
+      auto& strings = reloptions_storage.emplace_back();
+      auto& views = reloptions_views.emplace_back();
+      for (const auto name : catalog::kInvertedIndexSettings) {
+        strings.push_back(absl::StrCat(
+          name, "=", inverted->options.find(name)->second.ToString()));
       }
+      for (const auto& option : strings) {
+        views.emplace_back(option);
+      }
+      row.reloptions = views;
     } else {
       row.relam = pg::kPgAmSecondary;
     }

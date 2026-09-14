@@ -20,12 +20,14 @@
 
 #pragma once
 
+#include <array>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/scorer_options.hpp>
 #include <iresearch/types.hpp>
@@ -37,8 +39,9 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "catalog1/entry/tokenizer.h"
-#include "catalog1/persistence/inverted_index.h"
+#include "catalog/entry/tokenizer.h"
+#include "catalog/persistence/inverted_index.h"
+#include "query/config_variable_names.h"
 #include "search/search_analyzer_impl.h"
 
 namespace duckdb {
@@ -118,12 +121,30 @@ struct InvertedIndexKey {
 using InvertedIndexFields =
   containers::NodeHashMap<irs::field_id, InvertedIndexField>;
 
+inline constexpr auto kInvertedIndexSettings = std::to_array({
+  kRowGroupSizeSetting,
+  kRefreshIntervalSetting,
+  kReindexIntervalSetting,
+  kCompactionIntervalSetting,
+  kCleanupIntervalStepSetting,
+  kSegmentMemoryMaxSetting,
+  kSegmentDocsMaxSetting,
+  kCompactionMaxSegmentsSetting,
+  kCompactionMaxSegmentsBytesSetting,
+  kCompactionFloorSegmentBytesSetting,
+});
+
 std::vector<std::string> ParseKeyColumns(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
-duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassDict(
-  duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
-  std::string_view opclass);
+bool IsKnownInvertedIndexOption(std::string_view name);
+
+void BindInvertedIndexOptions(
+  duckdb::ClientContext& context,
+  duckdb::case_insensitive_map_t<duckdb::Value>& options);
+
+InvertedIndexSettings ResolveSettings(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 struct InvertedIndexConfig final : irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
@@ -131,7 +152,9 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   const InvertedIndexField* FindColumnInfo(
-    irs::field_id column_id) const noexcept;
+    irs::field_id column_id) const noexcept {
+    return LookupField(column_id).entry;
+  }
   InvertedIndexFieldLookup LookupField(irs::field_id field_id) const noexcept;
   bool IsKeywordField(irs::field_id field_id) const noexcept;
 
@@ -140,7 +163,6 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   irs::field_id FindFieldIdByExpression(
     std::string_view normalized) const noexcept;
 
-  InvertedIndexSettings settings;
   PkPolicy pk;
   std::vector<InvertedIndexKey> keys;
   InvertedIndexFields fields;
@@ -176,19 +198,27 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override;
+  std::string ToSQL() const override {
+    return duckdb::IndexCatalogEntry::GetInfo()->ToString();
+  }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
+
+  using duckdb::DuckIndexEntry::AlterEntry;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) override;
 
   // A view-backed index has no DataTableInfo to read the relation's name off,
   // and the base would dereference it. The name it was created against is the
   // answer, and it is the only one available.
   duckdb::Identifier GetTableName() const override;
 
-  duckdb::Identifier GetSchemaName() const override;
+  duckdb::Identifier GetSchemaName() const override { return schema.name; }
 
   void Rollback(duckdb::CatalogEntry& prev_entry) override;
+
+  void OnDrop() override;
 
   // Handed over once the storage is opened, which happens after the entry is
   // created. Every later version of the entry inherits it through Copy.

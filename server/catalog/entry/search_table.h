@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -34,6 +35,7 @@
 
 #include "basics/assert.h"
 #include "catalog/persistence/search_table.h"
+#include "query/config_variable_names.h"
 
 namespace duckdb {
 
@@ -57,7 +59,12 @@ enum class TableEngine : uint8_t {
 };
 
 inline constexpr std::string_view kStorageOption = "storage";
-inline constexpr std::string_view kPayloadOption = "sdb_payload";
+
+inline constexpr auto kSearchTableSettings = std::to_array({
+  kRefreshIntervalSetting,
+  kCompactionIntervalSetting,
+  kCleanupIntervalStepSetting,
+});
 
 TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
@@ -90,7 +97,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context) const override;
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override;
+  std::string ToSQL() const override { return GetInfo()->ToString(); }
 
   duckdb::virtual_column_map_t GetVirtualColumns() const override;
 

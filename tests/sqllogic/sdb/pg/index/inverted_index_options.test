@@ -158,13 +158,13 @@ DROP INDEX opt_z2;
 statement error
 ALTER INDEX opt_default SET (refresh_interval = 5000000000);
 ----
-db error: ERROR: value for option "refresh_interval" is out of range
+db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
 
 
 statement error
 CREATE INDEX opt_big ON opt_t USING inverted(label) WITH (segment_docs_max = 5000000000);
 ----
-db error: ERROR: value for option "segment_docs_max" is out of range
+db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
 
 
 # IF EXISTS on a missing index is a no-op.

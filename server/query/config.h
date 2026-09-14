@@ -158,6 +158,10 @@ namespace connector {
 
 void RegisterConfigVariables(duckdb::DBConfig& config);
 
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value);
+
 }  // namespace connector
 }  // namespace sdb
 namespace magic_enum {

@@ -859,5 +859,16 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
   }
 }
 
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value) {
+  duckdb::ExtensionOption option;
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
+                                                             option);
+  auto result = value.CastAs(context, option.type);
+  option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
+  return result;
+}
+
 }  // namespace connector
 }  // namespace sdb

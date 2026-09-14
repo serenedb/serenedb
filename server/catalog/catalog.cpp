@@ -20,18 +20,22 @@
 
 #include "catalog/catalog.h"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
-#include <array>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -51,6 +55,7 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
+#include "catalog/boot.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
@@ -71,7 +76,6 @@
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
-#include "query/config_variable_names.h"
 #include "search/search_table.h"
 
 namespace sdb::catalog {
@@ -117,11 +121,6 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   }
   options.erase(std::string{kStorageOption});
   return duckdb::DuckCatalog::MakeTableEntry(transaction, schema, info);
-}
-
-duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
-  duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) {
-  return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
 }
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
@@ -258,17 +257,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
-  static constexpr auto kSearchOptions = std::to_array({
-    kPayloadOption,
-    kRefreshIntervalSetting,
-    kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,
-  });
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
-           !(search && absl::c_contains(kSearchOptions, option.first));
+           !(search && absl::c_contains(kSearchTableSettings, option.first));
   });
   if (unknown != options.end()) {
     return duckdb::ErrorData{

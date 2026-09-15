@@ -83,7 +83,8 @@ FROM ddm_idx ORDER BY term
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: ddm_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(ddm_idx.body)) ASC                │
 │ ~3 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮

@@ -33,7 +33,6 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
@@ -54,10 +53,8 @@ class SearchTableTransaction {
     const std::shared_ptr<SearchTable>& shard,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
 
-  // The segments a bulk statement flushed + fsynced, for the WAL to reference
-  // instead of a second copy of the rows.
-  void AddSegments(const std::shared_ptr<SearchTable>& shard,
-                   std::vector<SearchDbWal::SegmentRef>&& segments);
+  void AddReferences(const std::shared_ptr<SearchTable>& shard,
+                     std::vector<SearchDbWal::PendingChunk>&& chunks);
 
   irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
     const std::shared_ptr<SearchTable>& shard,
@@ -72,12 +69,11 @@ class SearchTableTransaction {
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
                         std::span<const std::string> pks);
 
-  void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
-                         bool clears_shard);
+  void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard);
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    ObjectId shard_id, Factory&& make_reader) {
+    duckdb::idx_t shard_id, Factory&& make_reader) {
     auto it = _readers.find(shard_id);
     if (it == _readers.end()) {
       it = _readers
@@ -104,8 +100,9 @@ class SearchTableTransaction {
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
 
-  irs::containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
-  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+  irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;
 };

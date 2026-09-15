@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-auth-members.html
 // NOLINTBEGIN
 struct PgAuthMembers {
-  static constexpr uint64_t kId = 108;
+  static constexpr uint64_t kId = 1261;
   static constexpr std::string_view kName = "pg_auth_members";
 
   Oid oid;
@@ -41,6 +41,6 @@ struct PgAuthMembers {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData();
 
 }  // namespace sdb::pg

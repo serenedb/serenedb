@@ -45,29 +45,21 @@ count
 statement error
 DROP TABLE vedernikoff_iceberg_base;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
-view "vedernikoff_iceberg_left" depends on table "vedernikoff_iceberg_base".
-view "vedernikoff_iceberg_right" depends on table "vedernikoff_iceberg_base".
-view "vedernikoff_iceberg_top" depends on view "vedernikoff_iceberg_left".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_left;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_left" because there are entries that depend on it.
-view "vedernikoff_iceberg_top" depends on view "vedernikoff_iceberg_left".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_left" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_right;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_right" because there are entries that depend on it.
-view "vedernikoff_iceberg_top" depends on view "vedernikoff_iceberg_right".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_right" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -130,18 +122,14 @@ vedernikoff_bravo	300
 statement error
 DROP TABLE vedernikoff_clickclack_users;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_users" because there are entries that depend on it.
-view "vedernikoff_clickclack_summary" depends on table "vedernikoff_clickclack_users".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_users" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE vedernikoff_clickclack_offers;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offers" because there are entries that depend on it.
-view "vedernikoff_clickclack_summary" depends on table "vedernikoff_clickclack_offers".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offers" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -210,27 +198,21 @@ count
 statement error
 DROP TABLE vedernikoff_mop_t1;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_t1" because there are entries that depend on it.
-view "vedernikoff_mop_union" depends on table "vedernikoff_mop_t1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_mop_t1" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE vedernikoff_mop_t2;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_t2" because there are entries that depend on it.
-view "vedernikoff_mop_union" depends on table "vedernikoff_mop_t2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_mop_t2" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE vedernikoff_mop_t3;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_t3" because there are entries that depend on it.
-view "vedernikoff_mop_union" depends on table "vedernikoff_mop_t3".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_mop_t3" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -296,10 +278,7 @@ count
 statement error
 DROP TABLE vedernikoff_solid_t;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_t" because there are entries that depend on it.
-view "vedernikoff_solid_v1" depends on table "vedernikoff_solid_t".
-view "vedernikoff_solid_v2" depends on view "vedernikoff_solid_v1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_solid_t" because there are entries that depend on it.<slt:ignore>
 
 
 

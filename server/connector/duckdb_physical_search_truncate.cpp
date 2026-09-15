@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <memory>
 
 #include "connector/duckdb_client_state.h"
@@ -34,24 +33,17 @@ namespace sdb::connector {
 
 SereneDBSearchTruncate::SereneDBSearchTruncate(
   duckdb::PhysicalPlan& plan, std::shared_ptr<search::SearchTable> data,
-  duckdb::idx_t estimated_cardinality, bool clears_shard)
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
-    _data(std::move(data)),
-    _clears_shard(clears_shard) {}
+    _data(std::move(data)) {}
 
 duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
-  auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
-  if (!_clears_shard) {
-    search_txn
-      .EnsureSerialSearchTransaction(_data,
-                                     [&] { return _data->GetTransaction(); })
-      .Remove(std::make_shared<irs::All>());
-  }
-  search_txn.AddSearchTruncate(_data, _clears_shard);
+  auto& conn_ctx = GetSereneDBContext(context.client);
+  conn_ctx.SearchTxn().AddSearchTruncate(_data);
   return duckdb::SourceResultType::FINISHED;
 }
 

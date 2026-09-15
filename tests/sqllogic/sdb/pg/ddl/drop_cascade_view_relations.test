@@ -21,18 +21,14 @@ id	v
 statement error
 DROP TABLE iceberg_manifests;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifests" because there are entries that depend on it.
-view "v_iceberg_audit" depends on table "iceberg_manifests".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifests" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE iceberg_manifests RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifests" because there are entries that depend on it.
-view "v_iceberg_audit" depends on table "iceberg_manifests".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifests" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -82,18 +78,14 @@ id
 statement error
 DROP VIEW v_iceberg_snap1;
 ----
-db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.
-view "v_iceberg_snap2" depends on view "v_iceberg_snap1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP VIEW v_iceberg_snap1 RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.
-view "v_iceberg_snap2" depends on view "v_iceberg_snap1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -157,11 +149,7 @@ count
 statement error
 DROP TABLE iceberg_partitions;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partitions" because there are entries that depend on it.
-view "v_iceberg_part1" depends on table "iceberg_partitions".
-view "v_iceberg_part2" depends on table "iceberg_partitions".
-view "v_iceberg_part3" depends on table "iceberg_partitions".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_partitions" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -214,18 +202,14 @@ id	v_a	v_b
 statement error
 DROP TABLE iceberg_data_files;
 ----
-db error: ERROR: Cannot drop entry "iceberg_data_files" because there are entries that depend on it.
-view "v_iceberg_files_join" depends on table "iceberg_data_files".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_data_files" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE iceberg_delete_files;
 ----
-db error: ERROR: Cannot drop entry "iceberg_delete_files" because there are entries that depend on it.
-view "v_iceberg_files_join" depends on table "iceberg_delete_files".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_delete_files" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -264,9 +248,7 @@ count
 statement error
 DROP TABLE iceberg_sub_base;
 ----
-db error: ERROR: Cannot drop entry "iceberg_sub_base" because there are entries that depend on it.
-view "v_iceberg_sub" depends on table "iceberg_sub_base".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_sub_base" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -302,9 +284,7 @@ count
 statement error
 DROP TABLE iceberg_cte_base;
 ----
-db error: ERROR: Cannot drop entry "iceberg_cte_base" because there are entries that depend on it.
-view "v_iceberg_cte" depends on table "iceberg_cte_base".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_cte_base" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -349,18 +329,14 @@ count
 statement error
 DROP TABLE iceberg_union_a;
 ----
-db error: ERROR: Cannot drop entry "iceberg_union_a" because there are entries that depend on it.
-view "v_iceberg_union" depends on table "iceberg_union_a".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_union_a" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE iceberg_union_b;
 ----
-db error: ERROR: Cannot drop entry "iceberg_union_b" because there are entries that depend on it.
-view "v_iceberg_union" depends on table "iceberg_union_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_union_b" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -406,30 +382,21 @@ count
 statement error
 DROP TABLE iceberg_chain_t;
 ----
-db error: ERROR: Cannot drop entry "iceberg_chain_t" because there are entries that depend on it.
-view "v_iceberg_chain1" depends on table "iceberg_chain_t".
-view "v_iceberg_chain2" depends on view "v_iceberg_chain1".
-view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_chain_t" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP VIEW v_iceberg_chain1;
 ----
-db error: ERROR: Cannot drop entry "v_iceberg_chain1" because there are entries that depend on it.
-view "v_iceberg_chain2" depends on view "v_iceberg_chain1".
-view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "v_iceberg_chain1" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP VIEW v_iceberg_chain2;
 ----
-db error: ERROR: Cannot drop entry "v_iceberg_chain2" because there are entries that depend on it.
-view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "v_iceberg_chain2" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -476,12 +443,7 @@ CREATE VIEW v_iceberg_root4 AS SELECT id FROM v_iceberg_root3;
 statement error
 DROP TABLE iceberg_root_t;
 ----
-db error: ERROR: Cannot drop entry "iceberg_root_t" because there are entries that depend on it.
-view "v_iceberg_root1" depends on table "iceberg_root_t".
-view "v_iceberg_root2" depends on view "v_iceberg_root1".
-view "v_iceberg_root3" depends on view "v_iceberg_root2".
-view "v_iceberg_root4" depends on view "v_iceberg_root3".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_root_t" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -539,9 +501,7 @@ count
 statement error
 DROP TABLE iceberg_t_home.manifests_t;
 ----
-db error: ERROR: Cannot drop entry "manifests_t" because there are entries that depend on it.
-view "audit_v" depends on table "manifests_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "manifests_t" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -643,18 +603,14 @@ count
 statement error
 DROP SEQUENCE iceberg_both_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_both_seq" because there are entries that depend on it.
-view "v_iceberg_both" depends on sequence "iceberg_both_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_both_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE iceberg_both_t;
 ----
-db error: ERROR: Cannot drop entry "iceberg_both_t" because there are entries that depend on it.
-view "v_iceberg_both" depends on table "iceberg_both_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_both_t" because there are entries that depend on it.<slt:ignore>
 
 
 

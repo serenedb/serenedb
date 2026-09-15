@@ -193,8 +193,8 @@ x
 8001
 
 
-# MERGE INTO and INSERT ... ON CONFLICT (lowered to MergeInto) are rejected
-# cleanly instead of corrupting the index through the store mirror.
+# MERGE INTO is refused before planning; ON CONFLICT needs an ART index over
+# the conflict target, which a search table does not have.
 statement error
 MERGE INTO stk USING (SELECT 1::BIGINT AS pk) src ON stk.pk = src.pk
   WHEN MATCHED THEN UPDATE SET x = 0;
@@ -205,7 +205,7 @@ db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on
 statement error
 INSERT INTO stk VALUES (1, 1, 'dup', 1) ON CONFLICT (pk) DO NOTHING;
 ----
-db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
 
 
 # Deletes: masked rows vanish from filtered scans, counts and top-k.

@@ -35,7 +35,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/geo_validate.h"
+#include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -135,7 +135,7 @@ void ParseGeoConstant(const duckdb::Value& value,
       return;
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
-      sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
+      ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!irs::geo::ParseShapeWKB(wkb_str, shape)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

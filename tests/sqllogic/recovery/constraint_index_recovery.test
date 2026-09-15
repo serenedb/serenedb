@@ -2,8 +2,8 @@ control substitution on
 
 # Constraint + secondary-index metadata (explicit and auto names, types) and
 # enforcement survive a crash/restart, and DROP / RENAME CONSTRAINT by name
-# still work after recovery. Mirrors any/pg/index/constraint_index_catalog.test
-# but SereneDB-only (crash injection).
+# still work after recovery. Mirrors sdb/pg/index/constraint_index_catalog.test
+# with crash injection.
 
 statement ok
 CREATE TABLE parent (id INTEGER PRIMARY KEY);

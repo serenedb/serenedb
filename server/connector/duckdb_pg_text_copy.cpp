@@ -129,19 +129,6 @@ struct PgTextCopyGlobalState final : public duckdb::GlobalFunctionData {
   size_t pending = 0;
 };
 
-// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
-// the buffer empty for the next chunk.
-void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
-  auto chain = buffer.ReleaseChain();
-  for (auto* chunk = chain.head; chunk != nullptr; chunk = chunk->Next()) {
-    const auto data = chunk->Data(chunk->GetEnd());
-    if (!data.empty()) {
-      handle.Write(const_cast<uint8_t*>(data.data()),
-                   static_cast<duckdb::idx_t>(data.size()));
-    }
-  }
-}
-
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
   const duckdb::vector<duckdb::Identifier>&,

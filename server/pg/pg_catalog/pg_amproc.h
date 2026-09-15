@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-amproc.html
 // NOLINTBEGIN
 struct PgAmproc {
-  static constexpr uint64_t kId = 104;
+  static constexpr uint64_t kId = 2603;
   static constexpr std::string_view kName = "pg_amproc";
 
   Oid oid;

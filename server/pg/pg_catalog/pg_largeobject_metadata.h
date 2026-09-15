@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-largeobject-metadata.html
 // NOLINTBEGIN
 struct PgLargeobjectMetadata {
-  static constexpr uint64_t kId = 130;
+  static constexpr uint64_t kId = 2995;
   static constexpr std::string_view kName = "pg_largeobject_metadata";
 
   Oid oid;

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-publication-namespace.html
 // NOLINTBEGIN
 struct PgPublicationNamespace {
-  static constexpr uint64_t kId = 140;
+  static constexpr uint64_t kId = 6237;
   static constexpr std::string_view kName = "pg_publication_namespace";
 
   Oid oid;

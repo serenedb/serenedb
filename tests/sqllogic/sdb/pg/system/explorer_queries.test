@@ -58,7 +58,7 @@ WHERE (s.schema_name IN ('information_schema')
 ----
 id	name
 11	pg_catalog
-1000003	information_schema
+13	information_schema
 
 
 # tables: list tables in a schema
@@ -187,4 +187,4 @@ SELECT
 ----
 id	name
 11	pg_catalog
-1000003	information_schema
+13	information_schema

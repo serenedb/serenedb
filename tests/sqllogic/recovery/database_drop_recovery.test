@@ -79,7 +79,7 @@ SET sdb_faults = 'crash_on_drop';
 
 
 # DROP SCHEMA CASCADE -- biggest auto-drop closure in this DB.
-statement error (?i)connection closed|server closed|terminat|reset|EOF
+statement error connection closed
 DROP SCHEMA vedernikoff_iceberg_lake CASCADE;
 
 

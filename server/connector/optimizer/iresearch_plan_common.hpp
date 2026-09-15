@@ -33,8 +33,8 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/fwd.h"
-#include "catalog/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/search_filter_builder.hpp"
 
@@ -43,20 +43,17 @@ namespace sdb::optimizer {
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
 
-catalog::ColumnId ResolveColumnId(
+connector::ColumnId ResolveColumnId(
   duckdb::ColumnBinding binding,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get);
 
-std::vector<catalog::ColumnId> BuildProjectedColumnIds(
+std::vector<connector::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
 
-void ResolveSearchTableIndexes(connector::SereneDBScanBindData& bind_data,
-                               duckdb::ClientContext& context);
-
-std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
-  const connector::SereneDBScanBindData& bind_data, catalog::ColumnId col_id);
+std::shared_ptr<const catalog::InvertedIndexConfig> TermDictIndexFor(
+  const connector::SereneDBScanBindData& bind_data, connector::ColumnId col_id);
 
 struct FoundScan {
   duckdb::LogicalGet* get;
@@ -95,7 +92,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
 
 duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      duckdb::LogicalGet& get,
-                                     catalog::ColumnId virtual_id,
+                                     connector::ColumnId virtual_id,
                                      const duckdb::LogicalType& col_type,
                                      std::string_view col_name);
 
@@ -107,7 +104,7 @@ bool TryClaimIResearchConjunct(
   duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
 
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
-  irs::field_id field, const catalog::InvertedIndexEntryInfo* info,
+  irs::field_id field, const catalog::InvertedIndexField* info,
   duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
   return {
     .field_id = field,
@@ -127,10 +124,10 @@ struct SearchGetters {
   irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
 };
 
-bool WithSearchGetters(duckdb::LogicalGet& get,
-                       connector::SereneDBScanBindData& bind_data,
-                       std::span<const catalog::InvertedIndex* const> indexes,
-                       duckdb::ClientContext& context,
-                       absl::FunctionRef<bool(const SearchGetters&)> fn);
+bool WithSearchGetters(
+  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
+  std::span<const catalog::InvertedIndexEntry* const> indexes,
+  duckdb::ClientContext& context,
+  absl::FunctionRef<bool(const SearchGetters&)> fn);
 
 }  // namespace sdb::optimizer

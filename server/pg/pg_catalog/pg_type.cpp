@@ -21,17 +21,17 @@
 #include "pg/pg_catalog/pg_type.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
-#include "catalog/schema.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
@@ -41,8 +41,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 16,
     .typname = "bool",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 1,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -76,8 +76,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 21,
     .typname = "int2",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 2,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -111,8 +111,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 23,
     .typname = "int4",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -146,8 +146,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 20,
     .typname = "int8",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -180,8 +180,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 26,
     .typname = "oid",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -214,8 +214,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 27,
     .typname = "tid",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 6,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -248,8 +248,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 28,
     .typname = "xid",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -282,8 +282,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 29,
     .typname = "cid",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -316,8 +316,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 5069,
     .typname = "xid8",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -351,8 +351,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 700,
     .typname = "float4",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -386,8 +386,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 701,
     .typname = "float8",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -421,8 +421,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 25,
     .typname = "text",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -456,8 +456,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 18,
     .typname = "char",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 1,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -491,8 +491,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1043,
     .typname = "varchar",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -526,8 +526,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 17,
     .typname = "bytea",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -561,8 +561,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 114,
     .typname = "json",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -596,8 +596,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2950,
     .typname = "uuid",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 16,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -631,8 +631,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 869,
     .typname = "inet",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -666,8 +666,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1700,
     .typname = "numeric",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -701,8 +701,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1082,
     .typname = "date",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -736,8 +736,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1114,
     .typname = "timestamp",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -771,8 +771,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1184,
     .typname = "timestamptz",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -806,8 +806,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2206,
     .typname = "regtype",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -841,8 +841,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2205,
     .typname = "regclass",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -876,8 +876,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 4089,
     .typname = "regnamespace",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -911,8 +911,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 24,
     .typname = "regproc",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -946,8 +946,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2202,
     .typname = "regprocedure",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -981,8 +981,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2203,
     .typname = "regoper",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1016,8 +1016,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2204,
     .typname = "regoperator",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1051,8 +1051,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 4096,
     .typname = "regrole",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1086,8 +1086,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 3734,
     .typname = "regconfig",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1121,8 +1121,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 3769,
     .typname = "regdictionary",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1156,8 +1156,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 4191,
     .typname = "regcollation",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Base,
@@ -1193,8 +1193,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2281,
     .typname = "internal",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Pseudo,
@@ -1229,8 +1229,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2277,
     .typname = "anyarray",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Pseudo,
@@ -1266,8 +1266,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 705,
     .typname = "unknown",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = -2,
     .typbyval = false,
     .typtype = PgType::Typetype::Pseudo,
@@ -1301,8 +1301,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 19,
     .typname = "name",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
     .typlen = 64,  // NAMEDATALEN
     .typbyval = false,
     .typtype = PgType::Typetype::Base,
@@ -1336,8 +1336,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 13873,
     .typname = "cardinal_number",
-    .typnamespace = id::kPgInformationSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgInformationSchema,
+    .typowner = pg::kRootUser,
     .typlen = 4,
     .typbyval = true,
     .typtype = PgType::Typetype::Domain,
@@ -1371,8 +1371,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 13876,
     .typname = "character_data",
-    .typnamespace = id::kPgInformationSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgInformationSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Domain,
@@ -1406,8 +1406,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 13878,
     .typname = "sql_identifier",
-    .typnamespace = id::kPgInformationSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgInformationSchema,
+    .typowner = pg::kRootUser,
     .typlen = 64,  // NAMEDATALEN
     .typbyval = false,
     .typtype = PgType::Typetype::Domain,
@@ -1441,8 +1441,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 13884,
     .typname = "time_stamp",
-    .typnamespace = id::kPgInformationSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgInformationSchema,
+    .typowner = pg::kRootUser,
     .typlen = 8,
     .typbyval = true,
     .typtype = PgType::Typetype::Domain,
@@ -1476,8 +1476,8 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 13886,
     .typname = "yes_or_no",
-    .typnamespace = id::kPgInformationSchema.id(),
-    .typowner = id::kRootUser.id(),
+    .typnamespace = pg::kPgInformationSchema,
+    .typowner = pg::kRootUser,
     .typlen = -1,
     .typbyval = false,
     .typtype = PgType::Typetype::Domain,
@@ -1507,217 +1507,6 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
-  // time (OID 1083)
-  {
-    .oid = 1083,
-    .typname = "time",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = 8,
-    .typbyval = true,
-    .typtype = PgType::Typetype::Base,
-    .typcategory = PgType::Typcategory::DateTime,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = 1183,    // _time,
-    .typinput = 1143,    // time_in,
-    .typoutput = 1144,   // time_out,
-    .typreceive = 2470,  // time_recv,
-    .typsend = 2471,     // time_send,
-    .typmodin = 1314,    // timetypmodin,
-    .typmodout = 1315,   // timetypmodout,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Double,
-    .typstorage = PgType::Typstorage::Plain,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
-  // interval (OID 1186)
-  {
-    .oid = 1186,
-    .typname = "interval",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = 16,
-    .typbyval = false,
-    .typtype = PgType::Typetype::Base,
-    .typcategory = PgType::Typcategory::Timespan,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = 1187,    // _interval,
-    .typinput = 1160,    // interval_in,
-    .typoutput = 1161,   // interval_out,
-    .typreceive = 2478,  // interval_recv,
-    .typsend = 2479,     // interval_send,
-    .typmodin = 2903,    // intervaltypmodin,
-    .typmodout = 2904,   // intervaltypmodout,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Double,
-    .typstorage = PgType::Typstorage::Plain,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
-  // timetz (OID 1266)
-  {
-    .oid = 1266,
-    .typname = "timetz",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = 12,
-    .typbyval = false,
-    .typtype = PgType::Typetype::Base,
-    .typcategory = PgType::Typcategory::DateTime,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = 1270,    // _timetz,
-    .typinput = 1350,    // timetz_in,
-    .typoutput = 1351,   // timetz_out,
-    .typreceive = 2480,  // timetz_recv,
-    .typsend = 2481,     // timetz_send,
-    .typmodin = 1318,    // timetztypmodin,
-    .typmodout = 1319,   // timetztypmodout,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Double,
-    .typstorage = PgType::Typstorage::Plain,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
-  // varbit (OID 1562)
-  {
-    .oid = 1562,
-    .typname = "varbit",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = -1,
-    .typbyval = false,
-    .typtype = PgType::Typetype::Base,
-    .typcategory = PgType::Typcategory::BitString,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = 1563,    // _varbit,
-    .typinput = 1579,    // varbit_in,
-    .typoutput = 1580,   // varbit_out,
-    .typreceive = 2476,  // varbit_recv,
-    .typsend = 2477,     // varbit_send,
-    .typmodin = 2902,    // varbittypmodin,
-    .typmodout = 2921,   // varbittypmodout,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Int,
-    .typstorage = PgType::Typstorage::Extended,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
-  // record (OID 2249) -- the row type of a STRUCT and the element of a
-  // LIST(STRUCT), which is what map(), md_extract_*() and date_part() return
-  {
-    .oid = 2249,
-    .typname = "record",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = -1,
-    .typbyval = false,
-    .typtype = PgType::Typetype::Pseudo,
-    .typcategory = PgType::Typcategory::Pseudo,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = 2287,    // _record,
-    .typinput = 2290,    // record_in,
-    .typoutput = 2291,   // record_out,
-    .typreceive = 2402,  // record_recv,
-    .typsend = 2403,     // record_send,
-    .typmodin = 0,
-    .typmodout = 0,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Double,
-    .typstorage = PgType::Typstorage::Extended,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
-  // variant -- serenedb's own type
-  {
-    .oid = id::kVariant.id(),
-    .typname = "variant",
-    .typnamespace = id::kPgCatalogSchema.id(),
-    .typowner = id::kRootUser.id(),
-    .typlen = -1,
-    .typbyval = false,
-    .typtype = PgType::Typetype::Base,
-    .typcategory = PgType::Typcategory::UserDefined,
-    .typispreferred = false,
-    .typisdefined = true,
-    .typdelim = ',',
-    .typrelid = 0,
-    .typsubscript = 0,
-    .typelem = 0,
-    .typarray = id::kVariantArray.id(),
-    .typinput = 0,
-    .typoutput = 0,
-    .typreceive = 0,
-    .typsend = 0,
-    .typmodin = 0,
-    .typmodout = 0,
-    .typanalyze = 0,
-    .typalign = PgType::Typalign::Int,
-    .typstorage = PgType::Typstorage::Extended,
-    .typnotnull = false,
-    .typbasetype = 0,
-    .typtypmod = -1,
-    .typndims = 0,
-    .typcollation = 0,
-    .typdefaultbin = {},
-    .typdefault = {},
-    .typacl = {},
-  },
 });
 
 constexpr uint64_t kNullMask = MaskFromNulls({
@@ -1728,20 +1517,17 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
-  auto database_id = GetDatabaseId();
-
+MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   std::vector<PgType> rows;
   rows.reserve(kSampleData.size() * 2);
   for (const auto& row : kSampleData) {
     rows.push_back(row);
   }
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   const auto visit_types =
     [&](absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
-      catalog::Visit<catalog::SereneDBTypeEntry>(&context, database_id,
-                                                 visitor);
+      VisitEntries<duckdb::TypeCatalogEntry>(context, GetDatabase(), visitor);
     };
 
   irs::containers::FlatHashSet<std::string_view> taken;
@@ -1764,8 +1550,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   // pg_attribute.atttypid -> pg_type.oid; without these rows, columns whose
   // type is an array (text[], oid[], int2[], ...) fail to resolve.
   for (const auto& scalar : kSampleData) {
-    if (scalar.typarray == 0 ||
-        scalar.typcategory == PgType::Typcategory::Array) {
+    if (scalar.typarray == 0) {
       continue;
     }
     rows.push_back(PgType{
@@ -1813,9 +1598,9 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     const std::string_view type_name = type.name.GetIdentifierName();
     const auto type_oid = type.oid;
     const auto namespace_oid = type.ParentSchema().oid;
-    const auto array_oid = catalog::TypeArrayOid(ObjectId{type_oid}).id();
+    const auto array_oid = TypeArrayOid(type_oid);
     const auto array_name = make_array_name(type_name);
-    const AclColumn type_acl{catalog::AclView{perm.acl}};
+    const AclColumn type_acl{std::span<const duckdb::AclItem>{perm.acl}};
 
     auto make_row = [&](bool as_array) {
       return PgType{

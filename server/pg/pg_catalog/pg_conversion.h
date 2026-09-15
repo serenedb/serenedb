@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-conversion.html
 // NOLINTBEGIN
 struct PgConversion {
-  static constexpr uint64_t kId = 113;
+  static constexpr uint64_t kId = 2607;
   static constexpr std::string_view kName = "pg_conversion";
 
   Oid oid;

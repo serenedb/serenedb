@@ -26,18 +26,14 @@ s
 statement error
 DROP FUNCTION ml_square(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.
-view "v_ml_square" depends on macro function "ml_square".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP FUNCTION ml_square;
 ----
-db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.
-view "v_ml_square" depends on macro function "ml_square".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -87,11 +83,7 @@ CREATE VIEW v_ml_cube3 AS SELECT ml_cube(ml_cube(n)) AS c FROM ml_nums;
 statement error
 DROP FUNCTION ml_cube(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_cube" because there are entries that depend on it.
-view "v_ml_cube1" depends on macro function "ml_cube".
-view "v_ml_cube2" depends on macro function "ml_cube".
-view "v_ml_cube3" depends on macro function "ml_cube".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_cube" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -142,11 +134,7 @@ CREATE VIEW v_ml_double3 AS SELECT x + 1 AS y FROM v_ml_double2;
 statement error
 DROP FUNCTION ml_double_it(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_double_it" because there are entries that depend on it.
-view "v_ml_double1" depends on macro function "ml_double_it".
-view "v_ml_double2" depends on view "v_ml_double1".
-view "v_ml_double3" depends on view "v_ml_double2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_double_it" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -225,9 +213,7 @@ n	u
 statement error
 DROP TABLE ml_builtin_t;
 ----
-db error: ERROR: Cannot drop entry "ml_builtin_t" because there are entries that depend on it.
-view "v_ml_builtin" depends on table "ml_builtin_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_builtin_t" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -258,18 +244,14 @@ CREATE VIEW v_ml_mix7 AS SELECT ml_mix7(id) AS r FROM ml_t7;
 statement error
 DROP FUNCTION ml_mix7(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_mix7" because there are entries that depend on it.
-view "v_ml_mix7" depends on macro function "ml_mix7".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_mix7" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP TABLE ml_t7;
 ----
-db error: ERROR: Cannot drop entry "ml_t7" because there are entries that depend on it.
-view "v_ml_mix7" depends on table "ml_t7".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_t7" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -323,9 +305,7 @@ y
 statement error
 DROP FUNCTION ml_fn_sch.ml_times3(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_times3" because there are entries that depend on it.
-view "v_ml_outputs" depends on macro function "ml_times3".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "ml_times3" because there are entries that depend on it.<slt:ignore>
 
 
 

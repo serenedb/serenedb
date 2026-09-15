@@ -31,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -41,10 +40,9 @@ struct LocalTableChangesEntry {
   struct Op {
     std::unique_ptr<duckdb::ColumnDataCollection> collection;
     std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
-    std::vector<SearchDbWal::SegmentRef> segments;
+    std::vector<SearchDbWal::PendingChunk> chunks;
     std::vector<std::string> delete_pks;
     bool truncate = false;
-    bool clears_shard = false;
 
     bool IsDelete() const noexcept { return !delete_pks.empty(); }
     bool IsTruncate() const noexcept { return truncate; }
@@ -72,22 +70,22 @@ struct LocalTableChangesEntry {
     }
   }
 
-  // Move a bulk statement's already-flushed segments into the current insert
-  // run (does not seal it). Batched: one run lookup per statement, not per
-  // segment.
-  void AppendSegments(std::vector<SearchDbWal::SegmentRef>&& segments) {
-    if (segments.empty()) {
+  // Move a bulk statement's chunk files into the current insert run (does not
+  // seal it). Batched: one statement's chunks resolve the current run once,
+  // instead of re-checking the seal condition per chunk on this hot path.
+  void AppendReference(std::vector<SearchDbWal::PendingChunk>&& chunks) {
+    if (chunks.empty()) {
       return;
     }
     auto& run = CurrentInsertRun();
-    if (run.segments.empty()) {
-      run.segments = std::move(segments);  // fresh run: take the whole vector
+    if (run.chunks.empty()) {
+      run.chunks = std::move(chunks);  // fresh run: take the whole vector
       return;
     }
     // A prior bulk statement already coalesced into this run; append.
-    run.segments.insert(run.segments.end(),
-                        std::make_move_iterator(segments.begin()),
-                        std::make_move_iterator(segments.end()));
+    for (auto& c : chunks) {
+      run.chunks.push_back(std::move(c));
+    }
   }
 
   // Append a DELETE op, sealing the current insert run. (A delete op is
@@ -99,18 +97,18 @@ struct LocalTableChangesEntry {
     ops.emplace_back().delete_pks.assign(pks.begin(), pks.end());
   }
 
-  void AppendTruncate(bool clears_shard) {
-    auto& op = ops.emplace_back();
-    op.truncate = true;
-    op.clears_shard = clears_shard;
-  }
+  // Append a TRUNCATE op (wipe the shard). Autocommit-only, so it is the sole
+  // op in the transaction; it still seals any current run defensively.
+  void AppendTruncate() { ops.emplace_back().truncate = true; }
 
-  bool ClearsShard() const noexcept {
-    if (ops.empty() || !ops.front().clears_shard) {
+  // A TRUNCATE is always the sole op (autocommit-only), so the first op decides
+  // it; assert that invariant.
+  bool HasTruncate() const noexcept {
+    if (ops.empty() || !ops.front().IsTruncate()) {
       return false;
     }
     SDB_ASSERT(ops.size() == 1,
-               "a clearing TRUNCATE must be the only op in its transaction");
+               "TRUNCATE must be the only op in its transaction");
     return true;
   }
 
@@ -126,6 +124,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<duckdb::idx_t, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-aggregate.html
 // NOLINTBEGIN
 struct PgAggregate {
-  static constexpr uint64_t kId = 101;
+  static constexpr uint64_t kId = 2600;
   static constexpr std::string_view kName = "pg_aggregate";
 
   enum class Aggkind : char {
@@ -74,6 +74,6 @@ struct PgAggregate {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAggregate>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAggregate>::GetTableData();
 
 }  // namespace sdb::pg

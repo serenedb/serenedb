@@ -49,6 +49,6 @@ struct SdbSettings {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData();
+MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData();
 
 }  // namespace sdb::pg

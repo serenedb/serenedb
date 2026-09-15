@@ -364,7 +364,7 @@ db error: ERROR: Column 'bi' has unsupported type BIT and can not be indexed
 statement error
 CREATE INDEX g16_imp_en ON g16_t USING inverted(pk, en);
 ----
-db error: ERROR: Column 'en' has unsupported type g16_enum_t and can not be indexed
+db error: ERROR: Column 'en' has unsupported type ENUM('alpha', 'beta', 'gamma') and can not be indexed
 
 
 # (e) implicit (no opclass) on VARIANT: STRUCT-backed catch-all type, Unsupported.

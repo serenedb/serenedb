@@ -22,7 +22,7 @@
 
 #include <iresearch/utils/duckdb_engine.hpp>
 
-#include "catalog/entry.h"
+#include "catalog/catalog.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

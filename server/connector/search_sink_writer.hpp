@@ -39,10 +39,11 @@
 #include <string>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
+#include "connector/inverted_store_index.h"
+#include "connector/primary_key.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
@@ -61,102 +62,46 @@ class SearchRemoveFilter;
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
-inline TokenizerProvider MakeTokenizerProvider(
-  duckdb::ClientContext& ctx, catalog::TokenizerMap dicts,
-  const catalog::InvertedIndex& index) {
-  return [&ctx, dicts = std::move(dicts),
-          &index](irs::field_id field_id) -> catalog::ColumnTokenizer {
-    return index.GetTokenizer(ctx, dicts, field_id);
-  };
-}
-
-inline std::vector<IndexedExpression> MakeIndexedExpressions(
-  const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
-  const auto& expression_keys = index.ExpressionKeys();
-  std::vector<IndexedExpression> entries;
-  entries.reserve(expression_keys.size());
-  for (const auto& key : expression_keys) {
-    const auto& expr = key.data;
-    const auto field_id = key.field_id;
-    SDB_ASSERT(!expr.serialized_expr.empty());
-    SDB_ASSERT(!expr.dependent_columns.empty());
-    SDB_ASSERT(irs::field_limits::valid(field_id));
-    auto bound =
-      DeserializeBoundExpression(expr.serialized_expr, client_context);
-    const auto* entry = index.FindEntry(field_id);
-    const bool is_geojson = expr.return_type.IsJSONType() && entry &&
-                            irs::field_limits::valid(entry->synthetic_column);
-    entries.emplace_back(std::move(bound), expr.serialized_expr,
-                         expr.dependent_columns, field_id, is_geojson);
-  }
-  return entries;
-}
-
 using EntryInfoProvider =
-  absl::AnyInvocable<const catalog::InvertedIndexEntryInfo*(irs::field_id)>;
+  absl::AnyInvocable<const catalog::InvertedIndexField*(irs::field_id)>;
 
 inline EntryInfoProvider MakeEntryInfoProvider(
-  const catalog::InvertedIndex& index) {
-  return [&index](irs::field_id field_id) { return index.FindEntry(field_id); };
+  const catalog::InvertedIndexConfig& config) {
+  return
+    [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
+}
+
+inline std::vector<ColumnId> IndexedColumnIds(
+  const catalog::InvertedIndexConfig& config) {
+  std::vector<ColumnId> ids;
+  for (const auto& [field_id, field] : config.fields) {
+    if (field_id < kFirstSyntheticColumnId) {
+      ids.push_back(field_id);
+    }
+  }
+  return ids;
 }
 
 inline EntryInfoProvider NoEntryInfoProvider() {
-  return [](irs::field_id) -> const catalog::InvertedIndexEntryInfo* {
-    return nullptr;
-  };
-}
-
-inline const catalog::InvertedIndexEntryInfo* AllStoredEntry() {
-  static const catalog::InvertedIndexEntryInfo kStored = [] {
-    catalog::InvertedIndexEntryInfo e;
-    e.store_values = true;
-    return e;
-  }();
-  return &kStored;
+  return
+    [](irs::field_id) -> const catalog::InvertedIndexField* { return nullptr; };
 }
 
 inline EntryInfoProvider AllStoredEntryInfoProvider() {
-  return [](irs::field_id) { return AllStoredEntry(); };
+  static const catalog::InvertedIndexField kStored = [] {
+    catalog::InvertedIndexField e;
+    e.store_values = true;
+    return e;
+  }();
+  return [](irs::field_id) { return &kStored; };
 }
-
-// Holds one immutable index-config snapshot for the sink's lifetime so entry
-// pointers stay valid if a concurrent CREATE/DROP INDEX swaps the config.
-inline EntryInfoProvider MakeConfigEntryInfoProvider(
-  std::shared_ptr<const catalog::InvertedIndex::Entries> config) {
-  return [config = std::move(config)](
-           irs::field_id field_id) -> const catalog::InvertedIndexEntryInfo* {
-    auto it = config->find(field_id);
-    return it != config->end() ? &it->second : AllStoredEntry();
-  };
-}
-
-inline TokenizerProvider MakeConfigTokenizerProvider(
-  duckdb::ClientContext& ctx,
-  std::shared_ptr<const catalog::InvertedIndex::Entries> config,
-  catalog::TokenizerMap dicts) {
-  return [&ctx, config = std::move(config), dicts = std::move(dicts)](
-           irs::field_id field_id) -> catalog::ColumnTokenizer {
-    auto it = config->find(field_id);
-    // Not a merged-config field: the all-stored entry names no dictionary, so
-    // this resolves to the default string tokenizer.
-    const auto& entry = it != config->end() ? it->second : *AllStoredEntry();
-    return catalog::TokenizerForEntry(ctx, dicts, entry);
-  };
-}
-
-struct PkPolicy {
-  bool index_term = true;
-  catalog::PkColumnKind column = catalog::PkColumnKind::Has;
-};
 
 class SearchSinkInsertBaseImpl {
  public:
-  SearchSinkInsertBaseImpl(
-    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
-    std::vector<IndexedExpression>&& indexed_exprs = {},
-    std::shared_ptr<const search::SearchTable::TermsByColumn> terms_by_column =
-      {});
+  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
+                           TokenizerProvider&& tokenizer_provider,
+                           EntryInfoProvider&& entry_info_provider,
+                           PkPolicy pk_policy = {});
 
   void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
     _trx = &trx;
@@ -167,19 +112,6 @@ class SearchSinkInsertBaseImpl {
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
-
-  void AppendValueColumn(irs::field_id field_id,
-                         const duckdb::LogicalType& type,
-                         const duckdb::Vector& vec, duckdb::idx_t count);
-
-  std::span<const irs::field_id> TermFieldsForColumn(
-    catalog::ColumnId col_id) const noexcept;
-
-  // The indexed expressions declared on this table, evaluated per chunk by
-  // WriteChunkToSearchSink.
-  std::span<const IndexedExpression> IndexedExpressionImpl() const noexcept {
-    return _indexed_expressions;
-  }
 
   void FinishImpl();
 
@@ -193,7 +125,6 @@ class SearchSinkInsertBaseImpl {
     std::vector<duckdb::UnifiedVectorFormat> pk_formats;
     std::vector<std::string> row_keys;
     std::vector<duckdb::string_t> key_views;
-    std::vector<duckdb::string_t> key_terms;
   };
   KeyScratch& GetKeyScratch() noexcept { return _key_scratch; }
 
@@ -282,7 +213,7 @@ class SearchSinkInsertBaseImpl {
     Field null_field;
 
     void InitForExpression(irs::field_id entry_field_id,
-                           const catalog::InvertedIndexEntryInfo* entry,
+                           const catalog::InvertedIndexField* entry,
                            catalog::ColumnTokenizer& string_analyzer);
   };
 
@@ -305,8 +236,6 @@ class SearchSinkInsertBaseImpl {
     _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
   PkPolicy _pk_policy;
-  std::vector<IndexedExpression> _indexed_expressions;
-  std::shared_ptr<const search::SearchTable::TermsByColumn> _terms_by_column;
 
   JsonExpressionFields _json_fields;
   simdjson::ondemand::parser _json_parser;
@@ -369,7 +298,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
  public:
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    std::span<const catalog::ColumnId> indexed_columns,
+    std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
     PkPolicy pk_policy = {})
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
@@ -399,7 +328,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 
  private:
-  irs::containers::FlatHashSet<catalog::ColumnId> _indexed;
+  irs::containers::FlatHashSet<ColumnId> _indexed;
 };
 
 class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
@@ -421,18 +350,17 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 };
 
-// Built off the shard's merged index config, so the sink writes each column
-// under the term field the owning index allocated and evaluates the indexed
-// expressions declared on the table.
-std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
-  duckdb::ClientContext& context);
+inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+  irs::IndexWriter::Transaction& trx) {
+  return std::make_unique<SearchSinkInsertBaseImpl>(
+    trx, TokenizerProvider{}, AllStoredEntryInfoProvider(),
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
+}
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids,
-  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base, ObjectId table_id,
-  duckdb::ClientContext& context);
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const ColumnId> column_ids,
+                            std::span<const primary_key::PKColumn> pk_columns,
+                            bool uses_generated_pk, uint64_t pk_base);
 
 }  // namespace sdb::connector

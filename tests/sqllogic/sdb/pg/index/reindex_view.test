@@ -281,7 +281,8 @@ count
 
 
 # Generic view (no fast path): REINDEX re-runs the whole bound plan. CREATE
-# OR REPLACE VIEW with the same shape is picked up by the rebuild.
+# OR REPLACE VIEW is a drop and a create, and the index built on the view goes
+# with the old definition, as it does on DROP VIEW; it is recreated afterwards.
 
 statement ok
 CREATE VIEW reindex_union_v AS
@@ -305,14 +306,20 @@ CREATE OR REPLACE VIEW reindex_union_v AS
   UNION ALL SELECT 3, 'pudge plays again'
   UNION ALL SELECT 4, 'vedernikoff plays support';
 
-query
+statement error
 SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');
 ----
-count
-1
+db error: ERROR: Table with name reindex_union_idx does not exist!<slt:ignore>
+
+
+statement error
+CALL serenedb_reindex('reindex_union_idx');
+----
+db error: ERROR: index "reindex_union_idx" does not exist
+
 
 statement ok
-CALL serenedb_reindex('reindex_union_idx');
+CREATE INDEX reindex_union_idx ON reindex_union_v USING inverted(id, body reindex_en);
 
 query
 SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');

@@ -35,7 +35,8 @@
 #include <optional>
 #include <span>
 
-#include "catalog/table_options.h"
+#include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
@@ -49,7 +50,7 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
     return {nullptr, nullptr};
   }
   const auto* pk_col =
-    col_reader->Column(static_cast<irs::field_id>(catalog::kGeneratedPKId));
+    col_reader->Column(static_cast<irs::field_id>(kGeneratedPKId));
   if (!pk_col) {
     return {nullptr, nullptr};
   }

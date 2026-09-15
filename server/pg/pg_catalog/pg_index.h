@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-index.html
 // NOLINTBEGIN
 struct PgIndex {
-  static constexpr uint64_t kId = 125;
+  static constexpr uint64_t kId = 2610;
   static constexpr std::string_view kName = "pg_index";
 
   enum class Indisunique : char {
@@ -87,6 +87,6 @@ struct PgIndex {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData();
+MaterializedData SystemTableSnapshot<PgIndex>::GetTableData();
 
 }  // namespace sdb::pg

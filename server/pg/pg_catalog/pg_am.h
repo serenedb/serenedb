@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-am.html
 // NOLINTBEGIN
 struct PgAm {
-  static constexpr uint64_t kId = 102;
+  static constexpr uint64_t kId = 2601;
   static constexpr std::string_view kName = "pg_am";
 
   enum class Amtype : char {
@@ -43,6 +43,6 @@ struct PgAm {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAm>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAm>::GetTableData();
 
 }  // namespace sdb::pg

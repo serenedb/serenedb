@@ -18,7 +18,7 @@ query
 SELECT 'tsquery'::regtype::oid AS scalar_oid, 'tsquery[]'::regtype::oid AS array_oid;
 ----
 scalar_oid	array_oid
-1000102	1000103
+990003	990004
 
 skipif pg-wire-extended
 query

@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_tablespace.h"
 
+#include "pg/pg_types.h"
+
 namespace sdb::pg {
 namespace {
 
@@ -32,17 +34,17 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 // TODO: emit user rows here once CREATE TABLESPACE is implemented.
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
   const std::array<PgTablespace, 2> values{
     PgTablespace{
       .oid = 1663,
       .spcname = "pg_default",
-      .spcowner = id::kRootUser.id(),
+      .spcowner = pg::kRootUser,
     },
     PgTablespace{
       .oid = 1664,
       .spcname = "pg_global",
-      .spcowner = id::kRootUser.id(),
+      .spcowner = pg::kRootUser,
     },
   };
 

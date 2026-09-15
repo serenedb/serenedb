@@ -27,21 +27,17 @@
 
 #include <atomic>
 #include <filesystem>
-#include <functional>
-#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <vector>
 
-#include "catalog/inverted_index.h"
+#include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
-#include "search/store_stats.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
@@ -50,6 +46,11 @@ namespace sdb::query {
 class Transaction;
 
 }  // namespace sdb::query
+namespace sdb::catalog {
+
+using persistence::InvertedIndexSettings;
+
+}  // namespace sdb::catalog
 namespace sdb::search {
 
 class InvertedIndexStorage;
@@ -71,11 +72,12 @@ struct WalCursor {
   uint64_t offset = 0;
 };
 
-// Removes a dropped storage's directory tree. Only the leaf: an emptied
-// ancestor is shared with concurrent creations, and boot's orphan sweep
-// reclaims whatever is left, because a dropped object's ids are never
-// reissued. A failed removal is only logged for the same reason.
-void RemoveDroppedStorageDir(const std::filesystem::path& path);
+// Removes a dropped storage's directory tree, then up to `parent_levels`
+// ancestors that emptied out with it -- a still-populated ancestor stops the
+// walk. A failed removal is only logged, because a dropped object's ids are
+// never reissued.
+void RemoveDroppedStorageDir(const std::filesystem::path& path,
+                             size_t parent_levels);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -83,7 +85,27 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path);
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  InvertedIndexStorage(ObjectId db_id, const catalog::InvertedIndex& index,
+  struct Stats {
+    // NOLINTBEGIN
+    uint64_t numDocs = 0;
+    uint64_t numLiveDocs = 0;
+    uint64_t numBufferedDocs = 0;
+    uint64_t numSegments = 0;
+    uint64_t numFiles = 0;
+    uint64_t indexSize = 0;
+    uint64_t numFailedCommits = 0;
+    uint64_t numFailedCleanups = 0;
+    uint64_t numFailedConsolidations = 0;
+    uint64_t avgCommitTimeMs = 0;
+    uint64_t avgCleanupTimeMs = 0;
+    uint64_t avgConsolidationTimeMs = 0;
+    // NOLINTEND
+  };
+
+  InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
+                       duckdb::idx_t table_id, duckdb::idx_t index_id,
+                       const catalog::InvertedIndexSettings& options,
+                       const std::optional<irs::ScorerOptions>& top_k_scorer,
                        bool is_new);
   ~InvertedIndexStorage();
 
@@ -94,14 +116,21 @@ class InvertedIndexStorage final
     _dropped.store(true, std::memory_order_release);
   }
 
-  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id, ObjectId index_id);
+  static std::filesystem::path GetPath(duckdb::idx_t db_id,
+                                       duckdb::idx_t schema_id,
+                                       duckdb::idx_t table_id,
+                                       duckdb::idx_t index_id);
 
   // `db_id` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    ObjectId db_id, const catalog::InvertedIndex& index, bool is_new);
+    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+    duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
+    return std::make_shared<InvertedIndexStorage>(
+      db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
+  }
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -145,20 +174,13 @@ class InvertedIndexStorage final
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options);
 
-  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
-                          const irs::MergeWriter::FlushProgress& progress,
-                          bool& empty_compaction,
-                          const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env)
-    -> yaclib::Future<ResultWithTime>;
-
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code,
                                bool for_checkpoint = false);
 
   ResultWithTime CleanupUnsafe();
-  StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
+  Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void Refresh(const irs::ProgressReportCallback& progress = nullptr);
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
@@ -167,11 +189,13 @@ class InvertedIndexStorage final
   // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
   void CheckpointRefresh();
 
-  ObjectId GetId() const noexcept { return _index_id; }
+  duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
-  ObjectId GetDatabaseId() const noexcept { return _db_id; }
+  duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
-  StoreStats GetStats() const;
+  Stats GetStats() const {
+    return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
+  }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load(&_snapshot);
@@ -238,11 +262,11 @@ class InvertedIndexStorage final
     _stale_pressure.store(0, std::memory_order_relaxed);
   }
 
-  void StartTasks();
+  void StartTasks() { _search.StartTasks(shared_from_this()); }
 
   void FinishCreation();
 
-  void ApplyOptions(const catalog::InvertedIndexOptions& options);
+  void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
@@ -290,28 +314,44 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
-  // Highest tick the recovery replay has both retired and covered with a
-  // cursor point; a Recovering-phase refresh commits at most this tick.
-  void SetRecoveryFrontierTick(Tick tick) noexcept {
-    _recovery_frontier_tick.store(tick, std::memory_order_release);
-  }
-
  private:
-  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
-                         const irs::MergeWriter::FlushProgress& progress,
-                         bool& empty_compaction,
-                         const irs::IndexFieldOptions* field_options,
-                         const irs::AnnBuildEnv* env)
-    -> yaclib::Future<absl::Status>;
+  class MovingAverageMs {
+   public:
+    void Record(uint64_t time_ms) noexcept {
+      const uint64_t old =
+        _time_num.fetch_add((time_ms << 32U) + 1, std::memory_order_relaxed);
+      const uint64_t old_time = old >> 32U;
+      const uint64_t old_num = static_cast<uint32_t>(old);
+      if (old_num >= kWindow) {
+        _time_num.fetch_sub(((old_time / old_num) << 32U) + 1,
+                            std::memory_order_relaxed);
+      }
+    }
+    uint64_t Average() const noexcept {
+      const uint64_t v = _time_num.load(std::memory_order_relaxed);
+      const uint64_t time = v >> 32U;
+      const uint64_t num = static_cast<uint32_t>(v);
+      return num == 0 ? 0 : time / num;
+    }
+
+   private:
+    static constexpr uint64_t kWindow = 10;
+    std::atomic<uint64_t> _time_num{0};
+  };
+
+  absl::Status CompactUnsafeImpl(
+    const irs::CompactionPolicy& policy,
+    const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+    const irs::IndexFieldOptions* field_options);
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code, bool for_checkpoint);
   absl::Status CleanupUnsafeImpl();
 
-  ObjectId _index_id;
+  duckdb::idx_t _index_id;
   // The database whose duckdb file backs the indexed table: the refresh reads
   // its checkpoint iteration to stamp the recovery cursor.
-  ObjectId _db_id;
+  duckdb::idx_t _db_id;
   std::filesystem::path _path;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
@@ -354,9 +394,13 @@ class InvertedIndexStorage final
   std::vector<std::vector<int64_t>> _delete_log;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
-  MaintenanceCounters _maintenance;
+  std::atomic<uint64_t> _num_failed_commits{0};
+  std::atomic<uint64_t> _num_failed_cleanups{0};
+  std::atomic<uint64_t> _num_failed_consolidations{0};
+  MovingAverageMs _avg_commit_time_ms;
+  MovingAverageMs _avg_cleanup_time_ms;
+  MovingAverageMs _avg_consolidation_time_ms;
   Phase _phase{Phase::Creating};
-  std::atomic<Tick> _recovery_frontier_tick{0};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

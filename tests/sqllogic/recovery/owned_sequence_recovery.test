@@ -46,6 +46,7 @@ WHERE relkind = 'S' ORDER BY relname;
 ----
 relname	relkind
 ser_id_seq	S
+st_pk_seq	S
 
 
 # The entries as the statements that created them left them, so the comparison
@@ -67,7 +68,6 @@ WHERE entry_type = 'Sequence' ORDER BY name;
 ----
 entry_type	name
 Sequence	ser_id_seq
-Sequence	ser_pk_seq
 Sequence	st_pk_seq
 
 
@@ -94,6 +94,7 @@ WHERE relkind = 'S' ORDER BY relname;
 ----
 relname	relkind
 ser_id_seq	S
+st_pk_seq	S
 
 
 connection after_crash
@@ -107,7 +108,6 @@ FROM ows.before b ORDER BY 1, 2;
 entry_type	name	after
 Schema	ows	1
 Sequence	ser_id_seq	1
-Sequence	ser_pk_seq	1
 Sequence	st_pk_seq	1
 Table	ser	1
 Table	st	1

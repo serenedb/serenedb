@@ -59,10 +59,10 @@ void SearchTableTransaction::AddParallelSearchTransaction(
   w.transactions.push_back(std::move(trx));
 }
 
-void SearchTableTransaction::AddSegments(
+void SearchTableTransaction::AddReferences(
   const std::shared_ptr<SearchTable>& shard,
-  std::vector<SearchDbWal::SegmentRef>&& segments) {
-  _changes[shard->GetTableId()].AppendSegments(std::move(segments));
+  std::vector<SearchDbWal::PendingChunk>&& chunks) {
+  _changes[shard->GetTableId()].AppendReference(std::move(chunks));
 }
 
 void SearchTableTransaction::AddInlineInsertChunk(
@@ -98,12 +98,12 @@ void SearchTableTransaction::AddSearchDeletes(
 }
 
 void SearchTableTransaction::AddSearchTruncate(
-  const std::shared_ptr<SearchTable>& shard, bool clears_shard) {
+  const std::shared_ptr<SearchTable>& shard) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
-  _changes[shard->GetTableId()].AppendTruncate(clears_shard);
+  _changes[shard->GetTableId()].AppendTruncate();
 }
 
 void SearchTableTransaction::RegisterFlush() noexcept {
@@ -140,13 +140,13 @@ void SearchTableTransaction::Commit() {
       const bool committed = trx.Commit(tick);
       SDB_FATAL_IF(
         SEARCH, !committed,
-        "search-table commit: iresearch trx Commit failed for table ",
-        table_id.id(), " tick=", tick);
+        "search-table commit: iresearch trx Commit failed for table ", table_id,
+        " tick=", tick);
       tick -= trx.GetQueries() + 1;
     }
 
     auto cit = _changes.find(table_id);
-    if (cit != _changes.end() && cit->second.ClearsShard()) {
+    if (cit != _changes.end() && cit->second.HasTruncate()) {
       w.shard->Clear(record_tick);
     }
   }
@@ -167,39 +167,39 @@ uint64_t SearchTableTransaction::AppendCommit() {
     auto cit = _changes.find(table_id);
     SDB_ASSERT(cit != _changes.end(),
                "search shard with a trx but no manifest ops");
-    // A clearing TRUNCATE adds no trx but needs one tick for its Clear at the
-    // band top.
+    // A TRUNCATE adds no trx but needs one tick for its Clear at the band top.
 
     uint64_t shard_span =
-      ShardTickSpan(w) + (cit->second.ClearsShard() ? 1 : 0);
+      ShardTickSpan(w) + (cit->second.HasTruncate() ? 1 : 0);
     tick_span = std::max(tick_span, shard_span);
     auto& ops = op_lists.emplace_back();
 
     for (auto& op : cit->second.ops) {
       if (op.IsTruncate()) {
-        ops.push_back(SearchDbWal::Op{.truncate = true});
-        continue;
+        ops.push_back(SearchDbWal::Op{nullptr, {}, {}, {}, /*truncate=*/true});
+        break;
       }
       if (op.IsDelete()) {
         ops.push_back(SearchDbWal::Op{
-          .delete_pks = std::span<const std::string>{op.delete_pks}});
+          nullptr, {}, {}, std::span<const std::string>{op.delete_pks}});
         continue;
       }
       if (op.collection && op.collection->Count() > 0) {
         ops.push_back(SearchDbWal::Op{
-          .inline_data = op.collection.get(),
-          .inline_pks =
-            op.pk_segments
-              ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
-              : std::span<const SearchDbWal::InlinePk>{}});
+          op.collection.get(),
+          op.pk_segments
+            ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
+            : std::span<const SearchDbWal::InlinePk>{},
+          {},
+          {}});
       }
-      if (!op.segments.empty()) {
+      if (!op.chunks.empty()) {
         ops.push_back(SearchDbWal::Op{
-          .segments = std::span<const SearchDbWal::SegmentRef>{op.segments}});
+          nullptr, {}, std::span<SearchDbWal::PendingChunk>{op.chunks}, {}});
       }
     }
     SDB_ASSERT(!ops.empty(),
-               "search-table commit with neither segments nor inline rows");
+               "search-table commit with neither chunk files nor inline rows");
 
     SearchDbWal::ShardSection section;
     section.table_id = table_id;
@@ -207,7 +207,6 @@ uint64_t SearchTableTransaction::AppendCommit() {
     sections.push_back(section);
   }
 
-  SDB_ASSERT(wal != nullptr);
   return wal->AppendCommit(sections, tick_span);
 }
 

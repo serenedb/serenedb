@@ -22,32 +22,13 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <iresearch/utils/assert.hpp>
 
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/search_sink_writer.hpp"
 
 namespace sdb::connector {
-
-std::vector<size_t> BuildCreateIndexProjection(
-  std::span<const duckdb::LogicalIndex> pk_column_positions,
-  std::span<const duckdb::idx_t> index_column_positions) {
-  std::vector<size_t> projection;
-  projection.reserve(index_column_positions.size() +
-                     pk_column_positions.size());
-
-  for (auto pos : index_column_positions) {
-    projection.push_back(static_cast<size_t>(pos));
-  }
-  for (auto pk : pk_column_positions) {
-    projection.push_back(static_cast<size_t>(pk.index));
-  }
-  absl::c_sort(projection);
-  projection.erase(std::unique(projection.begin(), projection.end()),
-                   projection.end());
-  return projection;
-}
 
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,

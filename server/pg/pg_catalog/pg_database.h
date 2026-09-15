@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-database.html
 // NOLINTBEGIN
 struct PgDatabase {
-  static constexpr uint64_t kId = 114;
+  static constexpr uint64_t kId = 1262;
   static constexpr std::string_view kName = "pg_database";
 
   enum class Datlocprovider : char {
@@ -58,6 +58,6 @@ struct PgDatabase {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData();
+MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData();
 
 }  // namespace sdb::pg

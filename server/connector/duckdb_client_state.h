@@ -23,8 +23,9 @@
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
+#include <vector>
 
-#include "catalog/identifiers/object_id.h"
+#include "catalog/boot.h"
 #include "pg/progress_registry.h"
 
 namespace sdb {
@@ -42,7 +43,7 @@ namespace sdb::connector {
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";
 
 // Registered in DuckDB's ClientContext to provide access to SereneDB's
-// ConnectionContext (which holds config, transactions, catalog snapshots).
+// ConnectionContext (which holds config and transactions).
 // Accessible from any DuckDB function/operator via:
 //   context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
 // The ConnectionContext whose transaction is currently committing on this
@@ -116,22 +117,16 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
 
+  void OnBoundPlan(duckdb::ClientContext& context, duckdb::Binder& binder,
+                   duckdb::LogicalOperator& plan) final;
+
   // COPY classification for the NEXT query, staged by the wire session before
   // PendingQuery. QueryBegin resets the metrics of the previous statement, so
   // the session cannot write them directly; QueryBegin applies these after the
   // reset and clears them.
   pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
-  ObjectId pending_copy_relid;
-
-  // Transaction-scoped compensation for a statement that has already written
-  // its catalog record (CTAS): registered when the load starts, run in
-  // TransactionPreRollback while the MetaTransaction is alive, cleared by the
-  // owner right before its commit point. Never runs from a destructor -- a
-  // sink state outlives the statement (it dies with the cached plan), so a
-  // destructor-time MetaTransaction reference is a use-after-free.
-  std::function<void(duckdb::MetaTransaction&, duckdb::ClientContext&)>
-    transaction_abort_cleanup;
+  duckdb::idx_t pending_copy_relid;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;

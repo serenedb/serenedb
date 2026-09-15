@@ -67,7 +67,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids)
+  std::span<const ColumnId> bind_column_ids)
   : ViewIndexSourceBase{std::move(fast_path)} {
   SDB_ASSERT(_fast_path.catalog_ref);
   const auto& ref = *_fast_path.catalog_ref;
@@ -90,7 +90,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
                    return types[source_col];
                  });
 
-  _postgres_ctid = _fast_path.pk_spec == catalog::PkSpec::ExternalPostgresCtid;
+  _postgres_ctid = _fast_path.pk_spec == PkSpec::ExternalPostgresCtid;
   _num_key_cols = _postgres_ctid ? 1 : _fast_path.key_columns.size();
   _num_proj_cols = select_names.size();
 
@@ -109,7 +109,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   BuildQuery(context, ref, select_names);
 
   _sort_perm.resize(STANDARD_VECTOR_SIZE);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
 }
 
 void ExternalLookupIndexSource::BuildQuery(

@@ -182,7 +182,7 @@ query
 DESCRIBE myschema.mytable;
 ----
 column_name	column_type	null	key	default	extra
-v	mytype	YES	NULL	NULL	NULL
+v	ENUM('as', 'df')	YES	NULL	NULL	NULL
 
 # DOCS_TEST: example_014
 

@@ -29,50 +29,22 @@
 #include <span>
 #include <string>
 
-#include "catalog/table_options.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
-struct IndexedExpression {
-  duckdb::unique_ptr<duckdb::Expression> normalized_expr;
-  std::string serialized;
-  std::vector<catalog::ColumnId> dependent_columns;
-  irs::field_id field_id = irs::field_limits::invalid();
-  bool is_geojson = false;
-};
-
-std::vector<catalog::ColumnId> CollectDependentColumns(
-  const duckdb::Expression& expr);
+std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr);
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
-
-duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
-  std::string_view bytes, duckdb::ClientContext& context);
 
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::ColumnId> col_index_to_id,
-  duckdb::ClientContext& context);
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);
-
-// Rebinds a persisted expression's catalog-stable column refs onto `chunk`'s
-// own slots. The store-index feed rebinds to duckdb index positions instead
-// (RebindColumnRefsToIndexPositions); a search table has no BoundIndex, so its
-// chunk is keyed by catalog column id.
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id);
-
-// Evaluate one indexed expression over `chunk` -- the same ExpressionExecutor
-// the store-index feed runs, over chunk-resolved refs.
-duckdb::Vector EvaluateExprOverChunk(
-  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id,
-  duckdb::ClientContext& context, bool is_geojson = false);
 
 }  // namespace sdb::connector

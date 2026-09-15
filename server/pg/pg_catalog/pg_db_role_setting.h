@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-db-role-setting.html
 // NOLINTBEGIN
 struct PgDbRoleSetting {
-  static constexpr uint64_t kId = 115;
+  static constexpr uint64_t kId = 2964;
   static constexpr std::string_view kName = "pg_db_role_setting";
 
   Oid setdatabase;
@@ -37,6 +37,6 @@ struct PgDbRoleSetting {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData();
+MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData();
 
 }  // namespace sdb::pg

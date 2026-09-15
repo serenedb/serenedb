@@ -27,7 +27,9 @@
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
-#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/classification_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -38,11 +40,9 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/index.h"
-#include "catalog/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "rest_server/database_path_feature.h"
-#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
@@ -52,6 +52,7 @@
 #include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
+ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
@@ -74,37 +75,11 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
 }
 
-uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  return std::max<uint32_t>(
-    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
-}
-
-uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
-  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
-                              1, 16);
-}
-
-uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
-  return GetSearchEngine().AcquireAnnWorkers(want);
-}
-
-void AnnReleaseWorkers(uint32_t n) noexcept {
-  GetSearchEngine().ReleaseAnnWorkers(n);
-}
-
-const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
-    .acquire = AnnAcquireWorkers,
-    .release = AnnReleaseWorkers};
-  return env;
-}
-
 void SearchEngine::start() {
   InitInvertedIndexes();
-  // Replay each database's search-table WAL into iresearch (delta-based and
-  // unconditional, mirroring inverted-index recovery).
-  RunSearchTableRecovery(false);
+  if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
+    RunSearchTableRecovery();
+  }
   // Only now that every shard is fully replayed + committed do we start the
   // search-table background loops -- never while recovery is still rebuilding a
   // table, or a background commit's WAL GC could reclaim un-replayed chunks.
@@ -123,7 +98,6 @@ void SearchEngine::stop() {
 
 template<class Storage>
 void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
-  SDB_ASSERT(storage);
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
@@ -139,14 +113,14 @@ template void SearchEngine::StartTasks(
 template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 
 std::filesystem::path SearchEngine::GetPersistedPath(
-  ObjectId database_id) const {
+  duckdb::idx_t database_id) const {
   std::filesystem::path path = _dir_feature.directory();
   path /= irs::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }
 
-SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
+SearchDbWal& SearchEngine::GetDbWal(duckdb::idx_t database_id) {
   absl::MutexLock lock(&_db_wals_mu);
   auto it = _db_wals.find(database_id);
   if (it == _db_wals.end()) {

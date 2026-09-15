@@ -1,7 +1,8 @@
-# ALTER TABLE ... DROP COLUMN takes every CHECK that names the column with it,
-# as postgres does. A CHECK left behind naming a column the table no longer
-# lists makes the table permanently un-insertable: binding the constraint is
-# part of binding the write.
+# ALTER TABLE ... DROP COLUMN takes a CHECK that names only that column with
+# it. A CHECK that also names other columns keeps the column in place, as
+# duckdb does; it has to be dropped by name first. A CHECK left behind naming
+# a column the table no longer lists would make the table permanently
+# un-insertable: binding the constraint is part of binding the write.
 
 # --- 1. Single-column CHECK ----------------------------------------------
 
@@ -58,6 +59,24 @@ CREATE TABLE dropcol_check_pair (
 
 statement count 1
 INSERT INTO dropcol_check_pair VALUES (1, 1);
+
+
+statement error
+ALTER TABLE dropcol_check_pair DROP COLUMN b;
+----
+db error: ERROR: Cannot drop column "b" because there is a CHECK constraint that depends on it
+
+
+query
+SELECT conname FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'dropcol_check_pair'::regclass ORDER BY conname
+----
+conname
+dropcol_ab_ck
+
+
+statement ok
+ALTER TABLE dropcol_check_pair DROP CONSTRAINT dropcol_ab_ck;
 
 
 statement ok

@@ -1266,7 +1266,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty() || ss.IsHnswScored()) {
+  if (filters.empty()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data, context);

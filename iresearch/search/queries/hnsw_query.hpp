@@ -28,6 +28,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 
@@ -39,10 +40,12 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             std::shared_ptr<const QuantizerCodebook> codebook,
             std::vector<float> query, VectorMetric metric, uint32_t d,
             uint32_t record_size, uint32_t ef, score_t threshold,
-            size_t max_results, bool inclusive, score_t boost)
+            size_t max_results, bool inclusive, score_t boost,
+            QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
+      _inner{std::move(inner)},
       _query{query.size(),
              [&](float& slot, size_t i) noexcept { slot = query[i]; }},
       _metric{metric},
@@ -54,15 +57,28 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
       _boost{boost},
       _inclusive{inclusive} {}
 
-  std::vector<ScoreDoc> RunSearch() const;
+  // The hits of the graph search, ascending by doc, deleted docs dropped.
+  // With an inner predicate, or a table filter whose predicates fold into a
+  // set (TableFilter::Foldable), only docs they admit are returned: the walk
+  // keeps moving through every node but admits what the set passes, and a
+  // set too sparse for the graph is answered by scanning its docs. A table
+  // that does not fold is left to the caller to apply to the hits.
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
+
+  const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
+  template<typename Dist>
+  void RunFiltered(Dist& dist, detail::TableFilter* table,
+                   HnswSearchScratch& scratch) const;
+
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
+  QueryBuilder::ptr _inner;
   containers::Fixed<float> _query;
   VectorMetric _metric;
   uint32_t _d;
@@ -73,7 +89,5 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   score_t _boost;
   bool _inclusive;
 };
-
-void HnswRefuseFilter(const detail::TableFilter* table);
 
 }  // namespace irs

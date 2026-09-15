@@ -225,7 +225,7 @@ TEST_P(HnswIndexTest, RecallAgainstBruteForce) {
   ASSERT_EQ(irs::AnnKind::Hnsw, ann->Kind());
   ASSERT_EQ(kDim, ann->Dim());
   ASSERT_FALSE(ann->Empty());
-  ASSERT_FALSE(ann->SupportsFilter());
+  ASSERT_TRUE(ann->SupportsFilter());
 
   size_t total_hits = 0;
   size_t matched = 0;

@@ -39,10 +39,12 @@ namespace {
 class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
+           ColumnArgsFetcher& fetcher, irs::detail::TableFilter* table,
+           const irs::detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
-      _fetcher{fetcher} {
+      _fetcher{fetcher},
+      _table{table} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
@@ -66,7 +68,11 @@ class HnswHits : public Root {
       }
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
-      collector.AddDocs(_docs, n, _scores);
+      // The hits are ascending by doc, so a block is the run the table
+      // filter narrows in place.
+      const auto live =
+        _table == nullptr ? n : _table->Narrow(_docs, _scores, n);
+      collector.AddDocs(_docs, live, _scores);
       i += n;
     }
   }
@@ -76,6 +82,7 @@ class HnswHits : public Root {
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
+  irs::detail::TableFilter* _table;
   score_t _block[kScoreBlock];
   score_t _scores[kScoreBlock];
   doc_id_t _docs[kScoreBlock];
@@ -84,18 +91,21 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  HnswRefuseFilter(ctx.table);
-  auto hits = query.RunSearch();
+  auto hits = query.RunSearch(ctx.table);
   if (hits.empty()) {
     return {};
   }
+  // A table that folded into the search has been applied; one that did not
+  // (a predicate on the score) narrows the hits.
+  auto* const table =
+    ctx.table != nullptr && !ctx.table->Foldable() ? ctx.table : nullptr;
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
-                                        ctx.fetcher, args);
+                                        ctx.fetcher, table, args);
 }
 
 }  // namespace irs::top

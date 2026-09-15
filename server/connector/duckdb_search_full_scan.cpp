@@ -1372,6 +1372,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
+  if (ss.vector_scorer) {
+    state->owned_vector_scorer = *ss.vector_scorer;
+    auto& vs = *state->owned_vector_scorer;
+    // The knobs are the executing session's, not the planning session's: a
+    // cached plan sees every SET made since it was prepared, and reads the
+    // query vector from this execution's parameters.
+    RefreshVectorKnobs(vs, context);
+    if (vs.query_expr) {
+      vs.query_vector = EvaluateQueryVector(context, vs);
+    }
+    if (vs.kind == irs::AnnKind::Hnsw && ss.score_top_k) {
+      // The beam is the result ceiling, so it is at least k. Every hit of the
+      // beam is then the rerank pool (sized below), and ef alone trades recall
+      // for time; the rerank factor is an IVF knob.
+      vs.min_ef = static_cast<uint32_t>(*ss.score_top_k);
+    }
+    state->vector_scorer = &vs;
+  }
   // A cached plan outlives the transaction that planned it: its scan reads the
   // executing transaction's snapshot, taken now, not the one the bind holds.
   if (ss.cache_plan && ss.reacquire_snapshot) {
@@ -1381,7 +1399,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
   state->claimable_segments = static_cast<uint32_t>(state->total_segments);
-  state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
@@ -1440,20 +1457,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->owned_where = BuildDeferredFilter(context, ss);
     where = state->owned_where;
   }
-  if (ss.vector_scorer) {
-    auto vs = *ss.vector_scorer;
-    // The knobs are the executing session's, not the planning session's: a
-    // cached plan sees every SET made since it was prepared.
-    RefreshVectorKnobs(vs, context);
-    if (vs.query_expr) {
-      vs.query_vector = EvaluateQueryVector(context, vs);
-    }
-    if (vs.kind == irs::AnnKind::Hnsw && ss.score_top_k) {
-      // The beam is the result ceiling, so it is at least k. Every hit of the
-      // beam is then the rerank pool (sized below), and ef alone trades recall
-      // for time; the rerank factor is an IVF knob.
-      vs.min_ef = static_cast<uint32_t>(*ss.score_top_k);
-    }
+  if (state->vector_scorer) {
+    const auto& vs = *state->vector_scorer;
     state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
@@ -1525,7 +1530,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->topk.global_kth_score.store(state->score_static_floor,
                                          std::memory_order_relaxed);
     }
-    if (ss.vector_scorer && ss.vector_scorer->exact) {
+    if (state->vector_scorer && state->vector_scorer->exact) {
       // A brute-force scan reads a segment's vectors once, sequentially: the
       // rows split into parts of about 64k so a big segment spreads over the
       // workers, and no part is small enough for the split to cost more than
@@ -1538,14 +1543,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->topk.parts =
         static_cast<uint32_t>(std::clamp<uint64_t>(largest / 65536, 1, 32));
     }
-    if (ss.vector_scorer && !ss.vector_scorer->exact &&
-        (ss.vector_scorer->quant != irs::VectorQuantization::None ||
+    if (state->vector_scorer && !state->vector_scorer->exact &&
+        (state->vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
       const auto k = static_cast<double>(*ss.score_top_k);
       double pool;
-      if (ss.vector_scorer->kind == irs::AnnKind::Hnsw) {
+      if (state->vector_scorer->kind == irs::AnnKind::Hnsw) {
         // Every hit of the beam is reranked: the pool is ef, at least k.
-        pool = std::max<double>(k, ss.vector_scorer->ef_search);
+        pool = std::max<double>(k, state->vector_scorer->ef_search);
       } else {
         pool = std::ceil(ReadRerankFactor(context) * k);
       }

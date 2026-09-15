@@ -90,6 +90,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
   size_t total_segments = 0;
+  // The executing session's copy of the plan's vector options: the knobs and
+  // the query vector of a cached plan are read at execution, so every consumer
+  // must see this copy, not the bind data's planning-time values.
+  std::optional<VectorScorerOptions> owned_vector_scorer;
   const VectorScorerOptions* vector_scorer = nullptr;
 
   // --- The projection walk: what duckdb asked the scan for. ----------------

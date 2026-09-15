@@ -121,3 +121,57 @@ DEALLOCATE ap_knn;
 
 statement ok
 DEALLOCATE ap_where;
+
+# A quantized index reranks the beam with the stored vectors: the rerank reads
+# this execution's query vector, so a prepared search answers exactly what the
+# same search with a literal vector answers.
+statement ok
+CREATE TABLE apq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX apq_idx ON apq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+INSERT INTO apq SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(512) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) apq;
+
+statement ok
+SET sdb_hnsw_ef_search = 64;
+
+statement ok
+PREPARE apq_knn AS SELECT pk FROM apq ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE apq_knn([100.3, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+query
+EXECUTE apq_knn([300.7, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+301
+300
+302
+
+# The same answer as the literal form, which is planned per execution.
+query
+SELECT pk FROM apq ORDER BY emb <-> [300.7, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+301
+300
+302
+
+statement ok
+DEALLOCATE apq_knn;
+
+statement ok
+RESET sdb_hnsw_ef_search;

@@ -195,10 +195,6 @@ struct StreamSegmentCursor {
   }
 };
 
-IResearchScanGlobalState::IResearchScanGlobalState() = default;
-
-IResearchScanGlobalState::~IResearchScanGlobalState() = default;
-
 // Per-worker scan state, one family per ScanMode. Base holds what every mode
 // shares (claim bookkeeping + per-segment filter classification);
 // SegDocBufferedScanLocalState adds the HitBatcher machinery of the

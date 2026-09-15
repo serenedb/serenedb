@@ -86,9 +86,6 @@ enum class ScanMode : uint8_t {
 // mode's own state. Per-mode state lives in named sub-structs -- always
 // present (no tag checks on access), used only by their mode.
 struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
-  IResearchScanGlobalState();
-  ~IResearchScanGlobalState() override;
-
   // --- Query shape: the bind data and the snapshot it scans. ---------------
   const SereneDBScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;

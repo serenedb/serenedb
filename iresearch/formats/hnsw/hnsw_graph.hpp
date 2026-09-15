@@ -107,7 +107,16 @@ struct HnswSearchScratch {
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
   std::vector<score_t> scores;
+  // Distances computed by the level walk of the current search.
+  uint64_t scored = 0;
 };
+
+// The predicate of an unfiltered search: every node may enter the result.
+struct HnswAcceptAll {
+  bool operator()(uint32_t) const noexcept { return true; }
+};
+
+inline constexpr uint64_t kHnswNoBudget = std::numeric_limits<uint64_t>::max();
 
 class HnswGraph {
  public:
@@ -266,14 +275,19 @@ inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
 }
 
-template<typename Dist>
-void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
-                     uint32_t ef, HnswSearchScratch& s) {
+// Best-first expansion of `level` from the seeded heaps: `s.frontier` holds
+// the nodes still to expand and `s.nearest` the admitted results, both already
+// heaps. The walk passes through every reachable node so a predicate never
+// disconnects the graph, but only nodes `accept` passes enter `nearest`, and
+// the beam is measured in admitted nodes. Returns false once `budget`
+// distances were computed with the frontier still live: the caller then knows
+// the predicate is too sparse for the graph and answers another way.
+template<typename Dist, typename Accept>
+bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
+                     uint32_t ef, HnswSearchScratch& s, const Accept& accept,
+                     uint64_t budget = kHnswNoBudget) {
   auto& nearest = s.nearest;
   auto& frontier = s.frontier;
-  frontier.assign(nearest.begin(), nearest.end());
-  std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
-  std::make_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
 
   while (!frontier.empty()) {
     std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
@@ -304,22 +318,42 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     s.scores.resize(s.batch.size());
     dist.Batch(s.batch, s.scores.data(),
                nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
+    s.scored += s.batch.size();
 
     for (size_t i = 0; i < s.batch.size(); ++i) {
       const HnswCandidate cand{s.scores[i], s.batch[i]};
       if (nearest.size() >= ef && cand.score <= nearest.front().score) {
         continue;
       }
-      nearest.push_back(cand);
-      std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-      if (nearest.size() > ef) {
-        std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-        nearest.pop_back();
+      if (accept(cand.node)) {
+        nearest.push_back(cand);
+        std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+        if (nearest.size() > ef) {
+          std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+          nearest.pop_back();
+        }
       }
       frontier.push_back(cand);
       std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
     }
+    if (s.scored > budget) {
+      return false;
+    }
   }
+  return true;
+}
+
+// The classic level search: `s.nearest` seeds the frontier and every node is
+// admitted. Used by construction and as the seed pass of a radius search.
+template<typename Dist>
+void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
+                     uint32_t ef, HnswSearchScratch& s) {
+  auto& nearest = s.nearest;
+  auto& frontier = s.frontier;
+  frontier.assign(nearest.begin(), nearest.end());
+  std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
+  std::make_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+  HnswExpandLevel(graph, dist, level, ef, s, HnswAcceptAll{});
 }
 
 template<typename Dist>
@@ -596,12 +630,18 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
   }
 }
 
-template<typename Dist>
-void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
-                    HnswSearchScratch& s) {
+// Top-`ef` search. With a predicate the descent is unfiltered (it only
+// navigates), the level-0 walk admits what `accept` passes, and `budget` caps
+// the distances the walk may spend; see HnswExpandLevel for the false return.
+template<typename Dist, typename Accept = HnswAcceptAll>
+bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
+                    HnswSearchScratch& s, const Accept& accept = {},
+                    uint64_t budget = kHnswNoBudget) {
   s.nearest.clear();
+  s.frontier.clear();
+  s.scored = 0;
   if (graph.Empty()) {
-    return;
+    return true;
   }
   const uint32_t entry = graph.EntryPoint();
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
@@ -613,13 +653,17 @@ void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   }
   s.visited.Next();
   s.visited.TestAndSet(cur.node);
-  s.nearest.assign(1, cur);
-  HnswSearchLevel(graph, dist, 0, ef, s);
+  s.frontier.assign(1, cur);
+  if (accept(cur.node)) {
+    s.nearest.assign(1, cur);
+  }
+  return HnswExpandLevel(graph, dist, 0, ef, s, accept, budget);
 }
 
-template<bool Inclusive, typename Dist>
+template<bool Inclusive, typename Dist, typename Accept = HnswAcceptAll>
 void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
-                      size_t max_results, HnswSearchScratch& s) {
+                      size_t max_results, HnswSearchScratch& s,
+                      const Accept& admit = {}) {
   const auto accept = [threshold](score_t score) {
     if constexpr (Inclusive) {
       return score >= threshold;
@@ -652,7 +696,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
   std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   found.clear();
   for (const auto& seed : frontier) {
-    if (accept(seed.score)) {
+    if (accept(seed.score) && admit(seed.node)) {
       found.push_back(seed);
     }
   }
@@ -689,7 +733,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
         continue;
       }
       const HnswCandidate cand{s.scores[i], s.batch[i]};
-      if (accept(s.scores[i])) {
+      if (accept(s.scores[i]) && admit(cand.node)) {
         found.push_back(cand);
       }
       frontier.push_back(cand);

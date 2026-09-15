@@ -37,6 +37,12 @@ struct DeadRuns {
 };
 
 struct TableFilter : DeadRuns {
+  // True when every predicate reads columns alone, so a window can be narrowed
+  // before any score exists: `Narrow(base, mask, nullptr, words)` is then the
+  // whole answer and a set folded that way needs no second pass. A predicate
+  // on the computed score makes this false; such a table is applied to hits.
+  virtual bool Foldable() const noexcept = 0;
+
   virtual uint64_t CountAndClear(doc_id_t base, uint64_t* mask,
                                  uint32_t words) = 0;
 

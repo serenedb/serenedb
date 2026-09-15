@@ -24,8 +24,15 @@
 namespace irs::count {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  HnswRefuseFilter(ctx.table);
-  return MakeConstant(query.RunSearch().size());
+  auto hits = query.RunSearch(ctx.table);
+  if (ctx.table == nullptr || ctx.table->Foldable()) {
+    return MakeConstant(hits.size());
+  }
+  uint64_t live = 0;
+  for (const auto& hit : hits) {
+    live += ctx.table->Live(hit.doc) == hit.doc;
+  }
+  return MakeConstant(live);
 }
 
 }  // namespace irs::count

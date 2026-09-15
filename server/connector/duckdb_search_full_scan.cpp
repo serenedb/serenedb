@@ -123,6 +123,8 @@ class ColFilterVerify : public irs::detail::TableFilter {
     return _chain.Empty() && _score_filter == nullptr;
   }
 
+  bool Foldable() const noexcept final { return _score_filter == nullptr; }
+
   // Narrows the ascending run `docs[0..n)` -- and the scores beside it, where
   // the plan produced any -- to what passes, in place.
   irs::doc_id_t Live(irs::doc_id_t doc) final {
@@ -1699,8 +1701,8 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
 
   struct SlotKind {
     catalog::ColumnId cat;
-    duckdb::idx_t Req::* req;
-    duckdb::idx_t Field::* slot;
+    duckdb::idx_t Req::*req;
+    duckdb::idx_t Field::*slot;
     size_t next = 0;
   };
   std::array<SlotKind, 5> kinds{{

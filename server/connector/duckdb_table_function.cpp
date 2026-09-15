@@ -366,20 +366,6 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
-bool SereneDBScanBindData::IsHnswScored() const noexcept {
-  if (!vector_scorer) {
-    return false;
-  }
-  for (const auto& index : indexes) {
-    const auto info =
-      catalog::InvertedInfo(*index).GetAnnInfo(vector_scorer->field_id);
-    if (info) {
-      return info->kind == irs::AnnKind::Hnsw;
-    }
-  }
-  return false;
-}
-
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
@@ -638,7 +624,8 @@ void SereneDBScanBindData::AppendSummary(
     const auto col_id = static_cast<catalog::ColumnId>(vector_scorer->field_id);
     const auto fname = name_of(col_id);
     auto ctype = bind.ColumnTypeById(col_id);
-    if (ctype.id() == duckdb::LogicalTypeId::INVALID && bind.IsIndexRelation()) {
+    if (ctype.id() == duckdb::LogicalTypeId::INVALID &&
+        bind.IsIndexRelation()) {
       if (const auto* expr =
             bind.ScannedIndex().ExpressionByFieldId(vector_scorer->field_id)) {
         ctype = expr->return_type;

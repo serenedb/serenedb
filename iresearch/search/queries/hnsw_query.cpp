@@ -23,9 +23,9 @@
 #include <algorithm>
 #include <span>
 
-#include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -127,21 +127,137 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 
 }  // namespace
 
-void HnswRefuseFilter(const detail::TableFilter* table) {
-  if (table == nullptr) [[likely]] {
-    return;
+namespace {
+
+// The set the segment's predicates fold into for the graph walk: the inner
+// query's docs (every doc, without one), narrowed by the table filter's
+// column predicates. The walk asks about nodes in graph order, not doc order,
+// so the set ends up filled to the last node touched; that is the cost of
+// evaluating the predicates once, the same set ts_dict folds its WHERE into.
+// Deleted docs are not dropped here: the hits are masked once, in CollectHits.
+detail::LazyBitset MakeSet(const QueryBuilder* inner,
+                           detail::TableFilter* table, doc_id_t docs_count) {
+  if (inner == nullptr) {
+    return detail::LazyBitset{docs_count, nullptr, table};
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG("an hnsw vector index does not support filtered search: the graph "
-            "walk cannot honour a predicate, so the filter would be silently "
-            "dropped. Use an ivf vector index instead"));
+  auto node = inner->PlanFill({}, ScoreMergeType::Noop);
+  SDB_ASSERT(node);
+  if (auto* folded = node->Folded(); folded != nullptr) {
+    return detail::LazyBitset{std::move(*folded), nullptr, table};
+  }
+  return detail::LazyBitset{std::move(node), docs_count, nullptr, table};
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch() const {
+// The graph walk expands about `ef * m0` nodes unfiltered and, with a
+// predicate admitting a share `p` of the graph, about `ef * m0 / p` before it
+// has `ef` admitted nodes. Scanning the predicate's own docs costs one distance
+// per match. The walk is taken only where it is expected to be the cheaper of
+// the two; a walk that then overspends its budget (the match count, what the
+// scan would have cost) falls back to the scan.
+bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0,
+                    uint64_t nodes) noexcept {
+  if (matches == 0 || nodes == 0) {
+    return true;
+  }
+  const long double walk = static_cast<long double>(ef) * m0 * nodes /
+                           static_cast<long double>(matches);
+  return static_cast<long double>(matches) <= walk;
+}
+
+template<typename Dist>
+void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
+  auto& nearest = s.nearest;
+  s.scores.resize(s.batch.size());
+  dist.Batch(s.batch, s.scores.data(),
+             nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
+  for (size_t i = 0; i < s.batch.size(); ++i) {
+    const HnswCandidate cand{s.scores[i], s.batch[i]};
+    if (nearest.size() >= ef && cand.score <= nearest.front().score) {
+      continue;
+    }
+    nearest.push_back(cand);
+    std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+    if (nearest.size() > ef) {
+      std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+      nearest.pop_back();
+    }
+  }
+  s.batch.clear();
+}
+
+// Top-`ef` over the set's docs, no graph: every match is scored once, in
+// batches so the distance kernel and the quantizer's early exit apply.
+template<typename Dist>
+void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
+                  uint32_t ef, HnswSearchScratch& s) {
+  constexpr size_t kBatch = 256;
+  s.nearest.clear();
+  s.batch.clear();
+  const auto size = graph.Size();
+  for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
+       doc = set.Probe(doc + 1)) {
+    const auto node = static_cast<uint32_t>(doc - doc_limits::min());
+    if (node >= size) {
+      break;
+    }
+    // A row without a vector owns a node id but no place in the graph.
+    if (graph.LevelOf(node) == 0) {
+      continue;
+    }
+    s.batch.push_back(node);
+    dist.Prefetch(node);
+    if (s.batch.size() == kBatch) {
+      HnswAdmit(dist, ef, s);
+    }
+  }
+  if (!s.batch.empty()) {
+    HnswAdmit(dist, ef, s);
+  }
+}
+
+}  // namespace
+
+template<typename Dist>
+void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
+                            HnswSearchScratch& scratch) const {
+  SDB_ASSERT(_inner != nullptr || table != nullptr);
+  const auto& graph = _data->graph;
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
+  auto set = MakeSet(_inner.get(), table, docs_count);
+  const auto admit = [&](uint32_t node) {
+    return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
+  };
+  if (_ef == 0) {
+    ResolveBool(_inclusive, [&]<bool Inclusive>() {
+      HnswSearchRadius<Inclusive>(graph, dist, _threshold, _max_results,
+                                  scratch, admit);
+    });
+    return;
+  }
+  // An inner query knows its upper bound up front. A table's column predicates
+  // are only known once evaluated, and evaluating them is a column scan, far
+  // cheaper than the distances that hang on the answer: fold the whole set and
+  // count it.
+  const uint64_t matches =
+    table != nullptr ? set.Count() : _inner->EstimateMax();
+  if (!HnswPreferScan(matches, _ef, graph.M0(), graph.Size()) &&
+      HnswSearchTopK(graph, dist, _ef, scratch, admit, matches)) {
+    return;
+  }
+  HnswScanTopK(set, graph, dist, _ef, scratch);
+}
+
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   auto& scratch = ThreadScratch();
+  if (table != nullptr && !table->Foldable()) {
+    table = nullptr;
+  }
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                [&](auto& dist) {
+                 if (_inner != nullptr || table != nullptr) {
+                   RunFiltered(dist, table, scratch);
+                   return;
+                 }
                  if (_ef != 0) {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
                    return;

@@ -670,13 +670,13 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   auto call_field_id = irs::field_limits::invalid();
   if (ss.IsIndexRelation()) {
     index = &ss.ScannedIndex();
-    call_field_id = ResolveAnnTargetFieldId(*col_arg, *found->get, ss, *index,
-                                            context);
+    call_field_id =
+      ResolveAnnTargetFieldId(*col_arg, *found->get, ss, *index, context);
   } else {
     ResolveSearchTableIndexes(ss, context);
     for (const auto* candidate : ss.InvertedIndexes()) {
-      const auto fid = ResolveAnnTargetFieldId(*col_arg, *found->get, ss,
-                                               *candidate, context);
+      const auto fid =
+        ResolveAnnTargetFieldId(*col_arg, *found->get, ss, *candidate, context);
       if (irs::field_limits::valid(fid) && candidate->GetAnnInfo(fid)) {
         index = candidate;
         call_field_id = fid;
@@ -1266,7 +1266,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty() || ss.IsHnswScored()) {
+  if (filters.empty()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data, context);

@@ -212,7 +212,9 @@ db error: ERROR: Cannot drop entry "vedernikoff_mop_t2" because there are entrie
 statement error
 DROP TABLE vedernikoff_mop_t3;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_t3" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_mop_t3" because there are entries that depend on it.
+view "vedernikoff_mop_union" depends on table "vedernikoff_mop_t3".
+Use DROP...CASCADE to drop all dependents.
 
 
 

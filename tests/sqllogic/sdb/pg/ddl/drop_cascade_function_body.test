@@ -49,7 +49,9 @@ clickclack_outer_plan
 statement error
 DROP FUNCTION clickclack_inner_plan(INT);
 ----
-db error: ERROR: Cannot drop entry "clickclack_inner_plan" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "clickclack_inner_plan" because there are entries that depend on it.
+macro function "clickclack_outer_plan" depends on macro function "clickclack_inner_plan".
+Use DROP...CASCADE to drop all dependents.
 
 
 

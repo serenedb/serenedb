@@ -110,7 +110,9 @@ INSERT INTO vedernikoff_solid_payments (amount) VALUES (500);
 statement error
 DROP SEQUENCE vedernikoff_solid_payday_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_payday_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_payday_seq" because there are entries that depend on it.
+table "vedernikoff_solid_payments" depends on sequence "vedernikoff_solid_payday_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -275,7 +277,9 @@ db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics
 statement error
 DROP FUNCTION vedernikoff_clickclack_threshold();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_threshold" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_threshold" because there are entries that depend on it.
+table "vedernikoff_clickclack_metrics" depends on macro function "vedernikoff_clickclack_threshold".
+Use DROP...CASCADE to drop all dependents.
 
 
 

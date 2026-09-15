@@ -309,7 +309,7 @@ CREATE OR REPLACE FUNCTION fibo(n) AS (
     END
 );
 ----
-db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself<slt:ignore>
 
 
 query

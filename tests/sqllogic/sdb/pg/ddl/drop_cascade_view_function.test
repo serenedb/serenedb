@@ -33,7 +33,9 @@ db error: ERROR: Cannot drop entry "ml_square" because there are entries that de
 statement error
 DROP FUNCTION ml_square;
 ----
-db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.
+view "v_ml_square" depends on macro function "ml_square".
+Use DROP...CASCADE to drop all dependents.
 
 
 

@@ -33,7 +33,7 @@ statement error
 DROP SEQUENCE ghost_seq RESTRICT;
 ----
 db error: ERROR: Sequence with name ghost_seq does not exist!
-Did you mean "<slt:ignore>"?<slt:ignore>
+Did you mean "<slt:ignore>"?
 
 
 statement error

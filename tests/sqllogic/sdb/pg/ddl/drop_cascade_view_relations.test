@@ -85,7 +85,9 @@ db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries t
 statement error
 DROP VIEW v_iceberg_snap1 RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "v_iceberg_snap1" because there are entries that depend on it.
+view "v_iceberg_snap2" depends on view "v_iceberg_snap1".
+Use DROP...CASCADE to drop all dependents.
 
 
 

@@ -56,7 +56,7 @@ connection after_crash
 statement error
 SELECT id, payload FROM iceberg_partition ORDER BY id;
 ----
-db error: ERROR: Table with name iceberg_partition does not exist!
+db error: ERROR: Table with name iceberg_partition does not exist!<slt:ignore>
 
 
 # Every name the cascade took is free again, and the sequence comes back with

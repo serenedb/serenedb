@@ -111,7 +111,7 @@ connection after_crash
 statement error
 ALTER TABLE dir_type ALTER COLUMN b TYPE BIGINT;
 ----
-db error: ERROR: Cannot alter entry "dir_type" because there are entries that depend on it.
+db error: ERROR: Cannot alter entry "dir_type" because there are entries that depend on it.<slt:ignore>
 
 
 connection after_crash

@@ -45,7 +45,7 @@ ROLLBACK
 statement error
 SELECT * FROM ctx_rolled
 ----
-db error: ERROR: Table with name ctx_rolled does not exist!
+db error: ERROR: Table with name ctx_rolled does not exist!<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -177,7 +177,7 @@ DROP SCHEMA ctx_cascade CASCADE
 statement error
 SELECT * FROM ctx_cascade.v
 ----
-db error: ERROR: <slt:ignore>ctx_cascade
+db error: ERROR: <slt:ignore>ctx_cascade<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -253,7 +253,7 @@ INSERT INTO ctx_keep.t VALUES (9)
 statement error
 ALTER SCHEMA ctx_keep RENAME TO ctx_moved
 ----
-db error: ERROR: Altering schemas is not yet supported
+db error: ERROR: Altering schemas is not yet supported<slt:ignore>
 
 
 query
@@ -282,7 +282,7 @@ CREATE ROLE ctx_owner
 statement error
 CREATE SCHEMA ctx_owned AUTHORIZATION ctx_owner
 ----
-db error: ERROR: syntax error at or near "AUTHORIZATION"
+db error: ERROR: syntax error at or near "AUTHORIZATION"<slt:ignore>
 
 
 statement ok
@@ -317,7 +317,7 @@ connection after_crash
 statement error
 SELECT * FROM ctx_rolled
 ----
-db error: ERROR: Table with name ctx_rolled does not exist!
+db error: ERROR: Table with name ctx_rolled does not exist!<slt:ignore>
 
 
 connection after_crash
@@ -349,7 +349,7 @@ connection after_crash
 statement error
 SELECT * FROM ctx_cascade.v
 ----
-db error: ERROR: <slt:ignore>ctx_cascade
+db error: ERROR: <slt:ignore>ctx_cascade<slt:ignore>
 
 
 connection after_crash

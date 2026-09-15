@@ -140,7 +140,9 @@ vedernikoff_iceberg_next_snap
 statement error
 DROP SEQUENCE vedernikoff_iceberg_snap_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_snap_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_snap_seq" because there are entries that depend on it.
+macro function "vedernikoff_iceberg_next_snap" depends on sequence "vedernikoff_iceberg_snap_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 

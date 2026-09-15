@@ -131,7 +131,9 @@ db error: ERROR: Cannot drop entry "v_mop_diamond1" because there are entries th
 statement error
 DROP VIEW v_mop_diamond2;
 ----
-db error: ERROR: Cannot drop entry "v_mop_diamond2" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "v_mop_diamond2" because there are entries that depend on it.
+view "v_mop_diamond3" depends on view "v_mop_diamond2".
+Use DROP...CASCADE to drop all dependents.
 
 
 

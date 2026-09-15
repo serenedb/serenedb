@@ -559,7 +559,8 @@ void SearchTable::VacuumCompact() {
     }
   };
   const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
-  irs::GetReady(
+  // With workers the merge suspends on them; this VACUUM thread waits.
+  irs::GetBlocking(
     CompactUnsafeAsync(kFullMerge, kProgress, empty, field_options.get(), env));
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);

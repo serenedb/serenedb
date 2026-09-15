@@ -272,7 +272,7 @@ StoreStats SearchTable::GetStats() const {
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
   const {
-  absl::MutexLock lock(&_config_mu);
+  std::shared_lock lock(_table_lock);
   return _config;
 }
 
@@ -293,13 +293,13 @@ void SearchTable::RebuildConfig() {
 void SearchTable::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-  absl::MutexLock lock(&_config_mu);
+  std::unique_lock lock(_table_lock);
   _configs.push_back({index_oid, std::move(config)});
   RebuildConfig();
 }
 
 void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
-  absl::MutexLock lock(&_config_mu);
+  std::unique_lock lock(_table_lock);
   std::erase_if(
     _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
   RebuildConfig();

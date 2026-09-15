@@ -150,13 +150,13 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
   std::vector<IndexedExpression>&& indexed_exprs,
-  std::shared_ptr<const search::SearchIndexSet> index_set)
+  std::shared_ptr<const catalog::InvertedIndexConfig> config)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk_policy{pk_policy},
     _indexed_expressions{std::move(indexed_exprs)},
-    _index_set{std::move(index_set)} {
+    _config{std::move(config)} {
   _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
 }
 
@@ -845,37 +845,36 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
-  auto set = shard.IndexSet();
+  auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
-  for (const auto& config : set->Indexes()) {
-    for (const auto& key : config->keys) {
-      if (key.normalized_expression.empty()) {
-        continue;
-      }
-      const auto* entry = config->FindEntry(key.field_id);
-      indexed_exprs.push_back({
-        .normalized_expr =
-          DeserializeBoundExpression(key.normalized_expression, context),
-        .field_id = key.field_id,
-        .is_geojson = key.type.IsJSONType() && entry &&
-                      irs::field_limits::valid(entry->synthetic_column),
-      });
+  for (const auto& key : config->keys) {
+    if (key.normalized_expression.empty()) {
+      continue;
     }
+    const auto* entry = config->FindEntry(key.field_id);
+    indexed_exprs.push_back({
+      .normalized_expr =
+        DeserializeBoundExpression(key.normalized_expression, context),
+      .field_id = key.field_id,
+      .is_geojson = key.type.IsJSONType() && entry &&
+                    irs::field_limits::valid(entry->synthetic_column),
+    });
   }
-  auto tokenizers = std::make_shared<catalog::IndexTokenizers>(context, catalog,
-                                                               *set->Merged());
-  trx.SetFieldOptions(set);
+  auto tokenizers =
+    std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
+  auto entry_of = [config](irs::field_id field_id) {
+    const auto* entry = config->FindEntry(field_id);
+    return entry ? entry : AllStoredEntry();
+  };
+  trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx,
     [tokenizers](irs::field_id field_id) {
       return tokenizers->Acquire(field_id);
     },
-    [set](irs::field_id field_id) {
-      const auto* entry = set->FindEntry(field_id);
-      return entry ? entry : AllStoredEntry();
-    },
+    std::move(entry_of),
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
-    std::move(indexed_exprs), std::move(set));
+    std::move(indexed_exprs), std::move(config));
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
@@ -913,8 +912,8 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   const auto write_column = [&](ColumnId col_id,
                                 const duckdb::LogicalType& type,
                                 const duckdb::Vector& vec) {
-    sink.AppendValueColumn(static_cast<irs::field_id>(col_id), type, vec,
-                           num_rows);
+    sink.AppendToColumn(static_cast<irs::field_id>(col_id), type, vec,
+                        num_rows);
     for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }

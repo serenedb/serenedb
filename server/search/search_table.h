@@ -27,16 +27,23 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
+#include <vector>
 
+#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
+#include "search/store_stats.h"
 
 namespace sdb::search {
 
@@ -58,6 +65,12 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
                                          options);
   }
+
+  std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
+  void MergeIndexConfig(
+    duckdb::idx_t index_oid,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config);
+  void RemoveIndexConfig(duckdb::idx_t index_oid);
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
@@ -142,8 +155,23 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options);
+                               const irs::IndexFieldOptions* field_options) {
+    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                            field_options, nullptr));
+  }
+  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+                          const irs::MergeWriter::FlushProgress& progress,
+                          bool& empty_compaction,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env)
+    -> yaclib::Future<ResultWithTime>;
   ResultWithTime CleanupUnsafe();
+
+  const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
+    return _topk_options;
+  }
+
+  StoreStats GetStats() const;
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
@@ -164,9 +192,13 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   bool _is_new;
   uint64_t _segment_memory_max;
   std::atomic<bool> _dropped{false};
-  std::shared_mutex _table_lock;
+  mutable std::shared_mutex _table_lock;
+  std::vector<IndexConfig> _configs;
+  std::shared_ptr<const catalog::InvertedIndexConfig> _config;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
+  std::optional<irs::ScorerOptions> _topk_options;
+  std::unique_ptr<irs::Scorer> _topk_scorer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.
   SearchDbWal* _wal = nullptr;
   uint64_t _last_committed_tick = 0;

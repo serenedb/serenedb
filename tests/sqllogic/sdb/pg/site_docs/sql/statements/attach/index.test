@@ -26,7 +26,7 @@ CREATE TABLE tbl2 AS SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db25.csv';
+ATTACH '${__TEST_DIR__}/db25_${__DATABASE__}.csv';
 
 # DOCS_TEST: example_002
 
@@ -36,27 +36,27 @@ ATTACH '${__TEST_DIR__}/db25.csv';
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS db15;
+DETACH IF EXISTS db15_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db15.csv' AS db15;
+ATTACH '${__TEST_DIR__}/db15_${__DATABASE__}.csv' AS db15_${__DATABASE__};
 
 # DOCS_TEST: example_003
 
 statement ok
-DETACH IF EXISTS db16;
+DETACH IF EXISTS db16_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db17;
+DETACH IF EXISTS db17_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db17.db' AS db17;
+ATTACH '${__TEST_DIR__}/db17_${__DATABASE__}.db' AS db17_${__DATABASE__};
 
 statement ok
-CREATE TABLE db17.items AS SELECT 1 AS id, 'alpha' AS name;
+CREATE TABLE db17_${__DATABASE__}.items AS SELECT 1 AS id, 'alpha' AS name;
 
 statement ok
-DETACH db17;
+DETACH db17_${__DATABASE__};
 
 # DOCS_TEST_RAW
 #| ATTACH 'file.db' (READ_ONLY);
@@ -67,15 +67,15 @@ DETACH db17;
 # the old attachment object is still alive: any in-flight statement on another
 # connection that listed all catalogs (Catalog::GetAllSchemas) pins every
 # attachment for that statement's duration, and the pinned READ_WRITE object
-# keeps the file open, so the engine correctly hands it back and refuses the
-# mode change ("already attached in READ_WRITE mode"). On a shared server the
-# doc example's claim is "can be attached read-only", not "instantly", so retry
-# until the concurrent readers drain.
+# keeps the file open, so the engine hands it back and refuses the mode change
+# ("already attached in READ_WRITE mode"). On a shared server the doc example's
+# claim is "can be attached read-only", not "instantly", so retry until the
+# concurrent readers drain.
 statement ok retry 40 backoff 250ms
-ATTACH '${__TEST_DIR__}/db17.db' AS db16 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db17_${__DATABASE__}.db' AS db16_${__DATABASE__} (READ_ONLY);
 
 statement ok
-DETACH db16;
+DETACH db16_${__DATABASE__};
 
 # DOCS_TEST: example_004
 
@@ -85,7 +85,7 @@ DETACH db16;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
+ATTACH '${__TEST_DIR__}/db26_${__DATABASE__}.csv' (BLOCK_SIZE 16_384);
 
 # DOCS_TEST: example_005
 
@@ -95,7 +95,7 @@ ATTACH '${__TEST_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
+ATTACH '${__TEST_DIR__}/db27_${__DATABASE__}.csv' (ROW_GROUP_SIZE 2048);
 
 # DOCS_TEST: example_006
 
@@ -105,7 +105,7 @@ ATTACH '${__TEST_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
+ATTACH '${__TEST_DIR__}/db28_${__DATABASE__}.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_008
 
@@ -115,7 +115,7 @@ ATTACH '${__TEST_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__TEST_DIR__}/db29.csv';
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db29_${__DATABASE__}.csv';
 
 # DOCS_TEST: example_009
 
@@ -125,7 +125,7 @@ ATTACH IF NOT EXISTS '${__TEST_DIR__}/db29.csv';
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__TEST_DIR__}/db15b.csv' AS db15;
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db15b_${__DATABASE__}.csv' AS db15_${__DATABASE__};
 
 # DOCS_TEST: example_010
 
@@ -135,27 +135,27 @@ ATTACH IF NOT EXISTS '${__TEST_DIR__}/db15b.csv' AS db15;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH OR REPLACE '${__TEST_DIR__}/db15c.csv' AS db15;
+ATTACH OR REPLACE '${__TEST_DIR__}/db15c_${__DATABASE__}.csv' AS db15_${__DATABASE__};
 
 # DOCS_TEST: example_011
 
 statement ok
-DETACH IF EXISTS db16;
+DETACH IF EXISTS db16_${__DATABASE__};
 
 statement ok
-ATTACH ':memory:' AS db16;
+ATTACH ':memory:' AS db16_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE db16.new_table (i INTEGER);
+CREATE TABLE db16_${__DATABASE__}.new_table (i INTEGER);
 
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
 
 statement ok
-DETACH db16;
+DETACH db16_${__DATABASE__};
 
 # DOCS_TEST: example_013
 
@@ -167,15 +167,15 @@ SHOW DATABASES;
 # DOCS_TEST: example_014
 
 statement ok
-DETACH IF EXISTS db16;
+DETACH IF EXISTS db16_${__DATABASE__};
 
 statement ok
-ATTACH ':memory:' AS db16;
+ATTACH ':memory:' AS db16_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement ok
-USE db16;
+USE db16_${__DATABASE__};
 
 # DOCS_TEST: example_015
 
@@ -183,22 +183,22 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db16;
+DETACH IF EXISTS db16_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db18;
+DETACH IF EXISTS db18_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db18.duckdb' AS db18;
+ATTACH '${__TEST_DIR__}/db18_${__DATABASE__}.duckdb' AS db18_${__DATABASE__};
 
 statement ok
-CREATE TABLE db18.stations AS SELECT * FROM (VALUES
+CREATE TABLE db18_${__DATABASE__}.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH db18;
+DETACH db18_${__DATABASE__};
 
 # DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
@@ -208,37 +208,37 @@ DETACH db18;
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS db19;
+DETACH IF EXISTS db19_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
+ATTACH '${__TEST_DIR__}/db18_${__DATABASE__}.duckdb' AS db19_${__DATABASE__};
 
 statement ok
-DETACH db19;
+DETACH db19_${__DATABASE__};
 
-# mode change on a just-detached file: see the db16 (READ_ONLY) attach above
+# mode change on a just-detached file: see the db16_${__DATABASE__} (READ_ONLY) attach above
 statement ok retry 40 backoff 250ms
-ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18_${__DATABASE__}.duckdb' AS db19_${__DATABASE__} (READ_ONLY);
 
 # DOCS_TEST: example_016
 
 statement ok
-DETACH IF EXISTS db19;
+DETACH IF EXISTS db19_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db18;
+DETACH IF EXISTS db18_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db18;
+ATTACH '${__TEST_DIR__}/db18b_${__DATABASE__}.duckdb' AS db18_${__DATABASE__};
 
 statement ok
-CREATE TABLE db18.stations AS SELECT * FROM (VALUES
+CREATE TABLE db18_${__DATABASE__}.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH db18;
+DETACH db18_${__DATABASE__};
 
 # DOCS_TEST_RAW
 #| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
@@ -248,14 +248,14 @@ DETACH db18;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
+ATTACH '${__TEST_DIR__}/db18b_${__DATABASE__}.duckdb' AS db19_${__DATABASE__};
 
 statement ok
-DETACH db19;
+DETACH db19_${__DATABASE__};
 
-# mode change on a just-detached file: see the db16 (READ_ONLY) attach above
+# mode change on a just-detached file: see the db16_${__DATABASE__} (READ_ONLY) attach above
 statement ok retry 40 backoff 250ms
-ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18b_${__DATABASE__}.duckdb' AS db19_${__DATABASE__} (READ_ONLY);
 
 # DOCS_TEST: example_017
 
@@ -265,7 +265,7 @@ ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/db30.csv' (STORAGE_VERSION 'v1.2.0');
+ATTACH '${__TEST_DIR__}/db30_${__DATABASE__}.csv' (STORAGE_VERSION 'v1.2.0');
 
 # DOCS_TEST: example_018
 
@@ -275,13 +275,13 @@ ATTACH '${__TEST_DIR__}/db30.csv' (STORAGE_VERSION 'v1.2.0');
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS db20;
+DETACH IF EXISTS db20_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db20.csv' AS db20 (ENCRYPTION_KEY 'secret_key');
+ATTACH '${__TEST_DIR__}/db20_${__DATABASE__}.csv' AS db20_${__DATABASE__} (ENCRYPTION_KEY 'secret_key');
 
 statement ok
-DETACH db20;
+DETACH db20_${__DATABASE__};
 
 # DOCS_TEST: example_020
 
@@ -291,57 +291,57 @@ DETACH db20;
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS db20;
+DETACH IF EXISTS db20_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db20b.csv' AS db20 (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
+ATTACH '${__TEST_DIR__}/db20b_${__DATABASE__}.csv' AS db20_${__DATABASE__} (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 statement ok
-DETACH db20;
+DETACH db20_${__DATABASE__};
 
 # DOCS_TEST: example_021
 
 statement ok
-DETACH IF EXISTS db21;
+DETACH IF EXISTS db21_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS db21;
+ATTACH ':memory:' AS db21_${__DATABASE__};
 
 statement ok
-USE db21;
+USE db21_${__DATABASE__};
 
 # DOCS_TEST: example_022
 
 statement ok
-DETACH IF EXISTS db22;
+DETACH IF EXISTS db22_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS db22;
+ATTACH ':memory:' AS db22_${__DATABASE__};
 
 # DOCS_TEST: example_023
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE SCHEMA db22.my_schema;
+CREATE SCHEMA db22_${__DATABASE__}.my_schema;
 
 # DOCS_TEST: example_024
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE db22.my_schema.my_table (col INTEGER);
+CREATE TABLE db22_${__DATABASE__}.my_schema.my_table (col INTEGER);
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
 
 query
-SELECT db22.my_schema.my_table.col FROM db22.my_schema.my_table;
+SELECT db22_${__DATABASE__}.my_schema.my_table.col FROM db22_${__DATABASE__}.my_schema.my_table;
 ----
 col
 
@@ -357,14 +357,14 @@ CREATE TABLE my_table (col INTEGER);
 # DOCS_TEST_BODY
 
 statement ok
-USE db22;
+USE db22_${__DATABASE__};
 
 # DOCS_TEST: example_028
 
 # DOCS_TEST_BODY
 
 statement ok
-USE db22.my_schema;
+USE db22_${__DATABASE__}.my_schema;
 
 # DOCS_TEST: example_029
 
@@ -372,10 +372,10 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db22;
+DETACH IF EXISTS db22_${__DATABASE__};
 
 statement ok
-DROP SCHEMA IF EXISTS db22 CASCADE;
+DROP SCHEMA IF EXISTS db22_${__DATABASE__} CASCADE;
 
 statement ok
 DROP SCHEMA IF EXISTS my_schema CASCADE;
@@ -383,7 +383,7 @@ DROP SCHEMA IF EXISTS my_schema CASCADE;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS db22;
+ATTACH ':memory:' AS db22_${__DATABASE__};
 
 statement ok
 CREATE SCHEMA my_schema;
@@ -393,7 +393,7 @@ CREATE SCHEMA my_schema;
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE db22.tbl (i INTEGER);
+CREATE TABLE db22_${__DATABASE__}.tbl (i INTEGER);
 
 # DOCS_TEST: example_031
 
@@ -405,14 +405,14 @@ CREATE TABLE my_schema.tbl (i INTEGER);
 # DOCS_TEST: example_032
 
 statement ok
-CREATE SCHEMA db22;
+CREATE SCHEMA db22_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement error
-CREATE TABLE db22.tbl2 (i INTEGER);
+CREATE TABLE db22_${__DATABASE__}.tbl2 (i INTEGER);
 ----
-db error: ERROR: Ambiguous reference to catalog or schema "db22" - use a fully qualified path like "<slt:ignore>.db22"
+db error: ERROR: Ambiguous reference to catalog or schema "db22_<slt:ignore>
 
 
 # DOCS_TEST: example_033
@@ -427,36 +427,36 @@ statement ok
 DROP TABLE IF EXISTS tbl2;
 
 statement ok
-DETACH IF EXISTS db23;
+DETACH IF EXISTS db23_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db24;
+DETACH IF EXISTS db24_${__DATABASE__};
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS db23;
+ATTACH ':memory:' AS db23_${__DATABASE__};
 
 statement ok
-ATTACH ':memory:' AS db24;
+ATTACH ':memory:' AS db24_${__DATABASE__};
 
 statement ok
-CREATE TABLE db23.tbl1 (i INTEGER);
+CREATE TABLE db23_${__DATABASE__}.tbl1 (i INTEGER);
 
 statement ok
-CREATE TABLE db24.tbl2 (j INTEGER);
+CREATE TABLE db24_${__DATABASE__}.tbl2 (j INTEGER);
 
 # DOCS_TEST: example_034
 
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM db23.tbl1;
+SELECT * FROM db23_${__DATABASE__}.tbl1;
 ----
 i
 
 query
-SELECT * FROM db24.tbl2;
+SELECT * FROM db24_${__DATABASE__}.tbl2;
 ----
 j
 
@@ -472,7 +472,7 @@ j
 # DOCS_TEST_BODY
 
 statement ok
-SET search_path TO db23, db24;
+SET search_path TO db23_${__DATABASE__}, db24_${__DATABASE__};
 
 query
 SELECT * FROM tbl1;
@@ -491,49 +491,49 @@ statement ok
 SET search_path TO main;
 
 statement ok
-DETACH IF EXISTS db15;
+DETACH IF EXISTS db15_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db16;
+DETACH IF EXISTS db16_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db17;
+DETACH IF EXISTS db17_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db18;
+DETACH IF EXISTS db18_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db19;
+DETACH IF EXISTS db19_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db20;
+DETACH IF EXISTS db20_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db21;
+DETACH IF EXISTS db21_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db22;
+DETACH IF EXISTS db22_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db23;
+DETACH IF EXISTS db23_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db24;
+DETACH IF EXISTS db24_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db25;
+DETACH IF EXISTS db25_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db26;
+DETACH IF EXISTS db26_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db27;
+DETACH IF EXISTS db27_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db28;
+DETACH IF EXISTS db28_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db29;
+DETACH IF EXISTS db29_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db30;
+DETACH IF EXISTS db30_${__DATABASE__};

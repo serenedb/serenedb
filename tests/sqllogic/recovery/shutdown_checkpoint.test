@@ -57,7 +57,7 @@ SELECT 1;
 
 
 connection after_shutdown
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry 60 backoff 1s
 SELECT 1 AS one;
 ----
 one

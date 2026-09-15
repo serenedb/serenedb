@@ -12,7 +12,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE OR REPLACE SECRET gcs_import_${__DATABASE__} (
+CREATE OR REPLACE SECRET s3_${__DATABASE__} (
     TYPE gcs,
     KEY_ID 'AKIAIOSFODNN7EXAMPLE',
     SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
@@ -48,32 +48,32 @@ id	name	value
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS db51;
+DETACH IF EXISTS db51_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db52;
+DETACH IF EXISTS db52_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/db51.duckdb' AS db52;
+ATTACH '${__TEST_DIR__}/db51_${__DATABASE__}.duckdb' AS db52_${__DATABASE__};
 
 statement ok
-DROP TABLE IF EXISTS db52.items;
+DROP TABLE IF EXISTS db52_${__DATABASE__}.items;
 
 statement ok
-CREATE TABLE db52.items AS SELECT 1 AS id, 'alpha' AS name;
+CREATE TABLE db52_${__DATABASE__}.items AS SELECT 1 AS id, 'alpha' AS name;
 
 statement ok
-DETACH db52;
+DETACH db52_${__DATABASE__};
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/db51.duckdb' AS db51 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db51_${__DATABASE__}.duckdb' AS db51_${__DATABASE__} (READ_ONLY);
 
 statement ok
-DETACH db51;
+DETACH db51_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db51;
+DETACH IF EXISTS db51_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db52;
+DETACH IF EXISTS db52_${__DATABASE__};

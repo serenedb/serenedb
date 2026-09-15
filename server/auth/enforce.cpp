@@ -182,9 +182,7 @@ class Enforcer {
       _enforce{!_caller_closure.is_superuser} {}
 
   void Run() {
-    if (_enforce) {
-      CheckViews();
-    }
+    CheckViews();
     Collect(_root);
     Check(_root);
     if (!_enforce) {
@@ -326,11 +324,13 @@ class Enforcer {
     }
 
     switch (op.type) {
-      case LogicalOperatorType::LOGICAL_GET:
-        if (_enforce) {
-          CheckGet(op.Cast<duckdb::LogicalGet>());
+      case LogicalOperatorType::LOGICAL_GET: {
+        auto& get = op.Cast<duckdb::LogicalGet>();
+        if (_enforce || PrincipalFor(get.table_index.index) != _caller) {
+          CheckGet(get);
         }
         break;
+      }
       case LogicalOperatorType::LOGICAL_INSERT: {
         auto& insert = op.Cast<duckdb::LogicalInsert>();
         RequireWritableSchema(insert.table.ParentSchema());
@@ -512,6 +512,9 @@ class Enforcer {
     for (const auto& other : _props.view_scopes) {
       if (other.view == scope.view && other.begin == scope.begin &&
           other.end == scope.end) {
+        continue;
+      }
+      if (Unowned(*other.view)) {
         continue;
       }
       if (other.begin <= scope.begin && scope.end <= other.end &&
@@ -711,7 +714,7 @@ class Enforcer {
     });
     for (const auto& scope : scopes) {
       const auto& view = *scope.view;
-      if (Unowned(view)) {
+      if (Unowned(view) && !view.ParentCatalog().IsSystemCatalog()) {
         continue;
       }
       if (!ClosureOf(EnclosingPrincipal(scope))

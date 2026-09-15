@@ -772,6 +772,31 @@ bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   return false;
 }
 
+bool IndexWriter::Transaction::CommitLocked(uint64_t last_tick,
+                                            FlushContext& flush) noexcept {
+  auto* segment = _active.Segment();
+  if (segment == nullptr) {
+    return true;
+  }
+  // An unregistered transaction is queued into whichever context the caller
+  // holds. A registered one belongs to the context current when it registered,
+  // which may not be this one -- PrepareEmplace would then release it, and the
+  // caller would publish an adoption without the removals meant to mask it.
+  SDB_ASSERT(_active.Flush() == nullptr || _active.Flush() == &flush,
+             "CommitLocked on a transaction registered with another context");
+  try {
+    segment->Commit(_queries, last_tick);
+    if (flush.PrepareEmplace(_active)) {
+      flush.EmplaceLocked(std::move(_active));
+    }
+  } catch (...) {
+    // No Abort here: it takes the lock the caller is holding.
+    return false;
+  }
+  _queries = 0;
+  return true;
+}
+
 void IndexWriter::Transaction::Abort() noexcept {
   auto* segment = _active.Segment();
   if (segment == nullptr) {
@@ -860,24 +885,27 @@ bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
          _segment_limits.Docs() <= segment.buffered_docs();
 }
 
-void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+bool IndexWriter::FlushContext::PrepareEmplace(
+  ActiveSegmentContext& active) noexcept {
   SDB_ASSERT(active._segment != nullptr);
 
   if (active._segment->first_tick == writer_limits::kMaxTick) {
     // Reset all segment data because there wasn't successful transactions
     active._segment->Reset();
     active = {};  // release
-    return;
+    return false;
   }
 
   auto* flush = active._flush;
-  const bool is_null = flush == nullptr;
-  if (!is_null && flush != this) {
+  if (flush != nullptr && flush != this) {
     active = {};  // release
-    return;
+    return false;
   }
+  return true;
+}
 
-  std::lock_guard lock{pending_mutex};
+void IndexWriter::FlushContext::EmplaceLocked(ActiveSegmentContext&& active) {
+  const bool is_null = active._flush == nullptr;
   auto* node = [&] {
     if (is_null) {
       return &pending_segments.emplace_back(std::move(active._segment),
@@ -890,6 +918,14 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
   }();
   pending_freelist.push(*node);
   active = {};
+}
+
+void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+  if (!PrepareEmplace(active)) {
+    return;
+  }
+  std::lock_guard lock{pending_mutex};
+  EmplaceLocked(std::move(active));
 }
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
@@ -915,6 +951,7 @@ void IndexWriter::FlushContext::Reset() noexcept {
   cached.clear();
   segments.clear();
   segment_mask.clear();
+  masked_names.clear();
 
   for (auto& entry : pending_segments) {
     if (auto& segment = entry.segment; segment != nullptr) {
@@ -1430,7 +1467,28 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
     // FIXME TODO remove from 'compacting_segments_' any segments in
     // 'committed_state_' or 'pending_state_' to avoid data duplication
-    policy(candidates, *committed_reader, _compacting.segments);
+    const auto floor = _compacting.floor;
+    if (floor == 0) {
+      policy(candidates, *committed_reader, _compacting.segments);
+    } else {
+      // Hide the backfill-protected segments from the policy
+      // TODO(Dronplane): maybe make it member and not refill every run?
+      CompactingSegments unavailable = _compacting.segments;
+      for (const auto& segment : *committed_reader) {
+        uint64_t id = 0;
+        const auto& name = segment.Meta().name;
+        if (ParseSegmentId(name, id) && id <= floor) {
+          unavailable.insert(name);
+        }
+      }
+      policy(candidates, *committed_reader, unavailable);
+
+      // TODO(Dronplane): should it be an assert?
+      std::erase_if(candidates, [floor](const SubReader* candidate) {
+        uint64_t id = 0;
+        return ParseSegmentId(candidate->Meta().name, id) && id <= floor;
+      });
+    }
 
     switch (candidates.size()) {
       case 0:  // nothing to compact
@@ -1706,6 +1764,158 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
   flush->imports.emplace_back(std::move(segment), tick, std::move(refs),
                               std::move(adopted_reader));
 
+  return true;
+}
+
+void IndexWriter::CompactionFloorGuard::Release() noexcept {
+  if (_writer == nullptr) {
+    return;
+  }
+  std::lock_guard lock{_writer->_compacting.lock};
+  _writer->_compacting.floor = 0;
+  _writer = nullptr;
+}
+
+IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
+  std::lock_guard lock{_compacting.lock};
+  if (!_compacting.segments.empty()) {
+    // A compaction is between selecting candidates and minting its output id,
+    // so it could still stamp a fresh id on segments below the floor we are
+    // about to set. The caller should retry once it finishes.
+    return {};
+  }
+  if (_compacting.floor != 0) {
+    return {};  // already armed; one holder at a time
+  }
+  const auto floor = CurrentSegmentId();
+  _compacting.floor = floor;
+  return {*this, floor};
+}
+
+bool IndexWriter::ReplaceSegments(
+  std::span<const std::string_view> replaced,
+  std::span<const std::string_view> adopted_metas, const Format::ptr& codec,
+  Transaction* removals, uint64_t removals_tick) {
+  if (codec == nullptr) {
+    SDB_WARN(IRESEARCH, "Cannot replace segments: unresolvable codec");
+    return false;
+  }
+  if (replaced.empty() && adopted_metas.empty()) {
+    return true;
+  }
+
+  // Pin the committed state: the candidate names are masked as string_views
+  // into its metas, so it has to outlive the flush context that holds them --
+  // and holding it also keeps the cleaner off the files until the commit
+  // publishes them. Same reason Compact pins it.
+  decltype(_committed_reader) committed_reader;
+  Compaction candidates;
+  {
+    std::lock_guard lock{_compacting.lock};
+    committed_reader = GetSnapshotImpl();
+    candidates.reserve(replaced.size());
+    for (const auto name : replaced) {
+      const SubReader* found = nullptr;
+      for (const auto& segment : *committed_reader) {
+        if (segment.Meta().name == name) {
+          found = &segment;
+          break;
+        }
+      }
+      if (found == nullptr) {
+        // Not a lost race: a removal that takes a segment's last live doc masks
+        // the whole segment out rather than giving it a docs_mask (PrepareFlush
+        // stage 1), so a source whose rows were all deleted while the caller
+        // was rebuilding it is simply gone. Nothing left to mask, and the
+        // caller's replacement is still adopted -- whatever deleted those rows
+        // reaches the replacement too, by tick if the removal is still pending
+        // and through the host's own reissue if it was already applied.
+        continue;
+      }
+      candidates.push_back(found);
+    }
+  }
+
+  // Open every replacement before touching the flush context, so a failure
+  // leaves nothing behind.
+  struct Adopted {
+    IndexSegment segment;
+    FileRefs refs;
+    std::shared_ptr<const SegmentReaderImpl> reader;
+  };
+  std::vector<Adopted> adopted;
+  adopted.reserve(adopted_metas.size());
+  for (const auto meta_file : adopted_metas) {
+    Adopted entry;
+    entry.segment.filename = meta_file;
+    entry.segment.meta.codec = codec;
+    try {
+      codec->get_segment_meta_reader()->read(_dir, entry.segment.meta,
+                                             meta_file);
+    } catch (const std::exception& e) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '", meta_file,
+               "': ", e.what());
+      return false;
+    }
+    if (entry.segment.meta.live_docs_count == 0) {
+      continue;  // nothing to adopt; the sources are still replaced
+    }
+    auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
+    if (!meta_ref) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
+               entry.segment.filename, "': failed to reference it");
+      return false;
+    }
+    entry.reader = SegmentReaderImpl::Open(_dir, entry.segment.meta,
+                                           GetSnapshotImpl()->Options());
+    if (!entry.reader) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
+               entry.segment.filename, "': failed to open it");
+      return false;
+    }
+    entry.refs.emplace_back(std::move(meta_ref));
+    adopted.push_back(std::move(entry));
+  }
+
+  auto flush = GetFlushContext();
+  std::lock_guard lock{flush->pending_mutex};
+
+  // In the same critical section as the imports below, so removals queued here
+  // mask the adopted segments in the generation that publishes them. As rowids
+  // are not reused - even if this succeeds but allocations below fails -
+  // removes are harmless without adoption passed.
+  if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
+    return false;
+  }
+
+  // Pre-allocation so tail is allocation-free
+  auto& segment_mask = flush->segment_mask;
+  flush->imports.reserve(flush->imports.size() + adopted.size());
+  segment_mask.reserve(segment_mask.size() + candidates.size());
+  std::vector<std::string_view> masked;
+  masked.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    masked.emplace_back(
+      flush->masked_names.emplace_back(candidate->Meta().name));
+  }
+
+  // Mutating tail
+  // No merger: the replacements are already written, so PrepareFlush takes the
+  // plain-import path and applies pending removals by tick rather than
+  // remapping them through a merge. The pinned reader rides along so the files
+  // it names survive until the commit publishes them.
+  for (auto& entry : adopted) {
+    // A copy per import: the ctor takes the pin by rvalue, and every import
+    // needs its own so the files stay referenced until the commit.
+    // MinTick used here as pending removes must reach replaced segments.
+    flush->imports.emplace_back(std::move(entry.segment),
+                                writer_limits::kMinTick, std::move(entry.refs),
+                                Compaction{}, std::move(entry.reader),
+                                decltype(committed_reader){committed_reader});
+  }
+  for (const auto name : masked) {
+    segment_mask.emplace(name);
+  }
   return true;
 }
 

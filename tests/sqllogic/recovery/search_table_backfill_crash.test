@@ -1,0 +1,312 @@
+# A search-table CREATE INDEX that crashes part-way through its backfill
+# (search_table_backfill.md §6.3, §8). Requires SDB_FAULT_INJECTION.
+#
+# The build swaps rebuilt segments in a group at a time, through ordinary
+# index-meta commits -- durable the moment they publish, and NOT tied to the
+# CREATE INDEX transaction. So a crash mid-build leaves the table in a mixed
+# state: some segments already rewritten to carry a term field, the rest
+# untouched, and no index entry anywhere (that entry commits with the
+# statement, which never returned).
+#
+# What must hold afterwards: the table is intact across both halves, the index
+# does not exist, and a fresh CREATE INDEX succeeds -- it allocates a new term
+# field id rather than reusing the abandoned one, so the dead postings the
+# crashed attempt left behind are inert (F1).
+
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE bfx (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+# Three separate published segments: one INSERT + refresh each. With a 1-byte
+# group budget every segment is its own group and its own swap, so the crash
+# below lands with the first group swapped and the other two untouched.
+statement ok
+INSERT INTO bfx VALUES (1, 'alpha');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfx;
+
+statement ok
+INSERT INTO bfx VALUES (2, 'beta');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfx;
+
+statement ok
+INSERT INTO bfx VALUES (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfx;
+
+
+query
+SELECT count(*) FROM bfx;
+----
+count
+3
+
+
+statement ok
+SET search_backfill_group_bytes = 1;
+
+
+statement ok
+SET sdb_faults = 'crash_after_search_backfill_group';
+
+
+statement error connection closed
+CREATE INDEX bfx_idx ON bfx USING inverted (tag);
+
+
+# --- restart ---------------------------------------------------------------
+
+# The index entry never committed, so nothing declares the term field the first
+# group's rebuilt segments now carry.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'bfx' ORDER BY indexname;
+----
+indexname
+bfx_pkey
+
+
+# Every row survived -- both the group that was swapped and the ones that were
+# not. This is the assertion the whole swap protocol exists for: a rebuilt
+# segment replaces its sources in one index-meta commit, so a crash can never
+# land between "sources dropped" and "replacements adopted".
+connection after_crash
+query
+SELECT id, tag FROM bfx ORDER BY id;
+----
+id	tag
+1	alpha
+2	beta
+3	gamma
+
+
+connection after_crash
+query
+SELECT count(*) FROM bfx;
+----
+count
+3
+
+
+# A re-run succeeds and indexes everything, across the mixed segment set the
+# crash left behind.
+connection after_crash
+statement ok
+CREATE INDEX bfx_idx ON bfx USING inverted (tag);
+
+
+connection after_crash
+query
+SELECT id FROM bfx_idx WHERE tag @@ 'alpha';
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT id FROM bfx_idx WHERE tag @@ 'beta';
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id FROM bfx_idx WHERE tag @@ 'gamma';
+----
+id
+3
+
+
+# Writes still work against the re-indexed table, and reach the new index.
+connection after_crash
+statement ok
+INSERT INTO bfx VALUES (4, 'delta');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bfx;
+
+
+connection after_crash
+query
+SELECT id FROM bfx_idx WHERE tag @@ 'delta';
+----
+id
+4
+
+
+connection after_crash
+query
+SELECT count(*) FROM bfx_idx;
+----
+count
+4
+
+
+connection after_crash
+statement ok
+DROP TABLE bfx;
+
+
+## Part 2 -- the half-swapped table is rebuilt by a parallel re-run
+#
+# Part 1 leaves the same mixed state but re-runs on whatever defaults the
+# reconnect brings, so how many workers touch it is incidental. Here the
+# retry is pinned to the sliced shape: one group over every segment, split
+# across workers, each with its own transaction. That is the path that has to
+# cope with a segment set where some members already carry the abandoned term
+# field of the crashed attempt and the rest do not.
+connection after_crash
+statement ok
+CREATE TABLE bfy (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+connection after_crash
+statement ok
+INSERT INTO bfy VALUES (1, 'alpha');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bfy;
+
+connection after_crash
+statement ok
+INSERT INTO bfy VALUES (2, 'beta');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bfy;
+
+connection after_crash
+statement ok
+INSERT INTO bfy VALUES (3, 'gamma');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bfy;
+
+connection after_crash
+statement ok
+INSERT INTO bfy VALUES (4, 'delta');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bfy;
+
+
+# One segment per group again, so the crash lands with one swapped and three
+# untouched.
+connection after_crash
+statement ok
+SET search_backfill_group_bytes = 1;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_after_search_backfill_group';
+
+
+connection after_crash
+statement error connection closed
+CREATE INDEX bfy_idx ON bfy USING inverted (tag);
+
+
+# --- restart ---------------------------------------------------------------
+
+connection after_crash_2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'bfy' ORDER BY indexname;
+----
+indexname
+bfy_pkey
+
+
+connection after_crash_2
+query
+SELECT id, tag FROM bfy ORDER BY id;
+----
+id	tag
+1	alpha
+2	beta
+3	gamma
+4	delta
+
+
+# The retry, pinned parallel: zero budget puts all four segments in one group,
+# and the group is split across workers.
+connection after_crash_2
+statement ok
+SET search_backfill_group_bytes = 0;
+
+
+connection after_crash_2
+statement ok
+SET threads = 4;
+
+
+connection after_crash_2
+statement ok
+CREATE INDEX bfy_idx ON bfy USING inverted (tag);
+
+
+# Every slice's output reached the one swap, over both halves of the mix.
+connection after_crash_2
+query
+SELECT id FROM bfy_idx WHERE tag @@ 'alpha';
+----
+id
+1
+
+
+connection after_crash_2
+query
+SELECT id FROM bfy_idx WHERE tag @@ 'delta';
+----
+id
+4
+
+
+connection after_crash_2
+query
+SELECT count(*) FROM bfy_idx;
+----
+count
+4
+
+
+connection after_crash_2
+statement ok
+INSERT INTO bfy VALUES (5, 'epsilon');
+
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) bfy;
+
+
+connection after_crash_2
+query
+SELECT id FROM bfy_idx WHERE tag @@ 'epsilon';
+----
+id
+5
+
+
+connection after_crash_2
+statement ok
+DROP TABLE bfy;

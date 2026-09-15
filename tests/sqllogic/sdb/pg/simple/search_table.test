@@ -201,19 +201,30 @@ a	b
 9	nine
 
 
-# A non-inverted index is rejected outright (only inverted is supported on a
-# search table). An inverted index is supported, but only on an empty table --
-# indexing existing rows is not yet implemented -- and search_dml has rows.
+# A non-inverted index is rejected outright: only inverted is supported on a
+# search table.
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
 db error: ERROR: only inverted indexes are supported on a search-backed table
 
 
-statement error
+# An inverted index over a POPULATED search table rewrites the existing
+# segments so they carry the new term field, so search_dml's row is reachable
+# through the index straight away. Dedicated coverage lives in
+# sdb/pg/index/search_table_backfill.test; dropped again here so the ALTER
+# assertions below see the table as they did before.
+statement ok
 CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
+
+query
+SELECT a FROM search_dml_inv_idx WHERE b @@ 'nine';
 ----
-db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)
+a
+9
+
+statement ok
+DROP INDEX search_dml_inv_idx;
 
 
 # Search tables have a fixed iresearch schema: structural ALTERs are rejected.

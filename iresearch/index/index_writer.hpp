@@ -27,10 +27,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
@@ -427,6 +432,10 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
+    // Queues this transaction into `flush` with its `pending_mutex` already
+    // held by the caller
+    bool CommitLocked(uint64_t last_tick, FlushContext& flush) noexcept;
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
@@ -475,6 +484,45 @@ class IndexWriter : private util::Noncopyable {
 
   bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
                     uint64_t tick);
+
+  class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
+   public:
+    CompactionFloorGuard() = default;
+    CompactionFloorGuard(IndexWriter& writer, uint64_t floor) noexcept
+      : _writer{&writer}, _floor{floor} {}
+    CompactionFloorGuard(CompactionFloorGuard&& rhs) noexcept
+      : _writer{std::exchange(rhs._writer, nullptr)}, _floor{rhs._floor} {}
+    CompactionFloorGuard& operator=(CompactionFloorGuard&& rhs) noexcept {
+      if (this != &rhs) {
+        Release();
+        _writer = std::exchange(rhs._writer, nullptr);
+        _floor = rhs._floor;
+      }
+      return *this;
+    }
+    ~CompactionFloorGuard() { Release(); }
+
+    bool Held() const noexcept { return _writer != nullptr; }
+    uint64_t Floor() const noexcept { return _floor; }
+
+   private:
+    void Release() noexcept;
+
+    IndexWriter* _writer = nullptr;
+    uint64_t _floor = 0;
+  };
+
+  CompactionFloorGuard ArmCompactionFloor();
+
+  const Format::ptr& Codec() const noexcept { return _codec; }
+
+  uint64_t CurrentSegmentId() const noexcept;
+
+  bool ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<const std::string_view> adopted_metas,
+                       const Format::ptr& codec,
+                       Transaction* removals = nullptr,
+                       uint64_t removals_tick = writer_limits::kMinTick);
 
   bool Import(const IndexReader& reader, Format::ptr codec = nullptr,
               const MergeWriter::FlushProgress& progress = {});
@@ -728,12 +776,19 @@ class IndexWriter : private util::Noncopyable {
     absl::Mutex pending_mutex;
 
     CompactingSegments segment_mask;
+    // Backing store for segment_mask entries whose name is not kept alive by a
+    // pinned reader in `imports`. A deque so an append never invalidates the
+    // views already handed to segment_mask.
+    std::deque<std::string> masked_names;
 
     FlushContext() = default;
 
     ~FlushContext() noexcept { Reset(); }
 
     void Emplace(ActiveSegmentContext&& active);
+
+    bool PrepareEmplace(ActiveSegmentContext& active) noexcept;
+    void EmplaceLocked(ActiveSegmentContext&& active);
 
     void AddToPending(ActiveSegmentContext& active);
 
@@ -799,7 +854,6 @@ class IndexWriter : private util::Noncopyable {
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
   uint64_t NextSegmentId() noexcept;
-  uint64_t CurrentSegmentId() const noexcept;
   void InitMeta(IndexMeta& meta, uint64_t tick) const;
 
   bool Start(const CommitInfo& info);
@@ -818,6 +872,7 @@ class IndexWriter : private util::Noncopyable {
   struct {
     std::recursive_mutex lock;
     CompactingSegments segments;
+    uint64_t floor = 0;
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;

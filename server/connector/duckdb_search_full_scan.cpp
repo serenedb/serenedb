@@ -366,6 +366,9 @@ struct TsDictLocalState : public IResearchScanLocalState {
   // rather than as a number: what a `.col` predicate has to be given, and what
   // a field too small for its own `TermCounts` is asked about.
   irs::detail::LazyBitset& Live();
+  // True when every column predicate folds into Live(); false leaves a score
+  // predicate to narrow candidates document by document.
+  bool FoldsColFilters() const noexcept;
   uint32_t WalkLive(irs::TermIterator& it, bool count_all);
   // The counter for this field's terms, or null where the field is not worth
   // folding a set for and where the documents themselves are needed.
@@ -2685,13 +2688,19 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
 
 void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
   _term_counts = {};
-  if (count_mode == CountMode::Meta || !_col_verify.Empty()) {
+  // Column predicates that fold into the live set are part of it, so the
+  // counter sees them; one on the score cannot fold and needs the documents.
+  if (count_mode == CountMode::Meta || !FoldsColFilters()) {
     return;
   }
   if (irs::detail::DocOf(reader) == nullptr) {
     return;
   }
   _term_counts = irs::count::MakeTermCounts(Live(), reader, reader.size());
+}
+
+bool TsDictLocalState::FoldsColFilters() const noexcept {
+  return _col_verify.Empty() || _col_verify.Foldable();
 }
 
 irs::detail::LazyBitset& TsDictLocalState::Live() {
@@ -2701,13 +2710,18 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
     auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
     EnsurePlanned(node != nullptr);
     const auto* removals = _seg->docs_mask();
+    // The column predicates fold into the same set where they can (the
+    // chain's scans move forward, which the set's fill honours); a score
+    // predicate stays with the per-candidate narrowing in WalkLive.
+    auto* const table =
+      !_col_verify.Empty() && _col_verify.Foldable() ? &_col_verify : nullptr;
     if (auto* folded = node->Folded(); folded != nullptr) {
-      _live =
-        std::make_unique<irs::detail::LazyBitset>(std::move(*folded), removals);
+      _live = std::make_unique<irs::detail::LazyBitset>(std::move(*folded),
+                                                        removals, table);
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
-        removals);
+        removals, table);
     }
   }
   return *_live;
@@ -2716,7 +2730,12 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
 uint32_t TsDictLocalState::WalkLive(irs::TermIterator& it, bool count_all) {
   auto postings = it.postings(irs::IndexFeatures::None);
   SDB_ASSERT(postings);
-  _col_verify.Rewind();
+  // Folded column predicates are already in the set; only a score predicate
+  // is left to narrow the candidates, and its chain walks each term afresh.
+  const bool narrow = !FoldsColFilters();
+  if (narrow) {
+    _col_verify.Rewind();
+  }
   auto& live = Live();
   uint32_t total = 0;
   std::array<irs::doc_id_t, kPlanBatch> cand_docs;
@@ -2735,8 +2754,9 @@ uint32_t TsDictLocalState::WalkLive(irs::TermIterator& it, bool count_all) {
     if (n == 0) {
       return total;
     }
-    total +=
-      static_cast<uint32_t>(_col_verify.Narrow(cand_docs.data(), nullptr, n));
+    total += narrow ? static_cast<uint32_t>(
+                        _col_verify.Narrow(cand_docs.data(), nullptr, n))
+                    : n;
     if (!count_all && total != 0) {
       return 1;
     }

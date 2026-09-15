@@ -39,6 +39,9 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#if defined(__x86_64__)
+#include <immintrin.h>
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -663,6 +666,126 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
   std::vector<float> _query;
 };
 
+// sq8 codes decode as x_d = vmin_d + (c_d + 0.5) * vdiff_d / 255 (faiss
+// QT_8bit, one range per dimension), so a distance to the query is a dot
+// product of the raw bytes with weights fixed per query:
+//   <q, x>       = C + sum_d w_d c_d          w_d = q_d vdiff_d / 255
+//   ||q - x||^2  = A + sum_d u_d c_d + sum_d v_d c_d^2
+//                  s_d = vdiff_d / 255, a_d = q_d - vmin_d - s_d / 2,
+//                  u_d = -2 a_d s_d, v_d = s_d^2
+// The bytes are widened straight to float and multiplied, no decode into a
+// float vector first, and four codes run side by side so the four dependent
+// FMA chains overlap. Used where the CPU has AVX-512; faiss otherwise.
+struct Sq8Weights {
+  std::vector<float> a;  // w (inner product) or u (l2)
+  std::vector<float> b;  // v (l2 only)
+  float bias = 0.f;      // C or A
+  uint32_t d = 0;
+};
+
+template<VectorMetric M>
+Sq8Weights MakeSq8Weights(const faiss::ScalarQuantizer& sq,
+                          std::span<const float> query) {
+  Sq8Weights w;
+  w.d = static_cast<uint32_t>(sq.d);
+  SDB_ASSERT(query.size() == w.d);
+  const float* vmin = sq.trained.data();
+  const float* vdiff = sq.trained.data() + w.d;
+  w.a.resize(w.d);
+  if constexpr (M == VectorMetric::L2Sqr) {
+    w.b.resize(w.d);
+  }
+  double bias = 0.;
+  for (uint32_t i = 0; i < w.d; ++i) {
+    const float s = vdiff[i] / 255.f;
+    if constexpr (M == VectorMetric::L2Sqr) {
+      const float a = query[i] - vmin[i] - 0.5f * s;
+      bias += static_cast<double>(a) * a;
+      w.a[i] = -2.f * a * s;
+      w.b[i] = s * s;
+    } else {
+      bias += static_cast<double>(query[i]) * (vmin[i] + 0.5f * s);
+      w.a[i] = query[i] * s;
+    }
+  }
+  w.bias = static_cast<float>(bias);
+  return w;
+}
+
+#if defined(__x86_64__)
+inline bool HasAvx512ForSq8() noexcept {
+  static const bool has = __builtin_cpu_supports("avx512f") &&
+                          __builtin_cpu_supports("avx512bw") &&
+                          __builtin_cpu_supports("avx512vl");
+  return has;
+}
+
+// Four codes at once; `codes[k]` may repeat when fewer are left.
+template<bool L2>
+__attribute__((target("avx512f,avx512bw,avx512vl,fma"))) void Sq8Dot4Avx512(
+  const Sq8Weights& w, const byte_type* const codes[4], float out[4]) {
+  __m512 acc[4], acc2[4];
+  for (int k = 0; k < 4; ++k) {
+    acc[k] = _mm512_setzero_ps();
+    acc2[k] = _mm512_setzero_ps();
+  }
+  const float* a = w.a.data();
+  const float* b = w.b.data();
+  uint32_t i = 0;
+  for (; i + 16 <= w.d; i += 16) {
+    const __m512 va = _mm512_loadu_ps(a + i);
+    const __m512 vb = L2 ? _mm512_loadu_ps(b + i) : _mm512_setzero_ps();
+    for (int k = 0; k < 4; ++k) {
+      const __m512 c = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes[k] + i))));
+      acc[k] = _mm512_fmadd_ps(va, c, acc[k]);
+      if constexpr (L2) {
+        acc2[k] = _mm512_fmadd_ps(vb, _mm512_mul_ps(c, c), acc2[k]);
+      }
+    }
+  }
+  if (i < w.d) {
+    const __mmask16 m = static_cast<__mmask16>((1u << (w.d - i)) - 1u);
+    const __m512 va = _mm512_maskz_loadu_ps(m, a + i);
+    const __m512 vb =
+      L2 ? _mm512_maskz_loadu_ps(m, b + i) : _mm512_setzero_ps();
+    for (int k = 0; k < 4; ++k) {
+      const __m512 c = _mm512_cvtepi32_ps(
+        _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(m, codes[k] + i)));
+      acc[k] = _mm512_fmadd_ps(va, c, acc[k]);
+      if constexpr (L2) {
+        acc2[k] = _mm512_fmadd_ps(vb, _mm512_mul_ps(c, c), acc2[k]);
+      }
+    }
+  }
+  for (int k = 0; k < 4; ++k) {
+    float r = w.bias + _mm512_reduce_add_ps(acc[k]);
+    if constexpr (L2) {
+      r += _mm512_reduce_add_ps(acc2[k]);
+    }
+    out[k] = L2 ? -r : r;
+  }
+}
+
+template<bool L2, typename Row>
+void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out) {
+  size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    const byte_type* codes[4] = {row(i), row(i + 1), row(i + 2), row(i + 3)};
+    Sq8Dot4Avx512<L2>(w, codes, out + i);
+  }
+  if (i < n) {
+    const byte_type* codes[4] = {row(i), row(i), row(i), row(i)};
+    for (size_t k = 1; i + k < n; ++k) {
+      codes[k] = row(i + k);
+    }
+    float tail[4];
+    Sq8Dot4Avx512<L2>(w, codes, tail);
+    std::copy_n(tail, n - i, out + i);
+  }
+}
+#endif
+
 template<VectorMetric M>
 class ScalarQuantizerReader final : public QuantizerReader {
  public:
@@ -673,6 +796,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
                                : faiss::MetricType::METRIC_INNER_PRODUCT));
     _dc->code_size = _cb->Sq().code_size;
     _dc->set_query(_cb->Query().data());
+    PrepareFast(_cb->Query());
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
@@ -689,6 +813,13 @@ class ScalarQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(block.size() % cs == 0);
     const size_t n = block.size() / cs;
     const byte_type* c = block.data();
+#if defined(__x86_64__)
+    if (_fast) {
+      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(
+        _weights, [&](size_t j) { return c + j * cs; }, n, out);
+      return;
+    }
+#endif
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       _dc->distance_to_code_batch_4(c + i * cs, c + (i + 1) * cs,
@@ -713,6 +844,12 @@ class ScalarQuantizerReader final : public QuantizerReader {
       return base + static_cast<size_t>(ids[j]) * record_size;
     };
     const size_t n = ids.size();
+#if defined(__x86_64__)
+    if (_fast) {
+      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(_weights, row, n, out);
+      return;
+    }
+#endif
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       _dc->distance_to_code_batch_4(row(i), row(i + 1), row(i + 2), row(i + 3),
@@ -737,12 +874,25 @@ class ScalarQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(_dc);
     SDB_ASSERT(query.size() == _cb->Sq().d);
     _dc->set_query(query.data());
+    PrepareFast(query);
     return true;
   }
 
  private:
+  void PrepareFast(std::span<const float> query) {
+#if defined(__x86_64__)
+    _fast = _cb->Sq().qtype == faiss::ScalarQuantizer::QT_8bit &&
+            _cb->Sq().code_size == _cb->Sq().d && HasAvx512ForSq8();
+    if (_fast) {
+      _weights = MakeSq8Weights<M>(_cb->Sq(), query);
+    }
+#endif
+  }
+
   std::shared_ptr<const ScalarQuantizerCodebook<M>> _cb;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
+  Sq8Weights _weights;
+  bool _fast = false;
 };
 
 template<class Codebook, class Reader>

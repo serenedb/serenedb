@@ -133,8 +133,8 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost,
-    std::move(inner));
+    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost, std::move(inner),
+    opts.hnsw_filter_mode);
   built->SetStats(ctx.Record());
   return built;
 }

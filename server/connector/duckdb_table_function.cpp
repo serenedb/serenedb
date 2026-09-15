@@ -395,6 +395,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;
+  o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->inner = std::move(inner);
   return f;
 }

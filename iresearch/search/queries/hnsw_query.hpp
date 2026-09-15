@@ -40,7 +40,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             std::vector<float> query, VectorMetric metric, uint32_t d,
             uint32_t record_size, uint32_t ef, score_t threshold,
             size_t max_results, bool inclusive, score_t boost,
-            QueryBuilder::ptr&& inner = nullptr)
+            QueryBuilder::ptr&& inner = nullptr,
+            HnswFilterMode filter_mode = HnswFilterMode::Auto)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
@@ -53,6 +54,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
       _threshold{threshold},
       _max_results{max_results},
       _boost{boost},
+      _filter_mode{filter_mode},
       _inclusive{inclusive} {}
 
   // The hits of the graph search, ascending by doc, deleted docs dropped.
@@ -85,6 +87,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   score_t _threshold;
   size_t _max_results;
   score_t _boost;
+  HnswFilterMode _filter_mode;
   bool _inclusive;
 };
 

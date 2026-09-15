@@ -100,6 +100,23 @@ enum class AnnKind : uint8_t {
   Hnsw,
 };
 
+// How an HNSW search honours a predicate. Auto picks by the predicate's
+// estimated selectivity; the others force one path, for measurement and for
+// a caller that knows better.
+//   Scan    every doc the predicate admits is scored, no graph.
+//   Walk    the graph walk scores every neighbour and passes through rejected
+//           nodes; only admitted nodes enter the result.
+//   Prune   rejected nodes are neither scored nor expanded (Qdrant's default).
+//   TwoHop  rejected nodes are not scored; their neighbours are candidates
+//           instead (ACORN-1).
+enum class HnswFilterMode : uint8_t {
+  Auto = 0,
+  Walk,
+  Scan,
+  Prune,
+  TwoHop,
+};
+
 struct AnnInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;

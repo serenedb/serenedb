@@ -56,6 +56,10 @@ struct SearchColumnInfo {
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
+  // True when the scan can also read this column from its columnstore (a
+  // search table stores every column), so a predicate the term index would
+  // answer badly may be left to the column filter instead.
+  bool column_stored = false;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,

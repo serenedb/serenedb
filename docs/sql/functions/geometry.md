@@ -709,8 +709,9 @@ Geometry operations run on [Boost.Geometry](https://www.boost.org/doc/libs/relea
 | `ST_Segmentize`, `ST_Split`, `ST_Snap`, `ST_OffsetCurve` | — |
 | `ST_GeoHash` | `ST_QuadKey`, `ST_Hilbert` |
 
-Three further differences apply to functions that do exist:
+Four further differences apply to functions that do exist:
 
 -   **`ST_Union` and `ST_SymDifference` require both arguments to have the same dimension.** Combining a point with a polygon would produce a `GEOMETRYCOLLECTION`, which cannot be built. `ST_Intersection` and `ST_Difference` accept mixed dimensions.
--   **`Z` and `M` are dropped from returned geometries.** Measurement and predicates are computed in two dimensions, as they are in PostGIS, but PostGIS carries the extra dimensions through to the result and SereneDB does not.
--   **`GEOMETRYCOLLECTION` arguments are accepted only by `ST_Intersects` and `ST_Disjoint`.** Every other predicate rejects them, because a collection's answer is not the combination of its parts' answers.
+-   **The Boost-backed operations drop `Z` and `M` from their results.** Measurement and predicates are computed in two dimensions, as they are in PostGIS, but PostGIS carries the extra dimensions through to the result and these do not: `ST_Envelope`, `ST_Boundary`, `ST_ConvexHull`, `ST_Simplify`, `ST_Intersection`, `ST_PointOnSurface`, `ST_Normalize` and `ST_RemoveRepeatedPoints`. The functions that move vertices around rather than computing new ones keep every dimension: `ST_Reverse`, `ST_Multi`, `ST_Points`, `ST_StartPoint`, `ST_EndPoint` and `ST_PointN`, and so does `ST_Centroid`.
+-   **Only some functions accept a `GEOMETRYCOLLECTION`.** Those that can answer member by member do: `ST_Reverse`, `ST_Centroid`, `ST_Envelope`, `ST_ConvexHull`, `ST_Area`, `ST_Length`, `ST_NumGeometries`, `ST_IsValid`, `ST_IsEmpty`, and the `ST_Intersects` / `ST_Disjoint` predicates. `ST_Boundary` returns `NULL` for one. Everything else rejects it, because a collection's answer is not the combination of its parts' answers -- the other predicates, `ST_Buffer` and `ST_Simplify` among them.
+-   **An empty geometry is valid, and empty input yields `NULL` where a geometry is expected.** `ST_IsValid('LINESTRING EMPTY')` is true, and `ST_ClosestPoint` and `ST_ShortestLine` return `NULL` when either argument is empty rather than raising.

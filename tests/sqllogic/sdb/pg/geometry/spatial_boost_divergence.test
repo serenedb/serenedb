@@ -45,10 +45,11 @@ SELECT ST_Area(ST_Union('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POLYGON((2 
 same_dim_union	mixed_difference	mixed_intersection
 28	16	t
 
-# --- 2. Z and M do not survive ---
+# --- 2. Z and M do not survive the Boost-backed operations ---
 #
-# PostGIS answers POINT Z (2 2 6) for the intersection below and keeps Z through
-# ST_Reverse; both come back 2D here.
+# PostGIS answers POINT Z (2 2 6) for the intersection below; it comes back 2D
+# here, as does the hull. ST_Reverse only reorders vertices and never goes
+# through Boost, so it carries every dimension through.
 
 query
 SELECT ST_HasZ(ST_Intersection('LINESTRING Z(0 0 5,4 4 5)'::GEOMETRY, 'LINESTRING Z(0 4 7,4 0 7)'::GEOMETRY)) AS intersection_z,
@@ -56,7 +57,7 @@ SELECT ST_HasZ(ST_Intersection('LINESTRING Z(0 0 5,4 4 5)'::GEOMETRY, 'LINESTRIN
        ST_HasZ(ST_ConvexHull('LINESTRING Z(0 0 1,4 0 2,4 4 3)'::GEOMETRY)) AS hull_z;
 ----
 intersection_z	reverse_z	hull_z
-f	f	f
+f	t	f
 
 # The 2D answer itself is still correct.
 

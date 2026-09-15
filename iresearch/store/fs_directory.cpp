@@ -252,6 +252,11 @@ class FSIndexOutput final : public IndexOutput {
         absl::StrCat("Failed to FSIndexOutput::WriteDirect, written '", written,
                      "' out of '", len, "' bytes")};
     }
+    _unhinted += written;
+    if (_unhinted >= kWritebackHintBytes) {
+      file_utils::HintWriteback(_handle.get(), _offset - _unhinted, _unhinted);
+      _unhinted = 0;
+    }
   }
 
   FSIndexOutput(file_utils::handle_t handle,
@@ -265,11 +270,13 @@ class FSIndexOutput final : public IndexOutput {
     _rm.transactions->Decrease(sizeof(FSIndexOutput));
   }
 
-  // TODO(mbkkt) larger buf_ size?
-  byte_type _buf[1024];
+  static constexpr size_t kWritebackHintBytes = 8 << 20;
+
+  byte_type _buf[64 * 1024];
   const ResourceManagementOptions& _rm;
   file_utils::handle_t _handle;
   Crc32c _crc;
+  uint64_t _unhinted = 0;
 };
 
 class PooledFsIndexInput;

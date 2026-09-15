@@ -36,6 +36,7 @@
 #include <iresearch/types.hpp>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,7 @@ struct IndexReader;
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
+struct StreamSegmentCursor;
 
 // How the scan executes, decided once in IResearchScanInitGlobal
 // (DecideScanMode): the fastest mode that can apply every pushed filter.
@@ -240,6 +242,18 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   };
   ColScanState col_scan;
 
+  struct StreamCursorSlot {
+    std::mutex mutex;
+    std::shared_ptr<StreamSegmentCursor> cursor;
+  };
+  struct StreamCursors {
+    std::atomic_uint32_t slots{0};
+    std::unique_ptr<StreamCursorSlot[]> current;
+    uint32_t count = 0;
+  };
+  StreamCursors stream_cursors;
+  duckdb::idx_t stream_threads = 1;
+
   // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for score pruning,
   // and the over-fetch pool size when quantization / a lookup filter requires
   // reranking or survivor slack.
@@ -258,6 +272,8 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
         return 1;
       case ScanMode::ColScan:
         return std::max<duckdb::idx_t>(1, col_scan.units.size());
+      case ScanMode::Stream:
+        return std::max<duckdb::idx_t>(1, stream_threads);
       default:
         // The scorer prepare phase walks every segment (corpus-level term
         // statistics), even ones the whole-file classification excluded.

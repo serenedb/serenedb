@@ -66,6 +66,7 @@ set(iresearch-tests_sources
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
+    ./store/memory_directory_tests.cpp
     ./store/store_utils_tests.cpp
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
@@ -146,6 +147,8 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
+    ./duckdb/validity_mask_tests.cpp
+    ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp

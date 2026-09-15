@@ -1,0 +1,44 @@
+control substitution on
+
+statement ok
+CREATE TABLE sij_exp AS
+SELECT i,
+       CASE WHEN i % 500 = 7 THEN i::VARCHAR
+            WHEN i % 900 = 11 THEN 'true'
+            ELSE 'text-' || i::VARCHAR || '-' || repeat('q', 30) END AS s
+FROM generate_series(1, 6000) g(i);
+
+statement ok
+COPY (SELECT i,
+             CASE WHEN i % 500 = 7 THEN to_json(i)
+                  WHEN i % 900 = 11 THEN to_json(true)
+                  ELSE to_json('text-' || i::VARCHAR || '-' || repeat('q', 30)) END AS s
+      FROM generate_series(1, 6000) g(i))
+TO '${__TEST_DIR__}/sij.jsonl' (FORMAT json);
+
+statement ok
+CREATE TABLE sij_t (i BIGINT, s TEXT) WITH (storage = 'search');
+
+statement count 6000
+INSERT INTO sij_t SELECT i, s FROM read_json('${__TEST_DIR__}/sij.jsonl', columns={i: 'BIGINT', s: 'VARCHAR'});
+
+statement ok
+VACUUM (REFRESH_TABLE) sij_t;
+
+query
+SELECT count(*) AS n FROM sij_t;
+----
+n
+6000
+
+query
+SELECT count(*) AS n FROM (SELECT i, s FROM sij_t EXCEPT ALL SELECT i, s FROM sij_exp);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SELECT i, s FROM sij_exp EXCEPT ALL SELECT i, s FROM sij_t);
+----
+n
+0

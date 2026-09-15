@@ -25,6 +25,7 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -172,11 +173,44 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
       states[i] = init_analyze(actx, codec_type.InternalType());
     }
   }
+  auto index_of = [&](duckdb::CompressionType t) {
+    const auto it = std::ranges::find_if(
+      candidates, [&](const auto& f) { return f.get().type == t; });
+    return it == candidates.end()
+             ? candidates.size()
+             : static_cast<size_t>(it - candidates.begin());
+  };
+  size_t deferred = candidates.size();
+  size_t dict = candidates.size();
+  if (forced_method == duckdb::CompressionType::COMPRESSION_AUTO &&
+      codec_type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+      !chunks.empty()) {
+    dict = index_of(duckdb::CompressionType::COMPRESSION_DICT_FSST);
+    if (dict != candidates.size() && states[dict]) {
+      deferred = index_of(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED);
+    }
+  }
+  auto analyze_chunks = [&](size_t i) {
+    for (auto& c : chunks) {
+      if (!candidates[i].get().analyze(*states[i], c.data)) {
+        states[i].reset();
+        return;
+      }
+    }
+  };
   for (auto& c : chunks) {
     for (size_t i = 0; i < candidates.size(); ++i) {
-      if (states[i] && !candidates[i].get().analyze(*states[i], c.data)) {
+      if (states[i] && i != deferred &&
+          !candidates[i].get().analyze(*states[i], c.data)) {
         states[i].reset();
       }
+    }
+  }
+  if (deferred != candidates.size() && states[deferred]) {
+    if (states[dict]) {
+      states[deferred].reset();
+    } else {
+      analyze_chunks(deferred);
     }
   }
 
@@ -583,7 +617,7 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
       static_cast<duckdb::idx_t>(_row_group_size - _staged_rows);
     const auto take = std::min(
       {count - off, duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
-    duckdb::VectorOperations::Copy(vec, back.data, off + take,
+    duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
                                    /*source_offset=*/off,
                                    /*target_offset=*/back.count);
     back.count += take;

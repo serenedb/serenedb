@@ -199,58 +199,23 @@ class IndexWriter : private util::Noncopyable {
 
     QueryContext() = default;
 
-    static constexpr uintptr_t kDone = 0;
-    static constexpr uintptr_t kReplace = std::numeric_limits<uintptr_t>::max();
-
-    QueryContext(FilterPtr filter, uint64_t tick, uintptr_t data)
-      : filter{std::move(filter)}, tick{tick}, _data{data} {
-      SDB_ASSERT(this->filter != nullptr);
+    QueryContext(FilterPtr filter, uint64_t tick)
+      : filter{std::move(filter)}, tick{tick} {
+      SDB_ASSERT(this->filter);
     }
-    QueryContext(const irs::Filter& filter, uint64_t tick, size_t data)
-      : QueryContext{{FilterPtr{}, &filter}, tick, data} {}
-    QueryContext(irs::Filter::ptr&& filter, uint64_t tick, size_t data)
-      : QueryContext{FilterPtr{std::move(filter)}, tick, data} {}
+    QueryContext(const irs::Filter& filter, uint64_t tick)
+      : QueryContext{{FilterPtr{}, &filter}, tick} {}
+    QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
+      : QueryContext{FilterPtr{std::move(filter)}, tick} {}
 
     FilterPtr filter;
     uint64_t tick;
-
-    bool IsDone() const noexcept { return _data == kDone; }
-    void ForceDone() noexcept { _data = kDone; }
-    void Done() noexcept {
-      SDB_ASSERT(!IsDone());
-      Done(this);
-    }
-    void DependsOn(QueryContext& query) noexcept {
-      SDB_ASSERT(!IsDone());
-      if (query._data == kDone) {
-        Done(this);
-      } else {
-        SDB_ASSERT(query._data == kReplace);
-        query._data = reinterpret_cast<uintptr_t>(this);
-      }
-    }
-
-   private:
-    uintptr_t _data{kDone};
-
-    static void Done(QueryContext* query) noexcept {
-      while (true) {
-        auto next = std::exchange(query->_data, kDone);
-        SDB_ASSERT(next != kDone);
-        if (next == kReplace) {
-          return;
-        }
-        query = reinterpret_cast<QueryContext*>(next);
-        SDB_ASSERT(query != nullptr);
-      }
-    }
   };
   static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
 
   class Document : private util::Noncopyable {
    public:
-    Document(SegmentContext& segment, SegmentWriter::DocContext doc,
-             doc_id_t batch_size = 1, QueryContext* query = nullptr);
+    Document(SegmentContext& segment, uint64_t tick, doc_id_t batch_size = 1);
 
     Document(Document&&) = default;
     Document& operator=(Document&&) = delete;
@@ -290,7 +255,6 @@ class IndexWriter : private util::Noncopyable {
     void Finish() noexcept;
 
     SegmentWriter& _writer;
-    QueryContext* _query;
     doc_id_t _doc_id{irs::doc_limits::eof()};
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);
@@ -310,30 +274,17 @@ class IndexWriter : private util::Noncopyable {
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
                     CommitOnFlush* commit_on_flush = nullptr) {
       UpdateSegment(disable_flush, commit_on_flush);
-      return {*_active.Segment(), SegmentWriter::DocContext{_queries},
-              batch_size};
+      return {*_active.Segment(), _queries, batch_size};
     }
 
     template<bool TickBound = true, typename Filter>
     void Remove(Filter&& filter) {
       UpdateSegment(true, nullptr);
       _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
-                                              _queries, QueryContext::kDone);
+                                              _queries);
       if constexpr (TickBound) {
         ++_queries;
       }
-    }
-
-    template<typename Filter>
-    Document Replace(Filter&& filter, bool disable_flush = false) {
-      UpdateSegment(disable_flush, nullptr);
-      auto& segment = *_active.Segment();
-      auto& query = segment.queries.emplace_back(
-        std::forward<Filter>(filter), _queries, QueryContext::kReplace);
-      segment.has_replace = true;
-      return {segment,
-              SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
-              1, &query};
     }
 
     void Reset() noexcept;
@@ -576,34 +527,25 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+                            DocsMask&& docs_mask, DocContexts&& docs,
+                            size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        _docs_begin{docs_begin},
-        _docs_end{_docs_begin + meta.docs_count} {}
-
-    size_t GetDocsBegin() const noexcept { return _docs_begin; }
-    size_t GetDocsEnd() const noexcept { return _docs_end; }
-
-    bool SetCommitted(size_t committed) noexcept {
-      SDB_ASSERT(GetDocsBegin() <= committed);
-      SDB_ASSERT(committed < GetDocsEnd());
-      _docs_end = committed;
-      return _docs_begin != committed;
+        docs{std::move(docs)},
+        committed_docs{committed_docs} {
+      SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
     DocMap old2new;
     DocMap new2old;
     DocsMask docs_mask;
     DocumentMask document_mask;
+    DocContexts docs;
+    size_t committed_docs;
     bool was_flush = false;
     bool meta_on_disk = false;
-
-   private:
-    size_t _docs_begin;
-    size_t _docs_end;
   };
 
   struct SegmentContext {
@@ -615,21 +557,18 @@ class IndexWriter : private util::Noncopyable {
 
     ManagedVector<QueryContext> queries;
     ManagedVector<FlushedSegment> flushed;
-    ManagedVector<SegmentWriter::DocContext> flushed_docs;
 
     segment_meta_generator_t meta_generator;
 
     size_t flushed_queries{0};
     size_t committed_queries{0};
     size_t committed_buffered_docs{0};
-    size_t committed_flushed_docs{0};
 
     uint64_t first_tick{writer_limits::kMaxTick};
     uint64_t last_tick{writer_limits::kMinTick};
 
     std::unique_ptr<SegmentWriter> writer;
     IndexSegment writer_meta;
-    bool has_replace{false};
 
     static std::unique_ptr<SegmentContext> make(
       Directory& dir, segment_meta_generator_t&& meta_generator,

@@ -46,6 +46,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   const pg::VirtualTable& table) {
   duckdb::CreateTableInfo info{schema, duckdb::Identifier{table.GetName()}};
+  info.oid = table.Id();
   for (const auto& [name, type] :
        duckdb::StructType::GetChildTypes(table.RowType())) {
     info.columns.AddColumn(duckdb::ColumnDefinition{name, type});
@@ -60,6 +61,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeView(
     return nullptr;
   }
   auto info = view.info->Copy();
+  info->oid = view.oid;
   auto entry = duckdb::make_uniq<duckdb::ViewCatalogEntry>(
     catalog, schema, info->Cast<duckdb::CreateViewInfo>());
   entry->permissions = view.permissions;

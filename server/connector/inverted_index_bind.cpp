@@ -20,6 +20,7 @@
 
 #include "connector/inverted_index_bind.h"
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -34,10 +35,12 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
@@ -50,6 +53,7 @@
 #include <utility>
 
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
 #include "connector/functions/search.h"
@@ -73,6 +77,9 @@ constexpr std::string_view kMetricField = "metric";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
+constexpr std::string_view kNbBitsField = "nb_bits";
+constexpr std::string_view kMField = "m";
+constexpr std::string_view kEfConstructionField = "ef_construction";
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kHyperLogLogField = "hyperloglog";
 
@@ -85,11 +92,13 @@ constexpr std::string_view kSQ8Quant = "sq8";
 constexpr std::string_view kSQ4Quant = "sq4";
 constexpr std::string_view kPQQuant = "pq";
 constexpr std::string_view kRaBitQQuant = "rabitq";
+constexpr std::string_view kTQQuant = "tq";
 constexpr std::string_view kNoneQuant = "none";
 
-constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
+constexpr std::array<std::string_view, 3> kKnownOpclassTypes{
   catalog::kIncludedKind,
   catalog::kIVFKind,
+  catalog::kHNSWKind,
 };
 
 template<typename T>
@@ -219,10 +228,12 @@ std::string DescribeKnownOpclassTypes() {
 std::string DescribeIVFOptions() {
   const std::string metrics = absl::StrJoin(
     std::array{kL2Metric, kL1Metric, kCosineMetric, kIPMetric}, "|");
-  const std::string quants = absl::StrJoin(
-    std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant, kNoneQuant}, "|");
+  const std::string quants =
+    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant,
+                             kTQQuant, kNoneQuant},
+                  "|");
   const std::string quants_cosine =
-    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant}, "|");
+    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kTQQuant}, "|");
   return absl::StrCat(
     "metric (string: ", metrics, ", REQUIRED), ", "quant (string: ", quants,
     ", default ", kSQ8Quant, " for ", kL2Metric, "|", kIPMetric, "|",
@@ -230,12 +241,25 @@ std::string DescribeIVFOptions() {
     " need ", kL2Metric, "|", kIPMetric, "|", kCosineMetric, ", ", kRaBitQQuant,
     " needs ", kL2Metric, "|", kIPMetric, "), ",
     "pq_m (int >= 1, divides dimension, quant='", kPQQuant,
-    "' only, default auto ~d/2), ", "rabitq_bits (int ", irs::kRaBitQMinBits,
-    "-", irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant, "' only, default ",
-    irs::kRaBitQMinBits, "), ",
+    "' only, default auto ~d/2), ", "nb_bits (alias ", kRaBitQBitsField,
+    "; int ", irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, " for quant='",
+    kRaBitQQuant, "' with default ", irs::kRaBitQMinBits, "; int ",
+    irs::kTQMinBits, "-", irs::kTQMaxBits, " for quant='", kTQQuant,
+    "' with default ", irs::kTQDefaultBits, "), ",
     "compression (bool, default true; false stores the index vectors "
     "uncompressed (increases the search performance and the disk "
     "consumption))");
+}
+
+std::string DescribeHNSWOptions() {
+  return absl::StrCat(
+    "metric (string: l2|l1|cosine|ip, REQUIRED), ",
+    "quant (string: none|sq8|sq4|tq, default sq8, none for l1), ",
+    "nb_bits (int ", irs::kTQMinBits, "-", irs::kTQMaxBits,
+    " for quant='tq' with default ", irs::kTQDefaultBits, "), ",
+    "m (int >= 2, default ", irs::kHnswDefaultM, "), ",
+    "ef_construction (int >= 1, default ", irs::kHnswDefaultEfConstruction,
+    ", must be >= m), ", "compression (bool, default true)");
 }
 
 irs::VectorMetric ParseIVFMetric(std::string_view column_name,
@@ -269,6 +293,7 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
       {kSQ4Quant, irs::VectorQuantization::SQ4},
       {kPQQuant, irs::VectorQuantization::PQ},
       {kRaBitQQuant, irs::VectorQuantization::RaBitQ},
+      {kTQQuant, irs::VectorQuantization::TQ},
       {kNoneQuant, irs::VectorQuantization::None},
     };
   for (const auto& [k, v] : kMap) {
@@ -276,10 +301,55 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
       return v;
     }
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
-                          "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant,
-                          " ", kPQQuant, " ", kRaBitQQuant, " ", kNoneQuant));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
+            "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant, " ", kPQQuant,
+            " ", kRaBitQQuant, " ", kTQQuant, " ", kNoneQuant));
+}
+
+void ValidateQuantBits(std::string_view kind, std::string_view column_name,
+                       std::string_view bits_key, irs::AnnInfo& cfg) {
+  auto& bits = cfg.quant.nb_bits;
+  switch (cfg.quant.kind) {
+    case irs::VectorQuantization::RaBitQ:
+      if (bits == 0) {
+        bits = irs::kRaBitQMinBits;
+      }
+      if (bits > irs::kRaBitQMaxBits) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' (", bits, ") must be between ", irs::kRaBitQMinBits,
+                  " and ", irs::kRaBitQMaxBits, " for quant '", kRaBitQQuant,
+                  "'"));
+      }
+      break;
+    case irs::VectorQuantization::TQ:
+      if (bits == 0) {
+        bits = irs::kTQDefaultBits;
+      }
+      if (!irs::TQBitsValid(bits)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' (", bits, ") must be between ", irs::kTQMinBits, " and ",
+                  irs::kTQMaxBits, " for quant '", kTQQuant, "'"));
+      }
+      break;
+    default:
+      if (bits != 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(
+            "Column '", column_name, "': ", kind, " option '", bits_key,
+            "' is only valid with quant ",
+            kind == catalog::kHNSWKind
+              ? absl::StrCat("'", kTQQuant, "'")
+              : absl::StrCat("'", kRaBitQQuant, "' or '", kTQQuant, "'")));
+      }
+      break;
+  }
 }
 
 void ApplyIVFOptions(std::string_view column_name,
@@ -290,6 +360,7 @@ void ApplyIVFOptions(std::string_view column_name,
   auto& rabitq_bits = cfg.quant.nb_bits;
   bool metric_set = false;
   bool quant_set = false;
+  std::string_view bits_key;
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
       auto str =
@@ -304,7 +375,14 @@ void ApplyIVFOptions(std::string_view column_name,
     } else if (key == kPqMField) {
       pq_m =
         ParsePositiveUintOption(catalog::kIVFKind, column_name, key, raw_val);
-    } else if (key == kRaBitQBitsField) {
+    } else if (key == kRaBitQBitsField || key == kNbBitsField) {
+      if (!bits_key.empty()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("Column '", column_name, "': ivf options '",
+                                kNbBitsField, "' and '", kRaBitQBitsField,
+                                "' are aliases, specify only one"));
+      }
+      bits_key = key == kNbBitsField ? kNbBitsField : kRaBitQBitsField;
       rabitq_bits =
         ParsePositiveUintOption(catalog::kIVFKind, column_name, key, raw_val);
     } else if (key == kCompressionField) {
@@ -316,6 +394,9 @@ void ApplyIVFOptions(std::string_view column_name,
         ERR_MSG("Column '", column_name, "': unknown ivf option '", key,
                 "'. Accepted options: ", DescribeIVFOptions()));
     }
+  }
+  if (bits_key.empty()) {
+    bits_key = kNbBitsField;
   }
   if (!metric_set) {
     THROW_SQL_ERROR(
@@ -378,23 +459,90 @@ void ApplyIVFOptions(std::string_view column_name,
                     ERR_MSG("Column '", column_name, "': ivf option '",
                             kPqMField, "' is only valid with quant 'pq'"));
   }
-  if (quant == irs::VectorQuantization::RaBitQ) {
-    if (rabitq_bits == 0) {
-      rabitq_bits = irs::kRaBitQMinBits;
-    }
-    if (rabitq_bits > irs::kRaBitQMaxBits) {
+  ValidateQuantBits(catalog::kIVFKind, column_name, bits_key, cfg);
+}
+
+void ApplyHNSWOptions(std::string_view column_name,
+                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+                      irs::AnnInfo& cfg, bool& compression) {
+  auto& quant = cfg.quant.kind;
+  bool metric_set = false;
+  bool quant_set = false;
+  for (const auto& [key, raw_val] : opts) {
+    if (key == kMetricField) {
+      auto str =
+        GetIndexStringOption(catalog::kHNSWKind, column_name, key, raw_val);
+      cfg.metric = ParseIVFMetric(column_name, str);
+      metric_set = true;
+    } else if (key == kQuantField) {
+      auto str =
+        GetIndexStringOption(catalog::kHNSWKind, column_name, key, raw_val);
+      quant = ParseIVFQuant(column_name, str);
+      quant_set = true;
+    } else if (key == kNbBitsField) {
+      cfg.quant.nb_bits =
+        ParsePositiveUintOption(catalog::kHNSWKind, column_name, key, raw_val);
+    } else if (key == kMField) {
+      cfg.m =
+        ParsePositiveUintOption(catalog::kHNSWKind, column_name, key, raw_val);
+    } else if (key == kEfConstructionField) {
+      cfg.ef_construction =
+        ParsePositiveUintOption(catalog::kHNSWKind, column_name, key, raw_val);
+    } else if (key == kCompressionField) {
+      compression =
+        GetIndexBoolOption(catalog::kHNSWKind, column_name, key, raw_val);
+    } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Column '", column_name, "': ivf option '", kRaBitQBitsField,
-                "' (", rabitq_bits, ") must be between ", irs::kRaBitQMinBits,
-                " and ", irs::kRaBitQMaxBits));
+        ERR_MSG("Column '", column_name, "': unknown hnsw option '", key,
+                "'. Accepted options: ", DescribeHNSWOptions()));
     }
-  } else if (rabitq_bits != 0) {
+  }
+  if (!metric_set) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Column '", column_name, "': ivf option '", kRaBitQBitsField,
-              "' is only valid with quant 'rabitq'"));
+      ERR_MSG("Column '", column_name, "': hnsw opclass requires the '",
+              kMetricField, "' option (one of: ", kL2Metric, ", ", kL1Metric,
+              ", ", kCosineMetric, ", ", kIPMetric,
+              "). Example: hnsw (metric = 'l2')"));
   }
+  if (cfg.m == 0) {
+    cfg.m = irs::kHnswDefaultM;
+  }
+  if (cfg.ef_construction == 0) {
+    cfg.ef_construction = irs::kHnswDefaultEfConstruction;
+  }
+  if (cfg.m < 2) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name,
+              "': hnsw option 'm' must be at least 2, got ", cfg.m));
+  }
+  if (cfg.ef_construction < cfg.m) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': hnsw option 'ef_construction' (",
+              cfg.ef_construction, ") must be >= 'm' (", cfg.m, ")"));
+  }
+  if (!quant_set && (cfg.metric == irs::VectorMetric::L2Sqr ||
+                     cfg.metric == irs::VectorMetric::InnerProduct ||
+                     cfg.metric == irs::VectorMetric::Cosine)) {
+    quant = irs::VectorQuantization::SQ8;
+  }
+  if (quant == irs::VectorQuantization::PQ ||
+      quant == irs::VectorQuantization::RaBitQ) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Column '", column_name,
+                            "': hnsw supports only quant = ", kNoneQuant, ", ",
+                            kSQ8Quant, ", ", kSQ4Quant, " or ", kTQQuant));
+  }
+  if (quant != irs::VectorQuantization::None &&
+      cfg.metric == irs::VectorMetric::L1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Column '", column_name, "': hnsw with metric = '",
+                            kL1Metric, "' supports only quant = ", kNoneQuant));
+  }
+  ValidateQuantBits(catalog::kHNSWKind, column_name, kNbBitsField, cfg);
 }
 
 void ApplyIncludedOpclass(
@@ -459,6 +607,23 @@ void ApplyIVFOpclass(
   entry.store_values = true;
 }
 
+void ApplyHNSWOpclass(
+  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+  catalog::InvertedIndexField& entry) {
+  irs::AnnInfo cfg{
+    .kind = irs::AnnKind::Hnsw,
+    .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+  };
+  bool compression = true;
+  ApplyHNSWOptions(owner_label, *opts, cfg, compression);
+  entry.column_options.ann_info = cfg;
+  entry.column_options.compression =
+    compression ? duckdb::CompressionType::COMPRESSION_AUTO
+                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.store_values = true;
+}
+
 [[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
                                              std::string_view owner_label,
                                              std::string_view schema_name) {
@@ -498,16 +663,18 @@ bool IsGeoSourceAnalyzer(const irs::analysis::Tokenizer& analyzer) {
   return false;
 }
 
-void EnsureId(irs::field_id& id, irs::field_id& next) {
+using FieldIdSource = absl::FunctionRef<irs::field_id()>;
+
+void EnsureId(irs::field_id& id, FieldIdSource next_id) {
   if (!irs::field_limits::valid(id)) {
-    id = next++;
+    id = next_id();
   }
 }
 
 void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
                             const irs::analysis::Tokenizer& analyzer,
                             const duckdb::LogicalType& value_type,
-                            irs::field_id& next_sub_id,
+                            FieldIdSource next_id,
                             catalog::InvertedIndexField& entry) {
   entry.features = dict.GetFeatures();
   entry.is_keyword = analyzer.type() == irs::Type<irs::KeywordTokenizer>::id();
@@ -517,14 +684,14 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");
   if (wants_store || wants_norm) {
-    EnsureId(entry.synthetic_column, next_sub_id);
+    EnsureId(entry.synthetic_column, next_id);
   }
   // A geo analyzer consumes the GeoJSON object itself, so it gets no leaf
   // ids -- which is what keeps it out of the JSON leaf splitter.
   entry.whole_value = IsGeoAnalyzer(analyzer);
   if (value_type.IsJSONType() && !entry.whole_value) {
-    EnsureId(entry.bool_field_id, next_sub_id);
-    EnsureId(entry.numeric_field_id, next_sub_id);
+    EnsureId(entry.bool_field_id, next_id);
+    EnsureId(entry.numeric_field_id, next_id);
   }
 }
 
@@ -717,8 +884,11 @@ struct KeyOpclass {
   bool IsBuiltin(std::string_view builtin) const noexcept {
     return HasParentheses() && name == builtin;
   }
+  bool IsAnn() const noexcept {
+    return IsBuiltin(catalog::kIVFKind) || IsBuiltin(catalog::kHNSWKind);
+  }
   bool IsTokenizer() const noexcept {
-    return !IsBuiltin(catalog::kIVFKind) && !IsBuiltin(catalog::kIncludedKind);
+    return !IsAnn() && !IsBuiltin(catalog::kIncludedKind);
   }
 };
 
@@ -728,7 +898,7 @@ struct KeyOpclass {
 void ValidateInvertedIndexKey(std::string_view label,
                               const duckdb::LogicalType& type,
                               const KeyOpclass& opclass) {
-  if (opclass.IsBuiltin(catalog::kIVFKind)) {
+  if (opclass.IsAnn()) {
     ValidateIVFKey(label, type);
     return;
   }
@@ -768,7 +938,7 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
 }
 
 // Folds one key's opclass into the field's config, drawing whatever sub-field
-// ids that opclass turns out to need from `next_sub_id`. Merges: a column
+// ids that opclass turns out to need from `next_id`. Merges: a column
 // listed twice arrives here twice with the same `entry`.
 //
 // `dict` is the resolved text search dictionary, or null when the opclass is
@@ -778,13 +948,17 @@ void ApplyOpclassToEntry(
   std::string_view label, const duckdb::LogicalType& value_type,
   const KeyOpclass& opclass,
   duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict,
-  irs::field_id& next_sub_id, catalog::InvertedIndexField& entry) {
+  FieldIdSource next_id, catalog::InvertedIndexField& entry) {
   if (opclass.name.empty()) {
     return;
   }
   const auto* opts = opclass.options;
   if (opclass.IsBuiltin(catalog::kIVFKind)) {
     ApplyIVFOpclass(context, label, value_type, *opts, entry);
+    return;
+  }
+  if (opclass.IsBuiltin(catalog::kHNSWKind)) {
+    ApplyHNSWOpclass(label, value_type, *opts, entry);
     return;
   }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {
@@ -794,6 +968,7 @@ void ApplyOpclassToEntry(
   }
   if (!dict) {
     if (opclass.name == catalog::kIVFKind ||
+        opclass.name == catalog::kHNSWKind ||
         opclass.name == catalog::kIncludedKind) {
       ThrowUnknownBuiltinOpclass(opclass.name, label, schema_name);
     }
@@ -801,7 +976,7 @@ void ApplyOpclassToEntry(
   }
   auto analyzer = dict->Acquire(context);
   ValidateTokenizerVsColumn(label, value_type, *analyzer);
-  FillEntryFromTokenizer(*dict, *analyzer, value_type, next_sub_id, entry);
+  FillEntryFromTokenizer(*dict, *analyzer, value_type, next_id, entry);
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query
     // re-parses the column -- which only works if it is in the columnstore.
@@ -822,12 +997,10 @@ const duckdb::Value* FindOption(
 // synthetic range, which no relation column can ever collide with. Stride 8
 // covers the per-kind JSON leaves and the synthetic geo column allocated with
 // it -- allocated together, so either all valid or all invalid.
-constexpr irs::field_id kExpressionFieldBase =
-  connector::kFirstSyntheticColumnId + 0x100;
 constexpr irs::field_id kExpressionFieldStride = 8;
 
 constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
-  return kExpressionFieldBase + key * kExpressionFieldStride;
+  return connector::kFirstIndexFieldId + key * kExpressionFieldStride;
 }
 
 // `store_pk` is checked against the key shape the index will actually have.
@@ -895,6 +1068,8 @@ void DeriveKeys(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
   InvertedIndexConfig& config) {
   const auto* table = dynamic_cast<const duckdb::TableCatalogEntry*>(&relation);
+  const auto* search_table =
+    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
   static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
   const std::span<const connector::ColumnId> column_ids{
     entry.column_ids.data(), entry.column_ids.size()};
@@ -905,19 +1080,25 @@ void DeriveKeys(
   // included(...))` -- is two keys contributing to one field's config.
   InvertedIndexFields entries;
   irs::containers::FlatHashSet<std::string> tokenized_exprs;
+  irs::containers::FlatHashMap<connector::ColumnId, irs::field_id> term_fields;
+  auto& db_manager = duckdb::DatabaseManager::Get(context);
 
   for (size_t i = 0; i < keys; ++i) {
     InvertedIndexKey record;
-    const auto block = ExpressionFieldId(i);
     duckdb::LogicalType value_type;
     std::string label;
     bool bare_column = false;
+    const auto block = ExpressionFieldId(i);
+    auto next_sub_id = static_cast<irs::field_id>(block + 1);
+    const auto next_id = [&]() -> irs::field_id {
+      return search_table ? db_manager.NextOid() : next_sub_id++;
+    };
     if (i < exprs.size()) {
       value_type = exprs[i]->GetReturnType();
       if (const auto colref = AsColumnRef(*exprs[i])) {
         const auto pos = colref->Binding().column_index.GetIndex();
         SDB_ASSERT(pos < entry.column_ids.size());
-        record.field_id = static_cast<irs::field_id>(entry.column_ids[pos]);
+        record.column_id = static_cast<irs::field_id>(entry.column_ids[pos]);
         label = colref->GetName().GetIdentifierName();
         bare_column = true;
       }
@@ -930,21 +1111,10 @@ void DeriveKeys(
                  duckdb::ExpressionType::COLUMN_REF);
       const auto& column = table->GetColumn(
         parsed.Cast<duckdb::ColumnRefExpression>().GetColumnName());
-      record.field_id = static_cast<irs::field_id>(column.Oid());
+      record.column_id = static_cast<irs::field_id>(column.Oid());
       value_type = column.Type();
       label = column.Name().GetIdentifierName();
       bare_column = true;
-    }
-    if (!bare_column) {
-      record.field_id = block;
-      record.type = value_type;
-      label = entry.parsed_expressions[i]->ToString();
-      // Frozen here in the same normalized form a query will produce, so the
-      // match later needs nothing but the entry.
-      auto normalized = connector::NormalizeBoundExpression(
-        *exprs[i], relation.oid, column_ids, context);
-      record.normalized_expression =
-        connector::SerializeBoundExpression(*normalized);
     }
 
     KeyOpclass opclass;
@@ -953,6 +1123,28 @@ void DeriveKeys(
     }
     if (i < entry.column_opclass_options.size()) {
       opclass.options = &entry.column_opclass_options[i];
+    }
+
+    if (bare_column) {
+      record.field_id = record.column_id;
+      if (search_table && !opclass.IsAnn()) {
+        auto [it, fresh] = term_fields.try_emplace(record.column_id, 0);
+        if (fresh) {
+          it->second = next_id();
+        }
+        record.field_id = it->second;
+      }
+    } else {
+      record.field_id = search_table ? next_id() : block;
+      record.type = value_type;
+      label = entry.parsed_expressions[i]->ToString();
+      record.expression_text = label;
+      // Frozen here in the same normalized form a query will produce, so the
+      // match later needs nothing but the entry.
+      auto normalized = connector::NormalizeBoundExpression(
+        *exprs[i], relation.oid, column_ids, context);
+      record.normalized_expression =
+        connector::SerializeBoundExpression(*normalized);
     }
 
     ValidateInvertedIndexKey(label, value_type, opclass);
@@ -977,15 +1169,12 @@ void DeriveKeys(
       }
     }
 
-    // Sub-fields are drawn from this key's own 8-wide block, so two keys
-    // merging into one field never collide -- their blocks differ.
-    auto next_sub_id = static_cast<irs::field_id>(block + 1);
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
     auto& field = slot->second;
     if (fresh) {
       // Every field carries a null leaf; only the typed leaves are
       // conditional on what the analyzer reads.
-      field.null_field_id = next_sub_id++;
+      field.null_field_id = next_id();
     }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
@@ -1003,7 +1192,7 @@ void DeriveKeys(
       field.text_dictionary = dict->oid;
     }
     ApplyOpclassToEntry(context, entry.schema.name.GetIdentifierName(), label,
-                        value_type, opclass, dict, next_sub_id, field);
+                        value_type, opclass, dict, next_id, field);
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;
       ivf->postings_id = record.field_id;

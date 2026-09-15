@@ -36,6 +36,7 @@
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>
+#include <yaclib/async/make.hpp>
 #include <yaclib/async/run.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -134,9 +135,10 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
   return {};
 }
 
-CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {
-  // No per-field config yet -- the merge uses the writer's baseline encoding.
-  return {.alive = true, .keepalive = nullptr, .field_options = nullptr};
+CompactionOptions PinCompactionOptions(SearchTable& table) {
+  auto set = table.IndexSet();
+  const auto* options = set.get();
+  return {.alive = true, .keepalive = std::move(set), .field_options = options};
 }
 
 template<class Storage>
@@ -179,7 +181,9 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
 }
 
 template<class Storage>
-bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
+auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
+                  SearchEngine& engine) -> yaclib::Future<bool> {
+  absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
   SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -188,23 +192,26 @@ bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   }
   // Pin the merge's field options for its whole lifetime (storage-specific, see
   // PinCompactionOptions). A target found already dropped has nothing to merge.
-  auto opts = PinCompactionOptions(idx);
+  auto opts = PinCompactionOptions(*idx);
   if (!opts.alive) {
-    return false;
+    co_return false;
   }
   metrics::Scoped guard{metrics::Gauge::CompactionActive};
+
+  const auto progress = [] { return !ShouldStop(); };
+
   bool empty_compaction = false;
-  auto [res, time_ms] = idx.CompactUnsafe(
-    policy, [] { return !ShouldStop(); }, empty_compaction, opts.field_options);
+  auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
+    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv());
   if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful compaction of Search index '", idx.GetId(),
+    SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx.GetId(),
+              "ms while compacting Search index '", idx->GetId(),
               "': ", res.message());
   }
-  return !empty_compaction;
+  co_return !empty_compaction;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is
@@ -221,18 +228,19 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   std::vector<yaclib::FutureOn<bool>> runs;
   while (!ShouldStop() && engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
-    runs.push_back(s.Run([&, weak, small] {
-      absl::Cleanup release = [&] { engine.ReleaseCompaction(); };
+    runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
       if (ShouldStop()) {
-        return false;
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
       }
       auto idx = weak.lock();
       if (!idx) {
-        return false;
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      const auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
-      return DoCompaction(*idx, policy);
+      auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
+      return DoCompaction(std::move(idx), std::move(policy), engine);
     }));
   }
   return runs;

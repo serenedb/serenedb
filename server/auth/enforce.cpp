@@ -63,6 +63,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -330,31 +331,43 @@ class Enforcer {
           CheckGet(op.Cast<duckdb::LogicalGet>());
         }
         break;
-      case LogicalOperatorType::LOGICAL_INSERT:
+      case LogicalOperatorType::LOGICAL_INSERT: {
+        auto& insert = op.Cast<duckdb::LogicalInsert>();
+        RequireWritableSchema(insert.table.ParentSchema());
         if (_enforce) {
-          CheckInsert(op.Cast<duckdb::LogicalInsert>());
+          CheckInsert(insert);
         }
         break;
-      case LogicalOperatorType::LOGICAL_UPDATE:
+      }
+      case LogicalOperatorType::LOGICAL_UPDATE: {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        RequireWritableSchema(update.table.ParentSchema());
         if (_enforce) {
-          CheckUpdate(op.Cast<duckdb::LogicalUpdate>());
+          CheckUpdate(update);
         }
         break;
-      case LogicalOperatorType::LOGICAL_DELETE:
+      }
+      case LogicalOperatorType::LOGICAL_DELETE: {
+        auto& del = op.Cast<duckdb::LogicalDelete>();
+        RequireWritableSchema(del.table.ParentSchema());
         if (_enforce) {
-          auto& del = op.Cast<duckdb::LogicalDelete>();
           RequireTablePrivilege(
             del.table, del.is_truncate ? AclMode::Truncate : AclMode::Delete);
         }
         break;
-      case LogicalOperatorType::LOGICAL_MERGE_INTO:
+      }
+      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        RequireWritableSchema(merge.table.ParentSchema());
         if (_enforce) {
-          CheckMerge(op.Cast<duckdb::LogicalMergeInto>());
+          CheckMerge(merge);
         }
         break;
+      }
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
+        RequireWritableSchema(create.schema);
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         if (_enforce) {
           RequireSchemaCreate(create.schema);
@@ -367,6 +380,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_MACRO:
       case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireWritableSchema(create.schema);
         Stamp(*create.info, DefaultObjType(op.type), create.schema);
         if (_enforce) {
           RequireSchemaCreate(*create.schema);
@@ -376,6 +390,7 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireWritableSchema(create.schema);
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
           CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
@@ -390,17 +405,23 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_CREATE_INDEX:
+      case LogicalOperatorType::LOGICAL_CREATE_INDEX: {
+        auto& create = op.Cast<duckdb::LogicalCreateIndex>();
+        RequireWritableSchema(create.table.ParentSchema());
         if (_enforce) {
-          RequireOwner(op.Cast<duckdb::LogicalCreateIndex>().table);
+          RequireOwner(create.table);
         }
         break;
-      case LogicalOperatorType::LOGICAL_DROP:
+      }
+      case LogicalOperatorType::LOGICAL_DROP: {
+        auto& info =
+          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::DropInfo>();
+        RequireWritableSchema(SchemaOf(info.type, info.GetQualifiedName()));
         if (_enforce) {
-          CheckDrop(
-            op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::DropInfo>());
+          CheckDrop(info);
         }
         break;
+      }
       case LogicalOperatorType::LOGICAL_ALTER: {
         auto& info =
           op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::AlterInfo>();
@@ -408,8 +429,12 @@ class Enforcer {
           ResolvePermissions(info.Cast<duckdb::AlterPermissionsInfo>());
         } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
           pg::ResolveAlterRole(_context, info.Cast<duckdb::AlterRoleInfo>());
-        } else if (_enforce) {
-          CheckAlter(info);
+        } else {
+          RequireWritableSchema(
+            SchemaOf(info.GetCatalogType(), info.GetQualifiedName()));
+          if (_enforce) {
+            CheckAlter(info);
+          }
         }
         const auto type = info.GetCatalogType();
         if (type == CatalogType::DATABASE_ENTRY ||
@@ -856,6 +881,42 @@ class Enforcer {
     return duckdb::Catalog::GetEntry(_context,
                                      duckdb::EntryLookupInfo(type, name),
                                      duckdb::OnEntryNotFound::RETURN_NULL);
+  }
+
+  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaOf(
+    CatalogType type, const duckdb::QualifiedName& name) {
+    if (type == CatalogType::SCHEMA_ENTRY) {
+      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
+                                        duckdb::OnEntryNotFound::RETURN_NULL);
+    }
+    if (type == CatalogType::TRIGGER_ENTRY) {
+      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Schema(),
+                                        duckdb::OnEntryNotFound::RETURN_NULL);
+    }
+    if (!IsSchemaScoped(type)) {
+      return nullptr;
+    }
+    auto entry = FindEntry(type, name);
+    return entry ? &entry->ParentSchema() : nullptr;
+  }
+
+  void RequireWritableSchema(
+    duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
+    if (schema) {
+      RequireWritableSchema(*schema);
+    }
+  }
+
+  void RequireWritableSchema(const duckdb::SchemaCatalogEntry& schema) {
+    if (_connection.IsSystemWriter() ||
+        schema.name != duckdb::Identifier{irs::StaticStrings::kDocsSchema}) {
+      return;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("schema \"", schema.name.GetIdentifierName(), "\" is read-only"),
+      ERR_DETAIL("The embedded documentation is rebuilt from the "
+                 "server binary at startup."));
   }
 
   void CheckDrop(const duckdb::DropInfo& info) {

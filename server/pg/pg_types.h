@@ -61,6 +61,7 @@ inline constexpr duckdb::idx_t kPgAmIresearch = 1010003;
 
 inline constexpr duckdb::idx_t kPgOpclassIncluded = 1020001;
 inline constexpr duckdb::idx_t kPgOpclassIvf = 1020002;
+inline constexpr duckdb::idx_t kPgOpclassHnsw = 1020003;
 
 inline constexpr duckdb::idx_t kFirstSystemView = 1200000;
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = 1300000;

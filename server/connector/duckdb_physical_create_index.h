@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/execution/index/index_type.hpp>
@@ -162,11 +163,10 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   bool IsSource() const final { return true; }
 
  private:
-  // Returns the `_relation` cast to a Table when it is one; nullptr for views.
-  duckdb::TableCatalogEntry* TableOrNull() const noexcept {
-    return dynamic_cast<duckdb::TableCatalogEntry*>(&_relation);
+  duckdb::DuckTableEntry* DuckTableOrNull() const noexcept {
+    return dynamic_cast<duckdb::DuckTableEntry*>(&_relation);
   }
-  bool IsDuckDBTable() const noexcept { return TableOrNull(); }
+  bool IsDuckDBTable() const noexcept { return DuckTableOrNull(); }
 
   // Not const: the build reads and publishes into the relation's own storage.
   duckdb::CatalogEntry& _relation;

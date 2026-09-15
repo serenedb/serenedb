@@ -62,6 +62,7 @@ struct PkPolicy {
 
 struct KeyRecord {
   irs::field_id field_id = irs::field_limits::invalid();
+  irs::field_id column_id = irs::field_limits::invalid();
   duckdb::LogicalType type;
   std::string normalized_expression;
 };

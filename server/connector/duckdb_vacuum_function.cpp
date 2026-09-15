@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -34,6 +35,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -252,13 +254,22 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
+  auto& engine = search::GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
+
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
-    const auto [res, _] =
-      inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &field_options);
+    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+      kPolicy, tick, empty_compaction, &field_options, env_ptr));
     if (!res.ok()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),

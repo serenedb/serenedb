@@ -65,6 +65,7 @@ class Loader {
       _ctx{std::make_shared<ConnectionContext>(
         *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
         database, database_id, nullptr, 0, nullptr)} {
+    _ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};

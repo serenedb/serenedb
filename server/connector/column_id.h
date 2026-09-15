@@ -57,6 +57,7 @@ inline constexpr ColumnId kInvertedIndexTermCountId =
   kFirstSyntheticColumnId + 6;
 inline constexpr ColumnId kInvertedIndexTermScoreId =
   kFirstSyntheticColumnId + 7;
+inline constexpr ColumnId kFirstIndexFieldId = kFirstSyntheticColumnId + 0x100;
 
 // The SQL-visible names of those synthetic columns. The score is a whole
 // column name; the rest are prefixes a column name is appended to after a '$',

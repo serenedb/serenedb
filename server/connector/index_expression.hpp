@@ -33,9 +33,29 @@
 
 namespace sdb::connector {
 
+struct IndexedExpression {
+  duckdb::unique_ptr<duckdb::Expression> normalized_expr;
+  irs::field_id field_id = irs::field_limits::invalid();
+  bool is_geojson = false;
+};
+
 std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr);
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
+
+duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
+  std::string_view bytes, duckdb::ClientContext& context);
+
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
+  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
+  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id);
+
+duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
+                                     duckdb::DataChunk& chunk,
+                                     duckdb::idx_t table_id,
+                                     std::span<const ColumnId> slot_to_col_id,
+                                     duckdb::ClientContext& context,
+                                     bool is_geojson = false);
 
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by

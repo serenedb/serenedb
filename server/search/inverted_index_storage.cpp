@@ -40,6 +40,7 @@
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -48,6 +49,8 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <system_error>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -202,6 +205,7 @@ InvertedIndexStorage::InvertedIndexStorage(
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
@@ -371,14 +375,7 @@ InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
     stats.numFiles += meta.files.size();
   }
   stats.numBufferedDocs = _writer->BufferedDocs();
-  stats.numFailedCommits = _num_failed_commits.load(std::memory_order_relaxed);
-  stats.numFailedCleanups =
-    _num_failed_cleanups.load(std::memory_order_relaxed);
-  stats.numFailedConsolidations =
-    _num_failed_consolidations.load(std::memory_order_relaxed);
-  stats.avgCommitTimeMs = _avg_commit_time_ms.Average();
-  stats.avgCleanupTimeMs = _avg_cleanup_time_ms.Average();
-  stats.avgConsolidationTimeMs = _avg_consolidation_time_ms.Average();
+  _maintenance.Fill(stats);
   return stats;
 }
 
@@ -388,11 +385,7 @@ ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (!result.ok()) {
-    _num_failed_cleanups.fetch_add(1, std::memory_order_relaxed);
-  } else {
-    _avg_cleanup_time_ms.Record(time_ms);
-  }
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -414,18 +407,23 @@ ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
+  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                          field_options, nullptr));
+}
+
+auto InvertedIndexStorage::CompactUnsafeAsync(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
-  auto result =
-    CompactUnsafeImpl(policy, progress, empty_compaction, field_options);
+  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                                           field_options, env);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (!result.ok()) {
-    _num_failed_consolidations.fetch_add(1, std::memory_order_relaxed);
-  } else if (!empty_compaction) {
-    _avg_consolidation_time_ms.Record(time_ms);
-  }
-  return {std::move(result), time_ms};
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
+  co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
@@ -442,45 +440,42 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   }
   SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 
-  if (!result.ok()) {
-    _num_failed_commits.fetch_add(1, std::memory_order_relaxed);
-  } else if (code == RefreshResult::Done) {
-    _avg_commit_time_ms.Record(time_ms);
-  }
-
+  _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }
 
-absl::Status InvertedIndexStorage::CompactUnsafeImpl(
+auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<absl::Status> {
   empty_compaction = false;
 
   try {
-    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (res.error == irs::CompactionError::Fail) {
-      return absl::InternalError(absl::StrCat(
+      co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '", GetId(),
         "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
-      return absl::OkStatus();
+      co_return absl::OkStatus();
     }
 
     empty_compaction = (res.size == 0);
   } catch (const std::exception& e) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId(), "': ", e.what()));
   } catch (...) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId(), "'"));
   }
-  return absl::OkStatus();
+  co_return absl::OkStatus();
 }
 
 absl::Status InvertedIndexStorage::RefreshUnsafeImpl(

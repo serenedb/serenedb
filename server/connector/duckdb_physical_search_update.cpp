@@ -173,7 +173,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.SetCardinality(num_rows);
 
   if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(trx);
+    gstate.insert_sink = MakeSearchTableInsertSink(
+      trx, *gstate.search_table, _table.catalog, context.client);
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
@@ -185,7 +186,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,
-                         gstate.new_pk_columns, uses_generated_pk, pk_base);
+                         gstate.new_pk_columns, uses_generated_pk, pk_base,
+                         _table.oid, context.client);
   gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,

@@ -126,7 +126,7 @@ struct SearchGetters {
 
 bool WithSearchGetters(
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  std::span<const catalog::InvertedIndexEntry* const> indexes,
+  std::span<const catalog::SearchIndexRef> indexes,
   duckdb::ClientContext& context,
   absl::FunctionRef<bool(const SearchGetters&)> fn);
 

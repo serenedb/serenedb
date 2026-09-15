@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <limits>
@@ -38,6 +39,7 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
+#include "search/store_stats.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
@@ -85,22 +87,7 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  struct Stats {
-    // NOLINTBEGIN
-    uint64_t numDocs = 0;
-    uint64_t numLiveDocs = 0;
-    uint64_t numBufferedDocs = 0;
-    uint64_t numSegments = 0;
-    uint64_t numFiles = 0;
-    uint64_t indexSize = 0;
-    uint64_t numFailedCommits = 0;
-    uint64_t numFailedCleanups = 0;
-    uint64_t numFailedConsolidations = 0;
-    uint64_t avgCommitTimeMs = 0;
-    uint64_t avgCleanupTimeMs = 0;
-    uint64_t avgConsolidationTimeMs = 0;
-    // NOLINTEND
-  };
+  using Stats = StoreStats;
 
   InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                        duckdb::idx_t table_id, duckdb::idx_t index_id,
@@ -173,6 +160,13 @@ class InvertedIndexStorage final
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options);
+
+  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+                          const irs::MergeWriter::FlushProgress& progress,
+                          bool& empty_compaction,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env)
+    -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -315,34 +309,12 @@ class InvertedIndexStorage final
   }
 
  private:
-  class MovingAverageMs {
-   public:
-    void Record(uint64_t time_ms) noexcept {
-      const uint64_t old =
-        _time_num.fetch_add((time_ms << 32U) + 1, std::memory_order_relaxed);
-      const uint64_t old_time = old >> 32U;
-      const uint64_t old_num = static_cast<uint32_t>(old);
-      if (old_num >= kWindow) {
-        _time_num.fetch_sub(((old_time / old_num) << 32U) + 1,
-                            std::memory_order_relaxed);
-      }
-    }
-    uint64_t Average() const noexcept {
-      const uint64_t v = _time_num.load(std::memory_order_relaxed);
-      const uint64_t time = v >> 32U;
-      const uint64_t num = static_cast<uint32_t>(v);
-      return num == 0 ? 0 : time / num;
-    }
-
-   private:
-    static constexpr uint64_t kWindow = 10;
-    std::atomic<uint64_t> _time_num{0};
-  };
-
-  absl::Status CompactUnsafeImpl(
-    const irs::CompactionPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-    const irs::IndexFieldOptions* field_options);
+  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                         const irs::MergeWriter::FlushProgress& progress,
+                         bool& empty_compaction,
+                         const irs::IndexFieldOptions* field_options,
+                         const irs::AnnBuildEnv* env)
+    -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code, bool for_checkpoint);
@@ -394,12 +366,7 @@ class InvertedIndexStorage final
   std::vector<std::vector<int64_t>> _delete_log;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
-  std::atomic<uint64_t> _num_failed_commits{0};
-  std::atomic<uint64_t> _num_failed_cleanups{0};
-  std::atomic<uint64_t> _num_failed_consolidations{0};
-  MovingAverageMs _avg_commit_time_ms;
-  MovingAverageMs _avg_cleanup_time_ms;
-  MovingAverageMs _avg_consolidation_time_ms;
+  MaintenanceCounters _maintenance;
   Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};

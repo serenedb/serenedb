@@ -253,8 +253,7 @@ connection docs database=postgres
 statement error
 ALTER SCHEMA sdb_docs RENAME TO sdb_docs_old;
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Altering schemas is not yet supported
 
 
 connection docs database=postgres

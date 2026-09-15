@@ -959,7 +959,7 @@ statement error
 CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', segment_memory_max = 'x');
 ----
-db error: ERROR: invalid value for parameter "segment_memory_max": "x"
+db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
 
 
 # segment_memory_max is search/inverted-scoped, so it is rejected on a plain

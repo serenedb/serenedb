@@ -44,6 +44,18 @@ MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   });
 
   values.push_back({
+    .oid = pg::kPgOpclassHnsw,
+    .opcmethod = pg::kPgAmInverted,
+    .opcname = catalog::kHNSWKind,
+    .opcnamespace = pg::kPgCatalogSchema,
+    .opcowner = pg::kRootUser,
+    .opcfamily = 0,
+    .opcintype = PgTypeOID::kFloat4Array,
+    .opcdefault = false,
+    .opckeytype = 0,
+  });
+
+  values.push_back({
     .oid = pg::kPgOpclassIncluded,
     .opcmethod = pg::kPgAmInverted,
     .opcname = catalog::kIncludedKind,

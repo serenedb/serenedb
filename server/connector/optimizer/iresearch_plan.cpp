@@ -112,7 +112,7 @@ std::vector<connector::ColumnId> BuildProjectedColumnIds(
 
 std::shared_ptr<const catalog::InvertedIndexConfig> TermDictIndexFor(
   const connector::SereneDBScanBindData& bind_data, connector::ColumnId) {
-  return bind_data.IsInvertedIndexEntry() ? bind_data.inverted_config : nullptr;
+  return bind_data.inverted_config;
 }
 
 irs::field_id ResolveAnnTargetFieldId(
@@ -313,16 +313,16 @@ bool TryClaimIResearchConjunct(
 
 bool WithSearchGetters(
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  std::span<const catalog::InvertedIndexEntry* const> indexes,
+  std::span<const catalog::SearchIndexRef> indexes,
   duckdb::ClientContext& context,
   absl::FunctionRef<bool(const SearchGetters&)> fn) {
   struct IndexTokenizers {
-    const catalog::InvertedIndexEntry* index;
+    const catalog::SearchIndexRef* index;
     catalog::IndexTokenizers dicts;
   };
   const auto resolved =
-    indexes | std::views::transform([&](const auto* index) {
-      return IndexTokenizers{index, index->ResolveTokenizers(context)};
+    indexes | std::views::transform([&](const auto& index) {
+      return IndexTokenizers{&index, index.ResolveTokenizers(context)};
     }) |
     std::ranges::to<std::vector>();
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
@@ -374,10 +374,11 @@ bool WithSearchGetters(
       return std::nullopt;
     }
     for (const auto& resolved_index : resolved) {
-      const auto* info = resolved_index.index->Config()->FindColumnInfo(col_id);
+      const auto& config = *resolved_index.index->config;
+      const auto* info = config.FindColumnInfo(col_id);
       if (info && info->IsTermDict()) {
-        return make_info(resolved_index, static_cast<irs::field_id>(col_id),
-                         info, std::move(type), col_id);
+        return make_info(resolved_index, config.TermField(col_id), info,
+                         std::move(type), col_id);
       }
     }
     return std::nullopt;
@@ -389,7 +390,7 @@ bool WithSearchGetters(
       return std::nullopt;
     }
     for (const auto& resolved_index : resolved) {
-      const auto& config = *resolved_index.index->Config();
+      const auto& config = *resolved_index.index->config;
       auto normalized = connector::NormalizeBoundExpression(
         expr, bind_data.RelationId(), projected_ids, context);
       const auto field_id = config.FindFieldIdByExpression(
@@ -577,6 +578,14 @@ uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
   return ReadIntSetting(context, "sdb_ivf_search_nprobe");
 }
 
+uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
+  return ReadIntSetting(context, "sdb_ivf_max_search_fanout");
+}
+
+uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
+  return ReadIntSetting(context, "sdb_hnsw_ef_search");
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -648,6 +657,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
       .nprobe = ReadSearchNprobe(context),
+      .max_search_fanout = ReadMaxSearchFanout(context),
+      .ef_search = ReadHnswEfSearch(context),
     };
     ss.score_order = info.order;
   } else {
@@ -746,11 +757,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const bool is_text = col_info->HasTextDictionary();
   const bool offs_stored =
     col_info->features.HasFeatures(irs::IndexFeatures::Offs);
-  const auto read_field = target_col_id;
+  const auto read_field = index->TermField(target_col_id);
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
-    bind->inverted_index = found.bind_data->inverted_index;
+    bind->index = found.bind_data->InvertedIndexes().front();
     bind->column_id = read_field;
     bind->limit = limit;
     search_scan.offsets.push_back(
@@ -1119,7 +1130,7 @@ void IResearchPushdownComplexFilter(
   }
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   auto& ss = bind_data;
-  if (!bind_data.IsInvertedIndexEntry()) {
+  if (!bind_data.inverted_config) {
     return;
   }
   if (ss.TsDictMode()) {
@@ -1130,7 +1141,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty()) {
+  if (filters.empty() || ss.IsHnswScored()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data, context);

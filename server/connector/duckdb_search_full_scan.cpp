@@ -840,7 +840,8 @@ void BuildTableFilter(IResearchScanGlobalState& state,
     }
     const auto& config = bind_data.inverted_config;
     const auto* info = config ? config->FindColumnInfo(col_id) : nullptr;
-    const bool index_stored = !index_meta || (info && info->IsStored());
+    const bool index_stored = !index_meta || bind_data.IsSearchTableEntry() ||
+                              (info && info->IsStored());
     if (!index_stored) {
       state.has_lookup_filter = true;
     } else if (index_meta || bind_data.IsSearchTableEntry()) {
@@ -1366,6 +1367,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   if (ss.vector_scorer) {
     auto vs = *ss.vector_scorer;
+    if (vs.quant != irs::VectorQuantization::None && ss.score_top_k) {
+      vs.min_ef =
+        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
+    }
     state->owned_filter =
       MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();

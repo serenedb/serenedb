@@ -148,11 +148,15 @@ void SearchSinkInsertBaseImpl::InvertTokens(const Field& field,
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy)
+  EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
+  std::vector<IndexedExpression>&& indexed_exprs,
+  std::shared_ptr<const search::SearchIndexSet> index_set)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
-    _pk_policy{pk_policy} {
+    _pk_policy{pk_policy},
+    _indexed_expressions{std::move(indexed_exprs)},
+    _index_set{std::move(index_set)} {
   _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
 }
 
@@ -838,11 +842,49 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
+std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  duckdb::Catalog& catalog, duckdb::ClientContext& context) {
+  auto set = shard.IndexSet();
+  std::vector<IndexedExpression> indexed_exprs;
+  for (const auto& config : set->Indexes()) {
+    for (const auto& key : config->keys) {
+      if (key.normalized_expression.empty()) {
+        continue;
+      }
+      const auto* entry = config->FindEntry(key.field_id);
+      indexed_exprs.push_back({
+        .normalized_expr =
+          DeserializeBoundExpression(key.normalized_expression, context),
+        .field_id = key.field_id,
+        .is_geojson = key.type.IsJSONType() && entry &&
+                      irs::field_limits::valid(entry->synthetic_column),
+      });
+    }
+  }
+  auto tokenizers = std::make_shared<catalog::IndexTokenizers>(context, catalog,
+                                                               *set->Merged());
+  trx.SetFieldOptions(set);
+  return std::make_unique<SearchSinkInsertBaseImpl>(
+    trx,
+    [tokenizers](irs::field_id field_id) {
+      return tokenizers->Acquire(field_id);
+    },
+    [set](irs::field_id field_id) {
+      const auto* entry = set->FindEntry(field_id);
+      return entry ? entry : AllStoredEntry();
+    },
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    std::move(indexed_exprs), std::move(set));
+}
+
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             std::span<const primary_key::PKColumn> pk_columns,
-                            bool uses_generated_pk, uint64_t pk_base) {
+                            bool uses_generated_pk, uint64_t pk_base,
+                            duckdb::idx_t table_id,
+                            duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
@@ -868,9 +910,17 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   }
 
   sink.InitImpl(num_rows, PkChunk{.key_terms = key_views});
+  const auto write_column = [&](ColumnId col_id,
+                                const duckdb::LogicalType& type,
+                                const duckdb::Vector& vec) {
+    sink.AppendValueColumn(static_cast<irs::field_id>(col_id), type, vec,
+                           num_rows);
+    for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
+      sink.SwitchFieldImpl(term_field, type, vec, num_rows);
+    }
+  };
   for (size_t col = 0; col < column_ids.size(); ++col) {
-    sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
-                         chunk.data[col].GetType(), chunk.data[col], num_rows);
+    write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
   if (uses_generated_pk) {
     duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
@@ -878,7 +928,13 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       data[row] = static_cast<int64_t>(pk_base + row);
     }
-    sink.SwitchFieldImpl(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk,
+    write_column(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
+  }
+  for (const auto& indexed_expr : sink.IndexedExpressions()) {
+    auto result =
+      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
+                            column_ids, context, indexed_expr.is_geojson);
+    sink.SwitchFieldImpl(indexed_expr.field_id, result.GetType(), result,
                          num_rows);
   }
   sink.FinishImpl();

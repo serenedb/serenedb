@@ -273,36 +273,30 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   } else {
     const auto transaction =
       _schema_entry.ParentCatalog().GetCatalogTransaction(context);
-    duckdb::optional_ptr<duckdb::CatalogEntry> entry;
-    if (auto* table = TableOrNull()) {
-      entry = _schema_entry.CreateIndex(transaction, *_info, *table);
-    } else {
-      _info->dependencies.AddDependency(_relation);
-      auto index_entry = duckdb::make_uniq<catalog::InvertedIndexEntry>(
-        _schema_entry.ParentCatalog(), _schema_entry, *_info, nullptr);
-      auto dependencies = index_entry->dependencies;
-      entry = _schema_entry.AddEntryInternal(
-        transaction, std::move(index_entry), _info->on_conflict, dependencies);
-    }
+    auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
       index_entry.SetConfig(BindInvertedIndexConfig(
         context, index_entry, _relation, _bound_expressions, pk_type));
-      const auto published = PublishInvertedIndex(
-        context, index_entry, _relation, _bound_expressions);
-      published.storage->StartTasks();
-      if (IsDuckDBTable()) {
-        published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
-        state->backfill_rowid_end =
-          static_cast<int64_t>(published.rowid_horizon);
-        state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
-          duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
-        auto& store_db = TableOrNull()->ParentCatalog().GetAttached();
-        auto& store_txn = duckdb::DuckTransaction::Get(context, store_db);
-        const auto undo = store_txn.GetUndoProperties();
-        if (!undo.has_updates && !undo.has_deletes) {
-          duckdb::DuckTransactionManager::Get(store_db)
-            .RefreshCheckpointSnapshot(store_txn);
+      if (const auto& store = index_entry.SearchStore()) {
+        store->MergeIndexConfig(index_entry.Config());
+      } else {
+        const auto published = PublishInvertedIndex(
+          context, index_entry, _relation, _bound_expressions);
+        published.storage->StartTasks();
+        if (IsDuckDBTable()) {
+          published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
+          state->backfill_rowid_end =
+            static_cast<int64_t>(published.rowid_horizon);
+          state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
+            duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+          auto& store_db = DuckTableOrNull()->ParentCatalog().GetAttached();
+          auto& store_txn = duckdb::DuckTransaction::Get(context, store_db);
+          const auto undo = store_txn.GetUndoProperties();
+          if (!undo.has_updates && !undo.has_deletes) {
+            duckdb::DuckTransactionManager::Get(store_db)
+              .RefreshCheckpointSnapshot(store_txn);
+          }
         }
       }
     }
@@ -332,10 +326,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   auto storage = created->Cast<catalog::InvertedIndexEntry>().Storage();
   if (!storage) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("REINDEX: source index \"",
-                            extras->source_index.GetIdentifierName(),
-                            "\" vanished mid-refresh"));
+    if (IsReindexPass()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("REINDEX: source index \"",
+                              extras->source_index.GetIdentifierName(),
+                              "\" vanished mid-refresh"));
+    }
+    return state;
   }
   state->index_storage = storage;
 
@@ -390,7 +387,8 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
   auto* gstate_ptr =
     sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->config) {
+  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->config ||
+      !gstate_ptr->index_storage) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
   auto& gstate = *gstate_ptr;
@@ -428,8 +426,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  auto* lstate = static_cast<CreateIndexLocalState*>(&input.local_state);
-  if (!lstate->writer) {
+  auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state);
+  if (!lstate || !lstate->writer) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto* writer = lstate->writer.get();
@@ -616,7 +614,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
-  if (!gstate.created) {
+  if (!gstate.created || !gstate.index_storage) {
     return duckdb::SinkFinalizeType::READY;
   }
 
@@ -724,7 +722,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
                          .id = ColumnId{p}});
     }
   } else {
-    auto& table_entry = op.table.Cast<duckdb::DuckTableEntry>();
+    auto& table_entry = op.table.Cast<duckdb::TableCatalogEntry>();
     relation = &table_entry;
     const auto& entry_columns = table_entry.GetColumns();
     columns.reserve(entry_columns.LogicalColumnCount());

@@ -33,6 +33,7 @@
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "docs/docs_loader.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -142,6 +143,7 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    docs::LoadEmbeddedDocs();
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();

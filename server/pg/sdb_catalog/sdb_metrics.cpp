@@ -31,8 +31,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "server/utils/metrics.h"
 
 namespace sdb::pg {
@@ -112,22 +114,31 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   auto& context = _context;
   auto& catalog =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
-  const auto visit_index = [&](duckdb::CatalogEntry& entry) {
-    const auto* index =
-      dynamic_cast<const catalog::InvertedIndexEntry*>(&entry);
-    if (!index || !index->Storage()) {
-      return;
-    }
-    const auto stats = index->Storage()->GetStats();
-    const auto relation_id = static_cast<Oid>(index->oid);
+  const auto emit = [&](const Stats& stats, Oid relation_id) {
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
                           relation_id);
       masks.emplace_back(kPerIndexMask);
     }
   };
+  const auto visit_index = [&](duckdb::CatalogEntry& entry) {
+    const auto* index =
+      dynamic_cast<const catalog::InvertedIndexEntry*>(&entry);
+    if (!index || !index->Storage()) {
+      return;
+    }
+    emit(index->Storage()->GetStats(), static_cast<Oid>(index->oid));
+  };
+  const auto visit_table = [&](duckdb::CatalogEntry& entry) {
+    const auto* table = dynamic_cast<const catalog::SearchTableEntry*>(&entry);
+    if (!table) {
+      return;
+    }
+    emit(table->Storage()->GetStats(), static_cast<Oid>(table->oid));
+  };
   VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
     schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);
+    schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, visit_table);
   });
 
   auto result = CreateColumns<SdbMetrics>(values.size());

@@ -100,6 +100,9 @@ struct VectorScorerOptions {
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
+  uint32_t max_search_fanout = 16;
+  uint32_t ef_search = 0;
+  uint32_t min_ef = 0;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 
@@ -153,6 +156,7 @@ enum class ScanEntryKind : uint8_t {
   // A TableEngine::Search table: its iresearch store IS the table, so every
   // column is covered in `.col` and there is no separate lookup source.
   SearchTable,
+  SearchTableIndex,
 };
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
@@ -250,17 +254,15 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   Kind GetKind() const noexcept { return _kind; }
   bool IsViewBacked() const noexcept { return _kind == Kind::View; }
   bool IsInvertedIndexEntry() const noexcept {
-    return entry_kind == ScanEntryKind::InvertedIndex;
+    return entry_kind == ScanEntryKind::InvertedIndex ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
   }
   bool IsSearchTableEntry() const noexcept {
-    return entry_kind == ScanEntryKind::SearchTable;
+    return entry_kind == ScanEntryKind::SearchTable ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
   }
-  std::vector<const catalog::InvertedIndexEntry*> InvertedIndexes() const {
-    if (!inverted_index) {
-      return {};
-    }
-    return {inverted_index.get()};
-  }
+  std::vector<catalog::SearchIndexRef> InvertedIndexes() const;
+  bool IsHnswScored() const noexcept;
 
   template<typename T>
   T& As() & {

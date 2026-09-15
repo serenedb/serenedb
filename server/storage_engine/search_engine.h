@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
@@ -42,9 +43,16 @@ class SearchTable;
 class SearchEngine;
 SearchEngine& GetSearchEngine();
 
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept;
+void AnnReleaseWorkers(uint32_t n) noexcept;
+const irs::AnnBuildEnv& AnnBuildEnv();
+
 class SearchEngine final {
  public:
   inline static SearchEngine* gInstance = nullptr;
+
+  static uint32_t MaxAnnBuildWorkers() noexcept;
+  static uint32_t MaxAnnWorkersPerBuild() noexcept;
 
   // Process-wide cap on concurrent compactions, the only hard ceiling on
   // in-flight merges. Cores-derived (Lucene maxThreadCount): max(1, min(4,
@@ -101,6 +109,24 @@ class SearchEngine final {
     _running_compactions.fetch_sub(1, std::memory_order_release);
   }
 
+  uint32_t AcquireAnnWorkers(uint32_t want) noexcept {
+    const uint32_t cap = MaxAnnBuildWorkers();
+    const uint32_t ceiling = std::clamp(want, 1U, MaxAnnWorkersPerBuild());
+    auto cur = _running_ann_workers.load(std::memory_order_relaxed);
+    for (;;) {
+      const uint32_t grant =
+        std::clamp(cur < cap ? cap - cur : 0U, 1U, ceiling);
+      if (_running_ann_workers.compare_exchange_weak(
+            cur, cur + grant, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return grant;
+      }
+    }
+  }
+  void ReleaseAnnWorkers(uint32_t n) noexcept {
+    _running_ann_workers.fetch_sub(n, std::memory_order_release);
+  }
+
   // Free global slots right now. The coordinator throttles merge size when this
   // is low (occupancy backpressure) so the pool always drains.
   int FreeCompactionSlots() const noexcept {
@@ -116,6 +142,7 @@ class SearchEngine final {
     _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
+  std::atomic<uint32_t> _running_ann_workers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.

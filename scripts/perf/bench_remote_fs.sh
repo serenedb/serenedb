@@ -76,7 +76,7 @@ EOF
 : "${BRFS_KEEP:=1}"
 : "${BRFS_BUCKET:=testbucket}"
 : "${BRFS_CONTAINER:=testcont}"
-: "${BRFS_MINIO_IMAGE:=pgsty/minio}"
+: "${BRFS_MINIO_IMAGE:=pgsty/minio:latest}"
 : "${BRFS_AZURITE_IMAGE:=mcr.microsoft.com/azure-storage/azurite}"
 : "${BRFS_TOXIPROXY_IMAGE:=ghcr.io/shopify/toxiproxy}"
 : "${BRFS_NETSHOOT_IMAGE:=nicolaka/netshoot}"

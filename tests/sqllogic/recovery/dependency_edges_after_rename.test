@@ -33,7 +33,7 @@ CREATE VIEW dre.cv AS SELECT a FROM dre.ct;
 statement error
 ALTER TABLE dre.t RENAME TO t2;
 ----
-db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.
 
 
 statement ok
@@ -50,7 +50,7 @@ CREATE VIEW dre.vtop AS SELECT x FROM dre.vbase;
 statement error
 ALTER VIEW dre.vbase RENAME TO vbase2;
 ----
-db error: ERROR: Cannot alter entry "vbase" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot alter entry "vbase" because there are entries that depend on it.
 
 
 statement ok
@@ -67,7 +67,7 @@ CREATE VIEW dre.fv AS SELECT dre.f(1) AS y;
 statement error
 ALTER FUNCTION dre.f RENAME TO f2;
 ----
-db error: ERROR: Cannot alter entry "f" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot alter entry "f" because there are entries that depend on it.
 
 
 statement ok

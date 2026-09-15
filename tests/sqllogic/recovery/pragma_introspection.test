@@ -63,13 +63,13 @@ count
 statement error
 SELECT * FROM pragma_table_info('pin_inv');
 ----
-db error: ERROR: Table with name pin_inv does not exist!<slt:ignore>
+db error: ERROR: Table with name pin_inv does not exist!
 
 
 statement error
 SELECT * FROM pragma_table_info('pin_sec');
 ----
-db error: ERROR: Table with name pin_sec does not exist!<slt:ignore>
+db error: ERROR: Table with name pin_sec does not exist!
 
 
 query
@@ -156,19 +156,19 @@ VACUUM (REFRESH_TABLE) pin_txn;
 statement error
 SELECT * FROM pragma_storage_info('pin_inc');
 ----
-db error: ERROR: Table with name pin_inc does not exist!<slt:ignore>
+db error: ERROR: Table with name pin_inc does not exist!
 
 
 statement error
 SELECT * FROM pragma_storage_info('pin_inv');
 ----
-db error: ERROR: Table with name pin_inv does not exist!<slt:ignore>
+db error: ERROR: Table with name pin_inv does not exist!
 
 
 statement error
 SELECT * FROM pragma_storage_info('pin_sec');
 ----
-db error: ERROR: Table with name pin_sec does not exist!<slt:ignore>
+db error: ERROR: Table with name pin_sec does not exist!
 
 
 # Views have no storage.

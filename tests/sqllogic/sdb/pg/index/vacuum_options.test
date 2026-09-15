@@ -72,8 +72,7 @@ INSERT INTO public.docs VALUES (1, 'alpha refresh_index');
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
 ----
-count
-<slt:ignore>
+count<slt:ignore>
 
 
 statement ok
@@ -430,49 +429,49 @@ db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<sc
 statement error
 VACUUM (REFRESH_INDEX) nope_idx;
 ----
-db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
+db error: ERROR: relation "nope_idx" does not exist
 
 
 statement error
 VACUUM (COMPACT_INDEX) nope_idx;
 ----
-db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
+db error: ERROR: relation "nope_idx" does not exist
 
 
 statement error
 VACUUM (REFRESH_TABLE) nope_table;
 ----
-db error: ERROR: relation "nope_table" does not exist<slt:ignore>
+db error: ERROR: relation "nope_table" does not exist
 
 
 statement error
 VACUUM (COMPACT_TABLE) nope_table;
 ----
-db error: ERROR: relation "nope_table" does not exist<slt:ignore>
+db error: ERROR: relation "nope_table" does not exist
 
 
 statement error
 VACUUM (REFRESH_SCHEMA) nope_schema;
 ----
-db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
+db error: ERROR: schema "nope_schema" does not exist
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) nope_schema;
 ----
-db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
+db error: ERROR: schema "nope_schema" does not exist
 
 
 statement error
 VACUUM (REFRESH_DATABASE) nope_db;
 ----
-db error: ERROR: database "nope_db" does not exist<slt:ignore>
+db error: ERROR: database "nope_db" does not exist
 
 
 statement error
 VACUUM (COMPACT_DATABASE) nope_db;
 ----
-db error: ERROR: database "nope_db" does not exist<slt:ignore>
+db error: ERROR: database "nope_db" does not exist
 
 
 # Two extension options in one VACUUM -- parser-level rejection.

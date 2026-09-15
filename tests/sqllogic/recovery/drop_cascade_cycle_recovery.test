@@ -28,7 +28,7 @@ CREATE VIEW clickclack_v AS SELECT babsky_fn(n) AS c FROM kostya_t;
 statement error
 CREATE OR REPLACE FUNCTION babsky_fn(x INT) AS (SELECT count(*)::INT FROM clickclack_v) + x;
 ----
-db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself<slt:ignore>
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself
 
 
 # The original definition is untouched by the refused statement.

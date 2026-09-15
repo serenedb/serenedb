@@ -110,7 +110,7 @@ CREATE SERVER fc_failclosed FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner',
            password 'pass word', sslpassword 'sup3r secret');
 ----
-db error: ERROR: Unrecognized ClickHouse connection option "sslpassword"<slt:ignore>
+db error: ERROR: Unrecognized ClickHouse connection option "sslpassword"
 
 
 query
@@ -129,7 +129,7 @@ connection c_snoop user=fc_snoop password=fc_snoop_pw
 statement error
 SELECT srvname FROM pg_foreign_server WHERE srvname = 'fc_space';
 ----
-db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+db error: ERROR: permission denied for table pg_foreign_server
 
 
 connection default
@@ -153,7 +153,7 @@ connection c_user user=fc_user password=fc_user_pw
 statement error
 SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+db error: ERROR: permission denied for foreign server fc_rbac
 
 
 # The superuser grants USAGE on the server.
@@ -178,7 +178,7 @@ connection c_user user=fc_user password=fc_user_pw
 statement error
 SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+db error: ERROR: permission denied for foreign server fc_rbac
 
 
 # ===== cleanup =====

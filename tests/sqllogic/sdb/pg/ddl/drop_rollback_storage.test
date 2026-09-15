@@ -26,8 +26,7 @@ DROP INDEX drs_idx;
 statement error
 SELECT * FROM drs_missing;
 ----
-db error: ERROR: Table with name drs_missing does not exist!
-<slt:ignore>
+db error: ERROR: Table with name drs_missing does not exist!<slt:ignore>
 
 
 statement ok
@@ -118,8 +117,7 @@ DROP TABLE drs_s;
 statement error
 SELECT * FROM drs_missing;
 ----
-db error: ERROR: Table with name drs_missing does not exist!
-<slt:ignore>
+db error: ERROR: Table with name drs_missing does not exist!<slt:ignore>
 
 
 statement ok
@@ -160,8 +158,7 @@ ROLLBACK;
 statement error
 SELECT count(*) FROM drs_s2;
 ----
-db error: ERROR: Table with name drs_s2 does not exist!
-<slt:ignore>
+db error: ERROR: Table with name drs_s2 does not exist!<slt:ignore>
 
 
 statement ok
@@ -189,8 +186,7 @@ COMMIT;
 statement error
 SELECT count(*) FROM drs_s;
 ----
-db error: ERROR: Table with name drs_s does not exist!
-<slt:ignore>
+db error: ERROR: Table with name drs_s does not exist!<slt:ignore>
 
 
 statement ok

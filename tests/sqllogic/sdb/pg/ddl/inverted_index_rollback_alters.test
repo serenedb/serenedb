@@ -162,7 +162,7 @@ BEGIN;
 statement error
 ALTER TABLE ixiv_t ALTER COLUMN score TYPE BIGINT;
 ----
-db error: ERROR: Cannot alter entry "ixiv_t" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot alter entry "ixiv_t" because there are entries that depend on it.
 
 
 statement ok

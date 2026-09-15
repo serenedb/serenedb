@@ -158,14 +158,14 @@ connection after_crash
 statement error
 SELECT id, payload FROM vedernikoff_x_alpha.records;
 ----
-db error: ERROR: Table with name records does not exist!<slt:ignore>
+db error: ERROR: Table with name records does not exist!
 
 
 connection after_crash
 statement error
 SELECT count(*) FROM vedernikoff_x_charlie.payload_pulse;
 ----
-db error: ERROR: Table with name payload_pulse does not exist!<slt:ignore>
+db error: ERROR: Table with name payload_pulse does not exist!
 
 
 # The schemas still take DDL after the cascade.

@@ -55,13 +55,13 @@ CREATE VIEW tinker_view AS SELECT * FROM tinker;
 statement error
 ALTER TABLE tinker_view DROP CONSTRAINT foo;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement ok

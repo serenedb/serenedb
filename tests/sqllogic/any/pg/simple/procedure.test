@@ -52,7 +52,7 @@ onlyif serenedb
 statement error
 CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
 ----
-db error: ERROR: Table Macro Function with name "proc_ovl" already exists!<slt:ignore>
+db error: ERROR: Table Macro Function with name "proc_ovl" already exists!
 
 
 skipif serenedb # Postgres overloads by argument type

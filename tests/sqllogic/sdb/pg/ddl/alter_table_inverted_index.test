@@ -150,7 +150,7 @@ id	extra2
 statement error
 ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
 ----
-db error: ERROR: Cannot alter entry "ati_t2" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot alter entry "ati_t2" because there are entries that depend on it.
 
 
 statement error

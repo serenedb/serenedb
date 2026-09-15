@@ -75,7 +75,7 @@ onlyif serenedb
 statement error
 CREATE FUNCTION dofn_count(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)::int';
 ----
-db error: ERROR: Macro Function with name "dofn_count" already exists!<slt:ignore>
+db error: ERROR: Macro Function with name "dofn_count" already exists!
 
 
 skipif serenedb # Postgres overloads by argument type

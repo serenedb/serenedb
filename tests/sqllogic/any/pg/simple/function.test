@@ -430,7 +430,7 @@ onlyif serenedb
 statement error
 CREATE FUNCTION ovl_test(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql;
 ----
-db error: ERROR: Macro Function with name "ovl_test" already exists!<slt:ignore>
+db error: ERROR: Macro Function with name "ovl_test" already exists!
 
 
 skipif serenedb # Postgres overloads by argument type

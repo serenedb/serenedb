@@ -33,6 +33,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/async.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>

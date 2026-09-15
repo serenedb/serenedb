@@ -44,7 +44,7 @@ statement error
 CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
 ----
-db error: ERROR: permission denied for database<slt:ignore>
+db error: ERROR: permission denied for database
 
 
 # The denied CREATE left no orphaned attachment: the superuser can create the
@@ -84,7 +84,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 DROP SERVER fp_srv;
 ----
-db error: ERROR: must be owner of foreign server fp_srv<slt:ignore>
+db error: ERROR: must be owner of foreign server fp_srv
 
 
 # ===== querying needs USAGE on the server =====
@@ -94,7 +94,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 SELECT count(*) FROM fp_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+db error: ERROR: permission denied for foreign server fp_srv
 
 
 # The server owner can always query (no explicit USAGE needed).
@@ -127,7 +127,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 SELECT count(*) FROM fp_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+db error: ERROR: permission denied for foreign server fp_srv
 
 
 # ===== GRANT ... ON FOREIGN SERVER accepts only USAGE =====
@@ -137,14 +137,14 @@ connection default
 statement error
 GRANT SELECT ON FOREIGN SERVER fp_srv TO fp_other;
 ----
-db error: ERROR: invalid privilege type SELECT<slt:ignore>
+db error: ERROR: invalid privilege type SELECT
 
 
 # GRANT USAGE on a nonexistent server blames the server.
 statement error
 GRANT USAGE ON FOREIGN SERVER fp_nope TO fp_other;
 ----
-db error: ERROR: server "fp_nope" does not exist<slt:ignore>
+db error: ERROR: server "fp_nope" does not exist
 
 
 # ===== the superuser can always drop, regardless of owner =====

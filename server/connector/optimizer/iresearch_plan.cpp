@@ -23,12 +23,16 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
+#include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_parameter_expression.hpp>
 #include <duckdb/planner/expression/bound_window_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -43,7 +47,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
-#include <magic_enum/magic_enum.hpp>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -306,18 +310,84 @@ duckdb::idx_t AppendVirtualGetColumn(connector::ScanBindData& bind_data,
   return get_col_idx;
 }
 
-bool TryClaimIResearchConjunct(
+// A parameterized conjunct is claimed on its shape: built once with NULLs in
+// the parameters' places to prove the filter compiles, then rebuilt at every
+// execution with the values (connector::BuildDeferredFilter). Its columns are
+// resolved now and remembered, since the scan's binding is gone by then.
+struct DeferredClaimBuilder {
+  connector::DeferredClaim claim;
+  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>,
+           connector::DeferredColumn>
+    columns;
+  const BindingColumnId* column_id = nullptr;
+  bool used_expr_getter = false;
+  bool any_parameter = false;
+  bool declined_parameter = false;
+
+  connector::ColumnGetter Recording(const connector::ColumnGetter& getter) {
+    return [this, &getter](const duckdb::BoundColumnRefExpression& ref)
+             -> std::optional<connector::SearchColumnInfo> {
+      auto info = getter(ref);
+      if (info) {
+        columns.insert_or_assign(
+          {ref.Binding().table_index.index,
+           ref.Binding().column_index.GetIndex()},
+          connector::DeferredColumn{
+            .column = (*column_id)(ref), .column_stored = info->column_stored});
+      }
+      return info;
+    };
+  }
+
+  connector::ExpressionGetter Recording(
+    const connector::ExpressionGetter& getter) {
+    return [this, &getter](const duckdb::Expression& expr)
+             -> std::optional<connector::SearchColumnInfo> {
+      auto info = getter(expr);
+      if (info) {
+        used_expr_getter = true;
+      }
+      return info;
+    };
+  }
+};
+
+bool TryClaimIResearchConjunctImpl(
   irs::BooleanFilter& root,
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  duckdb::ClientContext& context, connector::FilterScorers* scorers) {
-  // A conjunct with an unbound parameter only appears in a prepared
-  // statement's template plan, which duckdb rebinds with the values
-  // substituted as constants before every execution. Decline instead of
-  // letting the @@ boundary throw; the residual never executes.
+  duckdb::ClientContext& context, connector::FilterScorers* scorers,
+  DeferredClaimBuilder* deferred) {
+  // A conjunct with an unbound parameter appears in a prepared statement's
+  // template plan. Where the scan can read the parameter at execution
+  // (`deferred`), the conjunct is claimed on its shape and rebuilt then; where
+  // it cannot, duckdb rebinds the statement with the values as constants
+  // before every execution, so declining here costs nothing.
   if (conjunct->HasParameter()) {
-    return false;
+    if (deferred == nullptr) {
+      return false;
+    }
+    deferred->any_parameter = true;
+    auto shaped = NormalizeClaimShape(
+      context, SubstituteParameters(conjunct->Copy(), /*with_values=*/false));
+    auto node = std::make_unique<irs::BooleanFilter>();
+    std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped, 1};
+    connector::FilterScorers shaped_scorers;
+    const auto column_getter = deferred->Recording(getter);
+    const auto expression_getter = deferred->Recording(expr_getter);
+    const auto claimed =
+      connector::MakeSearchFilter(*node, single, column_getter, context,
+                                  expression_getter, &shaped_scorers);
+    const bool built = absl::c_any_of(
+      irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
+    if (!claimed.ok() || !built || deferred->used_expr_getter ||
+        !shaped_scorers.empty()) {
+      deferred->declined_parameter = true;
+      return false;
+    }
+    deferred->claim.conjuncts.push_back(conjunct->Copy());
+    return true;
   }
   // A declined conjunct is rolled back by dropping the node it built into:
   // a term clause is sorted into its bucket rather than appended, so there
@@ -340,6 +410,16 @@ bool TryClaimIResearchConjunct(
     root.Add(std::move(node), irs::Occur::Must);
   }
   return true;
+}
+
+bool TryClaimIResearchConjunct(
+  irs::BooleanFilter& root,
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  const connector::ColumnGetter& getter,
+  const connector::ExpressionGetter& expr_getter,
+  duckdb::ClientContext& context, connector::FilterScorers* scorers) {
+  return TryClaimIResearchConjunctImpl(root, conjunct, getter, expr_getter,
+                                       context, scorers, nullptr);
 }
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
@@ -438,8 +518,18 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return std::nullopt;
   };
 
-  return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers});
+  const BindingColumnId column_id =
+    [&](const duckdb::BoundColumnRefExpression& ref) -> catalog::ColumnId {
+    return ResolveColumnId(ref.Binding(), bind_data, get);
+  };
+
+  return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers,
+                          column_id});
 }
+
+void DecidePlanCache(
+  connector::ScanBindData& scan,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& residual);
 
 namespace {
 
@@ -623,29 +713,15 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return gEfSearch.Int(context);
 }
 
-bool ReadAnnExact(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  return context.TryGetCurrentSetting("sdb_ann_exact", v) && !v.IsNull() &&
-         v.GetValue<bool>();
-}
-
-irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
-  static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
-  static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
-  const auto mode = gFilterMode.Enum(context, kModes);
-  if (mode >= kModes.size()) {
-    return irs::HnswFilterMode::Auto;
-  }
-  return static_cast<irs::HnswFilterMode>(mode);
-}
-
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
   const auto [col_arg, value_arg] =
     [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
+    // The query side references no column: a constant, or a prepared
+    // statement's parameter (not foldable, read at execution).
     if (info.is_norm) {
-      if (func.GetChildren().empty() || func.GetChildren()[0]->IsFoldable()) {
+      if (func.GetChildren().empty() || func.GetChildren()[0]->IsScalar()) {
         return {nullptr, nullptr};
       }
       return {func.GetChildren()[0].get(), nullptr};
@@ -655,10 +731,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     }
     auto& lhs = func.GetChildren()[0];
     auto& rhs = func.GetChildren()[1];
-    if (!lhs->IsFoldable() && rhs->IsFoldable()) {
+    if (!lhs->IsScalar() && rhs->IsScalar()) {
       return {lhs.get(), rhs.get()};
     }
-    if (lhs->IsFoldable() && !rhs->IsFoldable()) {
+    if (lhs->IsScalar() && !rhs->IsScalar()) {
       return {rhs.get(), lhs.get()};
     }
     return {nullptr, nullptr};
@@ -712,16 +788,25 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   }
 
   std::vector<float> call_qvec;
+  std::shared_ptr<const duckdb::Expression> call_qexpr;
   if (info.is_norm) {
     call_qvec.assign(ann_info->d, 0.0f);
   } else if (!TryFoldQueryVector(context, *value_arg, ann_info->d, call_qvec)) {
-    return nullptr;
+    // A prepared statement's template plan: the vector is a parameter whose
+    // value the execution supplies. Kept as the expression, evaluated at
+    // scan init; the plan can then be cached across executions.
+    if (!value_arg->HasParameter()) {
+      return nullptr;
+    }
+    call_qexpr = value_arg->Copy();
   }
 
   if (!ss.score.vector) {
     ss.score.vector = connector::VectorScorerOptions{
       .field_id = call_field_id,
       .query_vector = std::move(call_qvec),
+      .query_expr = std::move(call_qexpr),
+      .dims = static_cast<uint32_t>(ann_info->d),
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
@@ -732,14 +817,17 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
-      .hnsw_filter_mode = ReadHnswFilterMode(context),
-      .exact = ReadAnnExact(context),
+      .hnsw_filter_mode = connector::ReadHnswFilterMode(context),
+      .exact = connector::ReadAnnExact(context),
     };
     ss.score.order = info.order;
   } else {
     const auto& vs = *ss.score.vector;
+    const bool same_vector =
+      call_qexpr ? (vs.query_expr && vs.query_expr->Equals(*call_qexpr))
+                 : (!vs.query_expr && vs.query_vector == call_qvec);
     if (vs.field_id != call_field_id || vs.metric != info.metric ||
-        vs.score_emit != info.score_emit || vs.query_vector != call_qvec) {
+        vs.score_emit != info.score_emit || !same_vector) {
       return nullptr;
     }
   }
@@ -1146,24 +1234,57 @@ bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   connector::ScanBindData& bind_data, const SearchGetters& getters,
   duckdb::ClientContext& context) {
-  auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
+  auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
+    getters;
+  (void)column_id;
   auto& scan = bind_data;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
   connector::FilterScorers filter_scorers;
+  // Parameters are read at execution only by a vector-scored scan, the one
+  // whose plan is worth caching; a text-scored one keeps duckdb's rebind.
+  DeferredClaimBuilder deferred;
+  deferred.column_id = &getters.column_id;
+  DeferredClaimBuilder* const deferred_ptr =
+    scan.score.vector && !scan.score.text ? &deferred : nullptr;
+  std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
   for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
-                                  context, &filter_scorers)) {
+    if (TryClaimIResearchConjunctImpl(*root_and, filters[i], getter,
+                                      expr_getter, context, &filter_scorers,
+                                      deferred_ptr)) {
       any_claimed = true;
+      if (!filters[i]->HasParameter()) {
+        claimed_exprs.push_back(filters[i]->Copy());
+      }
       std::swap(filters[i], filters.back());
       filters.pop_back();
     } else {
       ++i;
     }
   }
+  if (deferred.declined_parameter) {
+    scan.plan_cache.declined_parameter = true;
+  }
   if (!any_claimed) {
     return false;
+  }
+  if (!deferred.claim.conjuncts.empty()) {
+    // The whole WHERE is rebuilt at execution, the constant conjuncts with
+    // it, so the executed filter is one boolean the optimizer has seen whole.
+    for (auto& e : claimed_exprs) {
+      deferred.claim.conjuncts.push_back(std::move(e));
+    }
+    deferred.claim.columns = std::make_shared<
+      const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>,
+                     connector::DeferredColumn>>(
+      std::move(deferred.columns));
+    deferred.claim.analyzed_fields.insert(analyzed_fields.begin(),
+                                          analyzed_fields.end());
+    for (const auto& [marker, field] : null_markers) {
+      deferred.claim.null_markers.emplace(marker, field);
+    }
+    scan.plan_cache.deferred = std::move(deferred.claim);
   }
 
   irs::Filter::ptr root = std::move(root_and);
@@ -1233,9 +1354,21 @@ bool TryClaimSearchTableFilter(
       return ClaimSearchConjuncts(
         filters, bind_data,
         SearchGetters{getter, getters.expr_getter, getters.analyzed_fields,
-                      getters.null_markers},
+                      getters.null_markers, getters.column_id},
         context);
     });
+}
+
+// Every SereneDB scan of the plan decides whether its plan may be cached
+// across executions; a scan under a WHERE decides again when its filters are
+// pushed down (IResearchPushdownComplexFilter).
+void DecidePlanCacheForScans(duckdb::LogicalOperator& op) {
+  if (auto scan = AsSearchScan(op)) {
+    DecidePlanCache(*scan->bind_data, {});
+  }
+  for (auto& child : op.children) {
+    DecidePlanCacheForScans(*child);
+  }
 }
 
 void RewriteSearchCallsToColumnRefs(
@@ -1243,9 +1376,29 @@ void RewriteSearchCallsToColumnRefs(
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   RewriteIResearchExpressions(input.context, plan, plan,
                               input.optimizer.binder);
+  DecidePlanCacheForScans(*plan);
 }
 
 }  // namespace
+
+// A vector-scored scan reads its knobs and its query vector at execution
+// and rebuilt its parameterized WHERE then too, so its plan may be cached
+// across the executions of a prepared statement: unless some conjunct with a
+// parameter was declined and stays a filter above the scan, which the
+// template plan would evaluate after the graph walk instead of inside it.
+void DecidePlanCache(
+  connector::ScanBindData& scan,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& residual) {
+  if (!scan.score.vector || scan.score.text || scan.ts_dict.Active() ||
+      scan.offsets.Active() || scan.plan_cache.declined_parameter ||
+      !scan.plan_cache.reacquire_snapshot) {
+    scan.plan_cache.cache_plan = false;
+    return;
+  }
+  const bool residual_parameter =
+    absl::c_any_of(residual, [](const auto& e) { return e->HasParameter(); });
+  scan.plan_cache.cache_plan = !residual_parameter;
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
@@ -1278,6 +1431,7 @@ void IResearchPushdownComplexFilter(
         TryClaimSearchTableFilter(filters, get, bind_data,
                                   *entry->GetSearchData(), context);
       }
+      DecidePlanCache(bind_data, filters);
     }
     return;
   }
@@ -1290,10 +1444,261 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty()) {
-    return;
+  if (!filters.empty()) {
+    TryClaimSearchFilter(filters, get, bind_data, context);
   }
-  TryClaimSearchFilter(filters, get, bind_data, context);
+  DecidePlanCache(bind_data, filters);
+}
+
+namespace {
+
+// A stand-in for a parameter's value while a conjunct is claimed on its shape:
+// non-NULL, since a comparison with NULL is no shape the filter builder
+// accepts, and of the parameter's type.
+duckdb::Value ShapeValue(const duckdb::LogicalType& type) {
+  if (type.IsNumeric()) {
+    return duckdb::Value::Numeric(type, 1);
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return duckdb::Value::BOOLEAN(true);
+    case duckdb::LogicalTypeId::VARCHAR:
+      return duckdb::Value("a");
+    default:
+      break;
+  }
+  duckdb::Value out;
+  for (const char* text : {"2000-01-01 00:00:00", "1"}) {
+    if (duckdb::Value{text}.DefaultTryCastAs(type, out, nullptr) &&
+        !out.IsNull()) {
+      return out;
+    }
+  }
+  return duckdb::Value{type};
+}
+
+// `CAST(col AS wider)` against a constant of the wider type, as the binder
+// shapes a comparison of a narrow integer column with a parameter of a wider
+// integer type. The filter builder wants the bare column: the constant moves
+// to the column's type when it fits there, else the predicate is decided by
+// the column's range (nothing, or every non-NULL row).
+bool IsPlainInteger(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::UTINYINT:
+    case duckdb::LogicalTypeId::USMALLINT:
+    case duckdb::LogicalTypeId::UINTEGER:
+    case duckdb::LogicalTypeId::UBIGINT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return nullptr;
+  }
+  const auto& child = expr.Cast<duckdb::BoundCastExpression>().Child();
+  if (child.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+      !IsPlainInteger(child.GetReturnType()) ||
+      !IsPlainInteger(expr.GetReturnType())) {
+    return nullptr;
+  }
+  return &child.Cast<duckdb::BoundColumnRefExpression>();
+}
+
+// `col <op> value` with the value of the column's type; `op` is the
+// comparison with the column on the left.
+duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
+  const duckdb::BoundColumnRefExpression& col, duckdb::ExpressionType op,
+  const duckdb::Value& value) {
+  using duckdb::ExpressionType;
+  const auto& type = col.GetReturnType();
+  const auto compare = [&](ExpressionType with, duckdb::Value constant) {
+    return duckdb::BoundComparisonExpression::Create(
+      with, col.Copy(),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(constant)));
+  };
+  duckdb::Value fitted;
+  if (value.DefaultTryCastAs(type, fitted, nullptr) && !fitted.IsNull()) {
+    return compare(op, std::move(fitted));
+  }
+  // Out of the column's range: above it when positive (every plain integer
+  // type holds zero), below it otherwise.
+  const bool above = value.GetValue<duckdb::hugeint_t>() > 0;
+  const bool all = [&] {
+    switch (op) {
+      case ExpressionType::COMPARE_NOTEQUAL:
+        return true;
+      case ExpressionType::COMPARE_LESSTHAN:
+      case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+        return above;
+      case ExpressionType::COMPARE_GREATERTHAN:
+      case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+        return !above;
+      default:
+        return false;
+    }
+  }();
+  if (all) {
+    return compare(ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+                   duckdb::Value::MinimumValue(type));
+  }
+  // A comparison with NULL: the builder's "matches nothing".
+  return compare(ExpressionType::COMPARE_EQUAL, duckdb::Value{type});
+}
+
+duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
+  duckdb::unique_ptr<duckdb::Expression> expr) {
+  using duckdb::ExpressionType;
+  if (duckdb::BoundComparisonExpression::IsComparison(*expr)) {
+    const auto& cmp = expr->Cast<duckdb::BoundFunctionExpression>();
+    auto op = cmp.GetExpressionType();
+    switch (op) {
+      case ExpressionType::COMPARE_EQUAL:
+      case ExpressionType::COMPARE_NOTEQUAL:
+      case ExpressionType::COMPARE_LESSTHAN:
+      case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+      case ExpressionType::COMPARE_GREATERTHAN:
+      case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+        break;
+      default:
+        return expr;
+    }
+    const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
+    const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
+    const auto* col = CastOfIntegerColumn(left);
+    const auto* constant = &right;
+    if (col == nullptr) {
+      col = CastOfIntegerColumn(right);
+      constant = &left;
+      op = duckdb::FlipComparisonExpression(op);
+    }
+    if (col == nullptr || constant->GetExpressionClass() !=
+                            duckdb::ExpressionClass::BOUND_CONSTANT) {
+      return expr;
+    }
+    const auto& value =
+      constant->Cast<duckdb::BoundConstantExpression>().GetValue();
+    if (value.IsNull() || !IsPlainInteger(value.type())) {
+      return expr;
+    }
+    return CompareIntegerColumn(*col, op, value);
+  }
+  if (expr->GetExpressionType() == ExpressionType::COMPARE_BETWEEN &&
+      expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    auto& between = expr->Cast<duckdb::BoundFunctionExpression>();
+    const auto* col =
+      CastOfIntegerColumn(duckdb::BoundBetweenExpression::Input(between));
+    const auto& lower = duckdb::BoundBetweenExpression::LowerBound(between);
+    const auto& upper = duckdb::BoundBetweenExpression::UpperBound(between);
+    if (col == nullptr ||
+        lower.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT ||
+        upper.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+      return expr;
+    }
+    const auto& lo = lower.Cast<duckdb::BoundConstantExpression>().GetValue();
+    const auto& hi = upper.Cast<duckdb::BoundConstantExpression>().GetValue();
+    if (lo.IsNull() || hi.IsNull() || !IsPlainInteger(lo.type()) ||
+        !IsPlainInteger(hi.type())) {
+      return expr;
+    }
+    return duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      ExpressionType::CONJUNCTION_AND,
+      CompareIntegerColumn(
+        *col, duckdb::BoundBetweenExpression::LowerComparisonType(between), lo),
+      CompareIntegerColumn(
+        *col, duckdb::BoundBetweenExpression::UpperComparisonType(between),
+        hi));
+  }
+  return expr;
+}
+
+}  // namespace
+
+duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
+  duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::Expression> expr) {
+  duckdb::ExpressionIterator::EnumerateChildren(
+    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
+      child = NormalizeClaimShape(context, std::move(child));
+    });
+  if (expr->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT &&
+      expr->IsFoldable()) {
+    duckdb::Value folded;
+    if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded)) {
+      return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        std::move(folded));
+    }
+  }
+  return FoldColumnCast(std::move(expr));
+}
+
+duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
+  duckdb::unique_ptr<duckdb::Expression> expr, bool with_values) {
+  if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_PARAMETER) {
+    const auto& param = expr->Cast<duckdb::BoundParameterExpression>();
+    auto value = with_values ? param.ParameterData()->GetValue()
+                             : ShapeValue(param.GetReturnType());
+    if (value.type() != param.GetReturnType()) {
+      value = value.DefaultCastAs(param.GetReturnType());
+    }
+    return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(value));
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
+      child = SubstituteParameters(std::move(child), with_values);
+    });
+  return expr;
+}
+
+std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
+  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  catalog::ColumnId col_id, bool column_stored) {
+  auto type = scan.ColumnTypeById(col_id);
+  if (type.id() == duckdb::LogicalTypeId::INVALID) {
+    return std::nullopt;
+  }
+  const bool table_backed = !scan.IsViewBacked();
+  const auto finish = [&](connector::SearchColumnInfo info) {
+    if (table_backed && scan.IsColumnNotNull(col_id)) {
+      info.null_field_id = irs::field_limits::invalid();
+    }
+    info.column_stored = column_stored;
+    return info;
+  };
+  for (const auto* index : scan.relation.InvertedIndexes()) {
+    const auto* info = index->FindColumnInfo(col_id);
+    if (info == nullptr || !info->IsTermDict()) {
+      continue;
+    }
+    const auto field_id = index->TermFieldForColumn(col_id);
+    const auto dicts = catalog::ResolveTokenizers(context, *index);
+    return finish(
+      MakeSearchColumnInfo(field_id, info, std::move(type),
+                           index->GetTokenizer(context, dicts, field_id)));
+  }
+  // A search table's stored column with a term dictionary of its own.
+  if (scan.relation.IsSearchTable() && table_backed) {
+    const auto* entry = dynamic_cast<const catalog::SereneDBTableEntry*>(
+      scan.relation.table_entry.get());
+    if (entry != nullptr && entry->GetSearchData()) {
+      const auto& shard = *entry->GetSearchData();
+      const auto config = shard.GetIndexConfig();
+      const auto field_id = static_cast<irs::field_id>(col_id);
+      const auto it = config->find(field_id);
+      if (it != config->end() && it->second.IsTermDict()) {
+        return finish(
+          MakeSearchColumnInfo(field_id, &it->second, std::move(type),
+                               shard.GetTokenizer(context, field_id)));
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {

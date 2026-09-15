@@ -104,6 +104,15 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->lookup.label = "search";
     data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
+    data->reacquire_snapshot =
+      [id = GetIndexedRelationId(), search = relation->GetSearchData()](
+        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
+      auto fresh =
+        connector::GetSereneDBContext(ctx).SearchTxn().EnsureSearchTableReader(
+          id, [&] { return search->GetDirectoryReader(); });
+      return std::make_shared<search::InvertedIndexSnapshot>(
+        irs::DirectoryReader{*fresh}, nullptr);
+    };
   } else {
     data->relation.kind = connector::ScanEntryKind::InvertedIndex;
     data->relation.row_group_size =
@@ -112,6 +121,13 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->score.prune = data->relation.ScannedIndex().GetTopKScorer();
     data->search.snapshot = conn_ctx.EnsureSearchSnapshot(
       _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
+    data->reacquire_snapshot =
+      [index_id = _index_id,
+       storage = ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id)](
+        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
+      return connector::GetSereneDBContext(ctx).EnsureSearchSnapshot(index_id,
+                                                                     storage);
+    };
   }
   bind_data = std::move(data);
   return connector::CreateIResearchScanFunction();

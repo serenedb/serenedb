@@ -28,9 +28,11 @@
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
 #include "catalog/entry/duckdb_table_entry.h"
+#include "query/config.h"
 
 namespace sdb::connector {
 namespace {
@@ -84,6 +86,21 @@ std::vector<const catalog::InvertedIndex*> RelationSpec::InvertedIndexes()
            return &catalog::InvertedInfo(*index);
          }) |
          std::ranges::to<std::vector>();
+}
+
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
+  static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
+  static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
+  const auto mode = gFilterMode.Enum(context, kModes);
+  if (mode >= kModes.size()) {
+    return irs::HnswFilterMode::Auto;
+  }
+  return static_cast<irs::HnswFilterMode>(mode);
+}
+
+bool ReadAnnExact(duckdb::ClientContext& context) {
+  static constinit SettingRef gExact{"sdb_ann_exact"};
+  return gExact.Bool(context);
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {

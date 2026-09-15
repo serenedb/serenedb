@@ -663,13 +663,32 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
 
-  const auto& index = found->bind_data->relation.ScannedIndex();
-  const auto call_field_id = ResolveAnnTargetFieldId(
-    *col_arg, *found->get, *found->bind_data, index, context);
-  if (!irs::field_limits::valid(call_field_id)) {
+  // An index relation scans exactly one inverted index. A search table scanned
+  // by name owns the same segments but carries no index in its bind data until
+  // the table's inverted indexes are resolved from the catalog; the ANN column
+  // then belongs to whichever of them indexes that field.
+  const catalog::InvertedIndex* index = nullptr;
+  auto call_field_id = irs::field_limits::invalid();
+  if (ss.relation.IsIndexRelation()) {
+    index = &ss.relation.ScannedIndex();
+    call_field_id =
+      ResolveAnnTargetFieldId(*col_arg, *found->get, ss, *index, context);
+  } else {
+    ResolveSearchTableIndexes(ss, context);
+    for (const auto* candidate : ss.relation.InvertedIndexes()) {
+      const auto fid =
+        ResolveAnnTargetFieldId(*col_arg, *found->get, ss, *candidate, context);
+      if (irs::field_limits::valid(fid) && candidate->GetAnnInfo(fid)) {
+        index = candidate;
+        call_field_id = fid;
+        break;
+      }
+    }
+  }
+  if (index == nullptr || !irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index.GetAnnInfo(call_field_id);
+  auto ann_info = index->GetAnnInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }

@@ -32,6 +32,8 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
@@ -118,8 +120,9 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
   }
   const auto value = FindConstant(options, kStorageOption);
   if (!value) {
-    throw duckdb::BinderException("WITH option \"%s\" expects a string literal",
-                                  std::string{kStorageOption});
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("WITH option \"", kStorageOption, "\" expects a string literal"));
   }
   const auto engine = value->GetValue()
                         .DefaultCastAs(duckdb::LogicalType::VARCHAR)
@@ -131,9 +134,10 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
   if (lower == kEngineSearch) {
     return TableEngine::Search;
   }
-  throw duckdb::BinderException(
-    "WITH option \"%s\" must be 'transactional' or 'search', got \"%s\"",
-    std::string{kStorageOption}, engine);
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("WITH option \"", kStorageOption,
+            "\" must be 'transactional' or 'search', got \"", engine, "\""));
 }
 
 SearchTableEntry::SearchTableEntry(

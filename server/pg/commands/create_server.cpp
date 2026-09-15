@@ -26,6 +26,8 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <utility>
 
@@ -76,8 +78,9 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   if (database && !auth::ClosureFor(&context, role)
                      ->Can(duckdb::CatalogType::DATABASE_ENTRY,
                            database->permissions, duckdb::AclMode::Create)) {
-    throw duckdb::PermissionException("permission denied for database %s",
-                                      database->name.GetIdentifierName());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for database ",
+                            database->name.GetIdentifierName()));
   }
   info.permissions.owner = role;
 
@@ -104,8 +107,8 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                  .GetEntry(transaction, duckdb::Identifier{name});
   if (entry && !auth::ClosureFor(&context, conn_ctx.GetRoleId())
                   ->Owns(entry->permissions.owner)) {
-    throw duckdb::PermissionException("must be owner of foreign server %s",
-                                      std::string{name});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("must be owner of foreign server ", name));
   }
   catalog.DropForeignServer(transaction, info);
 }

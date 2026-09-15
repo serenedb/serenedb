@@ -36,24 +36,13 @@ ALLOWED_PATHS = (
 STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 COMMENT_RE = re.compile(r"//.*$|/\*.*?\*/")
 THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
-# duckdb::NotImplementedException: the plan serialize / deserialize callbacks
-# duckdb requires on our table functions and system table entries are
-# unreachable placeholders (we never serialize a plan), and duckdb itself
-# expects that exception type there -- it never surfaces to a client as a pg
-# error, so a sqlstate would be meaningless.
-# duckdb::CatalogException / duckdb::InternalException: the catalog deliberately
-# raises DuckDB's own catalog errors rather than translating them, and
-# DuckExceptionToErrcode (server/network/pg/wire_frames.cpp) already maps
-# ExceptionType::CATALOG to the precise pg sqlstate per entry kind and
-# duplicate/undefined subtype, with everything else falling to
-# ERRCODE_INTERNAL_ERROR. The sqlstate therefore survives without a translation
-# layer, which is what this check exists to guarantee.
+# duckdb::NotImplementedException: duckdb catches this exact type to decide a
+# plan is not serializable (logical_operator.cpp, LogicalOperator::Serialize and
+# ToString). Our table function's serialize / deserialize callbacks must raise
+# it so that fallback runs; anything else aborts the query instead.
 ALLOWED_EXPRS = (
     "irs::SqlException",
-    "duckdb::TransactionException",
     "duckdb::NotImplementedException",
-    "duckdb::CatalogException",
-    "duckdb::InternalException",
 )
 
 

@@ -26,6 +26,8 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
@@ -103,7 +105,9 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();
   if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
-    throw duckdb::CatalogException::MissingEntry(type, name, std::string{});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
+                            name.GetIdentifierName(), " does not exist!"));
   }
 }
 
@@ -131,7 +135,8 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
   const duckdb::Identifier name{ClusterCatalog::kDatabaseName};
   auto attached = duckdb::DatabaseManager::Get(db).GetDatabase(name);
   if (!attached) {
-    throw duckdb::InternalException("the cluster catalog is not attached");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("the cluster catalog is not attached"));
   }
   return attached->GetCatalog().Cast<ClusterCatalog>();
 }

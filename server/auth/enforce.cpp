@@ -114,15 +114,15 @@ std::string KindName(CatalogType type) {
 }
 
 [[noreturn]] void Denied(const duckdb::CatalogEntry& entry) {
-  throw duckdb::PermissionException("permission denied for %s %s",
-                                    KindName(entry.type),
-                                    entry.name.GetIdentifierName());
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for ", KindName(entry.type), " ",
+                          entry.name.GetIdentifierName()));
 }
 
 [[noreturn]] void MustOwn(const duckdb::CatalogEntry& entry) {
-  throw duckdb::PermissionException("must be owner of %s %s",
-                                    KindName(entry.type),
-                                    entry.name.GetIdentifierName());
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of ", KindName(entry.type), " ",
+                          entry.name.GetIdentifierName()));
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
@@ -192,7 +192,8 @@ class Enforcer {
     CheckResolved();
     CheckReturning();
     if (_file_copy) {
-      throw duckdb::PermissionException("permission denied to COPY to a file");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied to COPY to a file"));
     }
   }
 
@@ -447,8 +448,8 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_ATTACH:
         if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
-          throw duckdb::PermissionException(
-            "permission denied to create database");
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied to create database"));
         }
         break;
       case LogicalOperatorType::LOGICAL_DETACH:
@@ -469,8 +470,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
       case LogicalOperatorType::LOGICAL_CREATE_SECRET:
         if (_enforce) {
-          throw duckdb::PermissionException(
-            "permission denied: superuser required");
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied: superuser required"));
         }
         break;
       default:

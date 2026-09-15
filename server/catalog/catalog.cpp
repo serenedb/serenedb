@@ -233,9 +233,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
   if (dynamic_cast<const SearchTableEntry*>(&op.table)) {
-    throw duckdb::NotImplementedException(
-      "MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on "
-      "search-backed tables");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on "
+              "search-backed tables"));
   }
   return duckdb::DuckCatalog::PlanMergeInto(context, planner, op, plan);
 }
@@ -265,8 +266,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       return inverted && IsKnownInvertedIndexOption(option.first);
     });
   if (unknown != info.options.end()) {
-    throw duckdb::BinderException("unrecognized parameter \"%s\"",
-                                  unknown->first);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"", unknown->first, "\""));
   }
   if (inverted) {
     BindInvertedIndexOptions(binder.context, info.options);
@@ -358,8 +359,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
     }
-    throw duckdb::CatalogException::EntryAlreadyExists(
-      duckdb::CatalogType::SCHEMA_ENTRY, name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+      ERR_MSG(duckdb::CatalogTypeToString(duckdb::CatalogType::SCHEMA_ENTRY),
+              " with name \"", name.GetIdentifierName(), "\" already exists!"));
   }
   return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }
@@ -388,7 +391,9 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this);
   const auto& name = info.GetQualifiedName().Name();
   if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
-    throw duckdb::CatalogException::MissingEntry(type, name, std::string{});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
+                            name.GetIdentifierName(), " does not exist!"));
   }
 }
 

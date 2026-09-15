@@ -20,12 +20,14 @@
 
 #include "catalog/cluster.h"
 
+#include <cstdlib>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -33,6 +35,7 @@
 
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "network/credentials.h"
 #include "pg/pg_types.h"
 
 namespace sdb::catalog {
@@ -73,6 +76,18 @@ void ClusterCatalog::FinalizeLoad(
                    RoleOption::CreateRole | RoleOption::CreateDb |
                    RoleOption::Login | RoleOption::Replication |
                    RoleOption::BypassRls;
+    if (const char* password = std::getenv("POSTGRES_PASSWORD");
+        password && *password) {
+      auto verifier = network::BuildScramVerifierString(password);
+      if (!verifier) {
+        SDB_FATAL(GENERAL,
+                  "could not derive a password verifier from "
+                  "POSTGRES_PASSWORD");
+      }
+      info.password = std::move(*verifier);
+      SDB_INFO(GENERAL, "bootstrap: initial password set for role '", kRootRole,
+               "' from POSTGRES_PASSWORD");
+    }
     CreateRole(transaction, info);
   }
   const duckdb::Identifier postgres{irs::StaticStrings::kDefaultDatabase};

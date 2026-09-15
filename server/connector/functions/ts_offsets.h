@@ -41,7 +41,8 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     dict_tokenizer);
 
 struct OffsetsBindData final : duckdb::FunctionData {
-  catalog::SearchIndexRef index;
+  std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  catalog::IndexTokenizers tokenizers;
   ColumnId column_id{};
 
   duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict_tokenizer;

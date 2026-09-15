@@ -106,7 +106,7 @@ class SearchSinkInsertBaseImpl {
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
     std::vector<IndexedExpression>&& indexed_exprs = {},
-    std::shared_ptr<const search::SearchIndexSet> index_set = {});
+    std::shared_ptr<const catalog::InvertedIndexConfig> config = {});
 
   void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
     _trx = &trx;
@@ -124,10 +124,8 @@ class SearchSinkInsertBaseImpl {
     AppendToColumn(field_id, type, vec, count);
   }
 
-  std::span<const irs::field_id> TermFieldsForColumn(
-    ColumnId column) const noexcept {
-    return _index_set ? _index_set->TermFields(column)
-                      : std::span<const irs::field_id>{};
+  std::vector<irs::field_id> TermFieldsForColumn(ColumnId column) const {
+    return _config ? _config->TermFields(column) : std::vector<irs::field_id>{};
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const noexcept {
@@ -286,7 +284,7 @@ class SearchSinkInsertBaseImpl {
   StoreAppender _store_appender;
   KeyScratch _key_scratch;
   std::vector<IndexedExpression> _indexed_expressions;
-  std::shared_ptr<const search::SearchIndexSet> _index_set;
+  std::shared_ptr<const catalog::InvertedIndexConfig> _config;
 
   std::vector<duckdb::string_t> _json_bool_terms;
   std::vector<double> _json_nums;

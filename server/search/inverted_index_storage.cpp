@@ -403,14 +403,6 @@ absl::Status InvertedIndexStorage::CleanupUnsafeImpl() {
   return absl::OkStatus();
 }
 
-ResultWithTime InvertedIndexStorage::CompactUnsafe(
-  const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
-  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                          field_options, nullptr));
-}
-
 auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,

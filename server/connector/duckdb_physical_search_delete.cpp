@@ -131,14 +131,16 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   if (gstate.returned) {
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
-    const auto stored = _table->GetColumns().LogicalColumnCount();
-    SDB_ASSERT(GetTypes().size() == stored + _pk_columns.size());
-    for (duckdb::idx_t i = 0; i < stored; ++i) {
-      SDB_ASSERT(_return_columns[i] != duckdb::DConstants::INVALID_INDEX);
-      row.data[i].Reference(chunk.data[_return_columns[i]]);
-    }
-    for (size_t i = 0; i < _pk_columns.size(); ++i) {
-      row.data[stored + i].Reference(chunk.data[_pk_columns[i].input_col_idx]);
+    for (duckdb::idx_t i = 0; i < row.ColumnCount(); ++i) {
+      const auto from = i < _return_columns.size()
+                          ? _return_columns[i]
+                          : duckdb::DConstants::INVALID_INDEX;
+      if (from == duckdb::DConstants::INVALID_INDEX) {
+        row.data[i].Reference(duckdb::Value(row.data[i].GetType()),
+                              duckdb::count_t(num_rows));
+      } else {
+        row.data[i].Reference(chunk.data[from]);
+      }
     }
     row.SetCardinality(num_rows);
     gstate.returned->Append(row);

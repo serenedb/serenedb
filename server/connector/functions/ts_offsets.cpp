@@ -61,7 +61,8 @@ namespace sdb::connector {
 
 duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
   auto copy = duckdb::make_uniq<OffsetsBindData>();
-  copy->index = index;
+  copy->config = config;
+  copy->tokenizers = tokenizers;
   copy->column_id = column_id;
   copy->dict_tokenizer = dict_tokenizer;
   copy->limit = limit;
@@ -71,7 +72,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
 
 bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<OffsetsBindData>();
-  return index.config == o.index.config && column_id == o.column_id &&
+  return config == o.config && column_id == o.column_id &&
          dict_tokenizer == o.dict_tokenizer && limit == o.limit &&
          stored_filter == o.stored_filter;
 }
@@ -176,9 +177,9 @@ auto& EnsureField(duckdb::ClientContext& context,
   if (bind.IsStandalone()) {
     wrapper = bind.dict_tokenizer->Acquire(context);
   } else {
-    wrapper = bind.index.ResolveTokenizers(context)
-                .Acquire(static_cast<irs::field_id>(bind.column_id))
-                .analyzer;
+    wrapper =
+      bind.tokenizers.Acquire(static_cast<irs::field_id>(bind.column_id))
+        .analyzer;
     column_id = bind.column_id;
   }
 

@@ -261,7 +261,12 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::SearchTable ||
            entry_kind == ScanEntryKind::SearchTableIndex;
   }
-  std::vector<catalog::SearchIndexRef> InvertedIndexes() const;
+  catalog::IndexTokenizers ResolveTokenizers(
+    duckdb::ClientContext& context) const {
+    return {context,
+            inverted_index ? inverted_index->catalog : table_entry->catalog,
+            *inverted_config};
+  }
   bool IsHnswScored() const noexcept;
 
   template<typename T>

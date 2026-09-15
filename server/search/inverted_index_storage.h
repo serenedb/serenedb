@@ -30,6 +30,7 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/async.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -159,7 +160,10 @@ class InvertedIndexStorage final
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options);
+                               const irs::IndexFieldOptions* field_options) {
+    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                            field_options, nullptr));
+  }
 
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,

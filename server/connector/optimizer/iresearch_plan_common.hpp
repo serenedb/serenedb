@@ -28,7 +28,6 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -51,9 +50,6 @@ connector::ColumnId ResolveColumnId(
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
-
-std::shared_ptr<const catalog::InvertedIndexConfig> TermDictIndexFor(
-  const connector::SereneDBScanBindData& bind_data, connector::ColumnId col_id);
 
 struct FoundScan {
   duckdb::LogicalGet* get;
@@ -124,10 +120,9 @@ struct SearchGetters {
   irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
 };
 
-bool WithSearchGetters(
-  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  std::span<const catalog::SearchIndexRef> indexes,
-  duckdb::ClientContext& context,
-  absl::FunctionRef<bool(const SearchGetters&)> fn);
+bool WithSearchGetters(duckdb::LogicalGet& get,
+                       connector::SereneDBScanBindData& bind_data,
+                       duckdb::ClientContext& context,
+                       absl::FunctionRef<bool(const SearchGetters&)> fn);
 
 }  // namespace sdb::optimizer

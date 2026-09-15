@@ -78,6 +78,9 @@ void InitInvertedIndexes() {
                 return;
               }
               const auto& storage = index->Storage();
+              if (!storage) {
+                return;
+              }
               TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
               storage->StartTasks();
               auto relation =

@@ -136,9 +136,9 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& table) {
-  auto set = table.IndexSet();
-  const auto* options = set.get();
-  return {.alive = true, .keepalive = std::move(set), .field_options = options};
+  std::shared_ptr<const irs::IndexFieldOptions> options = table.Config();
+  const auto* raw = options.get();
+  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
 template<class Storage>

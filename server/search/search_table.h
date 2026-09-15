@@ -150,12 +150,19 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   void VacuumCompact();
 
  private:
+  struct IndexConfig {
+    duckdb::idx_t oid;
+    std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  };
+
   void OpenWriter();
+  void RebuildConfig();
 
   duckdb::idx_t _table_id;
   duckdb::idx_t _db_id;
   duckdb::idx_t _schema_id;
   bool _is_new;
+  uint64_t _segment_memory_max;
   std::atomic<bool> _dropped{false};
   std::shared_mutex _table_lock;
   std::unique_ptr<irs::Directory> _dir;
@@ -167,6 +174,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // Background maintenance state (mirrors InvertedIndexStorage). A zero
   // refresh/compaction interval disables the loops.
   TasksSettings _maint_settings;
+  MaintenanceCounters _maintenance;
   absl::Mutex _refresh_mutex;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};

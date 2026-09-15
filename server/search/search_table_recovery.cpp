@@ -20,6 +20,7 @@
 
 #include "search/search_table_recovery.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
@@ -29,9 +30,11 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -94,6 +97,7 @@ void RunSearchTableRecovery() {
   struct ShardInfo {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
+    duckdb::Catalog* catalog = nullptr;
     std::vector<connector::ColumnId> column_ids;
     std::vector<connector::primary_key::PKColumn> pk_columns;
     bool uses_generated_pk = false;
@@ -110,6 +114,11 @@ void RunSearchTableRecovery() {
     uint64_t max_tick = 0;
   };
 
+  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
+  expr_conn.BeginTransaction();
+  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
+  auto& expr_context = *expr_conn.context;
+
   size_t recovered_shards = 0;
   for (const auto& database : SereneDatabases()) {
     const duckdb::idx_t db_id = database->oid;
@@ -119,6 +128,7 @@ void RunSearchTableRecovery() {
       ShardInfo info;
       info.search = search.get();
       info.shard = std::move(search);
+      info.catalog = &entry.catalog;
       const auto& columns = entry.GetColumns();
       for (const auto& col : columns.Logical()) {
         info.column_ids.emplace_back(col.Oid());
@@ -151,7 +161,8 @@ void RunSearchTableRecovery() {
       }
 
       if (!ctx.insert_sink) {
-        ctx.insert_sink = connector::MakeSearchTableInsertSink(ctx.trx);
+        ctx.insert_sink = connector::MakeSearchTableInsertSink(
+          ctx.trx, *info.search, *info.catalog, expr_context);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
@@ -161,9 +172,9 @@ void RunSearchTableRecovery() {
                       duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
-      connector::WriteChunkToSearchSink(*ctx.insert_sink, chunk,
-                                        info.column_ids, info.pk_columns,
-                                        info.uses_generated_pk, pk_base);
+      connector::WriteChunkToSearchSink(
+        *ctx.insert_sink, chunk, info.column_ids, info.pk_columns,
+        info.uses_generated_pk, pk_base, table_id, expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Each DELETE op replays as one removal batch on the shared trx; feeding it
@@ -188,12 +199,8 @@ void RunSearchTableRecovery() {
     // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
     // is last, Finalize commits the empty trx so the cleared state publishes.
     auto replay_truncate = [&](uint64_t tick, duckdb::idx_t table_id) {
-      auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
-      ctx.insert_sink.reset();
-      ctx.delete_sink.reset();
-      info.search->Clear(tick);
-      ctx.trx = info.search->GetTransaction();
+      ctx.trx.Remove(std::make_shared<irs::All>());
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     wal.Recover(exists_of, committed_of, replay, replay_delete,

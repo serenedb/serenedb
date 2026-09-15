@@ -35,11 +35,13 @@
 #include <utility>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/primary_key.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "search/scorer_options.h"
 #include "search/search_table.h"
 
 namespace sdb::catalog {
@@ -72,17 +74,40 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
     options[std::string{name}] =
       duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
   }
+  if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
+    search::ParseScorerExpression(nullptr,
+                                  constant->GetValue().GetValue<std::string>());
+  }
 }
 
 SearchTableOptions ResolveOptions(const WithOptions& options) {
   const auto get = [&](std::string_view name) {
     return FindConstant(options, name)->GetValue().GetValue<uint32_t>();
   };
-  return {
+  SearchTableOptions result{
     .refresh_interval_ms = get(kRefreshIntervalSetting),
     .compaction_interval_ms = get(kCompactionIntervalSetting),
     .cleanup_interval_step = get(kCleanupIntervalStepSetting),
+    .segment_memory_max = FindConstant(options, kSegmentMemoryMaxSetting)
+                            ->GetValue()
+                            .GetValue<uint64_t>(),
   };
+  if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
+    result.optimize_top_k = constant->GetValue().GetValue<std::string>();
+  }
+  return result;
+}
+
+std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
+  const duckdb::TableCatalogEntry& table) {
+  auto config = std::make_shared<InvertedIndexConfig>();
+  for (const auto index : connector::primary_key::KeyColumns(table)) {
+    const auto column = table.GetColumn(index).Oid();
+    config->fields.emplace(column,
+                           InvertedIndexField{.indexed_term_dict = true});
+    config->keys.push_back({.field_id = column, .column_id = column});
+  }
+  return config;
 }
 
 }  // namespace
@@ -128,13 +153,17 @@ SearchTableEntry::SearchTableEntry(
   if (!_storage) {
     _storage = search::SearchTable::Create(catalog.GetOid(), schema.oid, oid,
                                            base.oid == 0, _options);
+    _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
 
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   duckdb::virtual_column_map_t result;
   const auto keys = connector::primary_key::KeyColumns(*this);
-  result.reserve(std::max<size_t>(keys.size(), 1));
+  result.reserve(std::max<size_t>(keys.size(), 1) + 1);
+  result.insert({connector::kColumnIdentifierTableOid,
+                 duckdb::TableColumn{duckdb::Identifier{"tableoid"},
+                                     duckdb::LogicalType::BIGINT}});
   if (keys.empty()) {
     result.insert({connector::kColumnIdentifierGeneratedPk,
                    duckdb::TableColumn{duckdb::Identifier{"rowid"},
@@ -211,6 +240,11 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       duckdb::Value::UINTEGER(_options.compaction_interval_ms));
   set(kCleanupIntervalStepSetting,
       duckdb::Value::UINTEGER(_options.cleanup_interval_step));
+  set(kSegmentMemoryMaxSetting,
+      duckdb::Value::UBIGINT(_options.segment_memory_max));
+  if (!_options.optimize_top_k.empty()) {
+    set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
+  }
   return info;
 }
 

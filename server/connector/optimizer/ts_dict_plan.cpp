@@ -270,7 +270,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, "(): column not found in index"));
   }
-  const auto index = TermDictIndexFor(*found.bind_data, col_id);
+  const auto& index = found.bind_data->inverted_config;
   const auto* info = index ? index->FindColumnInfo(col_id) : nullptr;
   const auto& col_type = col_ref->GetReturnType();
   const auto text_type = [&] {
@@ -737,8 +737,9 @@ class TsDictFacetPushdown {
 
   bool ShapeOk() const;
   bool AdoptScan(std::optional<FoundScan> here);
-  const catalog::InvertedIndexConfig* ColumnIndex(
-    connector::ColumnId col_id) const;
+  const catalog::InvertedIndexConfig* ColumnIndex() const {
+    return _index ? _index : _found.bind_data->inverted_config.get();
+  }
   const catalog::InvertedIndexConfig& FacetIndex() const {
     return _index ? *_index : *_keys.front().index;
   }
@@ -896,7 +897,7 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   if (col_id == connector::kInvalidColumnId) {
     return std::nullopt;
   }
-  const auto index = TermDictIndexFor(*found.bind_data, col_id);
+  const auto& index = found.bind_data->inverted_config;
   if (!index) {
     return std::nullopt;
   }
@@ -958,14 +959,6 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
   return true;
 }
 
-const catalog::InvertedIndexConfig* TsDictFacetPushdown::ColumnIndex(
-  connector::ColumnId col_id) const {
-  if (_index) {
-    return _index;
-  }
-  return TermDictIndexFor(*_found.bind_data, col_id).get();
-}
-
 // Expression keys have no NOT NULL proof, so they always carry the
 // null-marker field for the synthesized NULL group.
 bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
@@ -994,12 +987,7 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
     key.index = &index;
     return true;
   };
-  const auto resolved =
-    _index ? resolve_in(*_index)
-           : absl::c_any_of(
-               _found.bind_data->InvertedIndexes(),
-               [&](const auto& index) { return resolve_in(*index.config); });
-  if (!resolved) {
+  if (!resolve_in(*ColumnIndex())) {
     return false;
   }
   key.anchor = _found.get->table_index;
@@ -1033,10 +1021,7 @@ bool TsDictFacetPushdown::ResolveKeys() {
           ResolveColumnId(walked.binding, *_found.bind_data, *_found.get);
       }
       if (col_id != connector::kInvalidColumnId) {
-        key.index = ColumnIndex(col_id);
-        if (!key.index) {
-          return false;
-        }
+        key.index = ColumnIndex();
         key.field_id = key.index->TermField(col_id);
         key.col_id = col_id;
         if (!_found.bind_data->IsColumnNotNull(col_id)) {
@@ -1676,9 +1661,8 @@ bool TsDictFacetPushdown::WhereOk() {
   for (size_t k = 0; k < _keys.size(); ++k) {
     key_by_field[_keys[k].field_id] = k;
   }
-  const auto indexes = _found.bind_data->InvertedIndexes();
   const bool claimable = WithSearchGetters(
-    *_found.get, *_found.bind_data, indexes, _context,
+    *_found.get, *_found.bind_data, _context,
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
       size_t computed_residuals = 0;
@@ -2130,8 +2114,7 @@ void ClaimTsDictFilter(
     TsDictFilterClaim{filters, get, bind_data, ss, context, getters}.Claim();
     return true;
   };
-  WithSearchGetters(get, bind_data, bind_data.InvertedIndexes(), context,
-                    claim);
+  WithSearchGetters(get, bind_data, context, claim);
 }
 
 }  // namespace sdb::optimizer

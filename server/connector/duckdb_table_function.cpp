@@ -285,7 +285,7 @@ bool SereneDBScanBindData::IsColumnNotNull(ColumnId col_id) const {
 }
 
 std::string_view TableScanBindData::RelationName() const {
-  if (entry_kind == ScanEntryKind::InvertedIndex && inverted_index) {
+  if (IsInvertedIndexEntry()) {
     return inverted_index->name.GetIdentifierName();
   }
   return table_entry->name.GetIdentifierName();
@@ -341,7 +341,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ViewScanBindData::Cardinality(
 duckdb::idx_t ViewScanBindData::RelationId() const { return view_id; }
 
 std::string_view ViewScanBindData::RelationName() const {
-  if (entry_kind == ScanEntryKind::InvertedIndex && inverted_index) {
+  if (IsInvertedIndexEntry()) {
     return inverted_index->name.GetIdentifierName();
   }
   return view_name;
@@ -406,18 +406,30 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
       duckdb::CatalogType::TABLE_ENTRY,
       duckdb::QualifiedName{qualified.Catalog(), index->GetSchemaName(),
                             index->GetTableName()}});
-  auto snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
-    entry.oid, entry.Storage());
+  const auto* search_table =
+    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
+  search::InvertedIndexSnapshotPtr snapshot;
+  if (search_table) {
+    snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+      search_table->Storage()->GetDirectoryReader(), nullptr);
+  } else {
+    snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
+      entry.oid, entry.Storage());
+  }
   auto data =
     relation.type == duckdb::CatalogType::VIEW_ENTRY
       ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
                              entry.options, std::move(snapshot))
       : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
-                              ScanEntryKind::InvertedIndex, "table",
+                              search_table ? ScanEntryKind::SearchTableIndex
+                                           : ScanEntryKind::InvertedIndex,
+                              search_table ? "search" : "table",
                               std::move(snapshot));
   data->inverted_index = &entry;
   data->inverted_config = entry.Config();
-  data->index_top_k_scorer = entry.Config()->top_k_scorer;
+  data->index_top_k_scorer = search_table
+                               ? search_table->Storage()->TopKScorer()
+                               : entry.Config()->top_k_scorer;
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
     return_types.push_back(type);
     names.push_back(std::string{data->ColumnNameById(id)});
@@ -504,12 +516,15 @@ const irs::Scorer* ResolvePruneScorer(
 
 std::string SereneDBScanBindData::DisplayColumnName(ColumnId col_id) const {
   auto name = ColumnNameById(col_id);
+  if (name.empty() && inverted_config) {
+    name = ColumnNameById(inverted_config->ColumnOf(col_id));
+  }
   if (!name.empty()) {
     return std::string{name};
   }
-  if (inverted_index) {
+  if (inverted_config) {
     auto expr =
-      inverted_index->ExpressionText(static_cast<irs::field_id>(col_id));
+      inverted_config->ExpressionText(static_cast<irs::field_id>(col_id));
     if (!expr.empty()) {
       return expr;
     }
@@ -520,6 +535,9 @@ std::string SereneDBScanBindData::DisplayColumnName(ColumnId col_id) const {
 static std::string ColumnNameFor(const SereneDBScanBindData& bind,
                                  ColumnId col_id) {
   auto name = bind.ColumnNameById(col_id);
+  if (name.empty() && bind.inverted_config) {
+    name = bind.ColumnNameById(bind.inverted_config->ColumnOf(col_id));
+  }
   if (!name.empty()) {
     return std::string{name};
   }
@@ -552,24 +570,36 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->max_search_fanout = vs.max_search_fanout;
+  o->ef_search = vs.ef_search;
+  o->min_ef = vs.min_ef;
   o->inner = std::move(inner);
   return f;
+}
+
+bool SereneDBScanBindData::IsHnswScored() const noexcept {
+  if (!vector_scorer || !inverted_config) {
+    return false;
+  }
+  const auto info =
+    inverted_config->GetColumnOptions(vector_scorer->field_id).ann_info;
+  return info && info->kind == irs::AnnKind::Hnsw;
 }
 
 namespace {
 
 auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data) {
   return [&bind_data](ColumnId col_id) -> std::string {
-    const auto& index_entry = *bind_data.inverted_index;
+    const auto& config = *bind_data.inverted_config;
     const auto fid = static_cast<irs::field_id>(col_id);
-    auto base = std::string{bind_data.ColumnNameById(col_id)};
+    auto base = std::string{bind_data.ColumnNameById(config.ColumnOf(fid))};
     const auto column_type = bind_data.ColumnTypeById(col_id);
     const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
-    const auto lookup = bind_data.inverted_config->LookupField(fid);
+    const auto lookup = config.LookupField(fid);
     auto entry_base = [&](irs::field_id entry_fid) {
-      auto s = index_entry.ExpressionText(entry_fid);
+      auto s = config.ExpressionText(entry_fid);
       if (s.empty()) {
-        s = std::string{bind_data.ColumnNameById(ColumnId{entry_fid})};
+        s = std::string{bind_data.ColumnNameById(config.ColumnOf(entry_fid))};
       }
       if (s.empty()) {
         s = absl::StrCat("col", entry_fid);
@@ -585,11 +615,10 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data) {
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (fid == lookup.entry_field_id) {
-        const auto expr_type_id =
-          bind_data.inverted_config->ExpressionType(fid).id();
+        const auto expr_type_id = config.ExpressionType(fid).id();
         const bool is_expr = expr_type_id != duckdb::LogicalTypeId::INVALID;
         if (base.empty()) {
-          base = index_entry.ExpressionText(fid);
+          base = config.ExpressionText(fid);
         }
         if (base.empty()) {
           base = absl::StrCat("col", fid);
@@ -645,20 +674,20 @@ term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
 auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data) {
   return [&bind_data](ColumnId col_id) -> term_dict::Kind {
     using term_dict::Kind;
+    const auto& config = *bind_data.inverted_config;
     const auto fid = static_cast<irs::field_id>(col_id);
-    const auto lookup = bind_data.inverted_config->LookupField(fid);
+    const auto lookup = config.LookupField(fid);
     if (lookup.entry_field_id == term_dict::kPKFieldId) {
       return Kind::NumericI64;
     }
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (fid == lookup.entry_field_id) {
-        if (const auto expr_type =
-              bind_data.inverted_config->ExpressionType(fid);
+        if (const auto expr_type = config.ExpressionType(fid);
             expr_type.id() != duckdb::LogicalTypeId::INVALID) {
           return ClassifyTerms(expr_type);
         }
-        const auto column_type = bind_data.ColumnTypeById(col_id);
+        const auto column_type = bind_data.ColumnTypeById(config.ColumnOf(fid));
         if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
           return ClassifyTerms(column_type);
         }
@@ -674,7 +703,7 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data) {
         return Kind::NumericF64;
       }
     }
-    const auto column_type = bind_data.ColumnTypeById(col_id);
+    const auto column_type = bind_data.ColumnTypeById(config.ColumnOf(fid));
     if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
       return ClassifyTerms(column_type);
     }
@@ -705,16 +734,16 @@ void SereneDBScanBindData::AppendSummary(
   // field ids come from a global allocator; display the pretty-printed
   // expression so EXPLAIN output is meaningful and deterministic.
   const auto display_field = [&](ColumnId id) -> std::string {
-    if (bind.inverted_index) {
-      if (auto expr =
-            bind.inverted_index->ExpressionText(static_cast<irs::field_id>(id));
+    if (bind.inverted_config) {
+      if (auto expr = bind.inverted_config->ExpressionText(
+            static_cast<irs::field_id>(id));
           !expr.empty()) {
         return expr;
       }
     }
     return ColumnNameFor(bind, id);
   };
-  if (bind.inverted_index) {
+  if (bind.inverted_config) {
     const auto name_of = MakeFieldNameResolver(bind);
     const auto kind_of = MakeFieldKindResolver(bind);
     const bool vector_is_range =
@@ -849,7 +878,7 @@ bool ProjectionIsFromIndex(const SereneDBScanBindData& bind,
     return false;
   }
   const auto catalog_col_id = bind.column_ids[col_id];
-  if (catalog_col_id == kGeneratedPKId) {
+  if (catalog_col_id == kGeneratedPKId || bind.IsSearchTableEntry()) {
     return true;
   }
   const auto* info = bind.inverted_config->FindColumnInfo(catalog_col_id);
@@ -974,7 +1003,7 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   // even when the scan's output is count-only.
   bool has_lookup_filter = false;
   if (input.filters && input.projected_column_ids &&
-      bind.IsInvertedIndexEntry() && bind.inverted_index) {
+      bind.entry_kind == ScanEntryKind::InvertedIndex) {
     const auto& column_ids = *input.projected_column_ids;
     for (const auto& entry : *input.filters) {
       const auto proj = static_cast<duckdb::idx_t>(entry.GetIndex());
@@ -997,7 +1026,7 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     }
   }
   const bool suppress_lookup =
-    bind.IsInvertedIndexEntry() && !has_lookup_filter &&
+    bind.entry_kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
     (count_only || (!entries.empty() && !has_lookup));
   if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);
@@ -1232,13 +1261,13 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto col_id = bind.column_ids[column_index];
-  if (bind.IsInvertedIndexEntry() && bind.inverted_config) {
-    const auto* info = bind.inverted_config->FindColumnInfo(col_id);
-    if (!info || !info->store_values) {
+  if (bind.IsSearchTableEntry()) {
+    if (col_id > kMaxRealColumnIdValue) {
       return nullptr;
     }
-  } else if (bind.IsSearchTableEntry()) {
-    if (col_id > kMaxRealColumnIdValue) {
+  } else if (bind.IsInvertedIndexEntry() && bind.inverted_config) {
+    const auto* info = bind.inverted_config->FindColumnInfo(col_id);
+    if (!info || !info->store_values) {
       return nullptr;
     }
   } else {
@@ -1416,10 +1445,13 @@ duckdb::TableFunction BindSearchTableScan(
   catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   const auto& store = entry.Storage();
-  bind_data =
+  auto data =
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
                           std::make_shared<search::InvertedIndexSnapshot>(
                             store->GetDirectoryReader(), nullptr));
+  data->index_top_k_scorer = store->TopKScorer();
+  data->inverted_config = store->Config();
+  bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }
 

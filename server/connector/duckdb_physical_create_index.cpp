@@ -96,7 +96,6 @@ enum class PkShape : uint8_t {
 };
 
 struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
-  bool created = false;
   duckdb::idx_t database_id;
   duckdb::idx_t index_id;
   std::string schema_name;
@@ -279,7 +278,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       index_entry.SetConfig(BindInvertedIndexConfig(
         context, index_entry, _relation, _bound_expressions, pk_type));
       if (const auto& store = index_entry.SearchStore()) {
-        store->MergeIndexConfig(index_entry.Config());
+        store->MergeIndexConfig(index_entry.oid, index_entry.Config());
       } else {
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
@@ -309,7 +308,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
 
-  state->created = true;
   state->index_id = created_id;
   if (state->progress) {
     state->progress->SetPhase(pg::progress_phase::CreateIndex::BuildingIndex);
@@ -387,8 +385,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
   auto* gstate_ptr =
     sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->config ||
-      !gstate_ptr->index_storage) {
+  if (!gstate_ptr || !gstate_ptr->index_storage) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
   auto& gstate = *gstate_ptr;
@@ -418,7 +415,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
-  if (!gstate.created) {
+  if (!gstate.index_storage) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto num_rows = chunk.size();
@@ -426,8 +423,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state);
-  if (!lstate || !lstate->writer) {
+  auto* lstate = &input.local_state.Cast<CreateIndexLocalState>();
+  if (!lstate->writer) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto* writer = lstate->writer.get();
@@ -614,7 +611,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
-  if (!gstate.created || !gstate.index_storage) {
+  if (!gstate.index_storage) {
     return duckdb::SinkFinalizeType::READY;
   }
 

@@ -62,6 +62,8 @@ namespace {
 
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
+  duckdb::Catalog* catalog = nullptr;
+  duckdb::idx_t table_id = 0;
   query::Transaction* sdb_txn = nullptr;
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
@@ -155,6 +157,8 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   state->search_table = table->Storage();
+  state->catalog = &table->catalog;
+  state->table_id = table->oid;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   const auto& columns = table->GetColumns();
@@ -198,7 +202,9 @@ SereneDBSearchInsert::GetLocalSinkState(
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_table->GetTransaction());
-    lstate->sink = MakeSearchTableInsertSink(*lstate->search_trx);
+    lstate->sink =
+      MakeSearchTableInsertSink(*lstate->search_trx, *gstate->search_table,
+                                *gstate->catalog, context.client);
   }
   return lstate;
 }
@@ -219,7 +225,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.search_table,
       [&] { return gstate.search_table->GetTransaction(); });
-    lstate->sink = MakeSearchTableInsertSink(trx);
+    lstate->sink = MakeSearchTableInsertSink(trx, *gstate.search_table,
+                                             *gstate.catalog, context.client);
   }
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
@@ -230,7 +237,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
                           num_rows)
                       : 0;
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
-                         gstate.pk_columns, uses_generated_pk, pk_base);
+                         gstate.pk_columns, uses_generated_pk, pk_base,
+                         gstate.table_id, context.client);
   if (lstate->returned) {
     // The chunk is the whole row in table-column order -- the defaults and the
     // STORED generated columns were resolved into the plan below this sink --

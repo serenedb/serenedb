@@ -40,6 +40,9 @@ struct DecodedColumn {
   std::vector<double> reals;
   // Empty when every row is valid.
   std::vector<uint64_t> valid;
+  // The valid rows ordered by value: a range predicate finds its rows by two
+  // binary searches instead of a compare per row.
+  std::vector<uint32_t> order;
   uint64_t rows = 0;
 
   bool Real() const noexcept { return !reals.empty(); }
@@ -50,7 +53,7 @@ struct DecodedColumn {
 
   size_t Bytes() const noexcept {
     return ints.size() * sizeof(int64_t) + reals.size() * sizeof(double) +
-           valid.size() * sizeof(uint64_t);
+           valid.size() * sizeof(uint64_t) + order.size() * sizeof(uint32_t);
   }
 };
 
@@ -115,6 +118,12 @@ struct DecodedPredicate {
   // fails; returns the survivors.
   uint64_t Narrow(uint64_t first, uint64_t* mask,
                   uint32_t words) const noexcept;
+
+  // The rows that pass, as [begin, end) into the column's value order.
+  std::pair<uint32_t, uint32_t> Range() const noexcept;
+
+  // Sets the bit of every passing row in `words` (bit i is row i).
+  void Fill(uint64_t* words) const noexcept;
 };
 
 // The predicate `expr` (a pushed ExpressionFilter's expression over one

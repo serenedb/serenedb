@@ -166,6 +166,10 @@ class ColFilterVerify : public irs::detail::TableFilter {
   // The column predicates compiled against decoded columns, when every one
   // of them is an interval on a plain numeric column.
   std::vector<DecodedPredicate> _direct_preds;
+  // The rows every predicate passes, as one bitset over the segment, when the
+  // predicates are selective enough that listing their rows from the value
+  // order beats comparing every row; a window is then narrowed by an AND.
+  std::vector<uint64_t> _direct_set;
   bool _direct = false;
 };
 
@@ -1985,6 +1989,37 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
     _direct_preds.push_back(std::move(*pred));
   }
   _direct = !_direct_preds.empty();
+  _direct_set.clear();
+  if (!_direct) {
+    return;
+  }
+  // Below a quarter of the rows, the value order lists the passing rows in
+  // fewer steps than comparing every row of every window would take.
+  const uint64_t rows = _direct_preds.front().column->rows;
+  uint64_t narrowest = rows;
+  for (const auto& pred : _direct_preds) {
+    const auto [b, e] = pred.Range();
+    narrowest = std::min<uint64_t>(narrowest, e - b);
+  }
+  if (narrowest * 4 > rows) {
+    return;
+  }
+  const auto words = (rows + 63) / 64;
+  _direct_set.assign(words, 0);
+  bool first = true;
+  std::vector<uint64_t> other;
+  for (const auto& pred : _direct_preds) {
+    if (first) {
+      pred.Fill(_direct_set.data());
+      first = false;
+      continue;
+    }
+    other.assign(words, 0);
+    pred.Fill(other.data());
+    for (size_t w = 0; w < words; ++w) {
+      _direct_set[w] &= other[w];
+    }
+  }
 }
 
 uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
@@ -2010,6 +2045,17 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
   }
   if (_direct) {
     const uint64_t first = base - irs::doc_limits::min();
+    if (!_direct_set.empty() && first % 64 == 0) {
+      // Windows start on a word boundary, so the set is ANDed word by word.
+      const auto w0 = first / 64;
+      uint64_t left = 0;
+      for (uint32_t w = 0; w < words; ++w) {
+        const auto set = w0 + w < _direct_set.size() ? _direct_set[w0 + w] : 0;
+        mask[w] &= set;
+        left += static_cast<uint64_t>(std::popcount(mask[w]));
+      }
+      return static_cast<uint32_t>(left);
+    }
     uint64_t left = 0;
     for (const auto& pred : _direct_preds) {
       left = pred.Narrow(first, mask, words);

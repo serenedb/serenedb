@@ -208,8 +208,9 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
     if (graph.LevelOf(node) == 0) {
       continue;
     }
+    // No prefetch here: a batch of 256 codes outgrows L1, the distance kernel
+    // fetches its own lookahead.
     s.batch.push_back(node);
-    dist.Prefetch(node);
     if (s.batch.size() == kBatch) {
       HnswAdmit(dist, ef, s);
     }

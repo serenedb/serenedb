@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <chrono>
@@ -471,8 +472,8 @@ ResultWithTime SearchTable::CompactUnsafe(
 auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
-  -> yaclib::Future<ResultWithTime> {
+  const irs::IndexFieldOptions* field_options,
+  const irs::AnnBuildEnv* env) -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
@@ -546,7 +547,20 @@ void SearchTable::VacuumCompact() {
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
   const auto field_options = GetFieldOptions();
-  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
+  // The merged segment's ANN graphs build on the ANN workers when a
+  // compaction slot is free, as the background loop's merges do; without the
+  // slot the build stays on this thread. A 1m-row HNSW graph is minutes of
+  // work on one core.
+  auto& engine = GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
+  irs::GetReady(
+    CompactUnsafeAsync(kFullMerge, kProgress, empty, field_options.get(), env));
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

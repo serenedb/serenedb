@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
+#include <duckdb/parallel/pipeline.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
@@ -37,6 +38,7 @@
 #include "catalog/scorer_options.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/scan/scan_state.h"
+#include "connector/search_table_dispatch.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -73,6 +75,14 @@ void ClassifySegments(ScanGlobalState& g) {
       g.segment_order.push_back(si);
     }
   }
+}
+
+bool SinkWritesSearchTable(duckdb::ExecutionContext& context) {
+  if (!context.pipeline) {
+    return false;
+  }
+  auto sink = context.pipeline->GetSink();
+  return sink && dynamic_cast<const SearchTableWriteOperator*>(sink.get());
 }
 
 }  // namespace
@@ -249,7 +259,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* state) {
   auto& g = state->Cast<ScanGlobalState>();
   const auto worker = g.worker_count.fetch_add(1, std::memory_order_relaxed);
@@ -278,7 +288,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       break;
     }
     case ScanShape::ColScan: {
-      result = duckdb::make_uniq<ColScanLocalState>();
+      auto l = duckdb::make_uniq<ColScanLocalState>();
+      l->share_payloads = SinkWritesSearchTable(context);
+      result = std::move(l);
       break;
     }
     case ScanShape::Stream: {

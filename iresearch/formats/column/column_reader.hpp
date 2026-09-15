@@ -149,8 +149,10 @@ class ColumnReader {
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;
     ReadContext* ctx = nullptr;
+    std::shared_ptr<ReadContext> shared_ctx;
     size_t opened_block = std::numeric_limits<size_t>::max();
     size_t advised_end = 0;
+    bool certified_dictionary = false;
     bool initialized = false;
     duckdb::SelectionVector sel;
     std::unique_ptr<VectorScratch> list_offsets;
@@ -220,7 +222,11 @@ class ColumnReader {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
 
-  ScanState InitScan(ReadContext& ctx) const;
+  ScanState InitScan(ReadContext& ctx) const { return InitScan(ctx, nullptr); }
+  ScanState InitScan(std::shared_ptr<ReadContext> ctx) const {
+    auto& ref = *ctx;
+    return InitScan(ref, std::move(ctx));
+  }
 
   virtual uint64_t GatherCursor(const ScanState& s) const noexcept {
     return s.window.begin + s.st.offset_in_column;
@@ -346,6 +352,10 @@ class ColumnReader {
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 
  private:
+  ScanState InitScan(ReadContext& ctx,
+                     std::shared_ptr<ReadContext> shared) const;
+  void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+                      duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;
   std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
                                               ReadContext& ctx,

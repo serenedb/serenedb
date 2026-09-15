@@ -346,6 +346,7 @@ struct ColScanLocalState : public ScanLocalState {
   FullScanner* scanner = nullptr;
   std::span<const irs::doc_id_t> dead;
   size_t dead_at = 0;
+  bool share_payloads = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;
   duckdb::SelectionVector live_sel;

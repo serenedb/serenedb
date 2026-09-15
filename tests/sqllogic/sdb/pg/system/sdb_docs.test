@@ -262,3 +262,31 @@ SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
 ----
 ?column?	count
 t	1
+
+# The documentation is readable by every role, not only the superuser.
+connection docs database=postgres
+statement ok
+DROP ROLE IF EXISTS sdb_docs_reader;
+
+connection docs database=postgres
+statement ok
+CREATE ROLE sdb_docs_reader LOGIN PASSWORD 'sdb_docs_reader_pw';
+
+connection docs_reader user=sdb_docs_reader password=sdb_docs_reader_pw database=postgres
+query
+SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta), (SELECT count(*) FROM sdb_docs.search('create search table', 3)), length(sdb_docs.read('sql/statements/create_table/index.md#CREATE_TABLE')) > 100 FROM sdb_docs.docs;
+----
+?column?	count	count	?column?
+t	1	3	t
+
+connection docs_reader user=sdb_docs_reader password=sdb_docs_reader_pw database=postgres
+statement error
+INSERT INTO sdb_docs.docs VALUES ('zzz.md', 'z', '', 'c', 'c');
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement ok
+DROP ROLE sdb_docs_reader;

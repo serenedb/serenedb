@@ -161,8 +161,6 @@ class Loader {
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),
-           absl::StrCat("GRANT USAGE ON SCHEMA ",
-                        irs::StaticStrings::kDocsSchema, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kTable, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kMeta, " TO PUBLIC"),
          }) {

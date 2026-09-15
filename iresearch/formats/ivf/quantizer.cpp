@@ -714,16 +714,17 @@ Sq8Weights MakeSq8Weights(const faiss::ScalarQuantizer& sq,
 
 #if defined(__x86_64__)
 inline bool HasAvx512ForSq8() noexcept {
-  static const bool has = __builtin_cpu_supports("avx512f") &&
-                          __builtin_cpu_supports("avx512bw") &&
-                          __builtin_cpu_supports("avx512vl");
+  static const bool has =
+    __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
+    __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512dq");
   return has;
 }
 
 // Four codes at once; `codes[k]` may repeat when fewer are left.
 template<bool L2>
-__attribute__((target("avx512f,avx512bw,avx512vl,fma"))) void Sq8Dot4Avx512(
-  const Sq8Weights& w, const byte_type* const codes[4], float out[4]) {
+__attribute__((target("avx512f,avx512bw,avx512vl,avx512dq,fma"))) void
+Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
+              float out[4]) {
   __m512 acc[4], acc2[4];
   for (int k = 0; k < 4; ++k) {
     acc[k] = _mm512_setzero_ps();
@@ -758,11 +759,20 @@ __attribute__((target("avx512f,avx512bw,avx512vl,fma"))) void Sq8Dot4Avx512(
       }
     }
   }
+  // One horizontal sum per code: the two chains are joined first, and the
+  // 16 lanes fold in four steps.
   for (int k = 0; k < 4; ++k) {
-    float r = w.bias + _mm512_reduce_add_ps(acc[k]);
+    __m512 a = acc[k];
     if constexpr (L2) {
-      r += _mm512_reduce_add_ps(acc2[k]);
+      a = _mm512_add_ps(a, acc2[k]);
     }
+    const __m256 h =
+      _mm256_add_ps(_mm512_castps512_ps256(a), _mm512_extractf32x8_ps(a, 1));
+    __m128 q =
+      _mm_add_ps(_mm256_castps256_ps128(h), _mm256_extractf128_ps(h, 1));
+    q = _mm_add_ps(q, _mm_movehl_ps(q, q));
+    q = _mm_add_ss(q, _mm_movehdup_ps(q));
+    const float r = w.bias + _mm_cvtss_f32(q);
     out[k] = L2 ? -r : r;
   }
 }

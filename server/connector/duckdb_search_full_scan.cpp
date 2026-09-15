@@ -32,6 +32,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/parallel/pipeline.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -96,6 +97,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
+#include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -332,6 +334,7 @@ struct ColScanLocalState : public StreamScanLocalState {
   uint32_t current_seg_idx = 0;
   uint64_t bulk_doc_in_seg = 0;
   uint64_t bulk_seg_doc_count = 0;
+  bool share_payloads = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
 
   void StartUnit(duckdb::ClientContext& ctx,
@@ -1806,8 +1809,16 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
 
 }  // namespace
 
+bool SinkWritesSearchTable(duckdb::ExecutionContext& context) {
+  if (!context.pipeline) {
+    return false;
+  }
+  auto sink = context.pipeline->GetSink();
+  return sink && dynamic_cast<const SearchTableWriteOperator*>(sink.get());
+}
+
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
-  duckdb::ExecutionContext& /*context*/, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* state) {
   auto& gstate = state->Cast<IResearchScanGlobalState>();
   const auto& bd = input.bind_data->Cast<SereneDBScanBindData>();
@@ -1840,7 +1851,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     return lstate;
   }
   if (gstate.mode == ScanMode::ColScan) {
-    return duckdb::make_uniq<ColScanLocalState>();
+    auto lstate = duckdb::make_uniq<ColScanLocalState>();
+    lstate->share_payloads = SinkWritesSearchTable(context);
+    return lstate;
   }
   auto lstate = duckdb::make_uniq<StreamScanLocalState>();
   BuildOffsetsEntries(*lstate, input, bd);
@@ -2312,7 +2325,7 @@ FullScanner* ColScanLocalState::OpenScanner(const IResearchScanGlobalState& g) {
                "segment filters are classified at the claim site");
     slot = std::make_unique<FullScanner>(*col_reader, g.cs_projections,
                                          seg_cls.active, g.client_context,
-                                         filter_states);
+                                         filter_states, share_payloads);
   }
   return slot.get();
 }

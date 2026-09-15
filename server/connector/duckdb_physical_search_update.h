@@ -30,7 +30,8 @@
 
 namespace sdb::connector {
 
-class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
+class SereneDBSearchUpdate final : public duckdb::PhysicalOperator,
+                                   public SearchTableWriteOperator {
  public:
   // `return_chunk` is RETURNING: the operator then hands back the rows as it
   // left them rather than their count, and `types` is the whole row.

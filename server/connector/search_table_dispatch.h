@@ -62,6 +62,11 @@ void RejectIfSearchTable(catalog::TableEngine engine,
 // the entry so nothing reaches back into the catalog while the query runs, and
 // so the shard and the generated-PK counter -- shared side state, one per
 // table, never per version -- are pinned for the life of the plan.
+class SearchTableWriteOperator {
+ public:
+  virtual ~SearchTableWriteOperator() = default;
+};
+
 struct SearchWriteTarget {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> data;

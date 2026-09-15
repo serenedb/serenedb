@@ -10,14 +10,14 @@ control substitution on
 # reachable at all.
 #
 # The beam is also the result ceiling: HnswSearchTopK keeps at most ef
-# candidates, so an ef below the LIMIT returns fewer rows than asked for. That
-# is the deterministic signal this file pins -- on a linear dataset the graph
-# finds the exact neighbour at any ef, so row *count* is what distinguishes the
-# beam widths, not row identity.
+# candidates, so the scan floors ef at the LIMIT -- a beam narrower than k
+# could not answer the query -- and above that the value is used verbatim. On
+# a linear dataset the graph finds the exact neighbours at any beam, so what
+# this file pins is that every LIMIT is met and that small values are honoured
+# rather than pinned to the old floor of 64.
 #
-# quant = 'none' is pinned so the graph traverses raw f32: with a quantizer the
-# scan layer over-fetches sdb_rerank_factor * k and rescores, which would mask
-# what the graph itself returned.
+# quant = 'none' is pinned so the graph traverses raw f32; with a quantizer the
+# scan layer rescores the beam's every hit exactly.
 # ============================================================================
 
 statement ok
@@ -57,8 +57,8 @@ pk
 1499
 
 
-# Below the old floor of 64 the value is honoured verbatim, and the beam caps
-# the result at min(ef, LIMIT).
+# Below the old floor of 64 the value is honoured, floored at the LIMIT: a
+# beam of 1 asked for 5 rows searches with a beam of 5 and returns all 5.
 statement ok
 SET sdb_hnsw_ef_search = 1;
 
@@ -68,10 +68,10 @@ SELECT pk FROM hnsw_ef_idx
 ----
 pk
 1500
-1482
-1548
-1418
-1612
+1501
+1499
+1502
+1498
 
 
 statement ok
@@ -85,8 +85,8 @@ pk
 1500
 1501
 1499
-1482
-1481
+1502
+1498
 
 
 # 0 restores the legacy derivation, so sdb_nprobe drives ef again and the old

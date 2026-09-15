@@ -1366,9 +1366,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   if (ss.vector_scorer) {
     auto vs = *ss.vector_scorer;
-    if (vs.quant != irs::VectorQuantization::None && ss.score_top_k) {
-      vs.min_ef =
-        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
+    if (vs.kind == irs::AnnKind::Hnsw && ss.score_top_k) {
+      // The beam is the result ceiling, so it is at least k. Every hit of the
+      // beam is then the rerank pool (sized below), and ef alone trades recall
+      // for time; the rerank factor is an IVF knob.
+      vs.min_ef = static_cast<uint32_t>(*ss.score_top_k);
     }
     state->owned_filter =
       MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
@@ -1447,7 +1449,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (ss.vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
       const auto k = static_cast<double>(*ss.score_top_k);
-      const double pool = std::ceil(ReadRerankFactor(context) * k);
+      double pool;
+      if (ss.vector_scorer->kind == irs::AnnKind::Hnsw) {
+        // Every hit of the beam is reranked: the pool is ef, at least k.
+        pool = std::max<double>(k, ss.vector_scorer->ef_search);
+      } else {
+        pool = std::ceil(ReadRerankFactor(context) * k);
+      }
       state->topk.rerank_pool =
         pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
     }

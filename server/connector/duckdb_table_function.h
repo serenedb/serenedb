@@ -92,6 +92,7 @@ struct VectorScorerOptions {
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
+  irs::AnnKind kind = irs::AnnKind::Ivf;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 16;
   uint32_t ef_search = 0;

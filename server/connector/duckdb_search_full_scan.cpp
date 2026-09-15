@@ -1855,18 +1855,15 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   // columns included, read for the filter), then reference just the projected
   // subset into output -- a reorder that drops filter-only columns, exactly
   // like PhysicalTableScan does with all_columns/projection_ids.
-  duckdb::DataChunk* target = &output;
-  if (!gstate.output_projection_ids.empty()) {
-    auto& base = data.local_state->Cast<IResearchScanLocalState>();
+  const bool reorder = !gstate.output_projection_ids.empty();
+  auto& base = data.local_state->Cast<IResearchScanLocalState>();
+  if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
-      duckdb::vector<duckdb::LogicalType> types(gstate.projected_types.begin(),
-                                                gstate.projected_types.end());
-      base.scan_chunk.Initialize(context, types);
+      base.scan_chunk.Initialize(context, gstate.projected_types);
     }
     base.scan_chunk.Reset();
-    target = &base.scan_chunk;
   }
-  auto& out = *target;
+  auto& out = reorder ? base.scan_chunk : output;
   switch (gstate.mode) {
     case ScanMode::TsDict: {
       auto& l = data.local_state->Cast<TsDictLocalState>();
@@ -1897,8 +1894,8 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       break;
     }
   }
-  if (target != &output) {
-    output.ReferenceColumns(*target, gstate.output_projection_ids);
+  if (reorder) {
+    output.ReferenceColumns(out, gstate.output_projection_ids);
   }
 }
 

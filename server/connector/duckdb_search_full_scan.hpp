@@ -93,6 +93,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // The executing session's copy of the plan's vector options: the knobs and
   // the query vector of a cached plan are read at execution, so every consumer
   // must see this copy, not the bind data's planning-time values.
+  // The top-k this execution asks for: the plan's constant LIMIT, or the value
+  // of its parameter, read at execution.
+  std::optional<size_t> score_top_k;
   std::optional<VectorScorerOptions> owned_vector_scorer;
   const VectorScorerOptions* vector_scorer = nullptr;
 

@@ -231,6 +231,10 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::optional<catalog::ScorerOptions> text_scorer;
   std::optional<VectorScorerOptions> vector_scorer;
   std::optional<size_t> score_top_k;
+  // The LIMIT of a prepared statement whose value is a parameter: the scan
+  // evaluates it at execution, so the top-k reaches the search even though the
+  // plan is cached (score_top_k stays unset).
+  std::shared_ptr<const duckdb::Expression> score_top_k_expr;
   std::optional<duckdb::OrderType> score_order;
 
   // Static score lower bound consumed at filter pushdown (Lucene min_score):

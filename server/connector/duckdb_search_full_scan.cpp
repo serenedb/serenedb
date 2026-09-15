@@ -1099,7 +1099,7 @@ double ReadRerankFactor(duckdb::ClientContext& context) {
 
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
                          const SereneDBScanBindData& bind) {
-  return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *bind.score_top_k;
+  return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *g.score_top_k;
 }
 
 void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
@@ -1175,7 +1175,7 @@ ScanMode DecideScanMode(const IResearchScanGlobalState& g,
   // materialization, and the TOP_N above trims to the exact k. A text lookup
   // filter still forces streaming (exact), so it never reaches here anyway
   // (score_top_k stays unset -- AfterLimit).
-  if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
+  if (g.score_top_k && (ss.text_scorer || ss.score_order) &&
       (!g.has_lookup_filter || ss.vector_scorer)) {
     return ScanMode::TopK;
   }
@@ -1323,6 +1323,29 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   vs.exact = ReadAnnExact(context);
 }
 
+// The LIMIT of a parameterized statement, from the parameters bound to this
+// execution. A value the scan cannot use (NULL, negative, or wider than a
+// size_t) leaves the top-k unset: the scan then streams and the TOP_N above
+// trims, which is what the plan would do without the pushdown.
+std::optional<size_t> EvaluateTopK(duckdb::ClientContext& context,
+                                   const duckdb::Expression& expr) {
+  duckdb::Value folded;
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, folded) ||
+      folded.IsNull()) {
+    return std::nullopt;
+  }
+  duckdb::Value casted;
+  if (!folded.DefaultTryCastAs(duckdb::LogicalType::UBIGINT, casted, nullptr) ||
+      casted.IsNull()) {
+    return std::nullopt;
+  }
+  const auto k = casted.GetValue<uint64_t>();
+  if (k == 0 || k > std::numeric_limits<uint32_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(k);
+}
+
 // The query vector of a parameterized statement, from the parameters bound
 // to this execution.
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
@@ -1372,6 +1395,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
+  state->score_top_k = ss.score_top_k;
+  if (!state->score_top_k && ss.score_top_k_expr) {
+    state->score_top_k = EvaluateTopK(context, *ss.score_top_k_expr);
+  }
   if (ss.vector_scorer) {
     state->owned_vector_scorer = *ss.vector_scorer;
     auto& vs = *state->owned_vector_scorer;
@@ -1382,11 +1409,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (vs.query_expr) {
       vs.query_vector = EvaluateQueryVector(context, vs);
     }
-    if (vs.kind == irs::AnnKind::Hnsw && ss.score_top_k) {
+    if (vs.kind == irs::AnnKind::Hnsw && state->score_top_k) {
       // The beam is the result ceiling, so it is at least k. Every hit of the
       // beam is then the rerank pool (sized below), and ef alone trades recall
       // for time; the rerank factor is an IVF knob.
-      vs.min_ef = static_cast<uint32_t>(*ss.score_top_k);
+      vs.min_ef = static_cast<uint32_t>(*state->score_top_k);
     }
     state->vector_scorer = &vs;
   }
@@ -1546,7 +1573,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (state->vector_scorer && !state->vector_scorer->exact &&
         (state->vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
-      const auto k = static_cast<double>(*ss.score_top_k);
+      const auto k = static_cast<double>(*state->score_top_k);
       double pool;
       if (state->vector_scorer->kind == irs::AnnKind::Hnsw) {
         // Every hit of the beam is reranked: the pool is ef, at least k.
@@ -1949,8 +1976,9 @@ void IResearchSetScanOrder(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->row_limit.IsValid() ||
-      !options->single_order_key) {
+  if (!bind_data || !options || !options->single_order_key ||
+      (!options->row_limit.IsValid() &&
+       options->row_limit_expression == nullptr)) {
     return;
   }
   duckdb::Value v;
@@ -1980,21 +2008,30 @@ void IResearchSetScanOrder(
     return;
   }
   auto& search_scan = bd;
-  if (search_scan.score_top_k) {
+  if (search_scan.score_top_k || search_scan.score_top_k_expr) {
     return;
   }
+  // A constant LIMIT is the top-k the plan carries; a parameterized one is
+  // kept as the expression the scan evaluates at execution.
+  const auto take_limit = [&] {
+    if (options->row_limit.IsValid()) {
+      search_scan.score_top_k = options->row_limit.GetIndex();
+    } else {
+      search_scan.score_top_k_expr = options->row_limit_expression;
+    }
+  };
   if (search_scan.text_scorer) {
     if (options->order_type != duckdb::OrderType::DESCENDING) {
       return;
     }
-    search_scan.score_top_k = options->row_limit.GetIndex();
+    take_limit();
     return;
   }
   if (search_scan.vector_scorer) {
     if (options->order_type != search_scan.vector_scorer->natural_order) {
       return;
     }
-    search_scan.score_top_k = options->row_limit.GetIndex();
+    take_limit();
   }
 }
 
@@ -2323,7 +2360,7 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
     if (g.vector_scorer->quant != irs::VectorQuantization::None) {
       RerankHits(g, accepted_slice);
     }
-    const size_t kreal = *g.scan->score_top_k;
+    const size_t kreal = *g.score_top_k;
     // Trim the over-fetched pool to the exact k only when nothing downstream
     // drops rows. With a lookup filter, keep the whole pool so the lookup can
     // discard non-matches and still yield up to k survivors (the TOP_N above

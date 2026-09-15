@@ -86,6 +86,7 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.text_scorer = src.text_scorer;
   dst.vector_scorer = src.vector_scorer;
   dst.score_top_k = src.score_top_k;
+  dst.score_top_k_expr = src.score_top_k_expr;
   dst.score_order = src.score_order;
   dst.score_static_floor = src.score_static_floor;
   dst.offsets = src.offsets;
@@ -740,10 +741,13 @@ void SereneDBScanBindData::AppendSummary(
       out.insert("Score", query_scorer->ToString());
     }
   }
-  if (score_top_k) {
+  if (score_top_k || score_top_k_expr) {
     // TODO(mbkkt): prunnable/etc instead of optimized?
     // TODO(mbkkt): streaming top k also should be marked when pruning enabled
-    std::string topk_val = absl::StrCat(*score_top_k);
+    // A parameterized LIMIT is read at execution, so the plan prints the
+    // parameter rather than a number.
+    std::string topk_val =
+      score_top_k ? absl::StrCat(*score_top_k) : score_top_k_expr->ToString();
     const auto* pruning =
       ResolvePruneScorer(bind.topk_scorer, query_scorer.get());
     if (pruning) {

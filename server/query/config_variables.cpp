@@ -465,6 +465,26 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_column_cache_mb",
+      {
+        LogicalTypeId::INTEGER,
+        "Memory, in MiB, for numeric columns of search-table segments decoded "
+        "into plain arrays, so a WHERE on such a column is evaluated by one "
+        "compare per row instead of a walk through the columnstore's blocks. "
+        "Least recently used columns leave when the budget is exceeded; 0 "
+        "disables the cache. Default 1024.",
+        [] { return duckdb::Value::INTEGER(1024); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (value.GetValue<int32_t>() < 0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_column_cache_mb\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_ivf_sample_factor",
       {
         LogicalTypeId::DOUBLE,

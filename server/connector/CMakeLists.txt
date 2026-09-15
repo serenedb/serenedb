@@ -14,6 +14,7 @@ add_library(
     duckdb_client_state.cpp
     duckdb_table_function.cpp
     duckdb_search_full_scan.cpp
+    decoded_column_cache.cpp
     full_scanner.cpp
     index_source_factory.cpp
     index_source_view.cpp

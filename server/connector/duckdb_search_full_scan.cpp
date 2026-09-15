@@ -87,6 +87,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
+#include "connector/decoded_column_cache.hpp"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
@@ -142,6 +143,10 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint32_t Narrow(irs::doc_id_t base, uint64_t* mask, irs::score_t* scores,
                   uint32_t words) final;
 
+  // True when every column predicate is an interval on a decoded numeric
+  // column: a window is then narrowed on the decoded values, no codec walk.
+  bool Direct() const noexcept { return _direct; }
+
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
@@ -158,6 +163,10 @@ class ColFilterVerify : public irs::detail::TableFilter {
   // scores already in memory, so it runs before the columnstore is read.
   const duckdb::TableFilter* _score_filter = nullptr;
   duckdb::TableFilterState* _score_state = nullptr;
+  // The column predicates compiled against decoded columns, when every one
+  // of them is an interval on a plain numeric column.
+  std::vector<DecodedPredicate> _direct_preds;
+  bool _direct = false;
 };
 
 // Per-worker scan state, one family per ScanMode. Base holds what every mode
@@ -1933,6 +1942,36 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   }
   _chain.Bind(*col_reader, *_ctx, active, *g.client_context, states);
   _chain.FinishBind();
+  // The decoded-column path: every column predicate an interval on a numeric
+  // column the cache holds (or decodes now, once per segment and column).
+  _direct = false;
+  _direct_preds.clear();
+  const auto budget = static_cast<size_t>(ReadIntSetting(
+                        *g.client_context, "sdb_column_cache_mb")) *
+                      (size_t{1} << 20);
+  if (budget == 0) {
+    return;
+  }
+  for (const auto& spec : active) {
+    if (spec.is_score) {
+      continue;
+    }
+    if (spec.filter->filter_type !=
+        duckdb::TableFilterType::EXPRESSION_FILTER) {
+      _direct_preds.clear();
+      return;
+    }
+    auto column =
+      DecodedColumnCache::Instance().Get(seg, *col_reader, spec.field, budget);
+    auto pred = CompileDecodedPredicate(
+      *spec.filter->Cast<duckdb::ExpressionFilter>().expr, std::move(column));
+    if (!pred) {
+      _direct_preds.clear();
+      return;
+    }
+    _direct_preds.push_back(std::move(*pred));
+  }
+  _direct = !_direct_preds.empty();
 }
 
 uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
@@ -1955,6 +1994,17 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
   if (_score_filter != nullptr) {
     irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
                                           scores, words);
+  }
+  if (_direct) {
+    const uint64_t first = base - irs::doc_limits::min();
+    uint64_t left = 0;
+    for (const auto& pred : _direct_preds) {
+      left = pred.Narrow(first, mask, words);
+      if (left == 0) {
+        break;
+      }
+    }
+    return static_cast<uint32_t>(left);
   }
   return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
 }

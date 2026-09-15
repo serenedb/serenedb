@@ -441,8 +441,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Search-time beam width (ef) for HNSW vector indexes. Higher values "
         "improve recall at the cost of latency. The beam is also the result "
-        "ceiling: a value below the query's LIMIT returns fewer rows than "
-        "asked for. Default 64.",
+        "ceiling, so it is floored at the query's LIMIT; with a quantized "
+        "index every hit of the beam is rescored exactly. Default 64.",
         [] { return duckdb::Value::INTEGER(64); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
@@ -451,6 +451,33 @@ constexpr std::pair<std::string_view, VariableDescription>
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_hnsw_ef_search\": \"",
                                     value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "sdb_hnsw_filter_mode",
+      {
+        LogicalTypeId::VARCHAR,
+        "How an HNSW vector index answers a query with a WHERE: 'auto' picks "
+        "by the predicate's estimated selectivity; 'scan' scores every row "
+        "the predicate admits; 'walk' walks the graph scoring every "
+        "neighbour and passing through rejected rows; 'prune' walks scoring "
+        "and expanding admitted rows only; 'twohop' walks expanding a "
+        "rejected row's neighbours in its place. Default 'auto'.",
+        [] { return duckdb::Value{"auto"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto mode = value.ToString();
+          if (!absl::EqualsIgnoreCase(mode, "auto") &&
+              !absl::EqualsIgnoreCase(mode, "walk") &&
+              !absl::EqualsIgnoreCase(mode, "scan") &&
+              !absl::EqualsIgnoreCase(mode, "prune") &&
+              !absl::EqualsIgnoreCase(mode, "twohop")) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("invalid value for parameter \"sdb_hnsw_filter_mode\": "
+                      "\"",
+                      mode, "\" (auto, scan, walk, prune or twohop)"));
           }
         },
       },
@@ -873,8 +900,7 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "server_version",
       {
-        LogicalTypeId::VARCHAR,
-        "Shows the server version.",
+        LogicalTypeId::VARCHAR, "Shows the server version.",
         [] { return duckdb::Value{"18.3"}; },
         nullptr,  // refused via kUnchangeableSettings
       },
@@ -882,8 +908,7 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "server_version_num",
       {
-        LogicalTypeId::INTEGER,
-        "Shows the server version as an integer.",
+        LogicalTypeId::INTEGER, "Shows the server version as an integer.",
         [] { return duckdb::Value::INTEGER(180003); },
         nullptr,  // refused via kUnchangeableSettings
       },

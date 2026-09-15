@@ -109,6 +109,67 @@ SELECT pk FROM hnsw_f_idx
 pk
 
 
+# Every walk mode answers the same. The admitted rows (pk >= 250) sit far from
+# where the descent lands, so a Prune walk that only expands admitted rows
+# empties its frontier at once and falls back to the scan; TwoHop reaches
+# them through rejected bridges or falls back the same way.
+statement ok
+SET sdb_hnsw_filter_mode = 'prune';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250 AND label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+251
+253
+
+statement ok
+SET sdb_hnsw_filter_mode = 'twohop';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+102
+98
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+250
+251
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+103
+
+statement error invalid value for parameter "sdb_hnsw_filter_mode"
+SET sdb_hnsw_filter_mode = 'sideways';
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
 # Filtered count through the graph's radius search.
 query
 SELECT count(*) FROM hnsw_f_idx

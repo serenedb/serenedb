@@ -148,19 +148,23 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
   return detail::LazyBitset{std::move(node), docs_count, nullptr, table};
 }
 
-// The graph walk expands about `ef * m0` nodes unfiltered and, with a
-// predicate admitting a share `p` of the graph, about `ef * m0 / p` before it
-// has `ef` admitted nodes. Scanning the predicate's own docs costs one distance
-// per match. The walk is taken only where it is expected to be the cheaper of
-// the two; a walk that then overspends its budget (the match count, what the
-// scan would have cost) falls back to the scan.
+// The walk computes on the order of `ef * m0` distances unfiltered; with a
+// predicate admitting a share `p` of the graph it needs about `1 / p` times
+// as many candidates before `ef` of them are admitted, but far fewer than
+// that in distances, since most of a node's neighbours were already visited:
+// `kWalkShare` is that observed fraction. Scanning the predicate's own docs
+// costs one distance per match. The walk is taken where it is expected to be
+// the cheaper of the two; a walk that then overspends its budget (the match
+// count, what the scan would have cost) falls back to the scan.
+inline constexpr long double kWalkShare = 0.25L;
+
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0,
                     uint64_t nodes) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
-  const long double walk = static_cast<long double>(ef) * m0 * nodes /
-                           static_cast<long double>(matches);
+  const long double walk = kWalkShare * static_cast<long double>(ef) * m0 *
+                           nodes / static_cast<long double>(matches);
   return static_cast<long double>(matches) <= walk;
 }
 
@@ -240,9 +244,44 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // count it.
   const uint64_t matches =
     table != nullptr ? set.Count() : _inner->EstimateMax();
-  if (!HnswPreferScan(matches, _ef, graph.M0(), graph.Size()) &&
-      HnswSearchTopK(graph, dist, _ef, scratch, admit, matches)) {
-    return;
+  auto mode = _filter_mode;
+  if (mode == HnswFilterMode::Auto) {
+    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size())
+             ? HnswFilterMode::Scan
+             : HnswFilterMode::Walk;
+  }
+  // A forced walk spends what it needs; a chosen one is capped at what the
+  // scan would have cost and falls back to it. A Prune or TwoHop walk that
+  // could not fill its beam although the predicate admits enough docs lost
+  // the admitted subgraph's connectivity: the scan answers exactly.
+  const auto budget =
+    _filter_mode == HnswFilterMode::Auto ? matches : kHnswNoBudget;
+  const auto walked = [&](bool complete) {
+    return complete &&
+           (scratch.nearest.size() >= _ef || scratch.nearest.size() >= matches);
+  };
+  switch (mode) {
+    case HnswFilterMode::Walk:
+      if (walked(HnswSearchTopK<HnswWalk::Through>(graph, dist, _ef, scratch,
+                                                   admit, budget))) {
+        return;
+      }
+      break;
+    case HnswFilterMode::Prune:
+      if (walked(HnswSearchTopK<HnswWalk::Prune>(graph, dist, _ef, scratch,
+                                                 admit, budget))) {
+        return;
+      }
+      break;
+    case HnswFilterMode::TwoHop:
+      if (walked(HnswSearchTopK<HnswWalk::TwoHop>(graph, dist, _ef, scratch,
+                                                  admit, budget))) {
+        return;
+      }
+      break;
+    case HnswFilterMode::Scan:
+    case HnswFilterMode::Auto:
+      break;
   }
   HnswScanTopK(set, graph, dist, _ef, scratch);
 }

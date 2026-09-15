@@ -39,6 +39,7 @@ struct VectorFilterOptions {
   uint32_t max_search_fanout = 16;
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
+  HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;

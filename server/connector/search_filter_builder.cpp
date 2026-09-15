@@ -686,6 +686,32 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
+// A granular numeric range is a union of trie terms: whole blocks of
+// kPrecisionStepDef bits above the finest level, plus the finest level's terms
+// between each bound and its block's edge. On a dense integer column that edge
+// run is up to 2^16 single-document terms per bound, and collecting, sorting
+// and merging them costs far more than reading the column itself: a search
+// table's columnstore answers a range with zonemaps and one vectorised
+// compare. A bound whose estimated edge run is longer than this leaves the
+// conjunct to the column filter. Encoded floats are dense at the leaf level,
+// so any float bound is treated as wide.
+inline constexpr uint64_t kMaxRangeEdgeTerms = 1024;
+
+template<typename T>
+bool RangeEdgeTooWide(T value, ComparisonOp op) noexcept {
+  if constexpr (std::is_floating_point_v<T>) {
+    return true;
+  } else {
+    constexpr auto kBlock = uint64_t{1}
+                            << irs::numeric_utils::kPrecisionStepDef;
+    const auto low = static_cast<uint64_t>(value) & (kBlock - 1);
+    const uint64_t edge = (op == ComparisonOp::Ge || op == ComparisonOp::Gt)
+                            ? kBlock - low
+                            : low + 1;
+    return edge > kMaxRangeEdgeTerms;
+  }
+}
+
 template<bool GenericVersion>
 absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
@@ -776,6 +802,16 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
       .assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTerm(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
+    if (column_info->column_stored) {
+      bool wide = false;
+      WithNumericValue(type_id, *const_val,
+                       [&](auto v) { wide = RangeEdgeTooWide(v, op); });
+      if (wide) {
+        return absl::UnimplementedError(
+          "wide numeric range on a stored column: the column filter is "
+          "cheaper than the term union");
+      }
+    }
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
     WithNumericValue(type_id, *const_val, [&](auto v) {
       irs::SetGranularNumericTerm(setup_base_filter(range_filter), v);

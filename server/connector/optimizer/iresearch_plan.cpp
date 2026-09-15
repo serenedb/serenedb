@@ -21,6 +21,7 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -621,6 +622,17 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return gEfSearch.Int(context);
 }
 
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
+  static constexpr std::string_view kModes[]{"auto", "walk", "scan", "prune",
+                                             "twohop"};
+  static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
+  const auto mode = gFilterMode.Enum(context, kModes);
+  if (mode >= std::size(kModes)) {
+    return irs::HnswFilterMode::Auto;
+  }
+  return static_cast<irs::HnswFilterMode>(mode);
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -714,6 +726,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
+      .hnsw_filter_mode = ReadHnswFilterMode(context),
     };
     ss.score.order = info.order;
   } else {
@@ -1189,6 +1202,7 @@ bool TryClaimSearchTableFilter(
         [&](const duckdb::BoundColumnRefExpression& ref)
         -> std::optional<connector::SearchColumnInfo> {
         if (auto info = getters.getter(ref)) {
+          info->column_stored = true;
           return info;
         }
         const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
@@ -1204,8 +1218,10 @@ bool TryClaimSearchTableFilter(
         if (type.id() == duckdb::LogicalTypeId::INVALID) {
           return std::nullopt;
         }
-        return MakeSearchColumnInfo(field_id, &it->second, std::move(type),
-                                    shard.GetTokenizer(context, field_id));
+        auto info = MakeSearchColumnInfo(field_id, &it->second, std::move(type),
+                                         shard.GetTokenizer(context, field_id));
+        info.column_stored = true;
+        return info;
       };
       return ClaimSearchConjuncts(
         filters, bind_data,

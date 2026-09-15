@@ -77,6 +77,16 @@ class HnswVisited {
     return seen;
   }
 
+  bool Test(uint32_t id) const noexcept {
+    SDB_ASSERT(id < _marks.size());
+    return _marks[id] == _generation;
+  }
+
+  void Set(uint32_t id) noexcept {
+    SDB_ASSERT(id < _marks.size());
+    _marks[id] = _generation;
+  }
+
  private:
   std::vector<uint16_t> _marks;
   uint16_t _generation = 0;
@@ -103,6 +113,9 @@ struct HnswFrontierOrder {
 
 struct HnswSearchScratch {
   HnswVisited visited;
+  // Rejected nodes reached as a neighbour's neighbour (TwoHop): explored
+  // once from there, yet still handled when reached as a direct neighbour.
+  HnswVisited visited_hop2;
   std::vector<HnswCandidate> nearest;
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
@@ -113,7 +126,21 @@ struct HnswSearchScratch {
 
 // The predicate of an unfiltered search: every node may enter the result.
 struct HnswAcceptAll {
+  static constexpr bool kAll = true;
   bool operator()(uint32_t) const noexcept { return true; }
+};
+
+// What the level walk does with a node the predicate rejects.
+enum class HnswWalk : uint8_t {
+  // Scored and passed through, never admitted: the graph stays connected
+  // whatever the predicate, at the price of scoring rejected nodes.
+  Through,
+  // Neither scored nor expanded: cheap, but the admitted subgraph may fall
+  // apart under a selective predicate.
+  Prune,
+  // Not scored; its neighbours are the candidates instead (ACORN-1), up to
+  // the level's width per rejected node.
+  TwoHop,
 };
 
 inline constexpr uint64_t kHnswNoBudget = std::numeric_limits<uint64_t>::max();
@@ -282,7 +309,7 @@ inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
 // the beam is measured in admitted nodes. Returns false once `budget`
 // distances were computed with the frontier still live: the caller then knows
 // the predicate is too sparse for the graph and answers another way.
-template<typename Dist, typename Accept>
+template<HnswWalk Walk = HnswWalk::Through, typename Dist, typename Accept>
 bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s, const Accept& accept,
                      uint64_t budget = kHnswNoBudget) {
@@ -300,7 +327,8 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
 
     s.batch.clear();
     const auto neighbors = graph.Neighbors(cur.node, level);
-    for (size_t i = 0; i < neighbors.size(); ++i) {
+    const auto width = neighbors.size();
+    for (size_t i = 0; i < width; ++i) {
       const auto id = HnswLoadLink(neighbors[i]);
       if (id == kHnswInvalidNode) {
         break;
@@ -308,8 +336,36 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
       if (s.visited.TestAndSet(id)) {
         continue;
       }
-      s.batch.push_back(id);
-      dist.Prefetch(id);
+      if constexpr (Walk == HnswWalk::Through) {
+        s.batch.push_back(id);
+        dist.Prefetch(id);
+        continue;
+      }
+      if (accept(id)) {
+        s.batch.push_back(id);
+        dist.Prefetch(id);
+        continue;
+      }
+      if constexpr (Walk == HnswWalk::TwoHop) {
+        // The rejected node is a bridge: its admitted neighbours stand in
+        // for it, at most one level width of them.
+        const auto limit = s.batch.size() + width;
+        const auto hop = graph.Neighbors(id, level);
+        for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
+          const auto w = HnswLoadLink(hop[j]);
+          if (w == kHnswInvalidNode) {
+            break;
+          }
+          if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
+            continue;
+          }
+          if (accept(w)) {
+            s.visited.Set(w);
+            s.batch.push_back(w);
+            dist.Prefetch(w);
+          }
+        }
+      }
     }
     if (s.batch.empty()) {
       continue;
@@ -325,7 +381,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
       if (nearest.size() >= ef && cand.score <= nearest.front().score) {
         continue;
       }
-      if (accept(cand.node)) {
+      if (Walk != HnswWalk::Through || accept(cand.node)) {
         nearest.push_back(cand);
         std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
         if (nearest.size() > ef) {
@@ -631,9 +687,11 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
 }
 
 // Top-`ef` search. With a predicate the descent is unfiltered (it only
-// navigates), the level-0 walk admits what `accept` passes, and `budget` caps
-// the distances the walk may spend; see HnswExpandLevel for the false return.
-template<typename Dist, typename Accept = HnswAcceptAll>
+// navigates), the level-0 walk admits what `accept` passes and treats the
+// rest per `Walk`, and `budget` caps the distances the walk may spend; see
+// HnswExpandLevel for the false return.
+template<HnswWalk Walk = HnswWalk::Through, typename Dist,
+         typename Accept = HnswAcceptAll>
 bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
                     HnswSearchScratch& s, const Accept& accept = {},
                     uint64_t budget = kHnswNoBudget) {
@@ -647,17 +705,23 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
 
   s.visited.Reset(graph.Size());
+  if constexpr (Walk == HnswWalk::TwoHop) {
+    s.visited_hop2.Reset(graph.Size());
+  }
   HnswCandidate cur{dist.One(entry), entry};
   if (entry_top > 0) {
     cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
   }
   s.visited.Next();
   s.visited.TestAndSet(cur.node);
+  // The landing node seeds the frontier whatever the predicate says: the walk
+  // must start somewhere, and a Prune walk that could not pass through it
+  // would otherwise never leave it.
   s.frontier.assign(1, cur);
   if (accept(cur.node)) {
     s.nearest.assign(1, cur);
   }
-  return HnswExpandLevel(graph, dist, 0, ef, s, accept, budget);
+  return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
 }
 
 template<bool Inclusive, typename Dist, typename Accept = HnswAcceptAll>

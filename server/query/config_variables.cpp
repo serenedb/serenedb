@@ -486,6 +486,18 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_ann_exact",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a vector search (ORDER BY <distance> LIMIT k) scores every "
+        "row from its stored vector instead of walking the ANN index: the "
+        "exact answer, at the cost of a full scan, split across the scan's "
+        "workers. Default false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_column_cache_mb",
       {
         LogicalTypeId::INTEGER,

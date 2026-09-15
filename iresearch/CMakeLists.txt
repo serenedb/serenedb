@@ -275,6 +275,7 @@ set(IResearch_core_sources
     ./search/docs/make_geo_distance.cpp
     ./search/hits/make.cpp
     ./search/hits/make_hnsw.cpp
+    ./search/hits/make_exact.cpp
     ./search/hits/make_ivf.cpp
     ./search/hits/make_posting.cpp
     ./search/hits/make_single_posting.cpp
@@ -296,6 +297,7 @@ set(IResearch_core_sources
     ./search/hits/make_geo_distance.cpp
     ./search/top/make.cpp
     ./search/top/make_hnsw.cpp
+    ./search/top/make_exact.cpp
     ./search/top/make_ivf.cpp
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
@@ -332,6 +334,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_prefix_rules.cpp
     ./search/filters/ngram_similarity_filter.cpp
     ./search/filters/vector_similarity_filter.cpp
+    ./search/filters/vector_exact_filter.cpp
     ./search/queries/hnsw_query.cpp
     ./search/queries/vector_similarity_query.cpp
     ./search/scorers/vector_similarity_scorer.cpp

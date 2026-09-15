@@ -623,6 +623,12 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return gEfSearch.Int(context);
 }
 
+bool ReadAnnExact(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  return context.TryGetCurrentSetting("sdb_ann_exact", v) && !v.IsNull() &&
+         v.GetValue<bool>();
+}
+
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
   static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
   static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
@@ -727,6 +733,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
       .hnsw_filter_mode = ReadHnswFilterMode(context),
+      .exact = ReadAnnExact(context),
     };
     ss.score.order = info.order;
   } else {

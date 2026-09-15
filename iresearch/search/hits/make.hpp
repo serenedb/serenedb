@@ -63,6 +63,7 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
+Root::ptr Make(const ExactVectorQuery& query, const Context& ctx);
 
 Root::ptr MakePosting(const irs::detail::PostingClause& posting,
                       const SubReader& segment, const Context& ctx);

@@ -443,7 +443,9 @@ constexpr std::pair<std::string_view, VariableDescription>
         "the predicate admits; 'walk' walks the graph scoring every "
         "neighbour and passing through rejected rows; 'prune' walks scoring "
         "and expanding admitted rows only; 'twohop' walks expanding a "
-        "rejected row's neighbours in its place. Default 'auto'.",
+        "rejected row's neighbours in its place; 'bridge' walks scoring every "
+        "neighbour but expanding a rejected row into admitted ones only. "
+        "Default 'auto'.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -451,12 +453,13 @@ constexpr std::pair<std::string_view, VariableDescription>
               !absl::EqualsIgnoreCase(mode, "walk") &&
               !absl::EqualsIgnoreCase(mode, "scan") &&
               !absl::EqualsIgnoreCase(mode, "prune") &&
-              !absl::EqualsIgnoreCase(mode, "twohop")) {
+              !absl::EqualsIgnoreCase(mode, "twohop") &&
+              !absl::EqualsIgnoreCase(mode, "bridge")) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
               ERR_MSG("invalid value for parameter \"sdb_hnsw_filter_mode\": "
                       "\"",
-                      mode, "\" (auto, scan, walk, prune or twohop)"));
+                      mode, "\" (auto, scan, walk, prune, twohop or bridge)"));
           }
         },
       },

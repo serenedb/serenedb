@@ -250,12 +250,12 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
-  // A forced walk spends what it needs; a chosen one is capped at what the
-  // scan would have cost and falls back to it. A Prune or TwoHop walk that
-  // could not fill its beam although the predicate admits enough docs lost
-  // the admitted subgraph's connectivity: the scan answers exactly.
-  const auto budget =
-    _filter_mode == HnswFilterMode::Auto ? matches : kHnswNoBudget;
+  // Every walk is capped at what the scan would have cost and falls back to
+  // it, forced ones included: a mode is a preference, never a way to spend
+  // more than the exact answer costs. A walk that could not fill its beam
+  // although the predicate admits enough docs lost the admitted subgraph's
+  // connectivity: the scan answers exactly.
+  const auto budget = matches;
   const auto walked = [&](bool complete) {
     return complete &&
            (scratch.nearest.size() >= _ef || scratch.nearest.size() >= matches);
@@ -275,6 +275,12 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       break;
     case HnswFilterMode::TwoHop:
       if (walked(HnswSearchTopK<HnswWalk::TwoHop>(graph, dist, _ef, scratch,
+                                                  admit, budget))) {
+        return;
+      }
+      break;
+    case HnswFilterMode::Bridge:
+      if (walked(HnswSearchTopK<HnswWalk::Bridge>(graph, dist, _ef, scratch,
                                                   admit, budget))) {
         return;
       }

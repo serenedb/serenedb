@@ -109,12 +109,15 @@ enum class AnnKind : uint8_t {
 //   Prune   rejected nodes are neither scored nor expanded (Qdrant's default).
 //   TwoHop  rejected nodes are not scored; their neighbours are candidates
 //           instead (ACORN-1).
+//   Bridge  rejected nodes are scored and crossed for one hop: their expansion
+//           offers only admitted neighbours.
 enum class HnswFilterMode : uint8_t {
   Auto = 0,
   Walk,
   Scan,
   Prune,
   TwoHop,
+  Bridge,
 };
 
 struct AnnInfo {

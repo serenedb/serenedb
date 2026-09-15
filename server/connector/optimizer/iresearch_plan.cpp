@@ -635,6 +635,9 @@ irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
   if (absl::EqualsIgnoreCase(mode, "twohop")) {
     return irs::HnswFilterMode::TwoHop;
   }
+  if (absl::EqualsIgnoreCase(mode, "bridge")) {
+    return irs::HnswFilterMode::Bridge;
+  }
   return irs::HnswFilterMode::Auto;
 }
 

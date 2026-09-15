@@ -109,6 +109,13 @@ The secret is matched to data-file paths by scope, longest prefix first — see 
 
 Every token-based method (everything except SigV4, which signs each request directly, and the static token) obtains a first token at `CREATE SECRET` — a bad credential fails right there, not at first query. After that, SereneDB renews the token shortly before its advertised expiry, and retries exactly once with a fresh token if the catalog unexpectedly answers 401. No configuration is involved.
 
+That covers the **catalog** credential. The **data-file** credential renews separately, and which one is in play depends on how the server was attached:
+
+- A storage secret you configured yourself (`access_delegation_mode 'none'`) is whatever you made it: HMAC keys never expire, a raw bearer token does and nothing can renew it.
+- A credential the catalog vends is short-lived by design — one hour on BigLake. The catalog returns the expiry together with the token, and SereneDB re-vends per table before it lapses.
+
+The two planes fail differently, which is the quickest way to tell them apart: when the catalog credential dies, listing tables and reading metadata break; when a vended storage credential dies, the catalog keeps answering and even `count(*)` still succeeds, while any read that must fetch a column value from object storage returns **HTTP 401**.
+
 <DocCallout type="attention">
     Persistent secrets are stored <strong>unencrypted</strong> in the secret directory. Sensitive fields (<code>private_key</code>, <code>client_secret</code>, <code>refresh_token</code>, tokens) are redacted in <code>sdb_secrets()</code> output, but the files on disk are not — protect the directory like any credential store, and prefer the methods that store little (SigV4 keys, client credentials) or nothing (attached service account) over ones that store broad personal credentials.
 </DocCallout>

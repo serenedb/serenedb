@@ -495,19 +495,17 @@ DROP VIEW rvp_part_v CASCADE;
 statement ok
 DROP VIEW rvp_ice_v CASCADE;
 
-# ----------------------------------------------------- negative: option DDL
-# The option is view-only on every road.
+# ----------------------------------------------------- option DDL on a table
+# The option is accepted on a table-backed index like any other setting; the
+# periodic tick has nothing to reindex there and stays idle.
 
 statement ok
 CREATE TABLE rvp_t(id INT, body TEXT);
 
-statement error only applies to view-backed
+statement ok
 CREATE INDEX rvp_t_idx ON rvp_t USING inverted(body rvp_en) WITH (reindex_interval=100);
 
 statement ok
-CREATE INDEX rvp_t_idx ON rvp_t USING inverted(body rvp_en);
-
-statement error only applies to view-backed
 ALTER INDEX rvp_t_idx SET (reindex_interval=100);
 
 statement ok

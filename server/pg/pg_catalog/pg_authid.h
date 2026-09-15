@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-authid.html
 // NOLINTBEGIN
 struct PgAuthid {
-  static constexpr uint64_t kId = 107;
+  static constexpr uint64_t kId = 1260;
   static constexpr std::string_view kName = "pg_authid";
   static constexpr bool kSuperuserOnly = true;
 
@@ -47,6 +47,6 @@ struct PgAuthid {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData();
 
 }  // namespace sdb::pg

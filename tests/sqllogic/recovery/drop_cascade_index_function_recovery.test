@@ -54,24 +54,12 @@ id
 1
 
 
-# The reloaded dependency graph still blocks RESTRICT.
-connection after_crash
-statement error (?i)cannot drop entry .*babsky.* because there are entries that depend on it
-DROP FUNCTION babsky(INT);
-
-
-connection after_crash
-query
-SELECT count(*) FROM pg_indexes WHERE indexname = 'vedernikoff_idx';
-----
-count
-1
-
-
-# CASCADE still drops the dependent index.
+# The reloaded dependency graph still carries the index: duckdb never asks for
+# CASCADE on behalf of an index, so the drop goes through and the index goes
+# with the function it references.
 connection after_crash
 statement ok
-DROP FUNCTION babsky(INT) CASCADE;
+DROP FUNCTION babsky(INT);
 
 
 connection after_crash

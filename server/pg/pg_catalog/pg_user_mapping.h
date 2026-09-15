@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-user-mapping.html
 // NOLINTBEGIN
 struct PgUserMapping {
-  static constexpr uint64_t kId = 164;
+  static constexpr uint64_t kId = 1418;
   static constexpr std::string_view kName = "pg_user_mapping";
   static constexpr bool kSuperuserOnly = true;
 

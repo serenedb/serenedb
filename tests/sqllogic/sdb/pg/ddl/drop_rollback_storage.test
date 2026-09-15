@@ -1,0 +1,237 @@
+control substitution on
+
+# A DROP inside a transaction only writes a tombstone. The storage behind an
+# inverted index, a search table or a database is marked dropped when that
+# transaction commits, and its files go with the last pin -- so a DROP that is
+# rolled back, including one undone by a failed transaction, leaves the object
+# exactly as it was, and a CREATE that is rolled back takes its fresh storage
+# away again.
+
+# ----------------------------------------------------------- inverted index
+statement ok
+CREATE TABLE drs_t (id INTEGER, label TEXT);
+
+statement ok
+INSERT INTO drs_t VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+CREATE INDEX drs_idx ON drs_t USING inverted(label);
+
+statement ok
+BEGIN;
+
+statement ok
+DROP INDEX drs_idx;
+
+statement error
+SELECT * FROM drs_missing;
+----
+db error: ERROR: Table with name drs_missing does not exist!
+<slt:ignore>
+
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'drs_idx';
+----
+count
+1
+
+statement ok
+INSERT INTO drs_t VALUES (4, 'alpha');
+
+query
+SELECT id FROM drs_t WHERE label = 'alpha' ORDER BY id;
+----
+id
+1
+4
+
+
+# A rolled-back CREATE leaves no index behind, and the name is free.
+statement ok
+BEGIN;
+
+statement ok
+CREATE INDEX drs_idx2 ON drs_t USING inverted(label);
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'drs_idx2';
+----
+count
+0
+
+statement ok
+CREATE INDEX drs_idx2 ON drs_t USING inverted(label);
+
+query
+SELECT id FROM drs_t WHERE label = 'beta';
+----
+id
+2
+
+
+# The committed DROP goes through, and the name can be reused.
+statement ok
+BEGIN;
+
+statement ok
+DROP INDEX drs_idx;
+
+statement ok
+COMMIT;
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'drs_idx';
+----
+count
+0
+
+statement ok
+CREATE INDEX drs_idx ON drs_t USING inverted(label);
+
+statement ok
+DROP TABLE drs_t;
+
+
+# ------------------------------------------------------------- search table
+statement ok
+CREATE TABLE drs_s (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drs_s VALUES (1, 'one'), (2, 'two');
+
+statement ok
+VACUUM (REFRESH_TABLE) drs_s;
+
+statement ok
+BEGIN;
+
+statement ok
+DROP TABLE drs_s;
+
+statement error
+SELECT * FROM drs_missing;
+----
+db error: ERROR: Table with name drs_missing does not exist!
+<slt:ignore>
+
+
+statement ok
+ROLLBACK;
+
+query
+SELECT id FROM drs_s ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+INSERT INTO drs_s VALUES (3, 'three');
+
+statement ok
+VACUUM (REFRESH_TABLE) drs_s;
+
+query
+SELECT count(*) FROM drs_s;
+----
+count
+3
+
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE drs_s2 (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drs_s2 VALUES (1, 'gone');
+
+statement ok
+ROLLBACK;
+
+statement error
+SELECT count(*) FROM drs_s2;
+----
+db error: ERROR: Table with name drs_s2 does not exist!
+<slt:ignore>
+
+
+statement ok
+CREATE TABLE drs_s2 (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+query
+SELECT count(*) FROM drs_s2;
+----
+count
+0
+
+statement ok
+DROP TABLE drs_s2;
+
+
+statement ok
+BEGIN;
+
+statement ok
+DROP TABLE drs_s;
+
+statement ok
+COMMIT;
+
+statement error
+SELECT count(*) FROM drs_s;
+----
+db error: ERROR: Table with name drs_s does not exist!
+<slt:ignore>
+
+
+statement ok
+CREATE TABLE drs_s (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+query
+SELECT count(*) FROM drs_s;
+----
+count
+0
+
+statement ok
+DROP TABLE drs_s;
+
+
+# ----------------------------------------------------------------- database
+# CREATE DATABASE is an attach recorded in the transaction: the rollback
+# detaches it, undoes the catalog row and removes the new database file.
+statement ok
+BEGIN;
+
+statement ok
+CREATE DATABASE drs_db_${__DATABASE__};
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) FROM pg_database WHERE datname = 'drs_db_${__DATABASE__}';
+----
+count
+0
+
+statement ok
+CREATE DATABASE drs_db_${__DATABASE__};
+
+query
+SELECT count(*) FROM pg_database WHERE datname = 'drs_db_${__DATABASE__}';
+----
+count
+1
+
+statement ok
+DROP DATABASE drs_db_${__DATABASE__};

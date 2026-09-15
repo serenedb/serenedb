@@ -1408,7 +1408,7 @@ const RecordSerializers& GetSerializersCache(
       for (const auto& [_, child_type] : children) {
         cached.functions.push_back(
           GetSerialization(child_type, VarFormat::Binary, context));
-        cached.oids.push_back(Type2Oid(child_type, false));
+        cached.oids.push_back(Type2Oid(child_type, context.client, false));
       }
     }
   }
@@ -1822,7 +1822,7 @@ struct OneDimArrayCore {
     } else {
       int32_t element_oid;
       if constexpr (ElementOID == kDynamicOid) {
-        element_oid = Type2Oid(child_vdata.logical_type, false);
+        element_oid = Type2Oid(child_vdata.logical_type, context.client, false);
       } else {
         element_oid = ElementOID;
       }
@@ -1867,14 +1867,14 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
                ? &duckdb::ArrayType::GetChildType(*leaf)
                : &duckdb::ListType::GetChildType(*leaf);
     }
-    leaf_oid = Type2Oid(*leaf, false);
+    leaf_oid = Type2Oid(*leaf, context.client, false);
     return;
   }
   const auto child_lid = child_vdata.logical_type.id();
   if (child_lid != duckdb::LogicalTypeId::ARRAY &&
       child_lid != duckdb::LogicalTypeId::LIST &&
       child_lid != duckdb::LogicalTypeId::MAP) {
-    leaf_oid = Type2Oid(child_vdata.logical_type, false);
+    leaf_oid = Type2Oid(child_vdata.logical_type, context.client, false);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
     return;
@@ -1985,7 +1985,7 @@ struct MultiDimArrayCore {
         // PG sends an empty array as ndim=0 with no dimension descriptors.
         int32_t leaf_oid;
         if constexpr (ElementOID == kDynamicOid) {
-          leaf_oid = Type2Oid(*t, false);
+          leaf_oid = Type2Oid(*t, context.client, false);
         } else {
           leaf_oid = ElementOID;
         }

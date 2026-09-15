@@ -41,12 +41,11 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/term_dict.h"
 
-namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct FilterContext {
@@ -179,11 +178,11 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
+  switch (term_dict::Classify(type_id)) {
+    case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());
       break;
-    case catalog::term_dict::Kind::NumericI64:
+    case term_dict::Kind::NumericI64:
       if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
         f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
@@ -192,10 +191,10 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
         f(value.GetValue<int64_t>());
       }
       break;
-    case catalog::term_dict::Kind::NumericF32:
+    case term_dict::Kind::NumericF32:
       f(value.GetValue<float>());
       break;
-    case catalog::term_dict::Kind::NumericF64:
+    case term_dict::Kind::NumericF64:
       f(value.GetValue<double>());
       break;
     default:

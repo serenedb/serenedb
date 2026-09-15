@@ -74,11 +74,13 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
+#include "search/scorer_options.h"
 
 namespace magic_enum {
 
@@ -1319,7 +1321,7 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
       ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
                "index."));
   }
-  auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
+  auto owned = search::MakeScorer(search::ParseScorerExpression(
     &ctx.client_context, std::string{expr}, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1762,7 +1764,7 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id));
+  return term_dict::IsNumeric(term_dict::Classify(id));
 }
 
 struct UnwrappedField {
@@ -1818,8 +1820,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  if (!catalog::term_dict::IsSupported(
-        catalog::term_dict::Classify(info->logical_type.id()))) {
+  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type.id()))) {
     return nullptr;
   }
   info->field_id = PickPerKindFieldId(*info, info->logical_type.id());
@@ -1833,7 +1834,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 bool IsFilterableType(duckdb::LogicalTypeId type_id) {
-  return catalog::term_dict::IsSupported(catalog::term_dict::Classify(type_id));
+  return term_dict::IsSupported(term_dict::Classify(type_id));
 }
 
 void ValidateFilterType(duckdb::LogicalTypeId type_id) {
@@ -1846,7 +1847,7 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
 }
 
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
+  return term_dict::IsNumeric(term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
 }
 

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-statistic-ext.html
 // NOLINTBEGIN
 struct PgStatisticExt {
-  static constexpr uint64_t kId = 151;
+  static constexpr uint64_t kId = 3381;
   static constexpr std::string_view kName = "pg_statistic_ext";
 
   enum class Stxkind : char {

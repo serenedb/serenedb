@@ -98,8 +98,11 @@ id	dl
 5	7
 
 
-query error raw_dl\(\) requires an inverted index scan in the same sub-query
+query error
 SELECT id, raw_dl(docs.tableoid) FROM docs WHERE id > 0;
+----
+db error: ERROR: Table "docs" does not have a column named "tableoid"
+Candidate bindings: "body"
 
 
 query

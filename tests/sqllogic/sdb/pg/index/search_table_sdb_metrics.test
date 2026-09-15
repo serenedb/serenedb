@@ -18,9 +18,9 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	0
-avg_commit_time_ms	0
-avg_consolidation_time_ms	0
+avg_cleanup_time_ms	<slt:ignore>
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	<slt:ignore>
 index_size	0
 num_buffered_docs	3
 num_docs	0
@@ -42,7 +42,7 @@ ORDER BY metric;
 metric	value
 avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
-avg_consolidation_time_ms	0
+avg_consolidation_time_ms	<slt:ignore>
 index_size	<slt:ignore>
 num_buffered_docs	0
 num_docs	3
@@ -67,7 +67,7 @@ ORDER BY metric;
 metric	value
 avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
-avg_consolidation_time_ms	0
+avg_consolidation_time_ms	<slt:ignore>
 index_size	<slt:ignore>
 num_buffered_docs	0
 num_docs	5

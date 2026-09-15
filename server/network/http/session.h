@@ -28,6 +28,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
@@ -46,9 +48,7 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -162,9 +162,12 @@ class HttpSession final
   duckdb::Connection& Connection() override {
     if (!_conn) {
       const auto dbname = irs::StaticStrings::kDefaultDatabase;
-      auto database = catalog::FindDatabase(nullptr, dbname);
+      auto& cluster = catalog::ClusterOf();
+      auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                        .GetEntry(cluster.LoginTransaction(),
+                                  duckdb::Identifier{std::string{dbname}});
       SDB_ENSURE(database);
-      const auto database_id = catalog::IdOf(*database);
+      const auto database_id = database->oid;
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
       auto login =

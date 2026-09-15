@@ -1,32 +1,24 @@
-target_sources(
-    sereneserver
-    PRIVATE
-        database.cpp
-        role.cpp
-        schema.cpp
-        ddl/catalog.cpp
-        ddl/cluster.cpp
-        ddl/indexes.cpp
-        ddl/references.cpp
-        ddl/tables.cpp
-        ddl/duckdb_catalog.cpp
-        read/duckdb_catalog_sets.cpp
-        read/duckdb_dependency.cpp
-        log/duckdb_global_catalog.cpp
-        entry/duckdb_index_entry.cpp
-        entry/duckdb_index_scan_entry.cpp
-        entry/duckdb_schema_entry.cpp
-        entry/duckdb_system_table_entry.cpp
-        entry/duckdb_table_entry.cpp
-        entry.cpp
-        table.cpp
-        index.cpp
-        sequence.cpp
-        inverted_index.cpp
-        scorer_options.cpp
-        log/data_store.cpp
-        log/store.cpp
-        log/store_op.cpp
-        tokenizer.cpp
-        foreign_server.cpp
+add_library(
+    sereneserver_catalog
+    STATIC
+    boot.cpp
+    catalog.cpp
+    cluster.cpp
+    entry/inverted_index.cpp
+    entry/search_table.cpp
+    entry/system_table.cpp
+    entry/tokenizer.cpp
+    entry/role.cpp
+    entry/foreign_server.cpp
+    entry/database.cpp
+)
+
+target_link_libraries(
+    sereneserver_catalog
+    PUBLIC boost_boost iresearch-static serene duckdb_static
+)
+
+target_include_directories(
+    sereneserver_catalog
+    PUBLIC ${CMAKE_SOURCE_DIR}/server
 )

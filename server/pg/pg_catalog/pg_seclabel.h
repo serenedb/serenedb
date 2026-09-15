@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-seclabel.html
 // NOLINTBEGIN
 struct PgSeclabel {
-  static constexpr uint64_t kId = 145;
+  static constexpr uint64_t kId = 3596;
   static constexpr std::string_view kName = "pg_seclabel";
 
   Oid objoid;

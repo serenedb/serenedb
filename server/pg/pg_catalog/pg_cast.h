@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-cast.html
 // NOLINTBEGIN
 struct PgCast {
-  static constexpr uint64_t kId = 109;
+  static constexpr uint64_t kId = 2605;
   static constexpr std::string_view kName = "pg_cast";
 
   enum class Castcontext : char {

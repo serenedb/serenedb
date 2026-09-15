@@ -27,7 +27,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <exception>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -39,7 +43,9 @@
 #include <yaclib/coro/on.hpp>
 #include <yaclib/util/result.hpp>
 
-#include "catalog/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
+#include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -90,7 +96,7 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   if (small) {
     tier.max_segments_bytes =
-      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
+      std::min(tier.max_segments_bytes, size_t{512} << 20);
   }
   return irs::index_utils::MakePolicy(tier);
 }
@@ -106,26 +112,33 @@ struct CompactionOptions {
 };
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // Off the committed definition of the index, cloned for this merge: the merge
-  // encodes against what it took for its whole length, and a concurrent DROP or
-  // ALTER writes a new version rather than freeing this clone.
-  auto index = catalog::FindInvertedIndex(idx.GetDatabaseId(), idx.GetId());
-  if (!index) {
-    return {};
+  // Cloned for this merge: the merge encodes against what it took for its
+  // whole length, and an ALTER writes a new configuration rather than mutating
+  // this one, while a DROP destroys the bound index but not this clone.
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
+    if (attached->oid != idx.GetDatabaseId()) {
+      continue;
+    }
+    const auto entry = attached->GetCatalog()
+                         .Cast<catalog::SereneDBCatalog>()
+                         .FindIn<duckdb::DuckIndexEntry>(nullptr, idx.GetId());
+    if (!entry) {
+      break;
+    }
+    std::shared_ptr<const irs::IndexFieldOptions> options =
+      entry->Cast<catalog::InvertedIndexEntry>().Config();
+    const auto* raw = options.get();
+    return {
+      .alive = true, .keepalive = std::move(options), .field_options = raw};
   }
-  const irs::IndexFieldOptions* raw = &catalog::InvertedInfo(*index);
-  return {
-    .alive = true,
-    .keepalive = std::shared_ptr<const irs::IndexFieldOptions>{index, raw},
-    .field_options = raw};
+  return {};
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& table) {
-  // Pin the merged encoding config so norm/compression applies to merged
-  // segments and stays alive across the merge.
-  auto options = table.GetFieldOptions();
-  const irs::IndexFieldOptions* ptr = options.get();
-  return {.alive = true, .keepalive = std::move(options), .field_options = ptr};
+  std::shared_ptr<const irs::IndexFieldOptions> options = table.Config();
+  const auto* raw = options.get();
+  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
 template<class Storage>
@@ -141,11 +154,11 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
     code = RefreshResult::Undefined;
     auto [res, time_ms] = idx.RefreshUnsafe(/*wait=*/false, nullptr, code);
     if (res.ok()) {
-      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId().id(),
+      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId(),
                 "', took: ", time_ms, "ms");
     } else {
       SDB_WARN(SEARCH, "error after running for ", time_ms,
-               "ms while refreshing Search index '", idx.GetId().id(),
+               "ms while refreshing Search index '", idx.GetId(),
                "': ", res.message());
     }
   }
@@ -158,11 +171,11 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   metrics::Scoped guard{metrics::Gauge::CleanupActive};
   auto [res, time_ms] = idx.CleanupUnsafe();
   if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId().id(),
+    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId(),
               "', took: ", time_ms, "ms");
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
-             "ms while cleaning up Search index '", idx.GetId().id(),
+             "ms while cleaning up Search index '", idx.GetId(),
              "': ", res.message());
   }
 }
@@ -191,11 +204,11 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
     policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv());
   if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful compaction of Search index '",
-              idx->GetId().id(), "', took: ", time_ms, "ms");
+    SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
+              "', took: ", time_ms, "ms");
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx->GetId().id(),
+              "ms while compacting Search index '", idx->GetId(),
               "': ", res.message());
   }
   co_return !empty_compaction;
@@ -478,8 +491,8 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
       if (!g_reindex_runner) {
         return LoopTick::kNeutral;
       }
-      ObjectId database_id;
-      ObjectId id;
+      duckdb::idx_t database_id;
+      duckdb::idx_t id;
       {
         // The runner resolves the index by id through the catalog: don't pin
         // the storage across a potentially long tick.
@@ -494,7 +507,7 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
       if (status.ok()) {
         return LoopTick::kProgress;
       }
-      SDB_WARN(SEARCH, "periodic reindex of Search index '", id.id(),
+      SDB_WARN(SEARCH, "periodic reindex of Search index '", id,
                "' failed: ", status.message());
       return LoopTick::kIdle;
     });

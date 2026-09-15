@@ -190,8 +190,8 @@ cds_owner	a
 cds_owner	o
 
 
-# Two, not one: a table's generated primary-key sequence follows its owner, and
-# it is an object of its own even though pg_class does not list it.
+# Two, not one: the count is over pg_shdepend rows, and the table pins its owner
+# on two of them -- as its owner, and through the acl item the grant wrote for it.
 statement error
 DROP ROLE cds_owner
 ----

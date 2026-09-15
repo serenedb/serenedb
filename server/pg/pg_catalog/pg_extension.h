@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-extension.html
 // NOLINTBEGIN
 struct PgExtension {
-  static constexpr uint64_t kId = 121;
+  static constexpr uint64_t kId = 3079;
   static constexpr std::string_view kName = "pg_extension";
 
   Oid oid;
@@ -42,6 +42,6 @@ struct PgExtension {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgExtension>::GetTableData();
+MaterializedData SystemTableSnapshot<PgExtension>::GetTableData();
 
 }  // namespace sdb::pg

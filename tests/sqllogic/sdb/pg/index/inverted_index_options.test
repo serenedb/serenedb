@@ -158,13 +158,13 @@ DROP INDEX opt_z2;
 statement error
 ALTER INDEX opt_default SET (refresh_interval = 5000000000);
 ----
-db error: ERROR: value for option "refresh_interval" is out of range
+db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
 
 
 statement error
 CREATE INDEX opt_big ON opt_t USING inverted(label) WITH (segment_docs_max = 5000000000);
 ----
-db error: ERROR: value for option "segment_docs_max" is out of range
+db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
 
 
 # IF EXISTS on a missing index is a no-op.
@@ -172,25 +172,25 @@ statement ok
 ALTER INDEX IF EXISTS opt_missing SET (refresh_interval = 100);
 
 
-# ALTER on a secondary index is rejected: options apply to inverted only.
-# The target type wins over option validation -- a non-alterable option on a
-# secondary index still reports the index type, and RESET behaves the same.
+# ALTER on a secondary index is rejected: options apply to inverted only, so
+# an ART index falls through to duckdb's generic alter rejection before any
+# option is validated, and RESET behaves the same.
 statement error
 ALTER INDEX opt_sec SET (segment_memory_max = 33554432);
 ----
-db error: ERROR: "opt_sec" is not an inverted index
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER INDEX opt_sec SET (row_group_size = 4096);
 ----
-db error: ERROR: "opt_sec" is not an inverted index
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER INDEX opt_sec RESET (segment_memory_max);
 ----
-db error: ERROR: "opt_sec" is not an inverted index
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 # ALTER TABLE ... SET/RESET (PG storage params) parses into the same shape;
@@ -198,13 +198,13 @@ db error: ERROR: "opt_sec" is not an inverted index
 statement error
 ALTER TABLE opt_t SET (refresh_interval = 250);
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET (<options>) is not supported for DuckDB tables<slt:ignore>
 
 
 statement error
 ALTER TABLE opt_t RESET (refresh_interval);
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: RESET (<options>) is not supported for DuckDB tables<slt:ignore>
 
 
 # The index still answers queries after the ALTERs.

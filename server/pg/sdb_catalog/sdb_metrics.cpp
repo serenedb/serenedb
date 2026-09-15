@@ -21,18 +21,18 @@
 #include "sdb_metrics.h"
 
 #include <array>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
-#include "catalog/log/duckdb_global_catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
+#include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/metrics.h"
@@ -53,41 +53,39 @@ constexpr uint64_t kPerIndexMask = MaskFromNonNulls({
   GetIndex(&SdbMetrics::relation_id),
 });
 
-using search::StoreStats;
+using Stats = search::InvertedIndexStorage::Stats;
 
 struct IndexMetricDesc {
   std::string_view metric;
-  uint64_t StoreStats::* field;
+  uint64_t Stats::* field;
   std::string_view description;
 };
 
 constexpr std::array<IndexMetricDesc, 12> kIndexMetrics = {{
-  {"num_docs", &StoreStats::numDocs,
-   "documents in the index (including deleted)"},
-  {"num_live_docs", &StoreStats::numLiveDocs, "live (non-deleted) documents"},
-  {"num_buffered_docs", &StoreStats::numBufferedDocs,
+  {"num_docs", &Stats::numDocs, "documents in the index (including deleted)"},
+  {"num_live_docs", &Stats::numLiveDocs, "live (non-deleted) documents"},
+  {"num_buffered_docs", &Stats::numBufferedDocs,
    "documents buffered in the writer, not yet committed"},
-  {"num_segments", &StoreStats::numSegments, "index segments"},
-  {"num_files", &StoreStats::numFiles, "files backing the index"},
-  {"index_size", &StoreStats::indexSize, "on-disk index size in bytes"},
-  {"num_failed_commits", &StoreStats::numFailedCommits,
-   "failed commit operations"},
-  {"num_failed_cleanups", &StoreStats::numFailedCleanups,
+  {"num_segments", &Stats::numSegments, "index segments"},
+  {"num_files", &Stats::numFiles, "files backing the index"},
+  {"index_size", &Stats::indexSize, "on-disk index size in bytes"},
+  {"num_failed_commits", &Stats::numFailedCommits, "failed commit operations"},
+  {"num_failed_cleanups", &Stats::numFailedCleanups,
    "failed cleanup operations"},
-  {"num_failed_consolidations", &StoreStats::numFailedConsolidations,
+  {"num_failed_consolidations", &Stats::numFailedConsolidations,
    "failed consolidation operations"},
-  {"avg_commit_time_ms", &StoreStats::avgCommitTimeMs,
+  {"avg_commit_time_ms", &Stats::avgCommitTimeMs,
    "average time of the last few commits, in ms"},
-  {"avg_cleanup_time_ms", &StoreStats::avgCleanupTimeMs,
+  {"avg_cleanup_time_ms", &Stats::avgCleanupTimeMs,
    "average time of the last few cleanups, in ms"},
-  {"avg_consolidation_time_ms", &StoreStats::avgConsolidationTimeMs,
+  {"avg_consolidation_time_ms", &Stats::avgConsolidationTimeMs,
    "average time of the last few consolidations, in ms"},
 }};
 
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
+MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   std::vector<SdbMetrics> values;
   std::vector<uint64_t> masks;
 
@@ -100,40 +98,48 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   }
 
   const auto wal_first = values.size();
-  const auto wal = catalog::ClusterCatalogWalSize();
-  values.emplace_back("catalog_wal_appended_bytes", wal.appended_bytes,
+  auto& storage_manager =
+    duckdb::Catalog::GetCatalog(_context, duckdb::Identifier::InvalidCatalog())
+      .GetAttached()
+      .GetStorageManager();
+  auto wal = storage_manager.GetWAL();
+  values.emplace_back("catalog_wal_appended_bytes",
+                      wal ? wal->GetTotalWritten() : 0,
                       "bytes appended to the catalog wal since start");
-  values.emplace_back("catalog_wal_size_on_disk", wal.size_on_disk,
+  values.emplace_back("catalog_wal_size_on_disk",
+                      wal ? storage_manager.GetWALSize() : 0,
                       "current catalog wal file size in bytes");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
-  const auto emit = [&](const StoreStats& stats, Oid relation_id) {
+  auto& context = _context;
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
+  const auto emit = [&](const Stats& stats, Oid relation_id) {
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
                           relation_id);
       masks.emplace_back(kPerIndexMask);
     }
   };
-  for (const auto* index :
-       catalog::DatabaseInvertedIndexes(nullptr, GetDatabaseId())) {
-    const auto& storage = index->GetInvertedData();
-    if (!storage) {
-      continue;
+  const auto visit_index = [&](duckdb::CatalogEntry& entry) {
+    const auto* index =
+      dynamic_cast<const catalog::InvertedIndexEntry*>(&entry);
+    if (!index || !index->Storage()) {
+      return;
     }
-    const auto stats = storage->GetStats();
-    const Oid relation_id = index->Definition().GetId().id();
-    emit(stats, relation_id);
-  }
-  catalog::ScanDatabase(
-    nullptr, GetDatabaseId(), duckdb::CatalogType::TABLE_ENTRY,
-    [&](duckdb::CatalogEntry& entry) {
-      const auto* table = catalog::EntryOf<catalog::SereneDBTableEntry>(&entry);
-      if (!table || !table->IsSearchTable() || !table->GetSearchData()) {
-        return;
-      }
-      const auto& store = *table->GetSearchData();
-      emit(store.GetStats(), store.GetTableId().id());
-    });
+    emit(index->Storage()->GetStats(), static_cast<Oid>(index->oid));
+  };
+  const auto visit_table = [&](duckdb::CatalogEntry& entry) {
+    const auto* table = dynamic_cast<const catalog::SearchTableEntry*>(&entry);
+    if (!table) {
+      return;
+    }
+    emit(table->Storage()->GetStats(), static_cast<Oid>(table->oid));
+  };
+  VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
+    schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);
+    schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, visit_table);
+  });
 
   auto result = CreateColumns<SdbMetrics>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

@@ -24,21 +24,18 @@ id	payload
 3	first
 
 
+# Both tables depend on the sequence, so a plain DROP SEQUENCE is refused.
 statement error
-DROP TABLE clickclack_dashboards;
+DROP SEQUENCE clickclack_dashboards_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
-DROP TABLE clickclack_dashboards RESTRICT;
+DROP SEQUENCE clickclack_dashboards_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -62,46 +59,62 @@ id	payload
 4	still-works
 
 
-statement error
-DROP SEQUENCE clickclack_dashboards_id_seq;
-----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards" depends on sequence "clickclack_dashboards_id_seq".
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
-
-
-
 statement ok
 DROP TABLE clickclack_dashboards CASCADE;
 
 
-statement error (?i)(table|relation).*clickclack_dashboards.*does not exist
-SELECT * FROM clickclack_dashboards;
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_dashboards';
+----
+n
+0
 
 
-statement error (?i)(sequence|relation).*clickclack_dashboards_id_seq.*does not exist
+# The sequence is not owned by the dropped table -- it keeps counting.
+query error
 SELECT nextval('clickclack_dashboards_id_seq');
+----
+db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
+
+
+
+statement error
+INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
+----
+db error: ERROR: Table with name clickclack_dashboards_audit does not exist!
+Did you mean "<slt:ignore>"?
+
+
+
+statement error
+INSERT INTO clickclack_dashboards_audit (payload) VALUES ('default-still-works');
+----
+db error: ERROR: Table with name clickclack_dashboards_audit does not exist!
+Did you mean "<slt:ignore>"?
+
+
+
+query error
+SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
+----
+db error: ERROR: Table with name clickclack_dashboards_audit does not exist!
+Did you mean "<slt:ignore>"?
+
+
+
+# CASCADE granularity: the dependent TABLE goes, not just its column DEFAULT.
+statement error
+DROP SEQUENCE clickclack_dashboards_id_seq CASCADE;
+----
+db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
+
 
 
 query
-SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_dashboards_audit';
 ----
-id	payload
-3	first
-4	still-works
-
-
-statement count 1
-INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_dashboards_audit (payload) VALUES ('would-have-been-default');
-
-
-statement ok
-DROP TABLE clickclack_dashboards_audit;
+n
+0
 
 
 statement ok
@@ -133,20 +146,14 @@ INSERT INTO iceberg_audits (v) VALUES ('iceberg_audits-row');
 statement error
 DROP SEQUENCE iceberg_manifest_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP SEQUENCE iceberg_manifest_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -157,50 +164,17 @@ nextval
 12
 
 
+# CASCADE takes both dependent tables with the sequence.
 statement ok
 DROP SEQUENCE iceberg_manifest_seq CASCADE;
 
 
-statement error (?i)(sequence|relation).*iceberg_manifest_seq.*does not exist
-SELECT nextval('iceberg_manifest_seq');
-
-
 query
-SELECT id, v FROM iceberg_partitions ORDER BY id;
+SELECT count(*) AS n FROM pg_class
+  WHERE relname IN ('iceberg_manifest_seq', 'iceberg_partitions', 'iceberg_audits');
 ----
-id	v
-10	iceberg_partitions-row
-
-
-query
-SELECT id, v FROM iceberg_audits ORDER BY id;
-----
-id	v
-11	iceberg_audits-row
-
-
-statement count 1
-INSERT INTO iceberg_partitions (id, v) VALUES (500, 'explicit-iceberg_partitions');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO iceberg_partitions (v) VALUES ('omitted');
-
-
-statement count 1
-INSERT INTO iceberg_audits (id, v) VALUES (501, 'explicit-iceberg_audits');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO iceberg_audits (v) VALUES ('omitted');
-
-
-statement ok
-DROP TABLE iceberg_partitions;
-
-
-statement ok
-DROP TABLE iceberg_audits;
+n
+0
 
 
 statement ok

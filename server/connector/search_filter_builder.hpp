@@ -33,13 +33,14 @@
 #include <optional>
 #include <span>
 
-#include "catalog/inverted_index.h"
-#include "catalog/table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
+#include "connector/term_dict.h"
 
 namespace sdb::connector {
 
 // `field_id` is the unified iresearch field id: both a plain indexed column's
-// id (`catalog::ColumnId`) and an indexed expression's id come from
+// id (`ColumnId`) and an indexed expression's id come from
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.
@@ -84,7 +85,7 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // the reason; the optimizer treats it as "decline, fall back" (`root` may
 // hold partially-added children the caller must roll back), ts_offsets
 // surfaces it as a SQL error. Genuine user errors under index-only syntax
-// (`@@`, ts_*, geo, ::boost) throw SqlException at origin instead.
+// (`@@`, ts_*, geo, ::boost) throw irs::SqlException at origin instead.
 using FilterScorers = std::vector<std::shared_ptr<irs::Scorer>>;
 
 // Where a produced clause goes: the node that will hold it, and which of its
@@ -217,11 +218,11 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   const auto pick = [&](irs::field_id per_kind) {
     return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
   };
-  const auto kind = catalog::term_dict::Classify(type_id);
-  if (kind == catalog::term_dict::Kind::Bool) {
+  const auto kind = term_dict::Classify(type_id);
+  if (kind == term_dict::Kind::Bool) {
     return pick(column_info.bool_field_id);
   }
-  if (catalog::term_dict::IsNumeric(kind)) {
+  if (term_dict::IsNumeric(kind)) {
     return pick(column_info.numeric_field_id);
   }
   return column_info.field_id;

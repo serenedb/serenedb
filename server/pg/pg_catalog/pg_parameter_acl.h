@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-parameter-acl.html
 // NOLINTBEGIN
 struct PgParameterAcl {
-  static constexpr uint64_t kId = 135;
+  static constexpr uint64_t kId = 6243;
   static constexpr std::string_view kName = "pg_parameter_acl";
 
   Oid oid;

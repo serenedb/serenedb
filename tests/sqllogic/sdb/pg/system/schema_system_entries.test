@@ -1,0 +1,44 @@
+statement error
+DROP SCHEMA pg_catalog;
+----
+db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
+
+
+statement error
+CREATE SCHEMA pg_catalog;
+----
+db error: ERROR: Schema with name "pg_catalog" already exists!
+
+
+statement ok
+CREATE SCHEMA pg_foo;
+
+statement error
+CREATE SCHEMA information_schema;
+----
+db error: ERROR: Schema with name "information_schema" already exists!
+
+
+# IF NOT EXISTS silently succeeds for system-catalog schemas
+statement ok
+CREATE SCHEMA IF NOT EXISTS information_schema;
+
+
+query error
+SELECT * FROM sql_parts LIMIT 0;
+
+
+query
+SELECT * FROM information_schema.sql_parts LIMIT 0;
+----
+feature_id	feature_name	is_supported	is_verified_by	comments
+
+
+statement ok
+SET search_path TO information_schema, public;
+
+
+query
+SELECT * FROM sql_parts LIMIT 0;
+----
+feature_id	feature_name	is_supported	is_verified_by	comments

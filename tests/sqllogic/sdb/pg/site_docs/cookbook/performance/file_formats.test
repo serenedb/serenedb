@@ -15,13 +15,13 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT replace(
-    Prompt,
+    "Prompt",
     '${__TEST_DIR__}/cookbook_performance_file_formats_example_001_part_0001.csv',
     'file_path.csv'
-) AS Prompt
+) AS "Prompt"
 FROM sniff_csv('${__TEST_DIR__}/cookbook_performance_file_formats_example_001_part_0001.csv');
 ----
-prompt
+Prompt
 FROM read_csv('file_path.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
 
 

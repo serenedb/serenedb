@@ -20,16 +20,16 @@
 
 #include "pg/pg_catalog/pg_foreign_server.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <deque>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/foreign_server.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/foreign_server.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -44,9 +44,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
-  const auto database_id = GetDatabaseId();
-
+MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   // srvoptions is an Array<Text> spanning opt_views, whose Text elements point
   // into the owned "key=value" strings in opt_bytes; both outlive the WriteData
   // loop and neither may reallocate its elements (hence the deques). Rendered
@@ -57,23 +55,30 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   std::deque<std::vector<Text>> opt_views;
   std::vector<PgForeignServer> values;
 
-  catalog::VisitForeignServers(
-    &_config.GetClientContext(), database_id,
-    [&](const catalog::SereneDBForeignServerEntry& server) {
-      const auto& perm = server.permissions;
-      const auto& bytes = opt_bytes.emplace_back(server.GetStringOptions());
-      const auto& views = opt_views.emplace_back(bytes.begin(), bytes.end());
-      values.push_back(PgForeignServer{
-        .oid = server.oid,
-        .srvname = server.GetName(),
-        .srvowner = perm.owner,
-        .srvfdw = 0,
-        .srvtype = {},
-        .srvversion = {},
-        .srvacl = {catalog::AclView{perm.acl}},
-        .srvoptions = views,
+  auto& context = _context;
+  auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();
+  database.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+    .Scan(
+      database.GetCatalogTransaction(context),
+      [&](duckdb::CatalogEntry& entry) {
+        const auto& server = entry.Cast<catalog::ForeignServerCatalogEntry>();
+        const auto& perm = server.permissions;
+        auto& bytes = opt_bytes.emplace_back();
+        for (const auto& [key, value] : server.Options()) {
+          bytes.push_back(absl::StrCat(key, "=", value));
+        }
+        const auto& views = opt_views.emplace_back(bytes.begin(), bytes.end());
+        values.push_back(PgForeignServer{
+          .oid = server.oid,
+          .srvname = server.name.GetIdentifierName(),
+          .srvowner = perm.owner,
+          .srvfdw = 0,
+          .srvtype = {},
+          .srvversion = {},
+          .srvacl = {std::span<const duckdb::AclItem>{perm.acl}},
+          .srvoptions = views,
+        });
       });
-    });
 
   auto result = CreateColumns<PgForeignServer>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

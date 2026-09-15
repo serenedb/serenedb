@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-sequence.html
 // NOLINTBEGIN
 struct PgSequence {
-  static constexpr uint64_t kId = 146;
+  static constexpr uint64_t kId = 2224;
   static constexpr std::string_view kName = "pg_sequence";
 
   Oid seqrelid;
@@ -42,6 +42,6 @@ struct PgSequence {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgSequence>::GetTableData();
+MaterializedData SystemTableSnapshot<PgSequence>::GetTableData();
 
 }  // namespace sdb::pg

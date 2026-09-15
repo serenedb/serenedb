@@ -70,17 +70,26 @@ statement ok
 CREATE FUNCTION dofn_count(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
 
 
-# Same name, different argument type -> a distinct overloaded function.
+# A name holds one function, so the second definition is refused.
+onlyif serenedb
+statement error
+CREATE FUNCTION dofn_count(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)::int';
+----
+db error: ERROR: Macro Function with name "dofn_count" already exists!<slt:ignore>
+
+
+skipif serenedb # Postgres overloads by argument type
 statement ok
 CREATE FUNCTION dofn_count(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)::int';
 
 
-# Each overload is dropped independently by its full signature.
+# The signature names the function; the drop takes the name.
 statement ok
 DROP FUNCTION dofn_count(int);
 
 
 # DROP FUNCTION ... RESTRICT is the default: no dependents -> succeeds.
+skipif serenedb
 statement ok
 DROP FUNCTION dofn_count(text) RESTRICT;
 

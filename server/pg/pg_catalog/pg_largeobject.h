@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-largeobject.html
 // NOLINTBEGIN
 struct PgLargeobject {
-  static constexpr uint64_t kId = 129;
+  static constexpr uint64_t kId = 2613;
   static constexpr std::string_view kName = "pg_largeobject";
   static constexpr bool kSuperuserOnly = true;
   Oid loid;

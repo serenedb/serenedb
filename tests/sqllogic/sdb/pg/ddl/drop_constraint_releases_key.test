@@ -27,9 +27,10 @@ count
 2
 
 
-# The same for a primary key created with the table.
+# The same for a primary key created with the table. Only an explicitly named
+# constraint can be dropped by name, so the name is given here.
 statement ok
-CREATE TABLE dcrk_pk (a INTEGER PRIMARY KEY, b INTEGER);
+CREATE TABLE dcrk_pk (a INTEGER CONSTRAINT dcrk_pk_pkey PRIMARY KEY, b INTEGER);
 
 statement ok
 INSERT INTO dcrk_pk VALUES (1, 5);

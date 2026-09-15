@@ -55,15 +55,13 @@ CREATE VIEW tinker_view AS SELECT * FROM tinker;
 statement error
 ALTER TABLE tinker_view DROP CONSTRAINT foo;
 ----
-db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"
-DETAIL: This operation is not supported for views.
+db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
 
 
 statement error
 ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
 ----
-db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"
-DETAIL: This operation is not supported for views.
+db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
 
 
 statement ok

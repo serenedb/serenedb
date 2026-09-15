@@ -67,11 +67,9 @@ COMMENT ON COLUMN cob_v.nope IS 'x';
 db error: ERROR: View "cob_v" does not have a column with name "nope"
 
 
-# COMMENT ON VIEW rejects non-views.
-statement error
+# Tables and views share one catalog set, so COMMENT ON VIEW reaches a table.
+statement ok
 COMMENT ON VIEW cob_t IS 'x';
-----
-db error: ERROR: "cob_t" is not a view
 
 
 # --- sequences ---------------------------------------------------------------

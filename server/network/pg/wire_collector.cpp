@@ -280,7 +280,8 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   ctx->context = context.shared_from_this();
   ctx->engaged = true;
   if (ctx->announce_rowdesc) {
-    WriteRowDescription(*ctx->send, data.types, data.names, ctx->formats);
+    WriteRowDescription(*ctx->send, context, data.types, data.names,
+                        ctx->formats);
   }
   auto& physical_plan = *data.physical_plan;
   auto& root = physical_plan.Root();

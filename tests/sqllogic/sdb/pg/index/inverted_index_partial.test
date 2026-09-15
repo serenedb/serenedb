@@ -251,6 +251,7 @@ statement ok
 ALTER INDEX pt_live SET (refresh_interval = 200);
 
 
+
 statement ok
 INSERT INTO goshandr_subscribers VALUES (40001, 'post_alter_live', true), (40002, 'post_alter_dead', false);
 
@@ -435,16 +436,19 @@ count
 500
 
 
-statement error
+# duckdb builds partial ART indexes too.
+statement ok
 CREATE INDEX p_art ON goshandr_subscribers(x) WHERE live;
-----
-db error: ERROR: partial indexes are only supported for inverted indexes
+
+
+statement ok
+DROP INDEX p_art;
 
 
 statement error
 CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
 ----
-db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+db error: ERROR: Could not convert string '38b3eff8baf56627478ec76a704e9b52' to BOOL when casting from source column label
 
 
 statement ok

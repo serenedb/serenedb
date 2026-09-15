@@ -141,7 +141,7 @@ VACUUM (REFRESH_TABLE) doc_pre
 
 # Arm the crash: serened will exit(1) before RocksDB persists the next COMMIT.
 statement ok
-SET sdb_faults = 'crash_before_search_commit';
+SET sdb_faults = 'crash_before_commit';
 
 
 statement ok

@@ -213,8 +213,6 @@ void RegisterProbeIndexType(duckdb::DatabaseInstance& db) {
 class IndexLifecycleTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    _foreign_deserializer = duckdb::foreign_create_info_deserializer;
-    duckdb::foreign_create_info_deserializer = nullptr;
     _dir = std::filesystem::temp_directory_path() /
            ("sdb_index_lifecycle_" + std::to_string(::getpid()));
     std::filesystem::remove_all(_dir);
@@ -227,7 +225,6 @@ class IndexLifecycleTest : public ::testing::Test {
     _conn.reset();
     _db.reset();
     std::filesystem::remove_all(_dir);
-    duckdb::foreign_create_info_deserializer = _foreign_deserializer;
   }
   void Open(bool checkpoint_on_shutdown = true) {
     _conn.reset();
@@ -249,8 +246,6 @@ class IndexLifecycleTest : public ::testing::Test {
   std::filesystem::path _dir;
   std::unique_ptr<duckdb::DuckDB> _db;
   std::unique_ptr<duckdb::Connection> _conn;
-  decltype(duckdb::foreign_create_info_deserializer) _foreign_deserializer =
-    nullptr;
 };
 
 TEST_F(IndexLifecycleTest, AppendAtCommitWithFinalRowIds) {

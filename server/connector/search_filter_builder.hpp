@@ -183,7 +183,7 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
     return;
   }
   auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
-  node.VisitChildren([](irs::Filter::ptr& child) {
+  node.VisitChildren([](irs::Filter::ptr& child, bool) {
     if (child) {
       EnsureIncludeSides(*child);
     }

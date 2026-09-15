@@ -68,15 +68,15 @@ IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
   }
 }
 
-template<ScoreMergeType MergeType, DFIMeasure M, bool HasBoost>
+template<ScoreMergeType MergeType, DFIMeasure M, bool HasScale>
 IRS_FORCE_INLINE void DFIImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t ratio,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t ratio,
   score_t const_boost) noexcept {
   constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = TermCountToScore(freq[i]);
+    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t expected = ratio * dl;
     score_t r = 0.f;
@@ -84,30 +84,22 @@ IRS_FORCE_INLINE void DFIImpl(
       const score_t measure = MeasureKernel<M>(tf - expected, expected);
       r = std::log1p(measure) * kInvLn2;
     }
-    if constexpr (HasBoost) {
-      r *= const_boost * boost[i];
-    } else {
-      r *= const_boost;
-    }
+    r *= const_boost;
     Merge<MergeType>(res[i], r);
   }
 }
 
-template<DFIMeasure M, bool HasFilterBoost>
+template<DFIMeasure M, bool HasScale>
 struct DFIScore : public ScoreOperator {
   DFIScore(score_t boost, const DFIStats& stats, const FreqBlockAttr* freq,
-           const uint32_t* norm, const score_t* fb) noexcept
-    : freq{freq},
-      norm{norm},
-      filter_boost{fb},
-      boost{boost},
-      ratio{stats.ratio} {}
+           const uint32_t* norm, const score_t* scale) noexcept
+    : freq{freq}, norm{norm}, scale{scale}, boost{boost}, ratio{stats.ratio} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    DFIImpl<MergeType, M, HasFilterBoost>(
-      res, n, freq->value, norm, TryGetValue(filter_boost), ratio, boost);
+    DFIImpl<MergeType, M, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), ratio, boost);
   }
 
   score_t Score() const noexcept final {
@@ -142,8 +134,7 @@ struct DFIScore : public ScoreOperator {
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t ratio;
 };
@@ -151,10 +142,10 @@ struct DFIScore : public ScoreOperator {
 template<DFIMeasure M>
 ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
                                const FreqBlockAttr* freq, const uint32_t* norm,
-                               const score_t* filter_boost) {
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<DFIScore<M, HasBoost>>(ctx.boost, stats, freq,
-                                                      norm, filter_boost);
+                               const score_t* scale) {
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.boost, stats, freq,
+                                                      norm, scale);
   });
 }
 
@@ -197,21 +188,21 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
     norm = kNorms.data();
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
   switch (_measure) {
     case DFIMeasure::Standardized:
       return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
-                                                        filter_boost);
+                                                        scale);
     case DFIMeasure::Saturated:
       return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
-                                                     filter_boost);
+                                                     scale);
     case DFIMeasure::ChiSquared:
       return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
-                                                      filter_boost);
+                                                      scale);
   }
   return ScoreFunction::Default();
 }

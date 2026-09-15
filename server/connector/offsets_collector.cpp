@@ -26,7 +26,6 @@
 #include <algorithm>
 #include <iresearch/search/queries/multiterm_state.hpp>
 #include <iresearch/search/queries/ngram_similarity_query.hpp>
-#include <iresearch/search/queries/ngram_state.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/search/queries/phrase_state.hpp>
 #include <iresearch/search/queries/term_state.hpp>
@@ -158,14 +157,13 @@ void OffsetsCollector::RecordQuery(const Q& query,
 }
 
 bool OffsetsCollector::Visit(const irs::FixedPhraseQuery& query,
-                             const irs::FixedPhraseState& state, irs::score_t) {
+                             const irs::PhraseState& state, irs::score_t) {
   RecordQuery(query, state.reader);
   return true;
 }
 
 bool OffsetsCollector::Visit(const irs::VariadicPhraseQuery& query,
-                             const irs::VariadicPhraseState& state,
-                             irs::score_t) {
+                             const irs::PhraseState& state, irs::score_t) {
   RecordQuery(query, state.reader);
   return true;
 }

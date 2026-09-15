@@ -38,6 +38,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
@@ -57,106 +58,37 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType>
-IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
-                               const score_t* IRS_RESTRICT boost,
-                               score_t num) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    Merge<MergeType>(res[i], boost[i] * num);
-  }
-}
-
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
-                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT scale,
                            score_t num, score_t c1) noexcept {
   SDB_ASSERT(c1 != 0.f);
   for (scores_size_t i = 0; i != n; ++i) {
-    const auto c0 = [&] IRS_FORCE_INLINE {
-      if constexpr (HasBoost) {
-        SDB_ASSERT(boost);
-        return boost[i] * num;
-      } else {
-        return num;
-      }
-    }();
-    const auto r = c0 - c0 / (1.f + TermCountToScore(freq[i]) / c1);
-    Merge<MergeType>(res[i], r);
+    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
+    Merge<MergeType>(res[i], num - num / (1.f + tf / c1));
   }
 }
 
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            const uint32_t* IRS_RESTRICT norm,
-                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT scale,
                            score_t num, score_t norm_const,
                            score_t norm_length) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    const auto c0 = [&] IRS_FORCE_INLINE {
-      if constexpr (HasBoost) {
-        SDB_ASSERT(boost);
-        return boost[i] * num;
-      } else {
-        return num;
-      }
-    }();
     const score_t c1 = norm_const + norm_length * TermCountToScore(norm[i]);
-    const auto r = c0 - c0 * c1 / (c1 + TermCountToScore(freq[i]));
-    Merge<MergeType>(res[i], r);
+    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
+    Merge<MergeType>(res[i], num - num * c1 / (c1 + tf));
   }
 }
 
-struct Bm1Score : public ScoreOperator {
-  Bm1Score(score_t boost, const BM25Stats& stats, const score_t* fb) noexcept
-    : filter_boost{fb}, num{boost * stats.idf} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    Bm1Boost<MergeType>(res, n, filter_boost, num);
-  }
-
-  score_t Score() const noexcept final {
-    score_t res{};
-    ScoreImpl(&res, 1);
-    return res;
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
-  }
-
-  const score_t* filter_boost;
-  score_t num;
-};
-
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct Bm15Score : public ScoreOperator {
   Bm15Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
-            const score_t* fb) noexcept
-    : filter_boost{fb},
+            const score_t* scale) noexcept
+    : scale{scale},
       num{boost * stats.idf},
       norm_const{stats.norm_const},
       freq{freq} {
@@ -166,8 +98,8 @@ struct Bm15Score : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    Bm15<MergeType, HasFilterBoost>(res, n, freq->value,
-                                    TryGetValue(filter_boost), num, norm_const);
+    Bm15<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale), num,
+                              norm_const);
   }
 
   score_t Score() const noexcept final {
@@ -200,18 +132,17 @@ struct Bm15Score : public ScoreOperator {
     ScoreImpl(res, kPostingBlock);
   }
 
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t num;
   score_t norm_const;
   const FreqBlockAttr* freq;
 };
 
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct Bm25Score : public ScoreOperator {
   Bm25Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
-            const uint32_t* norm, const score_t* filter_boost) noexcept
-    : filter_boost{filter_boost},
+            const uint32_t* norm, const score_t* scale) noexcept
+    : scale{scale},
       num{boost * stats.idf},
       norm_const{stats.norm_const},
       freq{freq},
@@ -221,9 +152,8 @@ struct Bm25Score : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    Bm25<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                    TryGetValue(filter_boost), num, norm_const,
-                                    norm_length);
+    Bm25<MergeType, HasScale>(res, n, freq->value, norm, TryGetValue(scale),
+                              num, norm_const, norm_length);
   }
 
   score_t Score() const noexcept final {
@@ -256,8 +186,7 @@ struct Bm25Score : public ScoreOperator {
     ScoreImpl(res, kPostingBlock);
   }
 
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t num;
   score_t norm_const;
   const FreqBlockAttr* freq;
@@ -298,17 +227,13 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
   if (IsBM1()) {
-    auto* bm1_stats = stats_cast(ctx.stats);
-    if (!filter_boost) {
-      return ScoreFunction::Constant(ctx.boost * bm1_stats->idf);
-    }
-    return ScoreFunction::Make<Bm1Score>(ctx.boost, *bm1_stats, filter_boost);
+    return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->idf);
   }
 
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
@@ -323,10 +248,10 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
   auto* stats = stats_cast(ctx.stats);
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {
-      return ScoreFunction::Make<Bm15Score<HasBoost>>(ctx.boost, *stats, freq,
-                                                      filter_boost);
+      return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.boost, *stats, freq,
+                                                      scale);
     }
 
     const uint32_t* norm = [&] {
@@ -343,8 +268,8 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
       norm = kNorms.data();
     }
 
-    return ScoreFunction::Make<Bm25Score<HasBoost>>(ctx.boost, *stats, freq,
-                                                    norm, filter_boost);
+    return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.boost, *stats, freq,
+                                                    norm, scale);
   });
 }
 

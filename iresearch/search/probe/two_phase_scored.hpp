@@ -46,8 +46,8 @@ class TwoPhaseScored {
 
   static constexpr bool kHasFreq =
     requires(const Slots& slots) { slots.Freq(); };
-  static constexpr bool kHasBoost =
-    requires(const Slots& slots) { slots.Boost(); };
+  static constexpr bool kHasScale =
+    requires(const Slots& slots) { slots.Scale(); };
 
   template<typename... Args>
   TwoPhaseScored(const SubReader& segment, const TermReader& field,
@@ -78,8 +78,8 @@ class TwoPhaseScored {
     if constexpr (kHasFreq) {
       _freqs[slot] = _slots.Freq();
     }
-    if constexpr (kHasBoost) {
-      _boosts[slot] = _slots.Boost();
+    if constexpr (kHasScale) {
+      _scales[slot] = _slots.Scale();
     }
   }
 
@@ -87,8 +87,8 @@ class TwoPhaseScored {
     if constexpr (kHasFreq) {
       std::get<FreqBlockAttr>(_provider.attrs).value = _freqs;
     }
-    if constexpr (kHasBoost) {
-      std::get<BoostBlockAttr>(_provider.attrs).value = _boosts;
+    if constexpr (kHasScale) {
+      std::get<ScaleBlockAttr>(_provider.attrs).value = _scales;
     }
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
     SDB_ASSERT(_recipe.args.scorer != nullptr);
@@ -108,7 +108,7 @@ class TwoPhaseScored {
 
  private:
   using Attrs = std::conditional_t<
-    kHasBoost, std::tuple<FreqBlockAttr, BoostBlockAttr>,
+    kHasScale, std::tuple<FreqBlockAttr, ScaleBlockAttr>,
     std::conditional_t<kHasFreq, std::tuple<FreqBlockAttr>, std::tuple<>>>;
 
   struct Provider final : AttributeProvider {
@@ -124,7 +124,7 @@ class TwoPhaseScored {
   };
 
   [[no_unique_address]] utils::Need<kHasFreq, uint32_t[kBatch]> _freqs{};
-  [[no_unique_address]] utils::Need<kHasBoost, score_t[kBatch]> _boosts{};
+  [[no_unique_address]] utils::Need<kHasScale, score_t[kBatch]> _scales{};
   Slots _slots;
   Provider _provider;
   detail::LeafRecipe _recipe;

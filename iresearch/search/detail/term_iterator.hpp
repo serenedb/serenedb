@@ -24,6 +24,8 @@
 #include <memory>
 #include <utility>
 
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -58,6 +60,72 @@ class WrappedTermIterator : public TermIterator {
   }
 
   SeekTermIterator::ptr _impl;
+};
+
+class ByTermIterator : public TermIterator {
+ public:
+  ByTermIterator(const TermReader& reader, bytes_view term)
+    : _reader{&reader}, _meta{reader.Lookup(term)} {
+    _term.value = term;
+  }
+
+  bytes_view value() const noexcept final { return _term.value; }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return id == irs::Type<TermAttr>::id() ? &_term : nullptr;
+  }
+
+  const PostingMeta& cookie() const final { return _meta; }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    if (_meta.docs_count == 0) {
+      return TermPostings::empty();
+    }
+    auto it = _reader->iterator();
+    SDB_ASSERT(it);
+    if (!it->seek(_term.value)) {
+      return TermPostings::empty();
+    }
+    return it->postings(features);
+  }
+
+  bool next() final { return std::exchange(_found, false); }
+
+ private:
+  const TermReader* _reader;
+  const PostingMeta _meta;
+  TermAttr _term;
+  bool _found{_meta.docs_count != 0};
+};
+
+struct PlainTerms {
+  static bytes_view Term(const bstring& term) noexcept { return term; }
+  static score_t Boost(const bstring&) noexcept { return kNoBoost; }
+};
+
+template<typename Cursor, typename Access = PlainTerms>
+class SeekTermsIterator : public WrappedTermIterator {
+ public:
+  SeekTermsIterator(const TermReader& reader, Cursor begin, Cursor end)
+    : WrappedTermIterator{reader.iterator()}, _cursor{begin}, _end{end} {}
+
+  score_t Boost() const noexcept { return _boost; }
+
+  bool next() final {
+    for (; _cursor != _end; ++_cursor) {
+      if (_impl->seek(Access::Term(*_cursor))) {
+        _boost = Access::Boost(*_cursor);
+        ++_cursor;
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  Cursor _cursor;
+  Cursor _end;
+  score_t _boost = kNoBoost;
 };
 
 class FilteredTermIterator : public TermIterator {

@@ -33,9 +33,9 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs {
@@ -314,11 +314,11 @@ class IntervalPositionStrategy {
 
 template<typename TermPositionT, bool Offs, bool HasFreq, bool HasIntervals,
          bool HasBoost = false, size_t N = 0>
-class PhraseFrequency {
+class PhraseMatcher {
  public:
   using TermPosition = TermPositionT;
   using Traits = TermPositionTraits<TermPosition>;
-  using Positions = detail::RunOf<TermPosition, N>;
+  using Positions = containers::Fixed<TermPosition, N>;
   using ExecutionStrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
@@ -326,11 +326,11 @@ class PhraseFrequency {
 
   static_assert(!HasBoost || HasFreq);
 
-  static constexpr bool kHasBoost = HasBoost;
+  static constexpr bool kHasScale = HasBoost;
   static constexpr bool kHasFreq = HasFreq;
   static constexpr bool kOffsets = Offs;
 
-  explicit PhraseFrequency(size_t size) : _pos{size} {}
+  explicit PhraseMatcher(size_t size) : _pos{size} {}
 
   TermPosition& Position(size_t i) noexcept {
     SDB_ASSERT(i < _pos.size());
@@ -362,14 +362,13 @@ class PhraseFrequency {
 
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
 
-  score_t GetBoost() const noexcept
-    requires(HasBoost)
+  score_t GetScale() const noexcept
+    requires(kHasScale)
   {
     if (_phrase_freq == 0) {
       return kNoBoost;
     }
-    return _phrase_boost /
-           static_cast<score_t>(_pos.size() * size_t{_phrase_freq});
+    return _phrase_boost;
   }
 
   uint32_t DocFreqBound() {
@@ -417,9 +416,11 @@ class PhraseFrequency {
 
   IRS_FORCE_INLINE void TakeBoost() noexcept {
     if constexpr (HasBoost) {
+      score_t match = kNoBoost;
       for (const auto& slot : _pos) {
-        _phrase_boost += Traits::Boost(slot);
+        match = std::min(match, Traits::Boost(slot));
       }
+      _phrase_boost = std::max(_phrase_boost, match);
     }
   }
 
@@ -558,7 +559,7 @@ class PhraseFrequency {
 };
 
 template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>
-using FixedPhraseFrequency = PhraseFrequency<FixedTermPosition<Offs>, Offs,
-                                             HasFreq, HasIntervals, false, N>;
+using FixedPhraseMatcher =
+  PhraseMatcher<FixedTermPosition<Offs>, Offs, HasFreq, HasIntervals, false, N>;
 
 }  // namespace irs

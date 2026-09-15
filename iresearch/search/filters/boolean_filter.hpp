@@ -159,8 +159,9 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
 
   void VisitChildren(ChildVisitor visit) final {
     for (const auto occur : kAllOccur) {
+      const bool negated = occur == Occur::MustNot;
       for (auto& child : Bucket(occur).filters) {
-        visit(child);
+        visit(child, negated);
       }
     }
   }

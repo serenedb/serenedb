@@ -29,8 +29,8 @@
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -172,13 +172,13 @@ class NGramPosition : public PosAttr {
 };
 
 template<typename Base, bool CollectAll = true, size_t N = 0>
-class SerialPositionsChecker final : public Base {
+class NGramMatcher final : public Base {
  public:
   static constexpr bool kHasPosition = std::is_same_v<NGramPosition, Base>;
   static constexpr bool kCollectAll = CollectAll;
 
-  SerialPositionsChecker(size_t size, size_t total_terms_count,
-                         size_t min_match_count = 1)
+  NGramMatcher(size_t size, size_t total_terms_count,
+               size_t min_match_count = 1)
     : _pos(size),
       _min_match_count{min_match_count},
       _total_terms_count{static_cast<score_t>(total_terms_count)} {}
@@ -195,7 +195,7 @@ class SerialPositionsChecker final : public Base {
     return nullptr;
   }
 
-  score_t GetBoost() const noexcept { return _filter_boost; }
+  score_t GetScale() const noexcept { return _scale; }
   uint32_t GetFreq() const noexcept { return _seq_freq; }
 
   std::span<const OffsAttr> Offsets() const noexcept
@@ -304,7 +304,7 @@ class SerialPositionsChecker final : public Base {
 
   using States = utils::Need<CollectAll, std::vector<SearchState>>;
 
-  irs::detail::RunOf<PositionType, N> _pos;
+  irs::containers::Fixed<PositionType, N> _pos;
   std::vector<const PosAttr*> _longest_sequence;
   std::vector<uint32_t> _pos_sequence;
   size_t _min_match_count;
@@ -312,13 +312,12 @@ class SerialPositionsChecker final : public Base {
   [[no_unique_address]] States _states;
   PosTemp _swap_cache;
   score_t _total_terms_count;
-  score_t _filter_boost = kNoBoost;
+  score_t _scale = kNoBoost;
   uint32_t _seq_freq = 0;
 };
 
 template<typename Base, bool CollectAll, size_t N>
-bool SerialPositionsChecker<Base, CollectAll, N>::Match(size_t potential,
-                                                        doc_id_t doc) {
+bool NGramMatcher<Base, CollectAll, N>::Match(size_t potential, doc_id_t doc) {
   _search_buf.clear();
   if constexpr (CollectAll) {
     _states.clear();
@@ -508,8 +507,7 @@ bool SerialPositionsChecker<Base, CollectAll, N>::Match(size_t potential,
       }
       _seq_freq = freq;
       SDB_ASSERT(!_pos.empty());
-      _filter_boost =
-        static_cast<score_t>(longest_sequence_len) / _total_terms_count;
+      _scale = static_cast<score_t>(longest_sequence_len) / _total_terms_count;
 
       if constexpr (kHasPosition) {
         static_cast<NGramPosition&>(*this).reset();

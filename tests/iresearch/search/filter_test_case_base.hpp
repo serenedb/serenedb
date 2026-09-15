@@ -46,6 +46,29 @@
 
 namespace tests {
 
+inline void VisitTerm(const irs::SubReader& segment,
+                      const irs::TermReader& field, irs::bytes_view term,
+                      irs::FilterVisitor& visitor) {
+  irs::ByTermIterator itr{field, term};
+  if (!itr.next()) {
+    return;
+  }
+  visitor.Prepare(segment, field, itr);
+  std::ignore = visitor.Visit(irs::kNoBoost);
+}
+
+template<typename Range>
+void VisitTermSet(const irs::SubReader& segment, const irs::TermReader& field,
+                  const Range& terms, irs::FilterVisitor& visitor) {
+  irs::SeekTermsIterator<decltype(std::begin(terms))> itr{
+    field, std::begin(terms), std::end(terms)};
+  visitor.Prepare(segment, field, itr.GetImpl());
+  if (!itr.next()) {
+    return;
+  }
+  irs::VisitTerms(itr, visitor);
+}
+
 template<typename F>
 irs::Filter::ptr Optimized(F filter, const irs::Scorer* scorer = nullptr) {
   irs::Filter::ptr root = std::make_unique<F>(std::move(filter));

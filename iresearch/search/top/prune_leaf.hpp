@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <memory>
 #include <span>
@@ -59,10 +60,14 @@ class PruneLeafBase {
 
   class BoundReadSkip {
    public:
-    explicit BoundReadSkip(bool)
-      : _skip_levels(1), _skip_scores(1, std::numeric_limits<score_t>::max()) {
+    explicit BoundReadSkip(bool) : _skip_levels{}, _skip_scores{} {
+      std::fill(std::begin(_skip_scores), std::end(_skip_scores),
+                std::numeric_limits<score_t>::max());
       Disable();
     }
+
+    BoundReadSkip(BoundReadSkip&&) = delete;
+    BoundReadSkip& operator=(BoundReadSkip&&) = delete;
 
     void SetBoundScorer(ScoreFunction func,
                         ScoreBoundSource::ptr source) noexcept {
@@ -77,22 +82,19 @@ class PruneLeafBase {
 
     score_t& Threshold() noexcept { return _threshold; }
 
-    void Disable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      _skip_levels.back().doc = doc_limits::eof();
-    }
+    void Disable() noexcept { _back->doc = doc_limits::eof(); }
 
     void Enable(const PostingMeta& state) noexcept {
       SDB_ASSERT(state.docs_count > doc_limits::kBlockSize);
-      CopyState<BoundTraits>(_skip_levels.front(), state);
-      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::invalid();
+      CopyState<BoundTraits>(_skip_levels[0], state);
+      SDB_ASSERT(doc_limits::eof(_back->doc));
+      _back->doc = doc_limits::invalid();
     }
 
     void Init(size_t num_levels, score_t max_score) {
-      SDB_ASSERT(num_levels != 0);
-      _skip_levels.resize(num_levels);
-      _skip_scores.resize(num_levels, std::numeric_limits<score_t>::max());
+      SDB_ASSERT(0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels);
+      _back = _skip_levels + (num_levels - 1);
+      _back_score = _skip_scores + (num_levels - 1);
       _global_max_score = max_score;
     }
 
@@ -107,10 +109,9 @@ class PruneLeafBase {
 
     IRS_FORCE_INLINE bool IsLessThanUpperBound(doc_id_t target) const noexcept {
       if constexpr (Standalone) {
-        return _skip_levels.back().doc < target ||
-               _skip_scores.back() <= _threshold;
+        return _back->doc < target || *_back_score <= _threshold;
       } else {
-        return _skip_levels.back().doc < target;
+        return _back->doc < target;
       }
     }
 
@@ -147,9 +148,7 @@ class PruneLeafBase {
       return level;
     }
 
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      return _skip_levels.back().doc;
-    }
+    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept { return _back->doc; }
 
     IRS_FORCE_INLINE score_t ReadBound(IndexInput& in) {
       const auto size = in.ReadByte();
@@ -164,17 +163,21 @@ class PruneLeafBase {
     SkipState& State() noexcept { return _prev_skip; }
 
     IRS_FORCE_INLINE score_t MaxScore(doc_id_t doc) const noexcept {
-      for (size_t i = _skip_levels.size(); i-- != 0;) {
-        if (_skip_levels[i].doc >= doc) {
-          return _skip_scores[i];
+      const score_t* score = _back_score;
+      for (const SkipState* level = _back; level >= _skip_levels;
+           --level, --score) {
+        if (level->doc >= doc) {
+          return *score;
         }
       }
       return _global_max_score;
     }
 
    private:
-    std::vector<SkipState> _skip_levels;
-    std::vector<score_t> _skip_scores;
+    SkipState _skip_levels[doc_limits::kMaxSkipLevels];
+    score_t _skip_scores[doc_limits::kMaxSkipLevels];
+    SkipState* _back = _skip_levels;
+    score_t* _back_score = _skip_scores;
     score_t _global_max_score = std::numeric_limits<score_t>::max();
     SkipState _prev_skip;
     ScoreFunction _bound_func;

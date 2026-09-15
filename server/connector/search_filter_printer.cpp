@@ -25,7 +25,6 @@
 #include <absl/strings/str_join.h>
 
 #include <iresearch/search/detail/search_range.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -159,10 +158,9 @@ struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const TermSetOptions& opts) const {
     absl::StrAppend(out, "Terms:[",
                     absl::StrJoin(opts.terms, "",
-                                  [](std::string* o, const auto& tb) {
-                                    const auto& [term, boost] = tb;
-                                    absl::StrAppend(o, "['", TermToString(term),
-                                                    "', ", boost, "],");
+                                  [](std::string* o, const auto& term) {
+                                    absl::StrAppend(o, "'", TermToString(term),
+                                                    "',");
                                   }),
                     "]");
   }
@@ -181,11 +179,6 @@ struct PhrasePartVisitor : util::Noncopyable {
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
     absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
-  }
-  auto operator()(const ByRegexpOptions&) const {
-    THROW_SQL_ERROR(
-      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
-              "printing"));
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));

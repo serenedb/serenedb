@@ -24,7 +24,6 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/detail/term_predicate.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -36,6 +35,7 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
+#include <set>
 
 #include "filter_test_case_base.hpp"
 #include "index/doc_generator.hpp"
@@ -55,25 +55,37 @@ inline constexpr irs::field_id kFieldsSchemaId = tests::FieldIdFor("Fields");
 inline constexpr irs::field_id kInvalidFieldId = tests::FieldIdFor("invalid");
 inline constexpr irs::field_id kEmptyFieldId = irs::field_limits::invalid();
 
-irs::TermSetOptions MakeOptions(
+struct TermsSpec {
+  std::vector<std::pair<std::string_view, irs::score_t>> terms;
+  size_t min_match = 1;
+};
+
+TermsSpec MakeOptions(
   const std::vector<std::pair<std::string_view, irs::score_t>>& terms,
   size_t min_match = 1) {
-  irs::TermSetOptions options;
-  options.min_match = min_match;
-  for (auto& term : terms) {
-    options.terms.emplace(irs::ViewCast<irs::byte_type>(term.first),
-                          term.second);
-  }
-  return options;
+  return TermsSpec{.terms = terms, .min_match = min_match};
 }
 
-irs::BooleanFilter MakeFilter(irs::field_id field,
-                              const irs::TermSetOptions& options) {
+std::set<irs::bstring> SortedTerms(const TermsSpec& options) {
+  std::set<irs::bstring> out;
+  for (const auto& term : options.terms) {
+    out.emplace(irs::ViewCast<irs::byte_type>(term.first));
+  }
+  return out;
+}
+
+irs::BooleanFilter MakeFilter(irs::field_id field, const TermsSpec& options) {
   irs::BooleanFilter q;
-  q.SetMergeType(options.merge_type);
+  std::set<std::string_view> seen;
   for (auto& term : options.terms) {
+    if (!seen.insert(term.first).second) {
+      continue;
+    }
     q.Add(
-      irs::TermClause{.field = field, .term = term.term, .boost = term.boost},
+      irs::TermClause{
+        .field = field,
+        .term = irs::bstring{irs::ViewCast<irs::byte_type>(term.first)},
+        .boost = term.second},
       irs::Occur::Should);
   }
   // A threshold larger than the bucket can never be met, and `BooleanFilter`
@@ -104,11 +116,6 @@ irs::BooleanFilter MakeFilter(
 }
 
 }  // namespace
-
-TEST(by_terms_test, options) {
-  irs::TermSetOptions opts;
-  ASSERT_TRUE(opts.terms.empty());
-}
 
 TEST(by_terms_test, ctor) {
   irs::BooleanFilter q;
@@ -287,16 +294,19 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
   CheckQuery(irs::Empty{}, Docs{}, Costs{0}, rdr);
 
   // empty field
-  CheckQuery(*tests::Optimized(MakeFilter(kEmptyFieldId, {{"xyz", 0.5f}})),
-             Docs{}, Costs{0}, rdr);
+  CheckQuery(
+    *tests::Optimized(MakeFilter(kEmptyFieldId, {{"xyz", irs::kNoBoost}})),
+    Docs{}, Costs{0}, rdr);
 
   // invalid field
-  CheckQuery(*tests::Optimized(MakeFilter(kInvalidFieldId, {{"xyz", 0.5f}})),
-             Docs{}, Costs{0}, rdr);
+  CheckQuery(
+    *tests::Optimized(MakeFilter(kInvalidFieldId, {{"xyz", irs::kNoBoost}})),
+    Docs{}, Costs{0}, rdr);
 
   // invalid term
-  CheckQuery(*tests::Optimized(MakeFilter(kSameId, {{"invalid_term", 0.5f}})),
-             Docs{}, Costs{0}, rdr);
+  CheckQuery(
+    *tests::Optimized(MakeFilter(kSameId, {{"invalid_term", irs::kNoBoost}})),
+    Docs{}, Costs{0}, rdr);
 
   // no value requested to match -- which is the empty query, not a boolean
   // holding a threshold no bucket can meet
@@ -307,7 +317,7 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     Docs result(32);
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
-    const auto options = MakeOptions({{"xyz", 1.f}});
+    const auto options = MakeOptions({{"xyz", irs::kNoBoost}});
     CheckQuery(*tests::Optimized(MakeFilter(kSameId, options)), result, costs,
                rdr);
 
@@ -315,12 +325,12 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kSameId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
-    ASSERT_EQ(
-      (std::vector<std::pair<std::string_view, irs::score_t>>{{"xyz", 1.f}}),
-      visitor.term_refs<char>());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"xyz", irs::kNoBoost}}),
+              visitor.term_refs<char>());
   }
 
   // match all
@@ -328,7 +338,7 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     Docs result(32);
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
-    const auto options = MakeOptions({{"invalid", 1.f}}, 0);
+    const auto options = MakeOptions({{"invalid", irs::kNoBoost}}, 0);
     CheckQuery(*tests::Optimized(MakeFilter(kSameId, options)), result, costs,
                rdr);
 
@@ -336,7 +346,7 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kSameId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(0, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{}),
@@ -348,7 +358,8 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     Docs result(32);
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
-    const auto options = MakeOptions({{"xyz", 1.f}, {"invalid_term", 0.5f}});
+    const auto options =
+      MakeOptions({{"xyz", irs::kNoBoost}, {"invalid_term", irs::kNoBoost}});
     const auto filter = MakeFilter(kSameId, options);
     CheckQuery(filter, result, costs, rdr);
 
@@ -356,20 +367,21 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kSameId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
-    ASSERT_EQ(
-      (std::vector<std::pair<std::string_view, irs::score_t>>{{"xyz", 1.f}}),
-      visitor.term_refs<char>());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"xyz", irs::kNoBoost}}),
+              visitor.term_refs<char>());
   }
 
   // match something
   {
     const Docs result{1, 21, 31, 32};
     const Costs costs{result.size()};
-    const auto options =
-      MakeOptions({{"abcd", 1.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto options = MakeOptions({{"abcd", irs::kNoBoost},
+                                      {"abc", irs::kNoBoost},
+                                      {"abcy", irs::kNoBoost}});
     const auto filter = MakeFilter(kPrefixId, options);
     CheckQuery(filter, result, costs, rdr);
 
@@ -377,11 +389,13 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kPrefixId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(3, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcy", irs::kNoBoost}}),
               visitor.term_refs<char>());
   }
 
@@ -389,8 +403,10 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
   {
     const Docs result{1, 21, 31, 32};
     const Costs costs{result.size()};
-    const auto options = MakeOptions(
-      {{"abcd", 1.f}, {"abcd", 0.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto options = MakeOptions({{"abcd", irs::kNoBoost},
+                                      {"abcd", irs::kNoBoost},
+                                      {"abc", irs::kNoBoost},
+                                      {"abcy", irs::kNoBoost}});
     const auto filter = MakeFilter(kPrefixId, options);
     CheckQuery(filter, result, costs, rdr);
 
@@ -398,11 +414,13 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kPrefixId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(3, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcy", irs::kNoBoost}}),
               visitor.term_refs<char>());
   }
 
@@ -410,8 +428,10 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
   {
     const Docs result{1, 21, 31, 32};
     const Costs costs{result.size()};
-    const auto options = MakeOptions(
-      {{"abcd", 1.f}, {"invalid_term", 0.f}, {"abc", 0.5f}, {"abcy", 0.5f}});
+    const auto options = MakeOptions({{"abcd", irs::kNoBoost},
+                                      {"invalid_term", irs::kNoBoost},
+                                      {"abc", irs::kNoBoost},
+                                      {"abcy", irs::kNoBoost}});
     const auto filter = MakeFilter(kPrefixId, options);
     CheckQuery(filter, result, costs, rdr);
 
@@ -419,11 +439,13 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     tests::EmptyFilterVisitor visitor;
     const auto* reader = segment.field(kPrefixId);
     ASSERT_NE(nullptr, reader);
-    irs::VisitTermSet(segment, *reader, options, visitor);
+    tests::VisitTermSet(segment, *reader, SortedTerms(options), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(3, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"abc", 0.5f}, {"abcd", 1.f}, {"abcy", 0.5f}}),
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcy", irs::kNoBoost}}),
               visitor.term_refs<char>());
   }
 }
@@ -480,21 +502,6 @@ TEST_P(TermsFilterTestCase, min_match) {
 
   auto rdr = open_reader();
   ASSERT_EQ(4, rdr.size());
-
-  {
-    const auto& segment = rdr[0];
-    tests::EmptyFilterVisitor visitor;
-    const auto* reader = segment.field(kFieldsSchemaId);
-    ASSERT_NE(nullptr, reader);
-    const auto options =
-      MakeOptions({{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 1);
-    irs::VisitTermSet(segment, *reader, options, visitor);
-    ASSERT_EQ(1, visitor.prepare_calls_counter());
-    ASSERT_EQ(2, visitor.visit_calls_counter());
-    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"BusinessEntityID", 1.f}, {"StartDate", 1.f}}),
-              visitor.term_refs<char>());
-  }
 
   {
     const Docs result{4,  5,  6,  7,  19, 20, 21, 22, 25, 27, 28, 29,

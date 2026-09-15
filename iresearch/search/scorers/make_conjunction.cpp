@@ -23,6 +23,7 @@
 #include <absl/base/optimization.h>
 
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
@@ -34,7 +35,9 @@ class ConjunctionScore : public ScoreOperator {
 
  public:
   explicit ConjunctionScore(std::vector<ScoreFunction>&& children) noexcept
-    : _children{std::move(children)} {
+    : _children{children.size(), [&](ScoreFunction& slot, size_t i) noexcept {
+                  slot = std::move(children[i]);
+                }} {
     SDB_ASSERT(_children.size() > 1);
   }
 
@@ -93,7 +96,7 @@ class ConjunctionScore : public ScoreOperator {
     }
   }
 
-  std::vector<ScoreFunction> _children;
+  containers::Fixed<ScoreFunction> _children;
 };
 
 template<ScoreMergeType Inner>
@@ -103,7 +106,11 @@ class ConjunctionConstScore : public ScoreOperator {
  public:
   ConjunctionConstScore(std::vector<ScoreFunction>&& children,
                         score_t constant) noexcept
-    : _children{std::move(children)}, _constant{constant} {
+    : _children{children.size(),
+                [&](ScoreFunction& slot, size_t i) noexcept {
+                  slot = std::move(children[i]);
+                }},
+      _constant{constant} {
     SDB_ASSERT(!_children.empty());
   }
 
@@ -164,7 +171,7 @@ class ConjunctionConstScore : public ScoreOperator {
     }
   }
 
-  std::vector<ScoreFunction> _children;
+  containers::Fixed<ScoreFunction> _children;
   score_t _constant;
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };

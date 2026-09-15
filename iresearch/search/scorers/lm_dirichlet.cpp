@@ -49,14 +49,14 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void LmDirImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p_inv,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p_inv,
   score_t mu, score_t const_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = TermCountToScore(freq[i]);
+    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t weight = std::log1p(tf * mu_p_inv);
     const score_t doc_norm = std::log1p(dl / mu);
@@ -64,23 +64,19 @@ IRS_FORCE_INLINE void LmDirImpl(
     if (r < 0.f) {
       r = 0.f;
     }
-    if constexpr (HasBoost) {
-      r *= const_boost * boost[i];
-    } else {
-      r *= const_boost;
-    }
+    r *= const_boost;
     Merge<MergeType>(res[i], r);
   }
 }
 
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct LmDirScore : public ScoreOperator {
   LmDirScore(score_t boost, score_t mu, const LMStats& stats,
              const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* fb) noexcept
+             const score_t* scale) noexcept
     : freq{freq},
       norm{norm},
-      filter_boost{fb},
+      scale{scale},
       boost{boost},
       mu{mu},
       mu_p_inv{1.f / (mu * stats.collection_prob)} {}
@@ -88,9 +84,8 @@ struct LmDirScore : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmDirImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                         TryGetValue(filter_boost), mu_p_inv,
-                                         mu, boost);
+    LmDirImpl<MergeType, HasScale>(res, n, freq->value, norm,
+                                   TryGetValue(scale), mu_p_inv, mu, boost);
   }
 
   score_t Score() const noexcept final {
@@ -125,8 +120,7 @@ struct LmDirScore : public ScoreOperator {
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t mu;
   score_t mu_p_inv;
@@ -171,14 +165,14 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
     norm = kNorms.data();
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<LmDirScore<HasBoost>>(ctx.boost, _mu, *stats,
-                                                     freq, norm, filter_boost);
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<LmDirScore<HasScale>>(ctx.boost, _mu, *stats,
+                                                     freq, norm, scale);
   });
 }
 

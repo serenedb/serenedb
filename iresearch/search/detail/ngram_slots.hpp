@@ -27,8 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/ngram_matcher.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -45,10 +45,10 @@ class NGramSlots {
       _live{size,
             [this](Leaf*& slot, size_t i) noexcept { slot = &_leaves[i]; }},
       _live_count{size},
-      _checker{size, total_terms, min_match},
+      _matcher{size, total_terms, min_match},
       _min_match{min_match} {
     for (size_t i = 0; i != size; ++i) {
-      _checker.Slot(i) = {_leaves[i].ValueRef(), _leaves[i].Positions()};
+      _matcher.Slot(i) = {_leaves[i].ValueRef(), _leaves[i].Positions()};
     }
     SDB_ASSERT(_min_match != 0);
     SDB_ASSERT(_leaves.size() > 1);
@@ -116,34 +116,34 @@ class NGramSlots {
     return _live[_min_match - 1]->Value();
   }
 
-  bool Match(doc_id_t doc) { return _checker.Match(_matches, doc); }
+  bool Match(doc_id_t doc) { return _matcher.Match(_matches, doc); }
 
   uint32_t Freq() const noexcept
     requires(Scored)
   {
-    return _checker.GetFreq();
+    return _matcher.GetFreq();
   }
 
-  score_t Boost() const noexcept
+  score_t Scale() const noexcept
     requires(Scored)
   {
-    return _checker.GetBoost();
+    return _matcher.GetScale();
   }
 
   std::span<const OffsAttr> Offsets() const noexcept
     requires(Offs)
   {
-    return _checker.Offsets();
+    return _matcher.Offsets();
   }
 
  private:
   using Base = std::conditional_t<Offs, ngram::NGramPosition, ngram::Dummy>;
-  using Checker = ngram::SerialPositionsChecker<Base, Scored || Offs, N>;
+  using Matcher = ngram::NGramMatcher<Base, Scored || Offs, N>;
 
-  detail::RunOf<Leaf, N> _leaves;
-  detail::RunOf<Leaf*, N> _live;
+  containers::Fixed<Leaf, N> _leaves;
+  containers::Fixed<Leaf*, N> _live;
   size_t _live_count = 0;
-  Checker _checker;
+  Matcher _matcher;
   uint32_t _min_match;
   uint32_t _matches = 0;
 };

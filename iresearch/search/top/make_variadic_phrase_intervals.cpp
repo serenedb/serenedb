@@ -40,7 +40,7 @@ Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query,
                                     .stats = stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  if (!query.state.volatile_boost) {
+  if (query.state.boosts.empty()) {
     if (const auto value =
           irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
       if (ctx.table != nullptr) {

@@ -52,6 +52,19 @@ inline IRS_FORCE_INLINE score_t TermCountToScore(uint32_t count) noexcept {
   return static_cast<score_t>(static_cast<int32_t>(count));
 }
 
+template<bool HasScale>
+inline IRS_FORCE_INLINE score_t
+ScaledFreq(const uint32_t* IRS_RESTRICT freq,
+           [[maybe_unused]] const score_t* IRS_RESTRICT scale,
+           scores_size_t i) noexcept {
+  if constexpr (HasScale) {
+    SDB_ASSERT(scale);
+    return TermCountToScore(freq[i]) * scale[i];
+  } else {
+    return TermCountToScore(freq[i]);
+  }
+}
+
 inline constexpr uint32_t kMaxFreq = std::numeric_limits<int32_t>::max();
 
 struct Scorer;

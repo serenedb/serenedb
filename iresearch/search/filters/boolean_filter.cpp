@@ -26,6 +26,7 @@
 
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
@@ -59,7 +60,9 @@ const Scorer* ClauseScorer(const Scorer* scorer, const Scorer* own) {
 class AllOfPredicate final : public TermPredicate {
  public:
   explicit AllOfPredicate(std::vector<TermPredicate::ptr>&& preds) noexcept
-    : _preds{std::move(preds)} {}
+    : _preds{preds.size(), [&](TermPredicate::ptr& slot, size_t i) noexcept {
+               slot = std::move(preds[i]);
+             }} {}
 
   bool Accepts(bytes_view term) const final {
     return absl::c_all_of(_preds,
@@ -67,14 +70,18 @@ class AllOfPredicate final : public TermPredicate {
   }
 
  private:
-  std::vector<TermPredicate::ptr> _preds;
+  containers::Fixed<TermPredicate::ptr> _preds;
 };
 
 class MinMatchPredicate final : public TermPredicate {
  public:
   MinMatchPredicate(std::vector<TermPredicate::ptr>&& preds,
                     size_t min_match) noexcept
-    : _preds{std::move(preds)}, _min_match{min_match} {}
+    : _preds{preds.size(),
+             [&](TermPredicate::ptr& slot, size_t i) noexcept {
+               slot = std::move(preds[i]);
+             }},
+      _min_match{min_match} {}
 
   bool Accepts(bytes_view term) const final {
     size_t matched = 0;
@@ -87,7 +94,7 @@ class MinMatchPredicate final : public TermPredicate {
   }
 
  private:
-  std::vector<TermPredicate::ptr> _preds;
+  containers::Fixed<TermPredicate::ptr> _preds;
   size_t _min_match;
 };
 

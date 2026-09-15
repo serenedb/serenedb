@@ -27,9 +27,9 @@
 #include <cstddef>
 #include <utility>
 
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -148,7 +148,7 @@ class DisjunctionLead {
   ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs]{};
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize]{};
   ABSL_CACHELINE_ALIGNED score_t _scores[doc_limits::kBlockSize]{};
-  irs::detail::FixedArray<Leaf> _leaves;
+  irs::containers::Fixed<Leaf> _leaves;
   doc_id_t _doc = doc_limits::invalid();
 };
 

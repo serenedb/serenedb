@@ -30,8 +30,8 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/detail/slop_phrase.hpp"
+#include "iresearch/search/detail/phrase_matcher.hpp"
+#include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -41,7 +41,7 @@ template<typename Matcher, typename Leaf, size_t N = 0>
 class PhraseFixedSlots {
  public:
   template<typename... Args>
-  PhraseFixedSlots(std::span<const PostingMeta* const> metas,
+  PhraseFixedSlots(std::span<const PostingMeta> metas,
                    std::span<const TermInterval> intervals,
                    const IndexInput& doc_in, IndexFeatures layout,
                    const IndexInput& pos_in, const IndexInput* pay_in,
@@ -111,12 +111,10 @@ class PhraseFixedSlots {
     return _matcher.NextAlignment();
   }
 
-  static constexpr bool kHasBoost = Matcher::kHasBoost;
-
-  score_t Boost() const noexcept
-    requires(kHasBoost)
+  score_t Scale() const noexcept
+    requires(Matcher::kHasScale)
   {
-    return _matcher.GetBoost();
+    return _matcher.GetScale();
   }
 
  private:

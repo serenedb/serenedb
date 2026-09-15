@@ -39,35 +39,28 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void RawTfImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t num) noexcept {
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t num) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    const auto r = [&] IRS_FORCE_INLINE {
-      if constexpr (HasBoost) {
-        return boost[i] * num * TermCountToScore(freq[i]);
-      } else {
-        return num * TermCountToScore(freq[i]);
-      }
-    }();
-    Merge<MergeType>(res[i], r);
+    Merge<MergeType>(res[i], num * ScaledFreq<HasScale>(freq, scale, i));
   }
 }
 
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct RawTfScore : public ScoreOperator {
   RawTfScore(score_t boost, const FreqBlockAttr* freq,
-             const score_t* filter_boost) noexcept
-    : freq{freq}, filter_boost{filter_boost}, boost{boost} {
+             const score_t* scale) noexcept
+    : freq{freq}, scale{scale}, boost{boost} {
     SDB_ASSERT(this->freq);
   }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    RawTfImpl<MergeType, HasFilterBoost>(res, n, freq->value,
-                                         TryGetValue(filter_boost), boost);
+    RawTfImpl<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale),
+                                   boost);
   }
 
   score_t Score() const noexcept final {
@@ -101,8 +94,7 @@ struct RawTfScore : public ScoreOperator {
   }
 
   const FreqBlockAttr* freq;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
 };
 
@@ -117,14 +109,13 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Default();
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<RawTfScore<HasBoost>>(ctx.boost, freq,
-                                                     filter_boost);
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<RawTfScore<HasScale>>(ctx.boost, freq, scale);
   });
 }
 

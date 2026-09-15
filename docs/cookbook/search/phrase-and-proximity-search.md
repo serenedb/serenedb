@@ -60,7 +60,7 @@ Nothing — the tokens are not adjacent. With one unit of slop, the intervening 
 
 <SqlLogicTest id="cookbook/search/phrase-and-proximity-search/example_011" />
 
-`slop` is an edit budget for phrases, playing the role [Levenshtein distance](./fuzzy-search.md#levenshtein-matching-with-ts_levenshtein) plays for a single word — except the only edit it can buy is *moving* a term, never substituting or dropping one. It is the total number of positions the query tokens may be shifted to line up with the document, shared across the whole phrase: each token sitting between two query tokens costs one unit, and `slop := 0` is an exact phrase, identical to omitting it. Every token you type must still appear in the document, so no amount of slop rescues a misspelled word — that is [`ts_levenshtein`](./fuzzy-search.md)'s job, and the two compose.
+`slop` is an edit budget for phrases, playing the role [Levenshtein distance](./fuzzy-search.md#levenshtein-matching-with-ts_levenshtein) plays for a single word — except the only edit it can buy is *moving* a term, never substituting or dropping one. Line the query up with the document and note how far each token had to move: slop is the difference between the largest and the smallest of those moves, one figure for the whole phrase rather than a sum per token. When the tokens stay in order that is simply the number of words wedged between them, and `slop := 0` is an exact phrase, identical to omitting it. Every token you type must still appear in the document, so no amount of slop rescues a misspelled word — that is [`ts_levenshtein`](./fuzzy-search.md)'s job, and the two compose.
 
 ### Widening the window
 
@@ -80,7 +80,7 @@ A budget of 2 also pays for one swap of an adjacent pair, so a phrase can match 
 
 <SqlLogicTest id="cookbook/search/phrase-and-proximity-search/example_014" />
 
-Reordering is strictly more expensive than insertion: one intervening word costs 1, one transposition costs 2. If word order matters to you, keep `slop` at `0` or `1`.
+Reordering is strictly more expensive than insertion: one intervening word costs 1, one transposition costs 2, whether the swapped pair stands alone or sits inside a longer phrase. If word order matters to you, keep `slop` at `0` or `1`.
 
 ### Other spellings
 

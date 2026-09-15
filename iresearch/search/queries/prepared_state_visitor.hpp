@@ -34,10 +34,9 @@ class MultiTermQuery;
 class MultiTermState;
 struct TermState;
 class FixedPhraseQuery;
-struct FixedPhraseState;
 class VariadicPhraseQuery;
-struct VariadicPhraseState;
 class NGramSimilarityQuery;
+struct PhraseState;
 struct NGramState;
 
 struct PreparedStateVisitor {
@@ -48,10 +47,10 @@ struct PreparedStateVisitor {
   virtual bool Visit(const TermState& state, score_t boost) = 0;
   virtual bool Visit(const MultiTermQuery& q, const MultiTermState& state,
                      score_t boost) = 0;
-  virtual bool Visit(const FixedPhraseQuery& q, const FixedPhraseState& state,
+  virtual bool Visit(const FixedPhraseQuery& q, const PhraseState& state,
                      score_t boost) = 0;
-  virtual bool Visit(const VariadicPhraseQuery& q,
-                     const VariadicPhraseState& state, score_t boost) = 0;
+  virtual bool Visit(const VariadicPhraseQuery& q, const PhraseState& state,
+                     score_t boost) = 0;
   virtual bool Visit(const NGramSimilarityQuery& q, const NGramState& state,
                      score_t boost) = 0;
 };

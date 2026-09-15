@@ -18,23 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Microbenchmark: SlopPhrase vs a functionally-equivalent disjunction of
+// Microbenchmark: PhraseSlopMatcher vs a functionally-equivalent disjunction of
 // fixed phrases, on europarl text plus synthetic corpora.
 //
 // For two terms with slop N and expected step 1, the equivalent disjunction
 // is built by MakeDisjunctionEquivalent.
 //
-// Two-term phrases run the fused merge-join (JoinPair); n >= 3 gathers
-// every slot in full (bulk ReadAll) and runs the DFS matcher.
+// Every arity runs the same sweep straight off the position iterators, with
+// the slot count baked in wherever ResolveArity can pin it.
 // DisjunctionExec is the baseline.
 //
 // Corpora: europarl (real text - balanced pairs, skewed "the commission",
 // dense-dense "of the", reversal-heavy "union european", explicit-gap
 // "the __ union", a slop=50 wide-window n=2 stress, and n=3/n=4 dense-slot0
 // phrases); synthetic 60:1 (n=2 skew ceiling); dense3 ("aaa bbb ccc" repeated,
-// every term dense so the n=3 phrase has many valid tuples - DFS stress across
-// slop {1,2,5,10}); allsame ("aaa" repeated - n=2 repeated-term pair stresses
-// the join's uniqueness check, n=3/n=4 stress the DFS).
+// every term dense so the n=3 phrase has many valid windows - sweep stress
+// across slop {1,2,5,10}); allsame ("aaa" repeated - n=2 repeated-term pair
+// stresses the sweep's uniqueness check, n=3/n=4 stress it further).
 //
 // Europarl path comes from env SERENEDB_BENCH_EUROPARL, with a fallback
 // relative to the working directory. Aborts if the file is missing.
@@ -55,7 +55,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
-#include <iresearch/search/detail/slop_phrase.hpp>
+#include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
@@ -66,6 +66,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -355,8 +356,7 @@ constexpr TermPair kTermPairs[] = {
   // buffer (windows overlap heavily, the buffer never drains).
   {"of_the", "of", "the"},
   // Reversed real bigram: forward occurrences are rare, so matches at
-  // higher slop come mostly through the reversal branch of StepCost
-  // (adjacent reversal costs 2).
+  // higher slop come mostly through reversals (adjacent reversal costs 2).
   {"union_european", "union", "european"},
 };
 
@@ -531,7 +531,7 @@ Corpus BuildSyntheticIndex() {
 // Builds a dense 3-term corpus: each doc is "aaa bbb ccc" repeated
 // kDense3Reps times, so every term occurs kDense3Reps times per doc.
 // The n=3 phrase "aaa bbb ccc" then has many valid tuples per doc,
-// growing with slop - the stress case for the DFS matching path.
+// growing with slop - the stress case for the sweep.
 Corpus BuildDense3Index() {
   auto tmp_root =
     std::filesystem::temp_directory_path() / "serenedb-bench-sloppy-dense3";
@@ -846,7 +846,7 @@ irs::BooleanFilter MakeDisjunctionEquivalent(std::string_view t0,
 }
 
 // General slop-phrase disjunction equivalent for n >= 2 terms: enumerates
-// every distinct-position layout whose slot-order StepCost (expected step 1)
+// every distinct-position layout whose slop cost (expected step 1)
 // is <= slop and ORs one exact phrase per layout. Matches exactly the docs
 // the sloppy phrase matches over distinct-position layouts; same-position
 // (synonym) layouts aren't represented, but real text has none, so its docs=
@@ -874,14 +874,15 @@ void AppendSlopPhraseVariants(irs::BooleanFilter& or_filter,
       tp = static_cast<irs::PosAttr::value_t>(tp + gaps[j - 1]);
       pos[perm[j]] = tp;
     }
-    irs::PosAttr::value_t cost = 0;
-    for (size_t i = 0; i + 1 < n; ++i) {
-      const int64_t delta =
-        static_cast<int64_t>(pos[i + 1]) - static_cast<int64_t>(pos[i]);
-      cost = static_cast<irs::PosAttr::value_t>(cost + spm::StepCost(delta, 1));
-      if (cost > slop) {
-        return;
-      }
+    int64_t min_shift = std::numeric_limits<int64_t>::max();
+    int64_t max_shift = std::numeric_limits<int64_t>::min();
+    for (size_t i = 0; i < n; ++i) {
+      const int64_t shift = pos[i] - static_cast<int64_t>(i);
+      min_shift = std::min(min_shift, shift);
+      max_shift = std::max(max_shift, shift);
+    }
+    if (max_shift - min_shift > slop) {
+      return;
     }
     auto phrase = std::make_unique<irs::ByPhrase>();
     *phrase->mutable_field_id() = kFieldId;
@@ -1242,8 +1243,8 @@ void RegisterAll() {
       })
       ->Repetitions(kRepetitions)
       ->ReportAggregatesOnly(true);
-    // n >= 3 with offsets has no pair-join bypass: the bulk Offs gather
-    // plus the enumerating matcher.
+    // n >= 3 with offsets has no pair-join bypass: the sweep carries the
+    // offsets itself.
     benchmark::RegisterBenchmark(
       ("SlopPhraseExecOffs" + suffix).c_str(),
       [slop](benchmark::State& state) {
@@ -1408,7 +1409,7 @@ void RegisterAll() {
   }
 
   // All-dense real-text 3-term phrase: minimal K for the disjunction, three
-  // dense postings for the gather.
+  // dense postings for the sweep.
   for (auto slop : kSlopValues) {
     const std::string suffix =
       "_one_of_the3_slop" + std::to_string(static_cast<unsigned>(slop));
@@ -1457,7 +1458,7 @@ void RegisterAll() {
   }
 
   // Dense 3-term phrase "aaa bbb ccc" (every term dense): stress for the
-  // DFS matching path across slop {1,2,5,10}. No disjunction baseline (no
+  // sweep across slop {1,2,5,10}. No disjunction baseline (no
   // 3-term equivalent helper registered for this corpus).
   for (unsigned slop : {1u, 2u, 5u, 10u}) {
     const std::string suffix = "_dense3_slop" + std::to_string(slop);
@@ -1484,8 +1485,8 @@ void RegisterAll() {
   }
 
   // Adversarial repeated-term phrases on the single-term corpus: n=3 and n=4
-  // "aaa" stress the DFS uniqueness handling (freq is combinatorial at high
-  // slop). Gather held at auto.
+  // "aaa" stress the sweep's uniqueness handling (freq is combinatorial at high
+  // slop).
   for (unsigned slop : {1u, 2u, 5u, 10u}) {
     for (size_t terms : {size_t{3}, size_t{4}}) {
       const std::string suffix =
@@ -1509,28 +1510,6 @@ void RegisterAll() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  // --disable-offs-bulk-gather: route the offset gather through the scalar
-  // per-position loop (in-binary A/B against the bulk ReadAll path). Must be
-  // stripped from argv before benchmark::Initialize, which rejects unknown
-  // flags. The seam exists only in SDB_DEV builds; anywhere else the flag
-  // fails loudly instead of silently measuring the bulk path twice.
-  for (int i = 1; i < argc;) {
-    if (std::string_view{argv[i]} == "--disable-offs-bulk-gather") {
-#ifdef SDB_DEV
-      spm::gOffsBulkGatherDisabled = true;
-#else
-      std::fprintf(stderr,
-                   "--disable-offs-bulk-gather requires an SDB_DEV build\n");
-      return 1;
-#endif
-      for (int j = i; j + 1 < argc; ++j) {
-        argv[j] = argv[j + 1];
-      }
-      --argc;
-    } else {
-      ++i;
-    }
-  }
   benchmark::Initialize(&argc, argv);
   // iresearch indexes require a process-wide duckdb::DatabaseInstance,
   // wired into IndexWriterOptions::db / IndexReaderOptions::db. The

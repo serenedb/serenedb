@@ -26,13 +26,13 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/scorers/make_probe.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -79,7 +79,7 @@ class AndLeaves {
   }
 
  private:
-  detail::RunOf<Leaf, N> _leaves;
+  containers::Fixed<Leaf, N> _leaves;
 };
 
 template<Type Leaf, size_t N = 0, bool Scored = false>
@@ -165,8 +165,9 @@ class OrLeaves {
   }
 
  private:
-  detail::RunOf<Leaf, N> _leaves;
-  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>> _held;
+  containers::Fixed<Leaf, N> _leaves;
+  [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
+    _held;
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
   [[no_unique_address]] utils::Need<Scored, uint32_t> _first = 0;
@@ -254,9 +255,10 @@ class ThresholdLeaves {
   }
 
  private:
-  detail::RunOf<Leaf, N> _probes;
-  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>> _held;
-  [[no_unique_address]] utils::Need<Scored, detail::RunOf<uint32_t, N>>
+  containers::Fixed<Leaf, N> _probes;
+  [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
+    _held;
+  [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
     _matched;
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
@@ -313,8 +315,8 @@ class BoostLeaves {
   }
 
  private:
-  detail::RunOf<Leaf, N> _leaves;
-  detail::RunOf<uint32_t, N> _held;
+  containers::Fixed<Leaf, N> _leaves;
+  containers::Fixed<uint32_t, N> _held;
   doc_id_t _doc = doc_limits::invalid();
 };
 

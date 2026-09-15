@@ -49,35 +49,31 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType, bool HasBoost>
+template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void LmJmImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t num,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t num,
   score_t denom_inv, score_t const_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = TermCountToScore(freq[i]);
+    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
     SDB_ASSERT(norm[i] != 0);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t ratio = (num * tf / dl) * denom_inv;
     score_t r = std::log1p(ratio);
-    if constexpr (HasBoost) {
-      r *= const_boost * boost[i];
-    } else {
-      r *= const_boost;
-    }
+    r *= const_boost;
     Merge<MergeType>(res[i], r);
   }
 }
 
-template<bool HasFilterBoost>
+template<bool HasScale>
 struct LmJmScore : public ScoreOperator {
   LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
             const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* fb) noexcept
+            const score_t* scale) noexcept
     : freq{freq},
       norm{norm},
-      filter_boost{fb},
+      scale{scale},
       boost{boost},
       num{1.f - lambda},
       denom_inv{1.f / (lambda * stats.collection_prob)} {}
@@ -85,9 +81,8 @@ struct LmJmScore : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmJmImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                        TryGetValue(filter_boost), num,
-                                        denom_inv, boost);
+    LmJmImpl<MergeType, HasScale>(res, n, freq->value, norm, TryGetValue(scale),
+                                  num, denom_inv, boost);
   }
 
   score_t Score() const noexcept final {
@@ -122,8 +117,7 @@ struct LmJmScore : public ScoreOperator {
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
+  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t num;
   score_t denom_inv;
@@ -168,14 +162,14 @@ ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
     norm = kNorms.data();
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  auto* scale = [&] {
+    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
     return attr ? attr->value : nullptr;
   }();
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<LmJmScore<HasBoost>>(ctx.boost, _lambda, *stats,
-                                                    freq, norm, filter_boost);
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<LmJmScore<HasScale>>(ctx.boost, _lambda, *stats,
+                                                    freq, norm, scale);
   });
 }
 

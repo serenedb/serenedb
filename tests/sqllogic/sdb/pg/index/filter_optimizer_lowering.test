@@ -329,26 +329,24 @@ SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_levensh
 ----
 id
 
-# A distance-0 edit-distance lowers to a Term before the prefix rule runs, so it
-# is not folded; the STARTS_WITH stays a separate AND clause.
+# A distance-0 edit-distance lowers to a Term, and a document holding `alpha`
+# already holds something starting with `alp`, so the prefix is implied and
+# dropped.
 query
 EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('alpha', 0)]);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────╮
-│ Index: fo_low_idx                                │
-│ Lookup: table                                    │
-│ Index Filter:                                    │
-│ ╭─ And ───────────────╮                          │
-│ ╰──────────┬──────────╯                          │
-│            ├────────────────────────╮            │
-│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
-│ │ Field: name(string) │  │ Field: name(string) │ │
-│ │ Values: 'alpha'     │  │ Prefix: alp         │ │
-│ ╰─────────────────────╯  ╰─────────────────────╯ │
-│ Projections: id                                  │
-│ ~1 row                                           │
-╰──────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: fo_low_idx       │
+│ Lookup: table           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: name(string) │ │
+│ │ Value: alpha        │ │
+│ ╰─────────────────────╯ │
+│ Projections: id         │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 query
 SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('alpha', 0)]) ORDER BY id;

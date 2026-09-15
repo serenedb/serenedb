@@ -26,10 +26,10 @@
 #include <type_traits>
 #include <variant>
 
-#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
+#include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
@@ -177,35 +177,45 @@ bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
 
 bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& phrase = irs::utils::downCast<ByPhrase>(*slot);
+  for (const auto& word : phrase.options()) {
+    const auto* const terms = std::get_if<TermSetOptions>(&word.part);
+    if (terms != nullptr && terms->terms.empty()) {
+      slot = std::make_unique<Empty>();
+      return true;
+    }
+  }
   if (phrase.options().size() != 1) {
     return false;
   }
   const auto field = phrase.field_id();
   const auto boost = phrase.GetBoost();
   const auto* scorer = phrase.GetScorer();
+  const bool scores = ScoreDependsOnTerms(phrase, ctx);
+  const bool constant = ScoreIsConstant(phrase, ctx);
   auto lowered = std::visit(
     [&]<typename Options>(Options& options) -> Filter::ptr {
       using Opts = std::remove_cvref_t<Options>;
       if constexpr (std::is_same_v<Opts, TermSetOptions>) {
-        if (options.terms.empty()) {
-          return std::make_unique<Empty>();
-        }
-        SDB_ASSERT(options.min_match == 1);
-        if (ctx.scored) {
+        if (scores) {
           return nullptr;
         }
         auto node = std::make_unique<BooleanFilter>();
-        node->SetMergeType(options.merge_type);
         for (auto& term : options.terms) {
-          node->Add(
-            TermClause{.field = field, .term = term.term, .boost = term.boost},
-            Occur::Should);
+          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
         }
         node->SetMinShouldMatch(1);
+        if (constant) {
+          node->SetMergeType(ScoreMergeType::Max);
+        }
         node->SetBoost(boost);
         node->SetScorer(scorer);
         return node;
       } else {
+        if constexpr (!std::is_same_v<Opts, ByTermOptions>) {
+          if (scores) {
+            return nullptr;
+          }
+        }
         auto node = std::make_unique<typename Opts::FilterType>();
         *node->mutable_field_id() = field;
         *node->mutable_options() = std::move(options);
@@ -245,7 +255,7 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     slot = std::move(by_term);
     return true;
   }
-  if (!ctx.scored && min_match == 1) {
+  if (ScoreIsIgnored(node, ctx) && min_match == 1) {
     auto disjunction_node = std::make_unique<BooleanFilter>();
     for (const auto& ngram : ngrams) {
       disjunction_node->Add(TermClause{.field = node.field_id(), .term = ngram},
@@ -255,19 +265,6 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     disjunction_node->SetBoost(node.GetBoost());
     disjunction_node->SetScorer(node.GetScorer());
     slot = std::move(disjunction_node);
-    return true;
-  }
-  if (node.options().allow_phrase && min_match == terms_count &&
-      terms_count >= 2) {
-    auto by_phrase = std::make_unique<ByPhrase>();
-    *by_phrase->mutable_field_id() = node.field_id();
-    auto* options = by_phrase->mutable_options();
-    for (const auto& ngram : ngrams) {
-      options->push_back(ByTermOptions{ngram});
-    }
-    by_phrase->SetBoost(node.GetBoost());
-    by_phrase->SetScorer(node.GetScorer());
-    slot = std::move(by_phrase);
     return true;
   }
   return false;
@@ -305,10 +302,11 @@ void LowerNode(Filter::ptr& slot) {
 }  // namespace
 
 void LowerAutomatons(Filter::ptr& root, const OptimizeContext& ctx) {
-  TraverseFilter(root, [&](Filter::ptr& slot) {
+  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
     LowerNode(slot);
     if (slot->type() == Type<BooleanFilter>::id()) {
-      NormalizeTerms(irs::utils::downCast<BooleanFilter>(*slot), ctx.scored);
+      auto& node = irs::utils::downCast<BooleanFilter>(*slot);
+      NormalizeTerms(node, !negated && !ScoreIsIgnored(node, ctx));
     }
   });
 }

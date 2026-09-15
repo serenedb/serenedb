@@ -44,8 +44,8 @@ class TwoPhaseScored {
  public:
   static constexpr bool kHasFreq =
     requires(const Slots& slots) { slots.Freq(); };
-  static constexpr bool kHasBoost =
-    requires(const Slots& slots) { slots.Boost(); };
+  static constexpr bool kHasScale =
+    requires(const Slots& slots) { slots.Scale(); };
 
   template<typename... Args>
   TwoPhaseScored(const SubReader& segment, const TermReader& field,
@@ -68,8 +68,8 @@ class TwoPhaseScored {
     if constexpr (kHasFreq) {
       _freqs[slot] = _slots.Freq();
     }
-    if constexpr (kHasBoost) {
-      _boosts[slot] = _slots.Boost();
+    if constexpr (kHasScale) {
+      _scales[slot] = _slots.Scale();
     }
   }
 
@@ -77,8 +77,8 @@ class TwoPhaseScored {
     if constexpr (kHasFreq) {
       std::get<FreqBlockAttr>(_provider.attrs).value = _freqs;
     }
-    if constexpr (kHasBoost) {
-      std::get<BoostBlockAttr>(_provider.attrs).value = _boosts;
+    if constexpr (kHasScale) {
+      std::get<ScaleBlockAttr>(_provider.attrs).value = _scales;
     }
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
     SDB_ASSERT(_recipe.args.scorer != nullptr);
@@ -107,9 +107,12 @@ class TwoPhaseScored {
     return _doc = target;
   }
 
-  using Attrs = std::conditional_t<
-    kHasBoost, std::tuple<FreqBlockAttr, BoostBlockAttr>,
-    std::conditional_t<kHasFreq, std::tuple<FreqBlockAttr>, std::tuple<>>>;
+  template<bool Want, typename T>
+  using Maybe = std::conditional_t<Want, std::tuple<T>, std::tuple<>>;
+
+  using Attrs =
+    decltype(std::tuple_cat(std::declval<Maybe<kHasFreq, FreqBlockAttr>>(),
+                            std::declval<Maybe<kHasScale, ScaleBlockAttr>>()));
 
   struct Provider final : AttributeProvider {
     Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -123,10 +126,8 @@ class TwoPhaseScored {
     [[no_unique_address]] Attrs attrs;
   };
 
-  [[no_unique_address]] utils::Need<kHasFreq, uint32_t[doc_limits::kBlockSize]>
-    _freqs{};
-  [[no_unique_address]] utils::Need<kHasBoost, score_t[doc_limits::kBlockSize]>
-    _boosts{};
+  [[no_unique_address]] utils::Need<kHasFreq, uint32_t[kScoreBlock]> _freqs{};
+  [[no_unique_address]] utils::Need<kHasScale, score_t[kScoreBlock]> _scales{};
   Slots _slots;
   Provider _provider;
   detail::LeafRecipe _recipe;

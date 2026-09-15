@@ -33,6 +33,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -167,7 +168,7 @@ class ThresholdGroup {
   ThresholdGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
                  uint32_t min_match, score_t constant)
     : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
-      _planes(size_t{min_match} * kWindowWords, 0),
+      _planes{size_t{min_match} * kWindowWords},
       _constant{constant},
       _min_match{min_match} {
     SDB_ASSERT(_min_match > 1);
@@ -240,7 +241,7 @@ class ThresholdGroup {
  private:
   Scratch _scratch{};
   Leaves _leaves;
-  std::vector<uint64_t> _planes;
+  containers::Fixed<uint64_t> _planes;
   score_t _constant;
   uint32_t _min_match;
 };

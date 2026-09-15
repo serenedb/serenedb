@@ -32,44 +32,38 @@ namespace irs {
 
 struct TermReader;
 
-struct FixedPhraseState {
-  explicit FixedPhraseState(IResourceManager& memory) noexcept
-    : terms{{memory}}, metas{{memory}} {}
+struct PostingsState {
+  explicit PostingsState(IResourceManager& memory) noexcept : metas{{memory}} {}
 
-  struct TermState {
-    TermState(const PostingMeta& first, score_t) noexcept : first{first} {}
-
-    PostingMeta first;
-  };
-
-  using Terms = ManagedVector<TermState>;
-  Terms terms;
-  ManagedVector<const PostingMeta*> metas;
+  ManagedVector<PostingMeta> metas;
   const TermReader* reader{};
   detail::PhraseHandles handles;
 };
 
-static_assert(std::is_nothrow_move_constructible_v<FixedPhraseState>);
-static_assert(std::is_nothrow_move_assignable_v<FixedPhraseState>);
+struct NGramState : PostingsState {
+  using PostingsState::PostingsState;
+};
 
-struct VariadicPhraseState {
-  explicit VariadicPhraseState(IResourceManager& memory) noexcept
-    : num_terms{{memory}}, terms{{memory}}, metas{{memory}}, boosts{{memory}} {}
+struct PhraseState : PostingsState {
+  explicit PhraseState(IResourceManager& memory) noexcept
+    : PostingsState{memory}, boosts{{memory}}, offsets{{memory}} {}
 
-  using TermState = std::pair<PostingMeta, score_t>;
+  size_t Slots() const noexcept {
+    SDB_ASSERT(!offsets.empty());
+    return offsets.size() - 1;
+  }
 
-  ManagedVector<uint32_t> num_terms;
-  ManagedVector<uint32_t> term_groups;
-  using Terms = ManagedVector<TermState>;
-  Terms terms;
-  ManagedVector<const PostingMeta*> metas;
+  bool Fixed() const noexcept {
+    return metas.size() == Slots() && boosts.empty();
+  }
+
   ManagedVector<score_t> boosts;
-  const TermReader* reader{};
-  detail::PhraseHandles handles;
-  bool volatile_boost{};
+  ManagedVector<uint32_t> offsets;
 };
 
-static_assert(std::is_nothrow_move_constructible_v<VariadicPhraseState>);
-static_assert(std::is_nothrow_move_assignable_v<VariadicPhraseState>);
+static_assert(std::is_nothrow_move_constructible_v<NGramState>);
+static_assert(std::is_nothrow_move_assignable_v<NGramState>);
+static_assert(std::is_nothrow_move_constructible_v<PhraseState>);
+static_assert(std::is_nothrow_move_assignable_v<PhraseState>);
 
 }  // namespace irs

@@ -396,10 +396,9 @@ launch_s3() {
 	docker run -d \
 		--name "$MINIO_CONTAINER_NAME" \
 		"${network_args[@]}" \
-		--user root \
 		-e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
-		alpine/minio:RELEASE.2025-10-15T17-29-55Z server /data
+		pgsty/minio server /data
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do

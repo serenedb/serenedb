@@ -76,7 +76,7 @@ EOF
 : "${BRFS_KEEP:=1}"
 : "${BRFS_BUCKET:=testbucket}"
 : "${BRFS_CONTAINER:=testcont}"
-: "${BRFS_MINIO_IMAGE:=alpine/minio:RELEASE.2025-10-15T17-29-55Z}"
+: "${BRFS_MINIO_IMAGE:=pgsty/minio}"
 : "${BRFS_AZURITE_IMAGE:=mcr.microsoft.com/azure-storage/azurite}"
 : "${BRFS_TOXIPROXY_IMAGE:=ghcr.io/shopify/toxiproxy}"
 : "${BRFS_NETSHOOT_IMAGE:=nicolaka/netshoot}"
@@ -393,7 +393,7 @@ net_up() {
 	docker rm -f "$MINIO_NAME" "$AZURITE_NAME" "$TOXI_NAME" >/dev/null 2>&1 || true
 	docker run -d --name "$MINIO_NAME" --network host \
 		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-		--user root "$BRFS_MINIO_IMAGE" server /data \
+		"$BRFS_MINIO_IMAGE" server /data \
 		--address "127.0.0.1:${MINIO_PORT}" --console-address "127.0.0.1:${CONSOLE_PORT}" >/dev/null
 	docker run -d --name "$AZURITE_NAME" --network host \
 		"$BRFS_AZURITE_IMAGE" azurite-blob \

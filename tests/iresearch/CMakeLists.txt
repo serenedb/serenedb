@@ -147,6 +147,7 @@ set(iresearch-tests_sources
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
     ./duckdb/validity_mask_tests.cpp
+    ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp

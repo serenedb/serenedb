@@ -48,7 +48,7 @@ gcloud iam service-accounts keys create key.json \
 
 <DocCallout type="attention">
     Organizations created after May 2024 have service-account key creation <a href="https://cloud.google.com/resource-manager/docs/secure-by-default-organizations">disabled by default</a>. If step 3 fails with a policy error, an organization admin must lift <code>iam.disableServiceAccountKeyCreation</code> for the project:
-    <code>gcloud org-policies reset iam.disableServiceAccountKeyCreation --project=my-project</code>
+    <code>gcloud resource-manager org-policies disable-enforce iam.disableServiceAccountKeyCreation --project=my-project</code> (<code>gcloud org-policies reset</code> will not do it — that restores the constraint to its default, which for these organizations is <em>enforced</em>).
 </DocCallout>
 
 ### Using it

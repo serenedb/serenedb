@@ -27,7 +27,6 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/compression_function.hpp>
@@ -619,8 +618,8 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
     const auto take = std::min(
       {count - off, duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
     duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
-                                               /*source_offset=*/off,
-                                               /*target_offset=*/back.count);
+                                   /*source_offset=*/off,
+                                   /*target_offset=*/back.count);
     back.count += take;
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;

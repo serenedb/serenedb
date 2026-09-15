@@ -163,6 +163,7 @@ force_download_threshold	0	Forces upfront download of files smaller than the giv
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
 force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
+geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
 hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
@@ -499,6 +500,7 @@ force_download_threshold	0	Forces upfront download of files smaller than the giv
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
 force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
+geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
 hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests

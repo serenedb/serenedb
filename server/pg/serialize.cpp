@@ -323,6 +323,29 @@ struct VarcharBinCore {
   }
 };
 
+template<WrapContext InContainer>
+struct GeometryTextCore {
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    static constexpr char kHexUpper[] = "0123456789ABCDEF";
+    const std::string_view value{raw.GetData(), raw.GetSize()};
+    auto* data = ctx.writer->Alloc(2 * value.size());
+    char* out = reinterpret_cast<char*>(data);
+    for (const char c : value) {
+      const auto byte = static_cast<unsigned char>(c);
+      *out++ = kHexUpper[byte >> 4U];
+      *out++ = kHexUpper[byte & 0x0FU];
+    }
+  }
+};
+
+struct GeometryBinCore {
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
+  }
+};
+
 template<WrapContext InContainer, typename T>
 IRS_FORCE_INLINE void EnumTextLabel(
   SerializationContext& ctx, const duckdb::RecursiveUnifiedVectorFormat& vdata,
@@ -2222,6 +2245,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
       return MakeArraySerializer<ByteaEscapeTextCore<WrapContext::Array>,
                                  ByteaBinCore, kBytea>(format, context, kind);
+    case GEOMETRY:
+      return MakeArraySerializer<GeometryTextCore<WrapContext::Array>,
+                                 GeometryBinCore, kGeometry>(format, context,
+                                                             kind);
     case DATE:
       return MakeArraySerializer<DateTextCore, DateBinCore, kDate>(
         format, context, kind);
@@ -2477,6 +2504,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<ByteaEscapeTextCore<WrapContext::None>,
                                    ByteaEscapeTextCore<WrapContext::Record>,
                                    ByteaBinCore>(format, context);
+    case GEOMETRY:
+      return SelectFieldSerializer<GeometryTextCore<WrapContext::None>,
+                                   GeometryTextCore<WrapContext::Record>,
+                                   GeometryBinCore>(format, context);
     case DATE:
       return SelectFieldSerializer<DateTextCore, DateTextCore, DateBinCore>(
         format, context);

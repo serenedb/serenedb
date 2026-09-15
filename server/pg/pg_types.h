@@ -245,6 +245,8 @@ enum PgTypeOID : int32_t {
   kTsqueryArray = id::kTsqueryArray.id(),
   kUnion = id::kUnion.id(),
   kUnionArray = id::kUnionArray.id(),
+  kGeometry = id::kGeometry.id(),
+  kGeometryArray = id::kGeometryArray.id(),
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

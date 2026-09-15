@@ -18,6 +18,16 @@ Modifications and new code added are licensed under corresponding [license](LICE
 
 Release binaries are statically linked against [glibc](https://www.gnu.org/software/libc/), which is licensed under the [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). License files from glibc are included in the distribution under `glibc/`.
 
+#### GEOS
+
+Release binaries are statically linked against [GEOS](https://libgeos.org),
+which is licensed under the [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
+GEOS provides the geometry predicates and overlay operations of the spatial
+extension. Its license file is included in the distribution under
+`third_party/geos/COPYING`, and the exact source revision is the pinned
+`third_party/geos` submodule of this repository, so a recipient of a binary
+can relink it against a modified GEOS.
+
 #### ArangoDB
 
 Some code is based on [ArangoDB](https://github.com/arangodb/arangodb), specifically incorporating code from [commit](https://github.com/arangodb/arangodb/commit/bdac13f0edef5ff69d7d9ae5758a30072bd6d312).

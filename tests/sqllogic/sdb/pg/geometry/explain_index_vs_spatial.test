@@ -1,0 +1,185 @@
+hash-threshold 100
+
+# Which engine answers a spatial predicate, pinned through EXPLAIN.
+#
+# Two things decide it:
+#   * the FROM target -- a table is evaluated by duckdb-spatial, an index name
+#     routes the query through the inverted index;
+#   * whether the geo filter builder can compile the predicate into an S2 leaf.
+#     When it cannot it declines, and the predicate resurfaces as a FILTER node
+#     above the scan instead of failing the query.
+#
+# The plans below cover both axes. A regression in
+# server/connector/geo_filter_builder.cpp shows up as a leaf moving between
+# `Index Filter` and `FILTER`.
+
+statement ok
+CREATE TABLE places(id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'), other GEOMETRY('OGC:CRS84'))
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geoshape(template = 'geojson')
+
+
+statement ok
+CREATE INDEX places_idx ON places USING inverted(id, geo geoshape)
+
+
+statement ok
+INSERT INTO places VALUES
+  (1, 'POINT(37.6 55.7)', 'POINT(37.6 55.7)'),
+  (2, 'POINT(0 0)', 'POINT(0 0)')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) places
+
+
+# A geo analyzer needs to know the coordinates are degrees, so a CRS-less
+# GEOMETRY column cannot be indexed at all.
+
+statement ok
+CREATE TABLE no_crs(id INTEGER PRIMARY KEY, geo GEOMETRY)
+
+
+statement error
+CREATE INDEX no_crs_idx ON no_crs USING inverted(id, geo geoshape)
+----
+db error: ERROR: Column 'geo': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# --- 1. plain table: the index is not consulted at all ---
+#
+# The FROM target decides. Against the table, ST_Intersects is an ordinary
+# scalar predicate that duckdb-spatial evaluates per row, whether or not a geo
+# index exists on the column.
+
+query
+EXPLAIN SELECT id FROM places WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'));
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────╮
+│ Table: places                                                     │
+│ Type: Sequential Scan                                             │
+│ Projections: id                                                   │
+│ Column Filter:                                                    │
+│ ST_Intersects(geo, POLYGON ((37 55, 38 55, 38 56, 37 56, 37 55))) │
+│ ~1 row                                                            │
+╰───────────────────────────────────────────────────────────────────╯
+
+# --- 2. FROM the index, indexed column, constant shape: index serves it ---
+#
+# The predicate is consumed into the scan as an `Index Filter` Geo leaf and the
+# shape is compiled to S2, so no rows are handed to duckdb-spatial.
+
+query
+EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: places_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Geo ──────────────╮ │
+│ │ Field: geo(string) │ │
+│ │ Op: Intersects     │ │
+│ │ Shape: S2Polygon   │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+# --- 3. argument order does not matter ---
+#
+# FromGeoFilter looks for the column in either position, so the constant may be
+# written first.
+
+query
+EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects('POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'), geo);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: places_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Geo ──────────────╮ │
+│ │ Field: geo(string) │ │
+│ │ Op: Intersects     │ │
+│ │ Shape: S2Polygon   │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+# --- 4. a constant with no CRS is still accepted ---
+#
+# Only a constant that carries a CRS is checked against the column's; a bare
+# GEOMETRY literal inherits the column's and reaches the index.
+
+query
+EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: places_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Geo ──────────────╮ │
+│ │ Field: geo(string) │ │
+│ │ Op: Intersects     │ │
+│ │ Shape: S2Polygon   │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+# --- 5. shape is not constant: falls back ---
+#
+# Two columns cannot be compiled into an S2 region, so the geo leaf is declined
+# and the predicate reappears as a FILTER above the scan -- the index still
+# drives the scan, duckdb-spatial does the comparison.
+
+query
+EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(geo, other);
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────╮
+│ Projections: #2                       │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression: ST_Intersects(geo, other) │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: places_idx                     │
+│ Lookup: table                         │
+│ Projections: geo (i), other (l),      │
+│              id (l)                   │
+│ ~2 rows                               │
+╰───────────────────────────────────────╯
+
+# --- 6. column carries no geo analyzer: falls back ---
+#
+# `other` is a GEOMETRY column of the same table, but it is not part of the
+# index, so there are no S2 terms to match against.
+
+query
+EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(other, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'));
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections: #1                                                     │
+│ ~1 row                                                              │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ FILTER ─────────────────────────┴──────────────────────────────────╮
+│ Expression:                                                         │
+│ ST_Intersects(other, POLYGON ((37 55, 38 55, 38 56, 37 56, 37 55))) │
+│ ~1 row                                                              │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────┴──────────────────────────────────╮
+│ Index: places_idx                                                   │
+│ Lookup: table                                                       │
+│ Projections: other, id                                              │
+│ ~2 rows                                                             │
+╰─────────────────────────────────────────────────────────────────────╯

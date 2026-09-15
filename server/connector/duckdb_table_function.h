@@ -33,8 +33,10 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string_view>
 
 #include "catalog/identifiers/object_id.h"
@@ -83,9 +85,16 @@ inline float ApplyScoreEmit(ScoreEmit emit, float score) {
   SDB_UNREACHABLE();
 }
 
+struct SearchColumnInfo;
+
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
+  // The query vector as an expression over prepared-statement parameters,
+  // when it is not a constant at plan time; evaluated at execution into
+  // `query_vector`. `dims` is the indexed dimension it must cast to.
+  std::shared_ptr<const duckdb::Expression> query_expr;
+  uint32_t dims = 0;
   irs::VectorMetric metric;
   ScoreEmit score_emit;
   duckdb::OrderType natural_order;
@@ -127,6 +136,16 @@ struct VectorScorerOptions {
     SDB_UNREACHABLE();
   }
 };
+
+// The session's HNSW filter mode and exact flag (sdb_hnsw_filter_mode,
+// sdb_ann_exact).
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context);
+bool ReadAnnExact(duckdb::ClientContext& context);
+
+// The claimed WHERE of a scan whose plan deferred it, built with the
+// parameter values bound to this execution.
+std::shared_ptr<const irs::Filter> BuildDeferredFilter(
+  duckdb::ClientContext& context, const SereneDBScanBindData& scan);
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
@@ -175,6 +194,38 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // table function is a search scan, so `snapshot` is always set.
   std::shared_ptr<irs::Filter> stored_filter;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
+  // The claimed WHERE as expressions, kept when some conjunct carries a
+  // prepared-statement parameter: the filter is then rebuilt at execution
+  // with the parameters' values, over the columns resolved at plan time.
+  // A column a deferred conjunct references, by the scan column it resolved
+  // to at plan time; its search info is resolved again at execution.
+  struct DeferredColumn {
+    catalog::ColumnId column;
+    bool column_stored = false;
+  };
+  struct DeferredClaim {
+    std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
+    std::shared_ptr<
+      const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, DeferredColumn>>
+      columns;
+    // What the filter optimizer is told about the claimed fields.
+    std::set<irs::field_id> analyzed_fields;
+    std::map<irs::field_id, irs::field_id> null_markers;
+  };
+  std::optional<DeferredClaim> deferred_claim;
+  // True when every parameter this scan depends on is read at execution:
+  // the prepared statement's plan is then cached instead of re-bound per
+  // execution (FunctionData::CachePlanWithParameters).
+  bool cache_plan = false;
+  // A conjunct with a parameter the claim could not shape: it stays a
+  // filter above the scan, so the plan must be re-bound with values.
+  bool declined_parameter = false;
+  // Re-acquires the index snapshot at execution, so a cached plan reads the
+  // data of the executing transaction rather than of the one that planned.
+  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
+    reacquire_snapshot;
+
+  bool CachePlanWithParameters() const final { return cache_plan; }
   search::InvertedIndexSnapshotPtr snapshot;
 
   std::optional<catalog::ScorerOptions> text_scorer;

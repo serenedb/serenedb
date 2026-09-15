@@ -21,6 +21,7 @@
 #include "connector/duckdb_table_function.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_join.h>
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
@@ -42,6 +43,8 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
@@ -58,7 +61,9 @@
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
+#include "query/config.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -73,6 +78,10 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.topk_scorer = src.topk_scorer;
   dst.stored_filter = src.stored_filter;
   dst.filter_scorers = src.filter_scorers;
+  dst.deferred_claim = src.deferred_claim;
+  dst.cache_plan = src.cache_plan;
+  dst.declined_parameter = src.declined_parameter;
+  dst.reacquire_snapshot = src.reacquire_snapshot;
   dst.snapshot = src.snapshot;
   dst.text_scorer = src.text_scorer;
   dst.vector_scorer = src.vector_scorer;
@@ -365,6 +374,81 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
     return std::string{name};
   }
   return absl::StrCat("col", col_id);
+}
+
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
+  const auto mode = ReadStringSetting(context, "sdb_hnsw_filter_mode");
+  if (absl::EqualsIgnoreCase(mode, "walk")) {
+    return irs::HnswFilterMode::Walk;
+  }
+  if (absl::EqualsIgnoreCase(mode, "scan")) {
+    return irs::HnswFilterMode::Scan;
+  }
+  if (absl::EqualsIgnoreCase(mode, "prune")) {
+    return irs::HnswFilterMode::Prune;
+  }
+  if (absl::EqualsIgnoreCase(mode, "twohop")) {
+    return irs::HnswFilterMode::TwoHop;
+  }
+  if (absl::EqualsIgnoreCase(mode, "bridge")) {
+    return irs::HnswFilterMode::Bridge;
+  }
+  return irs::HnswFilterMode::Auto;
+}
+
+bool ReadAnnExact(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  return context.TryGetCurrentSetting("sdb_ann_exact", v) && !v.IsNull() &&
+         v.GetValue<bool>();
+}
+
+std::shared_ptr<const irs::Filter> BuildDeferredFilter(
+  duckdb::ClientContext& context, const SereneDBScanBindData& scan) {
+  SDB_ASSERT(scan.deferred_claim);
+  const auto& claim = *scan.deferred_claim;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  conjuncts.reserve(claim.conjuncts.size());
+  for (const auto& e : claim.conjuncts) {
+    conjuncts.push_back(optimizer::NormalizeClaimShape(
+      context,
+      optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true)));
+  }
+  const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
+    -> std::optional<SearchColumnInfo> {
+    const auto it = claim.columns->find(
+      {ref.Binding().table_index.index, ref.Binding().column_index.GetIndex()});
+    if (it == claim.columns->end()) {
+      return std::nullopt;
+    }
+    return optimizer::ResolveSearchColumnById(context, scan, it->second.column,
+                                              it->second.column_stored);
+  };
+  const ExpressionGetter expr_getter =
+    [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
+    return std::nullopt;
+  };
+  auto root = std::make_unique<irs::BooleanFilter>();
+  FilterScorers scorers;
+  const auto status =
+    MakeSearchFilter(*root, conjuncts, getter, context, expr_getter, &scorers);
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("cannot build the search filter from the "
+                            "statement's parameters: ",
+                            status.message()));
+  }
+  irs::Filter::ptr filter = std::move(root);
+  EnsureIncludeSides(*filter);
+  irs::OptimizeContext ctx;
+  ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
+                             claim.analyzed_fields.end());
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  for (const auto& [marker, field] : claim.null_markers) {
+    null_markers[marker] = field;
+  }
+  ctx.null_markers = &null_markers;
+  irs::Optimize(filter, ctx);
+  return std::shared_ptr<const irs::Filter>{std::move(filter)};
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,

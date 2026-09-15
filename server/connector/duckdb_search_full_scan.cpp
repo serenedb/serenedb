@@ -30,6 +30,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -1310,6 +1311,52 @@ void ClassifySegmentColFilters(const irs::SubReader& seg,
                                irs::ColFilterStateCache& states,
                                irs::ColFilterClassification& out);
 
+namespace {
+
+// The search knobs a vector scan reads from the session at execution.
+void RefreshVectorKnobs(VectorScorerOptions& vs,
+                        duckdb::ClientContext& context) {
+  vs.nprobe = ReadIntSetting(context, "sdb_ivf_search_nprobe");
+  vs.max_search_fanout = ReadIntSetting(context, "sdb_ivf_max_search_fanout");
+  vs.ef_search = ReadIntSetting(context, "sdb_hnsw_ef_search");
+  vs.hnsw_filter_mode = ReadHnswFilterMode(context);
+  vs.exact = ReadAnnExact(context);
+}
+
+// The query vector of a parameterized statement, from the parameters bound
+// to this execution.
+std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
+                                       const VectorScorerOptions& vs) {
+  duckdb::Value folded;
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, *vs.query_expr,
+                                                     folded) ||
+      folded.IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("the query vector of a vector search is NULL"));
+  }
+  duckdb::Value casted;
+  const auto target =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vs.dims);
+  if (!folded.DefaultTryCastAs(target, casted, nullptr) || casted.IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("the query vector of a vector search is not a ",
+                            target.ToString()));
+  }
+  std::vector<float> out;
+  out.reserve(vs.dims);
+  for (const auto& child : duckdb::ArrayValue::GetChildren(casted)) {
+    if (child.IsNull()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("the query vector of a vector search holds NULL"));
+    }
+    out.push_back(child.GetValue<float>());
+  }
+  return out;
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
@@ -1325,8 +1372,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  state->reader = &ss.snapshot->reader;
-  state->total_segments = ss.snapshot->reader.size();
+  // A cached plan outlives the transaction that planned it: its scan reads the
+  // executing transaction's snapshot, taken now, not the one the bind holds.
+  if (ss.cache_plan && ss.reacquire_snapshot) {
+    state->snapshot = ss.reacquire_snapshot(context);
+  }
+  const auto& snapshot = state->snapshot ? *state->snapshot : *ss.snapshot;
+  state->reader = &snapshot.reader;
+  state->total_segments = snapshot.reader.size();
   state->claimable_segments = static_cast<uint32_t>(state->total_segments);
   state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
@@ -1347,7 +1400,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     if (ss.stored_filter) {
       state->filter = ss.stored_filter.get();
-      state->queries.resize(ss.snapshot->reader.size());
+      state->queries.resize(state->total_segments);
     }
     return duckdb::unique_ptr_cast<IResearchScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
@@ -1380,22 +1433,33 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "fast-path source (read_parquet/csv/json/...)"));
     }
   }
+  // The claimed WHERE, rebuilt with this execution's parameter values where
+  // the plan deferred it; otherwise the one the plan built.
+  std::shared_ptr<const irs::Filter> where = ss.stored_filter;
+  if (ss.deferred_claim) {
+    state->owned_where = BuildDeferredFilter(context, ss);
+    where = state->owned_where;
+  }
   if (ss.vector_scorer) {
     auto vs = *ss.vector_scorer;
+    // The knobs are the executing session's, not the planning session's: a
+    // cached plan sees every SET made since it was prepared.
+    RefreshVectorKnobs(vs, context);
+    if (vs.query_expr) {
+      vs.query_vector = EvaluateQueryVector(context, vs);
+    }
     if (vs.kind == irs::AnnKind::Hnsw && ss.score_top_k) {
       // The beam is the result ceiling, so it is at least k. Every hit of the
       // beam is then the rerank pool (sized below), and ef alone trades recall
       // for time; the rerank factor is an IVF knob.
       vs.min_ef = static_cast<uint32_t>(*ss.score_top_k);
     }
-    state->owned_filter =
-      MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
+    state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
-    state->filter =
-      ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+    state->filter = where ? where.get() : &MatchAllFilter();
   }
-  state->queries.resize(ss.snapshot->reader.size());
+  state->queries.resize(state->total_segments);
 
   if (!state->col_filters.empty() && state->total_segments != 0) {
     irs::ColFilterStateCache init_states;

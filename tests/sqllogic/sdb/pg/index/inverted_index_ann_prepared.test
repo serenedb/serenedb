@@ -1,0 +1,123 @@
+control substitution on
+
+# A prepared vector search keeps its plan across executions: the query vector
+# and the WHERE's parameters are read at execution, as are the search knobs,
+# and each execution sees the rows of its own transaction.
+
+statement ok
+CREATE TABLE ap (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR, num INTEGER)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX ap_idx ON ap
+  USING inverted(pk, label, num, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO ap SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ap;
+
+statement ok
+PREPARE ap_knn AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+# A second execution with another vector answers for that vector.
+query
+EXECUTE ap_knn([1500.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+1500
+1501
+1499
+
+# The WHERE's parameter is read at execution too.
+statement ok
+PREPARE ap_where AS SELECT pk FROM ap
+  WHERE label = $2 AND num >= $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 0);
+----
+pk
+100
+102
+98
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'odd', 105);
+----
+pk
+105
+107
+109
+
+# A knob set between executions applies to the next one: with a beam of one
+# admitted row the result has one row.
+statement ok
+SET sdb_hnsw_ef_search = 1;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
+# Rows added after the statement was prepared are seen.
+statement ok
+INSERT INTO ap VALUES (5000, [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], 'even', 5000);
+
+statement ok
+VACUUM (REFRESH_TABLE) ap;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+5000
+100
+101
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 200);
+----
+pk
+5000
+200
+202
+
+# Exact mode is a knob as well.
+statement ok
+SET sdb_ann_exact = true;
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 200);
+----
+pk
+5000
+200
+202
+
+statement ok
+RESET sdb_ann_exact;
+
+statement ok
+DEALLOCATE ap_knn;
+
+statement ok
+DEALLOCATE ap_where;

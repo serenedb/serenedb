@@ -197,6 +197,11 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // an offsets walk reads. Decided once for the scan: `queries` is shared.
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
+  // The executing transaction's snapshot when the plan is cached (the bind's
+  // is the planning transaction's), and the claimed WHERE rebuilt with this
+  // execution's parameter values when the plan deferred it.
+  search::InvertedIndexSnapshotPtr snapshot;
+  std::shared_ptr<const irs::Filter> owned_where;
   // Taken around a segment's query preparation when one segment is split
   // across workers (topk.parts > 1): two workers may then reach the same
   // unprepared segment at once, and the second would replace a query the

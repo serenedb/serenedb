@@ -154,6 +154,21 @@ std::shared_ptr<const DecodedColumn> Decode(const irs::ColReader& columns,
   if (decoded != out->rows) {
     return nullptr;
   }
+  out->order.reserve(out->rows);
+  for (uint64_t r = 0; r < out->rows; ++r) {
+    if (out->Valid(r)) {
+      out->order.push_back(static_cast<uint32_t>(r));
+    }
+  }
+  if (real) {
+    const auto* v = out->reals.data();
+    std::sort(out->order.begin(), out->order.end(),
+              [v](uint32_t a, uint32_t b) { return v[a] < v[b]; });
+  } else {
+    const auto* v = out->ints.data();
+    std::sort(out->order.begin(), out->order.end(),
+              [v](uint32_t a, uint32_t b) { return v[a] < v[b]; });
+  }
   return out;
 }
 
@@ -269,6 +284,47 @@ uint64_t DecodedPredicate::Narrow(uint64_t first, uint64_t* mask,
     total += static_cast<uint64_t>(std::popcount(m));
   }
   return total;
+}
+
+std::pair<uint32_t, uint32_t> DecodedPredicate::Range() const noexcept {
+  const auto& order = column->order;
+  if (column->Real()) {
+    const auto* v = column->reals.data();
+    const auto lo_it =
+      dlo_inclusive
+        ? std::lower_bound(order.begin(), order.end(), dlo,
+                           [v](uint32_t a, double x) { return v[a] < x; })
+        : std::upper_bound(order.begin(), order.end(), dlo,
+                           [v](double x, uint32_t a) { return x < v[a]; });
+    const auto hi_it =
+      dhi_inclusive
+        ? std::upper_bound(order.begin(), order.end(), dhi,
+                           [v](double x, uint32_t a) { return x < v[a]; })
+        : std::lower_bound(order.begin(), order.end(), dhi,
+                           [v](uint32_t a, double x) { return v[a] < x; });
+    const auto b = static_cast<uint32_t>(lo_it - order.begin());
+    const auto e = static_cast<uint32_t>(hi_it - order.begin());
+    return {b, std::max(b, e)};
+  }
+  const auto* v = column->ints.data();
+  const auto lo_it =
+    std::lower_bound(order.begin(), order.end(), lo,
+                     [v](uint32_t a, int64_t x) { return v[a] < x; });
+  const auto hi_it =
+    std::upper_bound(order.begin(), order.end(), hi,
+                     [v](int64_t x, uint32_t a) { return x < v[a]; });
+  const auto b = static_cast<uint32_t>(lo_it - order.begin());
+  const auto e = static_cast<uint32_t>(hi_it - order.begin());
+  return {b, std::max(b, e)};
+}
+
+void DecodedPredicate::Fill(uint64_t* words) const noexcept {
+  const auto [b, e] = Range();
+  const auto& order = column->order;
+  for (uint32_t i = b; i < e; ++i) {
+    const auto row = order[i];
+    words[row / 64] |= uint64_t{1} << (row % 64);
+  }
 }
 
 namespace {

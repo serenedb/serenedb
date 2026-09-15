@@ -23,14 +23,18 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -39,8 +43,12 @@
 #include <limits>
 #include <mutex>
 #include <system_error>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
+#include "connector/column_id.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 #include "search/task.h"
 #include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
@@ -79,7 +87,16 @@ std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options)
-  : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
+  : _table_id{table_id},
+    _db_id{db_id},
+    _schema_id{schema_id},
+    _is_new{is_new},
+    _segment_memory_max{options.segment_memory_max} {
+  if (!options.optimize_top_k.empty()) {
+    _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
+    _topk_scorer = MakeScorer(*_topk_options);
+  }
+  RebuildConfig();
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -130,10 +147,13 @@ void SearchTable::OpenWriter() {
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
-  writer_options.segment_memory_max = 256 * (size_t{1} << 20);
+  writer_options.segment_memory_max = _segment_memory_max;
   writer_options.lock_repository = false;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
+  if (_topk_scorer) {
+    writer_options.reader_options.scorer = _topk_scorer.get();
+  }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {
@@ -145,6 +165,24 @@ void SearchTable::OpenWriter() {
   };
 
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+
+  auto& db_manager =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
+  const auto claim = [&](irs::field_id id) {
+    if (id <= connector::kMaxRealColumnIdValue) {
+      db_manager.ClaimOid(id);
+    }
+  };
+  for (const auto& segment : _writer->GetSnapshot()) {
+    for (const auto id : segment.field_ids()) {
+      claim(id);
+    }
+    if (const auto* columns = segment.GetColReader()) {
+      for (const auto& column : columns->Columns()) {
+        claim(column->Id());
+      }
+    }
+  }
 
   if (path_exists) {
     // Restore the durable commit tick from the last commit's meta payload.
@@ -218,20 +256,68 @@ ResultWithTime SearchTable::RefreshUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  SDB_IF_FAILURE("Search::FailOnCommit") {
+    result = absl::InternalError("debug failure point");
+  }
+  _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }
 
-ResultWithTime SearchTable::CompactUnsafe(
+StoreStats SearchTable::GetStats() const {
+  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
+  stats.numBufferedDocs = _writer->BufferedDocs();
+  _maintenance.Fill(stats);
+  return stats;
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
+  const {
+  absl::MutexLock lock(&_config_mu);
+  return _config;
+}
+
+void SearchTable::RebuildConfig() {
+  auto merged = std::make_shared<catalog::InvertedIndexConfig>();
+  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->top_k_scorer = _topk_options;
+  for (const auto& index : _configs) {
+    for (const auto& [id, field] : index.config->fields) {
+      merged->fields.emplace(id, field);
+    }
+    merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
+                        index.config->keys.end());
+  }
+  _config = std::move(merged);
+}
+
+void SearchTable::MergeIndexConfig(
+  duckdb::idx_t index_oid,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  absl::MutexLock lock(&_config_mu);
+  _configs.push_back({index_oid, std::move(config)});
+  RebuildConfig();
+}
+
+void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
+  absl::MutexLock lock(&_config_mu);
+  std::erase_if(
+    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
+  RebuildConfig();
+}
+
+auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));
@@ -246,7 +332,8 @@ ResultWithTime SearchTable::CompactUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
-  return {std::move(result), time_ms};
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
+  co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
@@ -262,6 +349,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -278,7 +366,8 @@ void SearchTable::VacuumCompact() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
-  CompactUnsafe(kFullMerge, kProgress, empty, /*field_options=*/nullptr);
+  const auto field_options = Config();
+  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

@@ -44,10 +44,13 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
+#include "search/search_table.h"
 
 namespace sdb::catalog {
 namespace {
@@ -99,7 +102,9 @@ std::string TopKScorerOption(
 
 std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   persistence::InvertedIndexData data,
-  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
+    parsed_expressions) {
   auto config = std::make_shared<InvertedIndexConfig>();
   config->row_group_size = ResolveSettings(options).row_group_size;
   config->pk = data.pk;
@@ -123,10 +128,16 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   }
   config->keys.reserve(data.keys.size());
   for (auto& record : data.keys) {
+    const auto slot = config->keys.size();
     config->keys.push_back({
       .field_id = record.field_id,
+      .column_id = record.column_id,
       .type = std::move(record.type),
       .normalized_expression = std::move(record.normalized_expression),
+      .expression_text = !record.normalized_expression.empty() &&
+                             slot < parsed_expressions.size()
+                           ? parsed_expressions[slot]->ToString()
+                           : std::string{},
     });
   }
   return config;
@@ -135,7 +146,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
 duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table,
   const duckdb::CreateIndexInfo& info) {
-  if (!table) {
+  if (!table || !table->IsDuckTable()) {
     return nullptr;
   }
   return duckdb::make_shared_ptr<duckdb::IndexDataTableInfo>(
@@ -242,6 +253,9 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   if (const auto* entry = FindEntry(id)) {
     return entry->column_options;
   }
+  if (id <= connector::kMaxRealColumnIdValue) {
+    return {};
+  }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its
   // owner had a value of that kind.
@@ -320,6 +334,34 @@ const InvertedIndexField* InvertedIndexConfig::FindEntry(
   return it == fields.end() ? nullptr : &it->second;
 }
 
+irs::field_id InvertedIndexConfig::TermField(
+  irs::field_id column_id) const noexcept {
+  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
+    return key.column_id == column_id;
+  });
+  return it == keys.end() ? column_id : it->field_id;
+}
+
+std::vector<irs::field_id> InvertedIndexConfig::TermFields(
+  irs::field_id column_id) const {
+  std::vector<irs::field_id> result;
+  for (const auto& key : keys) {
+    const auto* entry = FindEntry(key.field_id);
+    if (key.column_id == column_id && entry && entry->IsTermDict()) {
+      result.push_back(key.field_id);
+    }
+  }
+  return result;
+}
+
+irs::field_id InvertedIndexConfig::ColumnOf(
+  irs::field_id field_id) const noexcept {
+  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
+    return key.field_id == field_id && irs::field_limits::valid(key.column_id);
+  });
+  return it == keys.end() ? field_id : it->column_id;
+}
+
 InvertedIndexFieldLookup InvertedIndexConfig::LookupField(
   irs::field_id field_id) const noexcept {
   if (const auto* own = FindEntry(field_id)) {
@@ -351,14 +393,9 @@ duckdb::LogicalType InvertedIndexConfig::ExpressionType(
   return key ? key->type : duckdb::LogicalType::INVALID;
 }
 
-std::string InvertedIndexEntry::ExpressionText(irs::field_id field_id) const {
-  const auto* key = FindKey(*_config, field_id);
-  if (!key || key->type.id() == duckdb::LogicalTypeId::INVALID) {
-    return {};
-  }
-  const auto slot = static_cast<size_t>(key - _config->keys.data());
-  return slot < parsed_expressions.size() ? parsed_expressions[slot]->ToString()
-                                          : std::string{};
+std::string InvertedIndexConfig::ExpressionText(irs::field_id field_id) const {
+  const auto* key = FindKey(*this, field_id);
+  return key ? key->expression_text : std::string{};
 }
 
 std::optional<ScorerOptions> TopKScorer(
@@ -368,7 +405,7 @@ std::optional<ScorerOptions> TopKScorer(
   if (text.empty()) {
     return std::nullopt;
   }
-  return search::ParseScorerExpression(context, text, "optimize_top_k");
+  return search::ParseScorerExpression(&context, text, "optimize_top_k");
 }
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
@@ -378,6 +415,7 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   for (const auto& key : _config->keys) {
     data.keys.push_back({
       .field_id = key.field_id,
+      .column_id = key.column_id,
       .type = key.type,
       .normalized_expression = key.normalized_expression,
     });
@@ -408,8 +446,11 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
   : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table, info)},
     _relation_name{info.table} {
+  if (table && !table->IsDuckTable()) {
+    _search_table = table->Cast<SearchTableEntry>().Storage();
+  }
   if (auto data = Unpack(info.options)) {
-    _config = FromPersisted(std::move(*data), options);
+    _config = FromPersisted(std::move(*data), options, parsed_expressions);
     options.erase(std::string{kPayloadOption});
   }
 }
@@ -462,6 +503,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   result->info = this->info;
   result->initial_index_size = initial_index_size;
   result->_storage = _storage;
+  result->_search_table = _search_table;
   result->_relation_name = _relation_name;
   if (_storage) {
     _storage->ApplyOptions(ResolveSettings(result->options));
@@ -478,6 +520,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   result->info = info;
   result->initial_index_size = initial_index_size;
   result->_storage = _storage;
+  result->_search_table = _search_table;
   result->_config = _config;
   result->_relation_name = _relation_name;
   return std::move(result);
@@ -487,11 +530,19 @@ void InvertedIndexEntry::OnDrop() {
   if (_storage) {
     _storage->MarkDropped();
   }
+  if (_search_table) {
+    _search_table->RemoveIndexConfig(oid);
+  }
 }
 
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID && _storage) {
-    _storage->MarkDropped();
+  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+    if (_storage) {
+      _storage->MarkDropped();
+    }
+    if (_search_table) {
+      _search_table->RemoveIndexConfig(oid);
+    }
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
 }

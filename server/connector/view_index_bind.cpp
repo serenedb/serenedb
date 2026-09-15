@@ -43,6 +43,8 @@
 #include "connector/file_manifest.h"
 #include "connector/pg_logical_types.h"
 #include "connector/view_fast_path.h"
+#include "query/config_variable_names.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -243,6 +245,72 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), view, nullptr);
   result->children.push_back(std::move(input));
+  return std::move(result);
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  catalog::SearchTableEntry& table,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  auto& context = binder.context;
+  auto info = TakeInfo(stmt);
+  if (info->index_type != catalog::kInvertedIndexTypeName) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("only inverted indexes are supported on a search-backed table"));
+  }
+  if (info->options.contains(std::string{kOptimizeTopKSetting})) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("optimize_top_k is a table option on a search-backed table"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', "
+               "optimize_top_k = '...'); the table's store keeps the score "
+               "bounds every index on it prunes with."));
+  }
+  if (info->where_clause) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("partial indexes are not supported on a search-backed table"));
+  }
+  const auto& store = table.Storage();
+  store->VacuumRefresh();
+  if (store->GetDirectoryReader().live_docs_count() != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("CREATE INDEX on a non-empty search-backed table is not yet "
+              "supported (indexing existing rows)"));
+  }
+
+  auto& dependencies = info->dependencies;
+  auto& catalog = table.ParentCatalog();
+  duckdb::catalog_entry_callback_t lookup_callback =
+    [&dependencies, &catalog](duckdb::CatalogEntry& entry) {
+      if (&catalog == &entry.ParentCatalog()) {
+        dependencies.AddDependency(entry);
+      }
+    };
+  duckdb::IndexBinder index_binder(binder, context, &table, info.get());
+  index_binder.SetCatalogLookupCallback(lookup_callback);
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
+  expressions.reserve(info->expressions.size());
+  for (auto& expr : info->expressions) {
+    expressions.push_back(index_binder.Bind(expr));
+  }
+
+  auto& get = plan->Cast<duckdb::LogicalGet>();
+  for (const auto& column_id : get.GetColumnIds()) {
+    const auto position = column_id.GetPrimaryIndex();
+    info->column_ids.push_back(position);
+    info->scan_types.push_back(get.returned_types[position]);
+  }
+  info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
+  info->names = get.names;
+  info->SetQualifiedName(duckdb::QualifiedName(
+    table.ParentCatalog().GetName(), table.ParentSchema().name,
+    info->GetQualifiedName().Name()));
+  auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
+    std::move(info), std::move(expressions), table, nullptr);
+  result->children.push_back(std::move(plan));
   return std::move(result);
 }
 

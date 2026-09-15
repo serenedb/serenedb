@@ -96,10 +96,6 @@ inline const catalog::InvertedIndexField* AllStoredEntry() {
   return &kStored;
 }
 
-inline EntryInfoProvider AllStoredEntryInfoProvider() {
-  return [](irs::field_id) { return AllStoredEntry(); };
-}
-
 class SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertBaseImpl(
@@ -118,11 +114,8 @@ class SearchSinkInsertBaseImpl {
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
 
-  void AppendValueColumn(irs::field_id field_id,
-                         const duckdb::LogicalType& type,
-                         const duckdb::Vector& vec, duckdb::idx_t count) {
-    AppendToColumn(field_id, type, vec, count);
-  }
+  void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
+                      const duckdb::Vector& vec, duckdb::idx_t count);
 
   std::vector<irs::field_id> TermFieldsForColumn(ColumnId column) const {
     return _config ? _config->TermFields(column) : std::vector<irs::field_id>{};
@@ -221,9 +214,6 @@ class SearchSinkInsertBaseImpl {
   void WriteColumnBlock(const Field& null_field, duckdb::idx_t count,
                         Insert&& insert);
   void FinishColumnBlocks(const Field& null_field);
-
-  void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
-                      const duckdb::Vector& vec, duckdb::idx_t count);
 
   struct JsonExpressionFields {
     Field string_field;

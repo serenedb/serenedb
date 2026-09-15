@@ -53,6 +53,7 @@ struct CreateIndexInfo;
 namespace sdb::search {
 
 class InvertedIndexStorage;
+class SearchTable;
 
 }  // namespace sdb::search
 namespace sdb::catalog {
@@ -110,12 +111,15 @@ inline constexpr const char* kInvertedIndexTypeName = "inverted";
 // shadows the built-in; the parenthesised form always selects the built-in.
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
+inline constexpr std::string_view kHNSWKind = "hnsw";
 
 struct InvertedIndexKey {
   irs::field_id field_id = irs::field_limits::invalid();
+  irs::field_id column_id = irs::field_limits::invalid();
   // INVALID for a bare column, which indexes under the column's own type.
   duckdb::LogicalType type;
   std::string normalized_expression;
+  std::string expression_text;
 };
 
 using InvertedIndexFields =
@@ -151,14 +155,18 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   irs::field_id GetNormColumnId(irs::field_id id) const final;
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
+  irs::field_id TermField(irs::field_id column_id) const noexcept;
+  std::vector<irs::field_id> TermFields(irs::field_id column_id) const;
+  irs::field_id ColumnOf(irs::field_id field_id) const noexcept;
   const InvertedIndexField* FindColumnInfo(
     irs::field_id column_id) const noexcept {
-    return LookupField(column_id).entry;
+    return LookupField(TermField(column_id)).entry;
   }
   InvertedIndexFieldLookup LookupField(irs::field_id field_id) const noexcept;
   bool IsKeywordField(irs::field_id field_id) const noexcept;
 
   duckdb::LogicalType ExpressionType(irs::field_id field_id) const noexcept;
+  std::string ExpressionText(irs::field_id field_id) const;
 
   irs::field_id FindFieldIdByExpression(
     std::string_view normalized) const noexcept;
@@ -233,16 +241,20 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   const auto& Storage() const noexcept { return _storage; }
+  const auto& SearchStore() const noexcept { return _search_table; }
   const auto& Config() const noexcept { return _config; }
   IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const {
     return {context, catalog, *_config};
   }
-  std::string ExpressionText(irs::field_id field_id) const;
+  std::string ExpressionText(irs::field_id field_id) const {
+    return _config->ExpressionText(field_id);
+  }
 
  private:
   persistence::InvertedIndexData ToPersisted() const;
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
+  std::shared_ptr<search::SearchTable> _search_table;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
 };

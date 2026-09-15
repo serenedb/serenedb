@@ -68,7 +68,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
     duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-    duckdb::TableCatalogEntry& table) override;
+    duckdb::CatalogEntry& relation) override;
 
   duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,

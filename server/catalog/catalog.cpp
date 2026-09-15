@@ -123,15 +123,24 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-  duckdb::TableCatalogEntry& table) {
+  duckdb::CatalogEntry& relation) {
   if (info.index_type != kInvertedIndexTypeName) {
-    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, table);
+    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, relation);
+  }
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
+  if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
+    table = &relation.Cast<duckdb::TableCatalogEntry>();
   }
   auto entry =
-    duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, &table);
-  if (info.oid != 0) {
+    duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, table);
+  if (info.oid == 0) {
+    return std::move(entry);
+  }
+  if (const auto& store = entry->SearchStore()) {
+    store->MergeIndexConfig(entry->oid, entry->Config());
+  } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      GetOid(), schema.oid, table.oid, entry->oid,
+      GetOid(), schema.oid, relation.oid, entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -196,9 +205,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   if (!entry) {
     return duckdb::DuckCatalog::PlanDelete(context, planner, op, plan);
   }
-  if (op.is_truncate && context.transaction.IsAutoCommit()) {
+  if (op.is_truncate) {
     return planner.Make<connector::SereneDBSearchTruncate>(
-      entry->Storage(), op.estimated_cardinality);
+      entry->Storage(), op.estimated_cardinality,
+      context.transaction.IsAutoCommit());
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
@@ -262,7 +272,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     BindInvertedIndexOptions(binder.context, info.options);
   }
   for (const auto& opclass : info.column_opclasses) {
-    if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind) {
+    if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind ||
+        opclass == kHNSWKind) {
       continue;
     }
     const duckdb::EntryLookupInfo dictionary{
@@ -278,9 +289,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     return connector::BindCreateIndexOnView(
       binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
   }
-  if (!table.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
-    throw duckdb::BinderException(
-      "CREATE INDEX on a search-backed table is not yet supported");
+  auto& table_entry = table.Cast<duckdb::TableCatalogEntry>();
+  if (!table_entry.IsDuckTable()) {
+    return connector::BindCreateIndexOnSearchTable(
+      binder, stmt, table_entry.Cast<SearchTableEntry>(), std::move(plan));
   }
   auto& scan = plan->Cast<duckdb::LogicalGet>()
                  .bind_data->Cast<duckdb::TableScanBindData>();
@@ -298,7 +310,7 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
-           !(search && absl::c_contains(kSearchTableSettings, option.first));
+           !(search && absl::c_contains(kSearchTableOptions, option.first));
   });
   if (unknown != options.end()) {
     return duckdb::ErrorData{

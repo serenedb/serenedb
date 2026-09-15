@@ -25,11 +25,18 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 
+#include "catalog/entry/search_table.h"
+
 namespace sdb::connector {
 
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan);
+
+duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  catalog::SearchTableEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan);
 
 }  // namespace sdb::connector

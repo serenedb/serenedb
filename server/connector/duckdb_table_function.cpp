@@ -638,7 +638,7 @@ void SereneDBScanBindData::AppendSummary(
     const auto col_id = static_cast<catalog::ColumnId>(vector_scorer->field_id);
     const auto fname = name_of(col_id);
     auto ctype = bind.ColumnTypeById(col_id);
-    if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
+    if (ctype.id() == duckdb::LogicalTypeId::INVALID && bind.IsIndexRelation()) {
       if (const auto* expr =
             bind.ScannedIndex().ExpressionByFieldId(vector_scorer->field_id)) {
         ctype = expr->return_type;

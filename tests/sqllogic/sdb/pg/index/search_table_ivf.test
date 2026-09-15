@@ -53,6 +53,26 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────────────────────────╯
 
+# The same ANN query through the table name. A search table scanned by name
+# carries no index in its bind data; the pushdown must resolve the table's
+# inverted indexes from the catalog instead of assuming an index relation
+# (it used to dereference an empty index list and crash the server).
+query
+SELECT id FROM v
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+query
+SELECT id FROM v WHERE id > 1
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+4
+3
+
 # --- IVF over an indexed expression ---
 # The IVF can build over an expression's value too: the vector is the
 # expression, stored + IVF-attached under the expression's own field.

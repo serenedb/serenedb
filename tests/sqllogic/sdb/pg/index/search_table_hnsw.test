@@ -1,0 +1,61 @@
+# HNSW (vector ANN) on a search table. Like IVF, the HNSW column must keep its
+# column id as its field id in a search-table index: the graph attaches to the
+# stored vector value, and the planner finds the ANN config by column id. It
+# used to get a per-index term field like a plain column, so no graph was
+# ever built and every kNN query silently fell back to a scored full scan.
+
+statement ok
+CREATE TABLE h (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX h_idx ON h USING inverted (vec hnsw(metric='l2', quant='none'));
+
+statement ok
+INSERT INTO h VALUES
+  (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
+  (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT)),
+  (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)),
+  (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
+
+statement ok
+VACUUM (REFRESH_TABLE) h;
+
+# Through the index relation and through the table name.
+query
+SELECT id FROM h_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+query
+SELECT id FROM h
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+# The distance + top-k are pushed into the scan: Score + Top, no distance
+# projection over all rows.
+query
+EXPLAIN SELECT id FROM h_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: h_idx                           │
+│ Lookup: search                         │
+│ Score: l2_distance(vec, FLOAT[3])      │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯

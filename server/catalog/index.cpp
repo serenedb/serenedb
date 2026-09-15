@@ -1108,7 +1108,8 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
     }
     const auto column = c.GetColumn().id;
     irs::field_id col_field_id;
-    if (search_engine && !c.IsBuiltin(kIVFKind)) {
+    const bool ann_column = c.IsBuiltin(kIVFKind) || c.IsBuiltin(kHNSWKind);
+    if (search_engine && !ann_column) {
       // Reuse the field when the column is mentioned again in the same index
       // (e.g. `col dict, col included(...)`).
       auto [m_it, m_new] =
@@ -1118,8 +1119,8 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
       }
       col_field_id = m_it->second;
     } else {
-      // IVF stays at the column id so it attaches to the stored vector value;
-      // transactional indexes too.
+      // An ANN column (IVF or HNSW) stays at the column id so the index attaches
+      // to the stored vector value; transactional indexes too.
       col_field_id = static_cast<irs::field_id>(column);
     }
     auto [col_it, col_inserted] =
@@ -1128,7 +1129,7 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
     if (col_inserted) {
       key_columns.push_back(column);
     }
-    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
+    if (!c.IsBuiltin(kIncludedKind) && !ann_column) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&

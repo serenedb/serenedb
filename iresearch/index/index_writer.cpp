@@ -1880,15 +1880,26 @@ bool IndexWriter::ReplaceSegments(
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
 
-  // In the same critical section as the imports below: a query reaches an
-  // import when `import.tick <= query.tick`, so removals queued here mask the
-  // adopted segments in the generation that publishes them. Queueing them
-  // outside this lock would let a commit in between publish one without the
-  // other, which is a deleted row briefly coming back.
+  // In the same critical section as the imports below, so removals queued here
+  // mask the adopted segments in the generation that publishes them. As rowids
+  // are not reused - even if this succeeds but allocations below fails -
+  // removes are harmless without adoption passed.
   if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
     return false;
   }
 
+  // Pre-allocation so tail is allocation-free
+  auto& segment_mask = flush->segment_mask;
+  flush->imports.reserve(flush->imports.size() + adopted.size());
+  segment_mask.reserve(segment_mask.size() + candidates.size());
+  std::vector<std::string_view> masked;
+  masked.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    masked.emplace_back(
+      flush->masked_names.emplace_back(candidate->Meta().name));
+  }
+
+  // Mutating tail
   // No merger: the replacements are already written, so PrepareFlush takes the
   // plain-import path and applies pending removals by tick rather than
   // remapping them through a merge. The pinned reader rides along so the files
@@ -1902,13 +1913,8 @@ bool IndexWriter::ReplaceSegments(
                                 Compaction{}, std::move(entry.reader),
                                 decltype(committed_reader){committed_reader});
   }
-
-  // noexcept part:
-  auto& segment_mask = flush->segment_mask;
-  segment_mask.reserve(segment_mask.size() + candidates.size());
-  for (const auto* candidate : candidates) {
-    segment_mask.emplace(
-      flush->masked_names.emplace_back(candidate->Meta().name));
+  for (const auto name : masked) {
+    segment_mask.emplace(name);
   }
   return true;
 }

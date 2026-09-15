@@ -82,6 +82,12 @@
       "paths": [
         "test/sql/parallelism/interquery/concurrent_writes_during_index_creation.test_slow"
       ]
+    },
+    {
+      "reason": "EXPLAIN names a scanned table bare where DuckDB qualifies it. The file asserts `Table: <REGEX>:.*.integers.*`, the catalog- and schema-qualified `memory.main.integers` upstream prints since 28e2ab60c6; SereneDB's EXPLAIN follows PostgreSQL, whose plans show the relation unqualified (`Seq Scan on integers`), so TableScanToString (src/function/table/table_scan.cpp) renders the entry's own name and tests/sqllogic/sdb/pg/explain pins `Table: t` in five files, on main as well as here. The regex cannot match a bare name, and changing the output would break the sqllogic expectations that define it.",
+      "paths": [
+        "test/sql/explain/test_explain_table_scan.test"
+      ]
     }
   ]
 }

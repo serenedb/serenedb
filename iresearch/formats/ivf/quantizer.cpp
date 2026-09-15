@@ -777,10 +777,30 @@ Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
   }
 }
 
+// Codes a few groups ahead are fetched while the current group computes: a
+// scan's candidates are spread over the code array, so without it every group
+// waits on memory.
+inline constexpr size_t kSq8Lookahead = 8;
+
 template<bool L2, typename Row>
 void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out) {
+  const size_t bytes = w.d;
+  const auto prefetch = [&](size_t j) {
+    if (j < n) {
+      const byte_type* p = row(j);
+      for (size_t off = 0; off < bytes; off += 64) {
+        __builtin_prefetch(p + off, 0, 1);
+      }
+    }
+  };
+  for (size_t j = 0; j < kSq8Lookahead && j < n; ++j) {
+    prefetch(j);
+  }
   size_t i = 0;
   for (; i + 4 <= n; i += 4) {
+    for (size_t j = i + kSq8Lookahead; j < i + kSq8Lookahead + 4; ++j) {
+      prefetch(j);
+    }
     const byte_type* codes[4] = {row(i), row(i + 1), row(i + 2), row(i + 3)};
     Sq8Dot4Avx512<L2>(w, codes, out + i);
   }

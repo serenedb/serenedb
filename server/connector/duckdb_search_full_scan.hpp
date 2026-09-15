@@ -273,8 +273,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
       case ScanMode::ColScan:
         return std::max<duckdb::idx_t>(1, col_scan.units.size());
       case ScanMode::Stream:
-        return std::max<duckdb::idx_t>(
-          stream_threads, scorer_obj ? total_segments : claimable_segments);
+        return std::max<duckdb::idx_t>(1, stream_threads);
       default:
         // The scorer prepare phase walks every segment (corpus-level term
         // statistics), even ones the whole-file classification excluded.

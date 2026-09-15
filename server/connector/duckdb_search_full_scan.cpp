@@ -1366,6 +1366,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
+  if (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan) {
+    state->stream_threads =
+      duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+  }
   if (state->mode == ScanMode::TsDict) {
     const auto& out = state->output_projection_ids;
     const bool real_output = out.empty()
@@ -1536,8 +1540,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan) {
-    state->stream_threads =
-      duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
     state->stream_cursors.count = static_cast<uint32_t>(state->stream_threads);
     state->stream_cursors.current =
       std::make_unique<IResearchScanGlobalState::StreamCursorSlot[]>(

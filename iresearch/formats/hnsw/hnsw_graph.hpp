@@ -141,6 +141,10 @@ enum class HnswWalk : uint8_t {
   // Not scored; its neighbours are the candidates instead (ACORN-1), up to
   // the level's width per rejected node.
   TwoHop,
+  // Scored and passed through for one hop: a rejected node's expansion only
+  // scores its admitted neighbours, so rejected regions are crossed but not
+  // explored.
+  Bridge,
 };
 
 inline constexpr uint64_t kHnswNoBudget = std::numeric_limits<uint64_t>::max();
@@ -328,6 +332,10 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     s.batch.clear();
     const auto neighbors = graph.Neighbors(cur.node, level);
     const auto width = neighbors.size();
+    // Bridge: a node reached through a rejected one only offers its admitted
+    // neighbours; an admitted node offers them all, as Through does.
+    const bool through = Walk == HnswWalk::Through ||
+                         (Walk == HnswWalk::Bridge && accept(cur.node));
     for (size_t i = 0; i < width; ++i) {
       const auto id = HnswLoadLink(neighbors[i]);
       if (id == kHnswInvalidNode) {
@@ -336,7 +344,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
       if (s.visited.TestAndSet(id)) {
         continue;
       }
-      if constexpr (Walk == HnswWalk::Through) {
+      if (through) {
         s.batch.push_back(id);
         dist.Prefetch(id);
         continue;
@@ -381,7 +389,8 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
       if (nearest.size() >= ef && cand.score <= nearest.front().score) {
         continue;
       }
-      if (Walk != HnswWalk::Through || accept(cand.node)) {
+      if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge) ||
+          accept(cand.node)) {
         nearest.push_back(cand);
         std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
         if (nearest.size() > ef) {
@@ -389,6 +398,9 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
           nearest.pop_back();
         }
       }
+      // The candidate's links are what its expansion reads first; fetching
+      // them now overlaps that miss with the rest of this batch.
+      __builtin_prefetch(graph.Neighbors(cand.node, level).data(), 0, 1);
       frontier.push_back(cand);
       std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
     }

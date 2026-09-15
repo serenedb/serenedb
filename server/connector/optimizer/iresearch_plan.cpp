@@ -42,6 +42,7 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -623,11 +624,10 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
 }
 
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
-  static constexpr std::string_view kModes[]{"auto", "walk", "scan", "prune",
-                                             "twohop"};
+  static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
   static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
   const auto mode = gFilterMode.Enum(context, kModes);
-  if (mode >= std::size(kModes)) {
+  if (mode >= kModes.size()) {
     return irs::HnswFilterMode::Auto;
   }
   return static_cast<irs::HnswFilterMode>(mode);

@@ -328,6 +328,28 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
     uint64_t last = off;
     bool more = true;
     for (;;) {
+      // A whole word of candidates, all of it inside the run: 64 consecutive
+      // indices at once. A set folded from every row of the segment is made
+      // of such words, and walking them a bit at a time cost more than the
+      // column compare they feed.
+      if (word == ~uint64_t{0}) {
+        const uint64_t first = (w - 1) * 64;
+        if (first + 64 <= limit && first + 64 - off <= STANDARD_VECTOR_SIZE) {
+          auto* const sel = _sel.data() + run;
+          const auto rel = static_cast<uint32_t>(first - off);
+          for (uint32_t i = 0; i < 64; ++i) {
+            sel[i] = rel + i;
+          }
+          run += 64;
+          last = first + 63;
+          word = 0;
+          if (!load()) {
+            more = false;
+            break;
+          }
+          continue;
+        }
+      }
       const auto b = bit();
       if (b >= limit || b - off >= STANDARD_VECTOR_SIZE) {
         break;

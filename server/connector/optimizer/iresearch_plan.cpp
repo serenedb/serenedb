@@ -621,6 +621,12 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return ReadIntSetting(context, "sdb_hnsw_ef_search");
 }
 
+bool ReadAnnExact(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  return context.TryGetCurrentSetting("sdb_ann_exact", v) && !v.IsNull() &&
+         v.GetValue<bool>();
+}
+
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
   const auto mode = ReadStringSetting(context, "sdb_hnsw_filter_mode");
   if (absl::EqualsIgnoreCase(mode, "walk")) {
@@ -735,6 +741,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
       .hnsw_filter_mode = ReadHnswFilterMode(context),
+      .exact = ReadAnnExact(context),
     };
     ss.score_order = info.order;
   } else {

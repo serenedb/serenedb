@@ -98,6 +98,9 @@ struct VectorScorerOptions {
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
+  // Brute force over the stored vectors instead of the ANN index: the exact
+  // answer, split across workers segment by segment.
+  bool exact = false;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 

@@ -54,6 +54,7 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context& ctx) {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 inline Root::ptr Make(const KnnVectorQuery&, const Context& ctx) { return {}; }
+inline Root::ptr Make(const ExactVectorQuery&, const Context&) { return {}; }
 Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);

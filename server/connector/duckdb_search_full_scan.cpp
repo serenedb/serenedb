@@ -1457,7 +1457,20 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->topk.global_kth_score.store(state->score_static_floor,
                                          std::memory_order_relaxed);
     }
-    if (ss.vector_scorer &&
+    if (ss.vector_scorer && ss.vector_scorer->exact) {
+      // A brute-force scan reads a segment's vectors once, sequentially: the
+      // rows split into parts of about 64k so a big segment spreads over the
+      // workers, and no part is small enough for the split to cost more than
+      // it saves.
+      uint64_t largest = 0;
+      for (uint32_t si = 0; si < state->total_segments; ++si) {
+        largest =
+          std::max<uint64_t>(largest, (*state->reader)[si].docs_count());
+      }
+      state->topk.parts =
+        static_cast<uint32_t>(std::clamp<uint64_t>(largest / 65536, 1, 32));
+    }
+    if (ss.vector_scorer && !ss.vector_scorer->exact &&
         (ss.vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
       const auto k = static_cast<double>(*ss.score_top_k);
@@ -2089,7 +2102,8 @@ void ClassifySegmentColFilters(const irs::SubReader& seg,
 namespace {
 
 void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
-                        uint32_t seg_idx, IResearchScanGlobalState& g) {
+                        uint32_t seg_idx, uint32_t part,
+                        IResearchScanGlobalState& g) {
   ClassifySegmentColFilters(seg, g, s.filter_states, s.seg_cls);
   const auto& cls = s.seg_cls;
   if (cls.segment_dead) {
@@ -2113,7 +2127,13 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   collector.RaiseScoreThreshold(
     g.topk.global_kth_score.load(std::memory_order_relaxed));
 
-  const auto& seg_query = EnsureSegmentQuery(g, s, seg, seg_idx);
+  const auto& seg_query = [&]() -> const irs::QueryBuilder& {
+    if (g.topk.parts <= 1) {
+      return EnsureSegmentQuery(g, s, seg, seg_idx);
+    }
+    absl::MutexLock lock{&g.queries_mutex};
+    return EnsureSegmentQuery(g, s, seg, seg_idx);
+  }();
 
   s.col_verify.Begin(seg, cls.active, g, s.filter_states);
 
@@ -2125,7 +2145,9 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
      .fetcher = s.score_fetcher,
      .table = s.col_verify.Empty() ? nullptr : &s.col_verify,
      .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
-     .k = static_cast<uint32_t>(s.hit_slice.size())});
+     .k = static_cast<uint32_t>(s.hit_slice.size()),
+     .part = part,
+     .parts = g.topk.parts});
   EnsurePlanned(plan != nullptr);
   plan->Run(collector);
 
@@ -2140,16 +2162,18 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
 
 void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                  TopKScanLocalState& l, duckdb::DataChunk& output) {
+  // A unit is a segment, or one part of it when the plan splits segments.
+  const uint32_t parts = std::max<uint32_t>(1, g.topk.parts);
   while (!l.segments_exhausted) {
     const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (claimed >= g.claimable_segments) {
+    if (claimed >= g.claimable_segments * parts) {
       l.segments_exhausted = true;
       break;
     }
-    const auto seg = g.SegmentAt(claimed);
+    const auto seg = g.SegmentAt(claimed / parts);
     const auto& sub = (*g.reader)[seg];
     SDB_ASSERT(sub.live_docs_count() != 0);
-    CollectSegmentTopK(l, sub, seg, g);
+    CollectSegmentTopK(l, sub, seg, claimed % parts, g);
   }
   if (!l.emit_prepared) {
     l.PrepareEmitBuffer(g);

@@ -45,6 +45,7 @@ Node::ptr Make(const ByNestedQuery& query);
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
+inline Node::ptr Make(const ExactVectorQuery&) { return {}; }
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
 Node::ptr Make(const BooleanQuery& query);
 template<typename Parser, typename Acceptor>
@@ -60,6 +61,9 @@ Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx);
+inline Node::ptr Make(const ExactVectorQuery&, const detail::ScoredCtx&) {
+  return {};
+}
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx);
 inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&) {
   return {};

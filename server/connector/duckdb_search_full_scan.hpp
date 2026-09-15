@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
 #include <algorithm>
@@ -196,6 +197,11 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // an offsets walk reads. Decided once for the scan: `queries` is shared.
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
+  // Taken around a segment's query preparation when one segment is split
+  // across workers (topk.parts > 1): two workers may then reach the same
+  // unprepared segment at once, and the second would replace a query the
+  // first is already running.
+  absl::Mutex queries_mutex;
   std::optional<irs::StatsArena> stats_arena;
   std::optional<irs::PreparedCollector> collector;
   const irs::Scorer* stats_scorer = nullptr;
@@ -247,6 +253,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     std::atomic<irs::score_t> global_kth_score =
       std::numeric_limits<irs::score_t>::lowest();
     uint32_t rerank_pool = 0;
+    // An exact (brute-force) vector scan splits every segment into this many
+    // parts, each a unit a worker claims; index walks use 1.
+    uint32_t parts = 1;
   };
   TopKState topk;
 
@@ -262,7 +271,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
         // The scorer prepare phase walks every segment (corpus-level term
         // statistics), even ones the whole-file classification excluded.
         return std::max<duckdb::idx_t>(
-          1, scorer_obj ? total_segments : claimable_segments);
+          1, (scorer_obj ? total_segments : claimable_segments) * topk.parts);
     }
   }
 };

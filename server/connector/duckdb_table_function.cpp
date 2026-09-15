@@ -42,6 +42,7 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -369,6 +370,15 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
+  if (vs.exact && vs.radius == std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByVectorExact>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
+    o->query = vs.query_vector;
+    o->metric = vs.metric;
+    o->inner = std::move(inner);
+    return f;
+  }
   if (vs.radius != std::numeric_limits<float>::max()) {
     auto f = std::make_unique<irs::ByRadius>();
     *f->mutable_field_id() = vs.field_id;
@@ -635,6 +645,9 @@ void SereneDBScanBindData::AppendSummary(
     out.insert("Score",
                absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
                             "(", fname, ", ", ctype.ToString(), ")"));
+    if (vector_scorer->exact) {
+      out.insert("Exact", "brute force over the stored vectors");
+    }
   }
   std::unique_ptr<irs::Scorer> query_scorer;
   if (text_scorer) {

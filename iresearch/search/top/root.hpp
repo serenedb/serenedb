@@ -35,6 +35,11 @@ struct Context {
   detail::TableFilter* table = nullptr;
   bool prune = false;
   uint32_t k = 0;
+  // A root that scans rows rather than walks an index answers for the rows
+  // of its part alone, so one segment can be split across workers; the
+  // callers merge. Index walks ignore the split and must be given part 0 of 1.
+  uint32_t part = 0;
+  uint32_t parts = 1;
 };
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {

@@ -70,8 +70,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     ASSERT_EQ(0, writer->memory_active());
 
     for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
+      writer->begin(0);
       ASSERT_TRUE(writer->valid());
       ASSERT_TRUE(tests::InsertField(*writer, writer->LastDocId(), field));
       ASSERT_TRUE(writer->valid());
@@ -97,8 +96,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
     ASSERT_EQ(0, writer->memory_active());
 
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
@@ -161,8 +159,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_EQ(0u, writer->memory_active());
 
     for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
+      writer->begin(0);
       ASSERT_TRUE(writer->valid());
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
                                writer->LastDocId(), field);
@@ -185,8 +182,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
 
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
@@ -235,8 +231,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     writer->reset(segment);
 
     for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
+      writer->begin(0);
       ASSERT_TRUE(writer->valid());
       ASSERT_TRUE(::tests::InsertField(*writer, writer->LastDocId(), field));
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
@@ -259,8 +254,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
 
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {

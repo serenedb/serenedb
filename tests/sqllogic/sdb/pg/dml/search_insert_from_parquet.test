@@ -1,0 +1,86 @@
+control substitution on
+
+statement ok
+CREATE TABLE sip_src AS
+SELECT i,
+       CASE WHEN i % 13 = 0 THEN NULL
+            WHEN i % 11 = 0 THEN ''
+            WHEN i % 3 = 0 THEN 'k' || (i % 50)::VARCHAR
+            ELSE 'row-' || i::VARCHAR || '-' || repeat(chr((97 + i % 26)::INTEGER), (20 + i % 40)::INTEGER) END AS s,
+       CASE WHEN i % 17 = 0 THEN NULL ELSE 'dict-value-' || (i % 37)::VARCHAR || repeat('z', 10) END AS d,
+       CASE WHEN i % 19 = 0 THEN NULL
+            WHEN i % 5 = 0 THEN []::VARCHAR[]
+            ELSE ['a' || i::VARCHAR, repeat('b', (13 + i % 7)::INTEGER), CASE WHEN i % 4 = 0 THEN NULL ELSE 'c' END] END AS l
+FROM generate_series(1, 20000) g(i);
+
+statement ok
+COPY sip_src TO '${__TEST_DIR__}/sip.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 3000);
+
+statement ok
+CREATE TABLE sip_t (i BIGINT, s TEXT, d TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement count 20000
+INSERT INTO sip_t SELECT i, s, d, l FROM read_parquet('${__TEST_DIR__}/sip.parquet');
+
+statement ok
+VACUUM (REFRESH_TABLE) sip_t;
+
+query
+SELECT count(*) AS n FROM sip_t;
+----
+n
+20000
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, d, l FROM sip_t EXCEPT ALL SELECT i, s, d, l FROM sip_src);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, d, l FROM sip_src EXCEPT ALL SELECT i, s, d, l FROM sip_t);
+----
+n
+0
+
+statement ok
+CREATE TABLE sip_tail (i BIGINT, s TEXT, d TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement count 5000
+INSERT INTO sip_tail SELECT i, s, d, l FROM read_parquet('${__TEST_DIR__}/sip.parquet') WHERE i > 15000;
+
+statement ok
+VACUUM (REFRESH_TABLE) sip_tail;
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, d, l FROM sip_tail EXCEPT ALL SELECT i, s, d, l FROM sip_src WHERE i > 15000);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, d, l FROM sip_src WHERE i > 15000 EXCEPT ALL SELECT i, s, d, l FROM sip_tail);
+----
+n
+0
+
+statement ok
+CREATE TABLE sip_dict (i BIGINT, s TEXT, d TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement ok
+INSERT INTO sip_dict SELECT i, s, d, l FROM read_parquet('${__TEST_DIR__}/sip.parquet') WHERE d = 'dict-value-5zzzzzzzzzz';
+
+statement ok
+VACUUM (REFRESH_TABLE) sip_dict;
+
+query
+SELECT (SELECT count(*) FROM sip_dict) = (SELECT count(*) FROM sip_src WHERE d = 'dict-value-5zzzzzzzzzz') AS same;
+----
+same
+t
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, d, l FROM sip_dict EXCEPT ALL SELECT i, s, d, l FROM sip_src WHERE d = 'dict-value-5zzzzzzzzzz');
+----
+n
+0

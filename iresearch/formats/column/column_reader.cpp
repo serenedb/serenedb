@@ -481,8 +481,10 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     }
     if (permille <= bands.native * span &&
         _segments[s.window.block].codec->select != nullptr) {
+      const bool self_valid = _segments[s.window.block].codec->validity ==
+                              duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
       bool native = true;
-      if (_validity) {
+      if (_validity && !self_valid) {
         auto& vs = s.child_states[0];
         _validity->BeginScanVector(vs);
         native =
@@ -495,9 +497,13 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
         s.st.internal_index = s.st.offset_in_column;
         if (_validity) {
           auto& vs = s.child_states[0];
-          vs.segments.back()->Select(vs.st, span, out, sel, hits);
-          vs.st.offset_in_column += span;
-          vs.st.internal_index = vs.st.offset_in_column;
+          if (self_valid) {
+            _validity->SkipRows(vs, span);
+          } else {
+            vs.segments.back()->Select(vs.st, span, out, sel, hits);
+            vs.st.offset_in_column += span;
+            vs.st.internal_index = vs.st.offset_in_column;
+          }
         }
         return;
       }

@@ -117,6 +117,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     size_t import_interval = 10000;
     irs::DirectoryReader import_reader;
     std::atomic<size_t> parsed_docs_count(0);
+    std::atomic<size_t> update_docs_count(0);
     size_t update_skip = 1000;
     size_t writer_batch_size =
       batch_size ? batch_size : (std::numeric_limits<size_t>::max)();
@@ -291,15 +292,13 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       for (size_t i = 0; i < num_update_threads; ++i) {
         thread_pool.run([&mutex, &writer, num_update_threads, i, update_skip,
                          writer_batch_size, &writer_commit_count, &inserts,
-                         this] {
+                         &update_docs_count, this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
           }
 
-          if (!i) {
-            inserts.wait();
-          }
+          inserts.wait();
 
           CsvDocTemplateT csv_doc_template;
           tests::CsvDocGenerator gen(resource("simple_two_column.csv"),
@@ -366,8 +365,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               REGISTER_TIMER_NAMED_DETAILED("update");
               {
                 auto ctx = writer->GetBatch();
+                ctx.Remove(std::move(filter));
                 {
-                  auto d = ctx.Replace(std::move(filter));
+                  auto d = ctx.Insert();
                   EXPECT_TRUE(
                     tests::InsertFields(d, csv_doc_template.indexed.begin(),
                                         csv_doc_template.indexed.end()));
@@ -376,6 +376,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                 }
                 TransactionTick(ctx);
               }
+              ++update_docs_count;
             }
 
             if (count >= writer_batch_size) {
@@ -472,6 +473,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     EXPECT_EQ(parsed_docs_count + imported_docs_count, indexed_docs_count)
       << parsed_docs_count << " " << imported_docs_count;
     EXPECT_EQ(imported_docs_count, import_docs_count);
+    EXPECT_EQ(updated_docs_count, update_docs_count);
     // at least some imports took place if import enabled
     EXPECT_TRUE(imported_docs_count != 0 || num_import_threads == 0);
     // at least some updates took place if update enabled

@@ -27,6 +27,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/utils/bit_utils.hpp"
@@ -56,16 +57,11 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
  public:
-  struct DocContext final {
-    uint64_t tick{0};
-    size_t query_id{writer_limits::kInvalidOffset};
-  };
-
   static std::unique_ptr<SegmentWriter> make(
     Directory& dir, const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
-  doc_id_t begin(DocContext ctx, doc_id_t batch_size = 1);
+  doc_id_t begin(uint64_t tick, doc_id_t batch_size = 1);
 
   // WithField/WithTokens are the only ingest doors: the FieldInverter
   // Invert* entries are the vocabulary, run under the writer's failure
@@ -131,7 +127,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     _valid = false;
   }
 
-  std::span<DocContext> docs_context() noexcept { return _docs_context; }
+  DocContexts& docs_context() noexcept { return _docs_context; }
 
   [[nodiscard]] DocMap flush(IndexSegment& segment, DocsMask& docs_mask);
 
@@ -229,7 +225,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
-  ManagedVector<DocContext> _docs_context;
+  DocContexts _docs_context;
   DocsMask _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;

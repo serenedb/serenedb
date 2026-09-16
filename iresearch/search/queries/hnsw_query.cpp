@@ -175,37 +175,73 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
 // anywhere, so the scans are rewound between hops. Every answer is remembered,
 // so a node revisited on a later hop costs nothing, and the walk asks about
 // each node at most once however often it is reached.
+// Buffers for the walk's answers, kept per thread. Sizing them per query would
+// be two bitmaps of the segment: at ten million rows that is 2.5 MB allocated
+// and zeroed for a walk that asks about a few hundred nodes. They are grown
+// once and cleared by the words actually touched.
+struct WalkFilterScratch {
+  std::vector<uint64_t> known;
+  std::vector<uint64_t> pass;
+  std::vector<uint32_t> dirty;
+  std::vector<doc_id_t> ask;
+
+  void Grow(size_t words) {
+    if (known.size() < words) {
+      known.resize(words, 0);
+      pass.resize(words, 0);
+    }
+  }
+
+  void Clear() {
+    for (const auto w : dirty) {
+      known[w] = 0;
+      pass[w] = 0;
+    }
+    dirty.clear();
+  }
+};
+
+WalkFilterScratch& ThreadWalkScratch() {
+  static thread_local WalkFilterScratch scratch;
+  return scratch;
+}
+
 class WalkFilter {
  public:
   WalkFilter(detail::TableFilter& table, doc_id_t docs_count)
-    : _table{&table},
-      _known((docs_count + 63) / 64, 0),
-      _pass((docs_count + 63) / 64, 0),
-      _docs_count{docs_count} {}
+    : _table{&table}, _s{ThreadWalkScratch()}, _docs_count{docs_count} {
+    _s.Grow((size_t{docs_count} + 63) / 64);
+  }
+
+  ~WalkFilter() { _s.Clear(); }
+
+  WalkFilter(const WalkFilter&) = delete;
+  WalkFilter& operator=(const WalkFilter&) = delete;
 
   // The hop, before anything is asked about a single node of it.
   void Prepare(std::span<const uint32_t> batch) const {
-    _ask.clear();
+    auto& ask = _s.ask;
+    ask.clear();
     for (const auto node : batch) {
-      if (node < _docs_count && !Bit(_known, node)) {
-        _ask.push_back(node + doc_limits::min());
+      if (node < _docs_count && !Bit(_s.known, node)) {
+        ask.push_back(node + doc_limits::min());
       }
     }
-    if (_ask.empty()) {
+    if (ask.empty()) {
       return;
     }
-    std::sort(_ask.begin(), _ask.end());
-    _ask.erase(std::unique(_ask.begin(), _ask.end()), _ask.end());
-    for (const auto doc : _ask) {
-      Set(_known, doc - doc_limits::min());
+    std::sort(ask.begin(), ask.end());
+    ask.erase(std::unique(ask.begin(), ask.end()), ask.end());
+    for (const auto doc : ask) {
+      Mark(doc - doc_limits::min());
     }
     // The previous hop left the scans wherever it ended; this one starts
     // anywhere, and the readers only go forwards.
     _table->Rewind();
-    const auto kept = _table->Narrow(_ask.data(), nullptr,
-                                     static_cast<uint32_t>(_ask.size()));
+    const auto kept =
+      _table->Narrow(ask.data(), nullptr, static_cast<uint32_t>(ask.size()));
     for (uint32_t i = 0; i < kept; ++i) {
-      Set(_pass, _ask[i] - doc_limits::min());
+      Set(_s.pass, ask[i] - doc_limits::min());
     }
   }
 
@@ -213,17 +249,17 @@ class WalkFilter {
     if (node >= _docs_count) {
       return false;
     }
-    if (!Bit(_known, node)) {
+    if (!Bit(_s.known, node)) {
       // Reached without a hop of its own: the seed of the walk, or a node a
       // mode admits outside the batch. One question, still ascending on its own.
       doc_id_t doc = node + doc_limits::min();
-      Set(_known, node);
+      Mark(node);
       _table->Rewind();
       if (_table->Narrow(&doc, nullptr, 1) == 1) {
-        Set(_pass, node);
+        Set(_s.pass, node);
       }
     }
-    return Bit(_pass, node);
+    return Bit(_s.pass, node);
   }
 
  private:
@@ -233,11 +269,18 @@ class WalkFilter {
   static void Set(std::vector<uint64_t>& w, uint32_t i) noexcept {
     w[i / 64] |= uint64_t{1} << (i % 64);
   }
+  // A word is recorded the first time anything in it is set, so the clear at
+  // the end touches only the words the walk reached.
+  void Mark(uint32_t node) const {
+    const auto w = node / 64;
+    if (_s.known[w] == 0) {
+      _s.dirty.push_back(w);
+    }
+    _s.known[w] |= uint64_t{1} << (node % 64);
+  }
 
   detail::TableFilter* _table;
-  mutable std::vector<uint64_t> _known;
-  mutable std::vector<uint64_t> _pass;
-  mutable std::vector<doc_id_t> _ask;
+  WalkFilterScratch& _s;
   doc_id_t _docs_count;
 };
 

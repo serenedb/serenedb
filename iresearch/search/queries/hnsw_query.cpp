@@ -311,18 +311,30 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
 }
 
-std::optional<uint64_t> HnswQuery::ScanCandidates(uint32_t parallel) const {
+std::optional<uint64_t> HnswQuery::ScanCandidates(
+  uint32_t parallel, std::optional<uint64_t> table_rows) const {
   // The same rule RunFiltered uses, from what is known without evaluating the
-  // predicate: an inner query's own upper bound. A table filter's count needs
-  // the fold, so it is not answered here.
-  if (_inner == nullptr || _ef == 0 || _filter_mode == HnswFilterMode::Walk ||
+  // predicate: an inner query's own upper bound, and whatever bound the caller
+  // has for its table filter. Both are upper bounds, and a scan only gets
+  // cheaper as the true count falls, so preferring it here still holds.
+  if (_ef == 0 || _filter_mode == HnswFilterMode::Walk ||
       _filter_mode == HnswFilterMode::Prune ||
       _filter_mode == HnswFilterMode::TwoHop ||
       _filter_mode == HnswFilterMode::Bridge) {
     return std::nullopt;
   }
   const auto& graph = _data->graph;
-  const uint64_t matches = _inner->EstimateMax();
+  uint64_t matches = 0;
+  if (_inner != nullptr) {
+    matches = _inner->EstimateMax();
+    if (table_rows) {
+      matches = std::min<uint64_t>(matches, *table_rows);
+    }
+  } else if (table_rows) {
+    matches = *table_rows;
+  } else {
+    return std::nullopt;
+  }
   if (_filter_mode != HnswFilterMode::Scan &&
       !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), parallel)) {
     return std::nullopt;
@@ -336,6 +348,14 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
   auto& scratch = ThreadScratch();
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
+  }
+  if (parts > 1 && _inner == nullptr && table == nullptr) {
+    // Nothing to split by doc range after all (the table filter turned out not
+    // to fold): the whole search is one part's, the rest answer nothing.
+    if (part != 0) {
+      return {};
+    }
+    parts = 1;
   }
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                [&](auto& dist) {

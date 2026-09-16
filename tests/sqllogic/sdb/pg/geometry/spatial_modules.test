@@ -1,14 +1,11 @@
 # Pins the *shape* of the compiled-in spatial extension: geometry operations run
-# on Boost.Geometry, and PROJ and GDAL are built (SPATIAL_USE_BOOST / _PROJ /
-# _GDAL in third_party/CMakeLists.txt). GEOS is not vendored at all.
+# on Boost.Geometry (SPATIAL_USE_BOOST in third_party/CMakeLists.txt). GEOS,
+# PROJ and GDAL are not vendored at all, so the extension has no dependency
+# outside the repository and every geometry function is its own code.
 #
 # One liveness assert per module, so a module silently dropping out of the build
 # fails here rather than surfacing at the call site as a confusing "not in the
 # catalog, but it exists in the spatial extension" error.
-#
-# GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit driver
-# allowlist, so the driver list is pinned too -- adding or removing a driver
-# should show up as a diff here rather than silently.
 #
 # The RTREE index is compiled out (SPATIAL_USE_RTREE=OFF) because SereneDB
 # indexes geometry through `USING inverted` instead, so this file pins that its
@@ -30,46 +27,67 @@ LINESTRING (2 0, 4 0)
 
 query
 SELECT count(*) AS v FROM duckdb_functions()
-WHERE function_name IN ('st_makevalid', 'st_node', 'st_polygonize', 'st_buildarea',
-                        'st_concavehull', 'st_voronoidiagram', 'st_coverageunion');
+WHERE lower(function_name) IN ('st_makevalid', 'st_node', 'st_polygonize', 'st_buildarea',
+                               'st_concavehull', 'st_voronoidiagram', 'st_coverageunion');
 ----
 v
 0
 
 
-# --- PROJ ---
+# --- PROJ is gone: reprojection goes with it ---
 
 query
-SELECT DuckDB_Proj_Version() AS v;
+SELECT count(*) AS v FROM duckdb_functions()
+WHERE lower(function_name) IN ('st_transform', 'duckdb_proj_version',
+                               'duckdb_proj_compiled_version');
 ----
 v
-9.3.1
+0
+
+
+# The spheroid measures stay: they only ever needed PROJ's bundled geodesic
+# solver, which is vendored into the extension instead. Counted by distinct
+# name because several of them carry both a GEOMETRY and a POINT_2D variant.
 
 query
-SELECT ST_AsText(ST_Transform('POINT (1 1)'::GEOMETRY,
-                              'EPSG:4326', 'EPSG:3857')) AS geom;
+SELECT count(DISTINCT lower(function_name)) AS v FROM duckdb_functions()
+WHERE lower(function_name) IN ('st_area_spheroid', 'st_distance_spheroid',
+                               'st_dwithin_spheroid', 'st_length_spheroid',
+                               'st_perimeter_spheroid');
 ----
-geom
-POINT (111319.49079327357 111325.1428663851)
+v
+5
 
 
-# --- GDAL: the driver allowlist ---
+# The CRS itself is a parameter of the GEOMETRY type and comes from the
+# database catalog, not from PROJ, so labelling a geometry still works.
 
 query
-SELECT string_agg(short_name, ', ' ORDER BY short_name) AS drivers
-FROM ST_Drivers();
+SELECT ST_CRS('POINT (1 1)'::GEOMETRY('OGC:CRS84')) AS crs;
 ----
-drivers
-CSV, ESRIJSON, FlatGeobuf, GeoJSON, GeoJSONSeq, OGR_VRT, TopoJSON
+crs
+OGC:CRS84
 
 
-# ST_Read reaches GDAL rather than a stub: a missing file must produce GDAL's
-# own open error.
+# --- GDAL is gone: the file readers and the COPY format go with it ---
 
-query error
-SELECT count(*) FROM ST_Read('/nonexistent.geojson');
+query
+SELECT count(*) AS v FROM duckdb_functions()
+WHERE lower(function_name) IN ('st_read', 'st_read_meta', 'st_drivers');
 ----
-db error: ERROR: Could not open GDAL dataset at: /nonexistent.geojson
+v
+0
+
+
+# The formats spatial reads on its own are unaffected: shapefiles go through
+# the vendored shapelib, OSM through protozero.
+
+query
+SELECT count(DISTINCT lower(function_name)) AS v FROM duckdb_functions()
+WHERE lower(function_name) IN ('st_readshp', 'st_readosm');
+----
+v
+2
 
 
 # --- spatial's RTREE index type stays unreachable on SereneDB tables ---

@@ -326,6 +326,7 @@ struct VarcharBinCore {
 template<WrapContext InContainer>
 struct GeometryTextCore {
   using Value = duckdb::string_t;
+  static constexpr const char* kArrayDelim = ":";
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     static constexpr char kHexUpper[] = "0123456789ABCDEF";
     const std::string_view value{raw.GetData(), raw.GetSize()};
@@ -1735,6 +1736,15 @@ bool RecordTextField(SerializationContext& ctx, const RUVF& v,
 // Emit the element run of a one-dimensional array (no surrounding braces /
 // binary header -- the array core writes those). `off`/`count` come from the
 // resolved array slice. Returns whether any element was NULL.
+template<typename Core, typename = void>
+struct ArrayDelim {
+  static constexpr const char* kValue = ",";
+};
+template<typename Core>
+struct ArrayDelim<Core, std::void_t<decltype(Core::kArrayDelim)>> {
+  static constexpr const char* kValue = Core::kArrayDelim;
+};
+
 template<typename Core, VarFormat Format>
 IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
                                      duckdb::idx_t off, duckdb::idx_t count) {
@@ -1788,7 +1798,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   } else {
     for (duckdb::idx_t i = 0; i < count; ++i) {
       if (i > 0) {
-        ctx.writer->Write(",");
+        ctx.writer->Write(ArrayDelim<Core>::kValue);
       }
       const auto idx = cv.unified.sel->get_index(off + i);
       if (!cv.unified.validity.RowIsValid(idx)) {
@@ -1954,7 +1964,7 @@ struct MultiDimArrayCore {
         context.writer->Write("{");
         for (duckdb::idx_t i = 0; i < array_size; ++i) {
           if (i > 0) {
-            context.writer->Write(",");
+            context.writer->Write(ArrayDelim<Core>::kValue);
           }
           // A NULL sub-list/element must not be resolved further (its
           // list_entry is undefined); render it as the literal NULL like the

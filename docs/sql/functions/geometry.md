@@ -55,7 +55,7 @@ Creates a rectangular polygon from `min_x`, `min_y`, `max_x` and `max_y`.
 
 #### `ST_Collect` function
 
-Collects a list of geometries into a multi-geometry. Geometries of one type become the matching multi-geometry; mixed types cannot be collected, because that would require a `GEOMETRYCOLLECTION`.
+Collects an array of geometries into one geometry. Geometries of one type become the matching multi-geometry, mixed types become a `GEOMETRYCOLLECTION`. `NULL` elements are skipped, and an empty array or an array of only `NULL`s yields `NULL`, as in PostGIS.
 
 <SqlLogicTest id="sql/functions/geometry/st_collect" />
 
@@ -579,13 +579,14 @@ Returns the part of a line carrying M values that falls between two measures.
 
 ## Coordinate Reference Systems
 
-SereneDB attaches the coordinate reference system to the `GEOMETRY` type itself rather than storing an SRID number alongside each value, so `ST_SRID` and `ST_SetSRID` do not exist. `ST_CRS` and `ST_SetCRS` take their place, and identifiers are strings such as `OGC:CRS84` or `EPSG:4326`.
+SereneDB attaches the coordinate reference system to the `GEOMETRY` type itself rather than storing an SRID number alongside each value, so `ST_SRID` and `ST_SetSRID` do not exist. `ST_CRS` and `ST_SetCRS` take their place, and identifiers are strings such as `OGC:CRS84`.
+
+A CRS is a label that SereneDB tracks and checks. It does not reproject: there is no `ST_Transform`, because reprojection needs a database of coordinate-system definitions that SereneDB does not ship. Convert coordinates before loading them, and use `ST_SetCRS` to record which system the result is in. Measuring on the WGS84 ellipsoid needs no such database and is supported, see [Spheroidal Measurements](#spheroidal-measurements).
 
 | Name                                       | Description                                                   |
 | :------------------------------------------ | :-------------------------------------------------------------- |
 | [`ST_CRS`](#st_crs-function)               | Returns the CRS identifier of the geometry                    |
 | [`ST_SetCRS`](#st_setcrs-function)         | Sets the CRS identifier of the geometry                       |
-| [`ST_Transform`](#st_transform-function)   | Reprojects the geometry into another CRS                      |
 
 #### `ST_CRS` function
 
@@ -599,17 +600,11 @@ Sets the Coordinate Reference System (CRS) identifier of the geometry. The coord
 
 <SqlLogicTest id="sql/functions/geometry/st_setcrs" />
 
-#### `ST_Transform` function
-
-Reprojects the geometry from one CRS into another. The source may be omitted when the geometry already carries a CRS.
-
-Authority definitions decide the axis order, and for `EPSG:4326` that order is latitude then longitude -- so the X of the input is read as a latitude. Pass `true` as the final argument to force the conventional longitude/latitude order instead. The example transforms `POINT(1 2)`, so X is a latitude of 1 and Y a longitude of 2, and the easting in the result is the one belonging to 2 degrees.
-
-<SqlLogicTest id="sql/functions/geometry/st_transform" />
-
 ## Spheroidal Measurements
 
 These functions measure on the earth rather than in the coordinate plane and return metres. They take **X as the latitude and Y as the longitude**, which is the opposite of the order used by the planar functions on this page.
+
+`ST_Distance_Sphere` treats the earth as a sphere, which is fast and approximate. The `*_Spheroid` functions use the WGS84 ellipsoid, which is slower and accurate.
 
 | Name                                                       | Description                                                    |
 | :------------------------------------------------------------ | :--------------------------------------------------------------- |

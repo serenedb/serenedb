@@ -219,10 +219,8 @@ WHERE auth_name = 'OGC'
 ORDER BY crs_name;
 ----
 crs_name	auth_name	auth_code
-OGC:CRS27	OGC	CRS27
 OGC:CRS83	OGC	CRS83
 OGC:CRS84	OGC	CRS84
-OGC:CRS84h	OGC	CRS84h
 
 # DOCS_TEST: example_007
 

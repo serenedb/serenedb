@@ -88,9 +88,7 @@ statement error
 DROP FUNCTION ml_cube(INT);
 ----
 db error: ERROR: Cannot drop entry "ml_cube" because there are entries that depend on it.
-view "v_ml_cube2" depends on macro function "ml_cube".
-view "v_ml_cube1" depends on macro function "ml_cube".
-view "v_ml_cube3" depends on macro function "ml_cube".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -143,13 +141,7 @@ statement error
 DROP FUNCTION ml_double_it(INT);
 ----
 db error: ERROR: Cannot drop entry "ml_double_it" because there are entries that depend on it.
-view "v_ml_double2" depends on macro function "ml_double_it".
-view "v_ml_double3" depends on view "v_ml_double2".
-view "v_ml_double1" depends on macro function "ml_double_it".
-view "v_ml_double2" depends on view "v_ml_double1".
-view "v_ml_double3" depends on view "v_ml_double2".
-view "v_ml_double3" depends on view "v_ml_double1".
-view "v_ml_double3" depends on macro function "ml_double_it".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

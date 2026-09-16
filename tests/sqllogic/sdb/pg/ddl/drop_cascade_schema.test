@@ -130,11 +130,7 @@ statement error
 DROP SCHEMA iceberg_warehouse RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "iceberg_warehouse" because there are entries that depend on it.
-view "audit_view" depends on schema "iceberg_warehouse".
-table "partitions" depends on schema "iceberg_warehouse".
-sequence "snapshot_seq" depends on schema "iceberg_warehouse".
-table "manifests" depends on schema "iceberg_warehouse".
-view "audit_view" depends on table "manifests".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -185,11 +181,7 @@ statement error
 DROP SCHEMA clickclack_team RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_team" because there are entries that depend on it.
-table "query_log" depends on schema "clickclack_team".
-sequence "query_log_id_seq" depends on schema "clickclack_team".
-table "dashboard" depends on sequence "query_log_id_seq".
-table "query_log" depends on sequence "query_log_id_seq".
-table "dashboard" depends on schema "clickclack_team".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

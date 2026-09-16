@@ -5,7 +5,7 @@ CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression'
 query error
 CREATE TYPE diagnosis AS ENUM ('something');
 ----
-db error: ERROR: type "diagnosis" already exists
+db error: ERROR: Type with name "diagnosis" already exists!
 
 
 query error

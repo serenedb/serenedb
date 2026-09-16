@@ -1526,10 +1526,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       vs.query_vector = EvaluateQueryVector(context, vs);
     }
     if (vs.kind == irs::AnnKind::Hnsw && state->score_top_k) {
-      // The beam is the result ceiling, so it is at least k. Every hit of the
-      // beam is then the rerank pool (sized below), and ef alone trades recall
-      // for time; the rerank factor is an IVF knob.
-      vs.min_ef = static_cast<uint32_t>(*state->score_top_k);
+      // The beam is the result ceiling, so it is at least k -- and at least
+      // the rescore pool, which is the same thing said of the pool: a search
+      // that returns a hundred cannot hand four hundred to the rescorer. This
+      // has to be decided here rather than next to the pool itself, because
+      // the filter below captures min_ef as it is built. Qdrant takes
+      // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
+      // reason; docs/hnsw-parity.md in vectorbench has the mapping.
+      const auto k = static_cast<double>(*state->score_top_k);
+      const auto factor = ReadHnswRerankFactor(context);
+      vs.min_ef = static_cast<uint32_t>(
+        factor > 0.0 ? std::max(k, std::ceil(factor * k)) : k);
     }
     state->vector_scorer = &vs;
   }
@@ -1761,15 +1768,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
           // keeps it whatever this says.
           pool = 0;
         } else if (factor > 0.0) {
+          // The beam was already widened to hold this, where it had to be:
+          // min_ef is read when the filter is built, well above here.
           pool = std::max(k, std::ceil(factor * k));
-          // A pool wider than the beam widens the beam. Capping it at the beam
-          // instead, as this did, makes the two knobs one: asking to re-score
-          // four hundred of a beam of a hundred then re-scores a hundred, and
-          // the recall the oversample was asked for never arrives. Qdrant
-          // takes ef = max(hnsw_ef, oversampling * k) for the same reason.
-          SDB_ASSERT(state->owned_vector_scorer.has_value());
-          state->owned_vector_scorer->min_ef =
-            static_cast<uint32_t>(std::max(beam, pool));
+          SDB_ASSERT(state->vector_scorer->min_ef >= pool);
         } else {
           pool = beam;
         }

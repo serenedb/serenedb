@@ -40,6 +40,7 @@
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
 #include "network/http/mcp/handlers.h"
+#include "network/http/otlp/handlers.h"
 #include "network/http/test/handlers.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
@@ -258,6 +259,9 @@ network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
         break;
       case network::HttpApi::Mcp:
         network::http::mcp::Register(router);
+        break;
+      case network::HttpApi::Otlp:
+        network::http::otlp::Register(router);
         break;
     }
   }

@@ -1,0 +1,59 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "checkout"}}
+      ]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "io.opentelemetry.http", "version": "1.0.0"},
+          "spans": [
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "b7ad6b7169203331",
+              "traceState": "rojo=00f067aa0ba902b7",
+              "name": "GET /checkout",
+              "kind": 2,
+              "startTimeUnixNano": "1788868800000000000",
+              "endTimeUnixNano": "1788868800150000000",
+              "attributes": [
+                {"key": "http.method", "value": {"stringValue": "GET"}}
+              ],
+              "events": [
+                {
+                  "timeUnixNano": "1788868800100000000",
+                  "name": "exception",
+                  "attributes": [
+                    {"key": "exception.type", "value": {"stringValue": "TimeoutError"}}
+                  ],
+                  "droppedAttributesCount": 0
+                }
+              ],
+              "links": [
+                {
+                  "traceId": "1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6",
+                  "spanId": "00f067aa0ba902b7",
+                  "traceState": "",
+                  "attributes": []
+                }
+              ],
+              "status": {"code": 2, "message": "upstream timed out"}
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "c1ad6b7169203332",
+              "parentSpanId": "b7ad6b7169203331",
+              "name": "SELECT orders",
+              "kind": 3,
+              "startTimeUnixNano": "1788868800010000000",
+              "endTimeUnixNano": "1788868800012000000",
+              "attributes": [
+                {"key": "db.system", "value": {"stringValue": "postgresql"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

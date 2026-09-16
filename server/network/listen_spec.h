@@ -61,12 +61,14 @@ enum class HttpApi {
   Es,
   Test,
   Mcp,
+  Otlp,
 };
 
-constexpr std::array<std::pair<std::string_view, HttpApi>, 3> kHttpApis{{
+constexpr std::array<std::pair<std::string_view, HttpApi>, 4> kHttpApis{{
   {"es", HttpApi::Es},
   {"test", HttpApi::Test},
   {"mcp", HttpApi::Mcp},
+  {"otlp", HttpApi::Otlp},
 }};
 
 struct ListenSpec {

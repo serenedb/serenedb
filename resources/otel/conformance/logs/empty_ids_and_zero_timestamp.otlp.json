@@ -1,0 +1,35 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "cart"}}
+      ]},
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "1788868800000000000",
+              "traceId": "00000000000000000000000000000000",
+              "spanId": "0000000000000000",
+              "severityNumber": 0,
+              "severityText": "",
+              "body": {"stringValue": "fell back to observed time"}
+            },
+            {
+              "observedTimeUnixNano": "1788868800000000001",
+              "body": {"kvlistValue": {"values": [
+                {"key": "event", "value": {"stringValue": "checkout"}},
+                {"key": "amount", "value": {"doubleValue": 12.5}}
+              ]}},
+              "attributes": [
+                {"key": "event.name", "value": {"stringValue": "cart.checkout"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

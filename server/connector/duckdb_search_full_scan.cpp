@@ -28,8 +28,11 @@
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -1420,32 +1423,37 @@ std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
 // to this execution.
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
                                        const VectorScorerOptions& vs) {
-  duckdb::Value folded;
-  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, *vs.query_expr,
-                                                     folded) ||
-      folded.IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("the query vector of a vector search is NULL"));
-  }
-  duckdb::Value casted;
+  // The expression is evaluated into a vector and cast in one vectorised step,
+  // never through one duckdb::Value per dimension: at 1024 dimensions that
+  // materialisation was a fifth of the query.
   const auto target =
     duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vs.dims);
-  if (!folded.DefaultTryCastAs(target, casted, nullptr) || casted.IsNull()) {
+  const auto bad = [&](const char* what) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("the query vector of a vector search is not a ",
-                            target.ToString()));
+                    ERR_MSG("the query vector of a vector search ", what));
+  };
+  duckdb::Vector evaluated{vs.query_expr->GetReturnType(), 1};
+  {
+    duckdb::ExpressionExecutor executor{context, *vs.query_expr};
+    executor.ExecuteExpression(evaluated);
   }
-  std::vector<float> out;
-  out.reserve(vs.dims);
-  for (const auto& child : duckdb::ArrayValue::GetChildren(casted)) {
-    if (child.IsNull()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("the query vector of a vector search holds NULL"));
-    }
-    out.push_back(child.GetValue<float>());
+  duckdb::Vector casted{target, 1};
+  std::string error;
+  if (!duckdb::VectorOperations::TryCast(context, evaluated, casted, 1,
+                                         &error)) {
+    bad(absl::StrCat("is not a ", target.ToString(), ": ", error).c_str());
   }
-  return out;
+  casted.Flatten(1);
+  if (!duckdb::FlatVector::Validity(casted).RowIsValid(0)) {
+    bad("is NULL");
+  }
+  auto& child = duckdb::ArrayVector::GetEntry(casted);
+  child.Flatten(vs.dims);
+  if (!duckdb::FlatVector::Validity(child).CheckAllValid(vs.dims)) {
+    bad("holds NULL");
+  }
+  const auto* data = duckdb::FlatVector::GetData<float>(child);
+  return std::vector<float>{data, data + vs.dims};
 }
 
 }  // namespace

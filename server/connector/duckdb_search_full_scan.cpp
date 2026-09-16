@@ -1396,7 +1396,97 @@ std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
   return std::vector<float>{data, data + vs.dims};
 }
 
+// An upper bound on the rows the segment's column predicates admit, measured on a sample of the
+// predicate itself.
+//
+// A predicate the term index answers carries its own bound through the query's inner iterator, so
+// this is only reached for one the columnstore alone answers, a range on a numeric column. Without
+// a bound such a query cannot weigh a scan against a walk and always walks, which on sift at a
+// million rows cost the range rows half their throughput.
+//
+// The filter's column scans only move forward, which the sequential fill honours, so the sample
+// takes whole windows in increasing order and never seeks back. Eight windows of four thousand
+// docs is under a thirtieth of a million-row segment, and the result is rounded up, because the
+// caller treats it as an upper bound and a scan only looks better as the true count falls.
+std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
+                                              IResearchScanGlobalState& g) {
+  if (g.col_filters.empty()) {
+    return std::nullopt;
+  }
+  const auto* col_reader = seg.GetColReader();
+  if (col_reader == nullptr) {
+    return std::nullopt;
+  }
+  irs::ColFilterStateCache states;
+  irs::ColFilterClassification cls;
+  ClassifySegmentColFilters(seg, g, states, cls);
+  if (cls.segment_dead) {
+    return uint64_t{0};
+  }
+  if (cls.active.empty()) {
+    return std::nullopt;
+  }
+  for (const auto& spec : cls.active) {
+    // A score predicate needs scores the sample does not have.
+    if (spec.is_score) {
+      return std::nullopt;
+    }
+  }
+  const uint64_t rows = seg.docs_count();
+  if (rows == 0) {
+    return uint64_t{0};
+  }
+
+  ColFilterVerify verify;
+  verify.Begin(seg, cls.active, g, states);
+
+  constexpr uint32_t kSampleWindows = 8;
+  constexpr auto kWords = static_cast<uint32_t>(irs::detail::kWindowWords);
+  const uint64_t total_words = (rows + 63) / 64;
+  const auto windows =
+    static_cast<uint32_t>((total_words + kWords - 1) / kWords);
+  const uint32_t take = std::min(kSampleWindows, windows);
+  const uint32_t stride = windows / take;
+
+  std::array<uint64_t, kWords> mask{};
+  uint64_t seen = 0;
+  uint64_t passed = 0;
+  for (uint32_t i = 0; i < take; ++i) {
+    const uint64_t first_word = uint64_t{stride} * i * kWords;
+    if (first_word >= total_words) {
+      break;
+    }
+    const auto words =
+      static_cast<uint32_t>(std::min<uint64_t>(kWords, total_words - first_word));
+    std::fill_n(mask.data(), words, ~uint64_t{0});
+    // No bit may name a doc past the segment's end: the filter reads the docs the bits name.
+    const uint64_t last_doc = (first_word + words) * 64;
+    if (last_doc > rows) {
+      const auto extra = static_cast<unsigned>(last_doc - rows);
+      mask[words - 1] &= ~uint64_t{0} >> extra;
+    }
+    const auto base =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(first_word * 64);
+    uint64_t bits = 0;
+    for (uint32_t w = 0; w < words; ++w) {
+      bits += static_cast<uint64_t>(std::popcount(mask[w]));
+    }
+    passed += verify.Narrow(base, mask.data(), nullptr, words);
+    seen += bits;
+  }
+  if (seen == 0) {
+    return std::nullopt;
+  }
+  // Round the share up, then cap at the segment: an underestimate would make the scan look cheaper
+  // than it is, which is the one error the caller cannot recover from.
+  const auto share = static_cast<long double>(passed) / static_cast<long double>(seen);
+  const auto est = static_cast<uint64_t>(
+    std::ceil(share * static_cast<long double>(rows) * 1.125L));
+  return std::min<uint64_t>(est, rows);
+}
+
 }  // namespace
+
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -1561,7 +1651,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       }
     }
   }
-
   if (state->mode == ScanMode::TopK) {
     state->prune_scorer =
       ResolvePruneScorer(bind_data.topk_scorer, state->scorer_obj.get());
@@ -1608,11 +1697,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (*state->reader)[widest],
         {.collector = nullptr, .thread = 0, .needs_terms = false});
       const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
-      // A predicate the term index answers carries its own upper bound, which
-      // the query reads from its inner iterator. A predicate only the
-      // columnstore answers (a range on a numeric column) has no bound here,
-      // so such a query keeps the graph walk rather than guessing at a scan.
-      const std::optional<uint64_t> table_rows;
+      const auto table_rows =
+        EstimateColFilterRows((*state->reader)[widest], *state);
       // The plan choice credits the split with only a little parallelism: a
       // scan's parts share the memory the codes come from, so its wall time
       // does not fall in proportion to the cores it is given, and a walk that

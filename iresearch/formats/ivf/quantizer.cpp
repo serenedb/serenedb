@@ -28,6 +28,7 @@
 #include <faiss/impl/RaBitQUtils.h>
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
 #include <faiss/impl/ScalarQuantizer.h>
+#include <faiss/impl/scalar_quantizer/sq8_batch.h>
 #include <faiss/impl/fast_scan/fast_scan.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
@@ -666,162 +667,6 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
   std::vector<float> _query;
 };
 
-// sq8 codes decode as x_d = vmin_d + (c_d + 0.5) * vdiff_d / 255 (faiss
-// QT_8bit, one range per dimension), so a distance to the query is a dot
-// product of the raw bytes with weights fixed per query:
-//   <q, x>       = C + sum_d w_d c_d          w_d = q_d vdiff_d / 255
-//   ||q - x||^2  = A + sum_d u_d c_d + sum_d v_d c_d^2
-//                  s_d = vdiff_d / 255, a_d = q_d - vmin_d - s_d / 2,
-//                  u_d = -2 a_d s_d, v_d = s_d^2
-// The bytes are widened straight to float and multiplied, no decode into a
-// float vector first, and four codes run side by side so the four dependent
-// FMA chains overlap. Used where the CPU has AVX-512; faiss otherwise.
-struct Sq8Weights {
-  std::vector<float> a;  // w (inner product) or u (l2)
-  std::vector<float> b;  // v (l2 only)
-  float bias = 0.f;      // C or A
-  uint32_t d = 0;
-};
-
-template<VectorMetric M>
-Sq8Weights MakeSq8Weights(const faiss::ScalarQuantizer& sq,
-                          std::span<const float> query) {
-  Sq8Weights w;
-  w.d = static_cast<uint32_t>(sq.d);
-  SDB_ASSERT(query.size() == w.d);
-  const float* vmin = sq.trained.data();
-  const float* vdiff = sq.trained.data() + w.d;
-  w.a.resize(w.d);
-  if constexpr (M == VectorMetric::L2Sqr) {
-    w.b.resize(w.d);
-  }
-  double bias = 0.;
-  for (uint32_t i = 0; i < w.d; ++i) {
-    const float s = vdiff[i] / 255.f;
-    if constexpr (M == VectorMetric::L2Sqr) {
-      const float a = query[i] - vmin[i] - 0.5f * s;
-      bias += static_cast<double>(a) * a;
-      w.a[i] = -2.f * a * s;
-      w.b[i] = s * s;
-    } else {
-      bias += static_cast<double>(query[i]) * (vmin[i] + 0.5f * s);
-      w.a[i] = query[i] * s;
-    }
-  }
-  w.bias = static_cast<float>(bias);
-  return w;
-}
-
-#if defined(__x86_64__)
-inline bool HasAvx512ForSq8() noexcept {
-  static const bool has =
-    __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
-    __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512dq");
-  return has;
-}
-
-// Four codes at once; `codes[k]` may repeat when fewer are left.
-template<bool L2>
-__attribute__((target("avx512f,avx512bw,avx512vl,avx512dq,fma"))) void
-Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
-              float out[4], uint32_t dims) {
-  __m512 acc[4], acc2[4];
-  for (int k = 0; k < 4; ++k) {
-    acc[k] = _mm512_setzero_ps();
-    acc2[k] = _mm512_setzero_ps();
-  }
-  const float* a = w.a.data();
-  const float* b = w.b.data();
-  uint32_t i = 0;
-  for (; i + 16 <= dims; i += 16) {
-    const __m512 va = _mm512_loadu_ps(a + i);
-    const __m512 vb = L2 ? _mm512_loadu_ps(b + i) : _mm512_setzero_ps();
-    for (int k = 0; k < 4; ++k) {
-      const __m512 c = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
-        _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes[k] + i))));
-      acc[k] = _mm512_fmadd_ps(va, c, acc[k]);
-      if constexpr (L2) {
-        acc2[k] = _mm512_fmadd_ps(vb, _mm512_mul_ps(c, c), acc2[k]);
-      }
-    }
-  }
-  if (i < dims) {
-    const __mmask16 m = static_cast<__mmask16>((1u << (dims - i)) - 1u);
-    const __m512 va = _mm512_maskz_loadu_ps(m, a + i);
-    const __m512 vb =
-      L2 ? _mm512_maskz_loadu_ps(m, b + i) : _mm512_setzero_ps();
-    for (int k = 0; k < 4; ++k) {
-      const __m512 c = _mm512_cvtepi32_ps(
-        _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(m, codes[k] + i)));
-      acc[k] = _mm512_fmadd_ps(va, c, acc[k]);
-      if constexpr (L2) {
-        acc2[k] = _mm512_fmadd_ps(vb, _mm512_mul_ps(c, c), acc2[k]);
-      }
-    }
-  }
-  // One horizontal sum per code: the two chains are joined first, and the
-  // 16 lanes fold in four steps.
-  for (int k = 0; k < 4; ++k) {
-    __m512 a = acc[k];
-    if constexpr (L2) {
-      a = _mm512_add_ps(a, acc2[k]);
-    }
-    const __m256 h =
-      _mm256_add_ps(_mm512_castps512_ps256(a), _mm512_extractf32x8_ps(a, 1));
-    __m128 q =
-      _mm_add_ps(_mm256_castps256_ps128(h), _mm256_extractf128_ps(h, 1));
-    q = _mm_add_ps(q, _mm_movehl_ps(q, q));
-    q = _mm_add_ss(q, _mm_movehdup_ps(q));
-    const float r = w.bias + _mm_cvtss_f32(q);
-    out[k] = L2 ? -r : r;
-  }
-}
-
-// Codes a few groups ahead are fetched while the current group computes: a
-// scan's candidates are spread over the code array, so without it every group
-// waits on memory.
-inline constexpr size_t kSq8Lookahead = 8;
-
-template<bool L2, typename Row>
-void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out,
-                    uint32_t dims = 0) {
-  if (dims == 0 || dims > w.d) {
-    dims = w.d;
-  }
-  // Only the bytes the kernel reads are fetched: a prefix pass touches a
-  // quarter of each code's cache lines, which is the point of it.
-  const size_t bytes = dims;
-  const auto prefetch = [&](size_t j) {
-    if (j < n) {
-      const byte_type* p = row(j);
-      for (size_t off = 0; off < bytes; off += 64) {
-        __builtin_prefetch(p + off, 0, 1);
-      }
-    }
-  };
-  for (size_t j = 0; j < kSq8Lookahead && j < n; ++j) {
-    prefetch(j);
-  }
-  size_t i = 0;
-  for (; i + 4 <= n; i += 4) {
-    for (size_t j = i + kSq8Lookahead; j < i + kSq8Lookahead + 4; ++j) {
-      prefetch(j);
-    }
-    const byte_type* codes[4] = {row(i), row(i + 1), row(i + 2), row(i + 3)};
-    Sq8Dot4Avx512<L2>(w, codes, out + i, dims);
-  }
-  if (i < n) {
-    const byte_type* codes[4] = {row(i), row(i), row(i), row(i)};
-    for (size_t k = 1; i + k < n; ++k) {
-      codes[k] = row(i + k);
-    }
-    float tail[4];
-    Sq8Dot4Avx512<L2>(w, codes, tail, dims);
-    std::copy_n(tail, n - i, out + i);
-  }
-}
-#endif
-
 template<VectorMetric M>
 class ScalarQuantizerReader final : public QuantizerReader {
  public:
@@ -851,8 +696,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const byte_type* c = block.data();
 #if defined(__x86_64__)
     if (_fast) {
-      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(
-        _weights, [&](size_t j) { return c + j * cs; }, n, out);
+      faiss::scalar_quantizer::sq8_batch_score_n(
+        _weights, [&](size_t j) { return c + j * cs; }, n, out, 0);
       return;
     }
 #endif
@@ -894,7 +739,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
       const auto row = [&](size_t j) {
         return base + static_cast<size_t>(ids[j]) * record_size;
       };
-      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(_weights, row, ids.size(), out,
+      faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, ids.size(), out,
                                                dims);
       return;
     }
@@ -912,7 +757,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const size_t n = ids.size();
 #if defined(__x86_64__)
     if (_fast) {
-      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(_weights, row, n, out);
+      faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, n, out, 0);
       return;
     }
 #endif
@@ -947,17 +792,21 @@ class ScalarQuantizerReader final : public QuantizerReader {
  private:
   void PrepareFast(std::span<const float> query) {
 #if defined(__x86_64__)
+    // faiss dispatches the kernel by runtime SIMD level, so there is no CPU
+    // probe here any more: AVX-512 where the machine has it, AVX2 or NEON
+    // otherwise, and a scalar loop on anything else.
     _fast = _cb->Sq().qtype == faiss::ScalarQuantizer::QT_8bit &&
-            _cb->Sq().code_size == _cb->Sq().d && HasAvx512ForSq8();
+            _cb->Sq().code_size == _cb->Sq().d;
     if (_fast) {
-      _weights = MakeSq8Weights<M>(_cb->Sq(), query);
+      faiss::scalar_quantizer::sq8_batch_train(
+        _cb->Sq(), query.data(), M == VectorMetric::L2Sqr, _weights);
     }
 #endif
   }
 
   std::shared_ptr<const ScalarQuantizerCodebook<M>> _cb;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
-  Sq8Weights _weights;
+  faiss::scalar_quantizer::SQ8BatchWeights _weights;
   bool _fast = false;
 };
 

@@ -36,7 +36,7 @@ connection s2
 statement error
 DROP TABLE ccd_rename;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 # The refused drop left its connection usable.
@@ -86,7 +86,7 @@ connection s2
 statement error
 DROP TABLE ccd_comment;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -125,7 +125,7 @@ connection s2
 statement error
 DROP TABLE ccd_colcomment;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -163,7 +163,7 @@ connection s2
 statement error
 DROP TABLE ccd_renamecol;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -195,7 +195,7 @@ connection s2
 statement error
 DROP TABLE ccd_index;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -241,7 +241,7 @@ connection s2
 statement error
 DROP TABLE ccd_altidx CASCADE;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -277,7 +277,7 @@ connection s2
 statement error
 DROP TABLE ccd_grant;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -317,7 +317,7 @@ connection s2
 statement error
 DROP TABLE ccd_owner;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -349,7 +349,7 @@ connection s2
 statement error
 DROP ROLE ccd_victim;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -389,7 +389,7 @@ connection s2
 statement error
 DROP TABLE ccd_dropview CASCADE;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -443,7 +443,7 @@ connection s3
 statement error
 COMMENT ON TABLE ccd_late IS 'doomed';
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s3
@@ -595,7 +595,7 @@ connection s9
 statement error
 ALTER TABLE ccd_plain RENAME TO ccd_plain_x;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s9

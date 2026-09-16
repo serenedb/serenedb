@@ -1113,6 +1113,10 @@ double ReadHnswRerankFactor(duckdb::ClientContext& context) {
   return ReadDoubleSetting(context, "sdb_hnsw_rerank_factor");
 }
 
+bool ReadHnswRescore(duckdb::ClientContext& context) {
+  return ReadBoolSetting(context, "sdb_hnsw_rescore");
+}
+
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
                          const SereneDBScanBindData& bind) {
   return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *g.score_top_k;
@@ -1750,10 +1754,25 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         // at k=10 reads a hundred and sixty kilobytes. Zero keeps the old
         // behaviour, so nothing changes for a query that does not ask.
         const auto factor = ReadHnswRerankFactor(context);
-        const auto beam =
-          std::max<double>(k, state->vector_scorer->ef_search);
-        pool = factor > 0.0 ? std::min(beam, std::max(k, std::ceil(factor * k)))
-                            : beam;
+        const auto beam = std::max<double>(k, state->vector_scorer->ef_search);
+        if (!state->has_lookup_filter && !ReadHnswRescore(context)) {
+          // Answer from the codes the walk already scored. The pool is also
+          // the over-fetch a lookup filter eats into, so a query that has one
+          // keeps it whatever this says.
+          pool = 0;
+        } else if (factor > 0.0) {
+          pool = std::max(k, std::ceil(factor * k));
+          // A pool wider than the beam widens the beam. Capping it at the beam
+          // instead, as this did, makes the two knobs one: asking to re-score
+          // four hundred of a beam of a hundred then re-scores a hundred, and
+          // the recall the oversample was asked for never arrives. Qdrant
+          // takes ef = max(hnsw_ef, oversampling * k) for the same reason.
+          SDB_ASSERT(state->owned_vector_scorer.has_value());
+          state->owned_vector_scorer->min_ef =
+            static_cast<uint32_t>(std::max(beam, pool));
+        } else {
+          pool = beam;
+        }
       } else {
         pool = std::ceil(ReadRerankFactor(context) * k);
       }

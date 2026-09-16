@@ -496,10 +496,24 @@ struct HnswBuildScratch {
   std::vector<HnswPendingLink> pending;
   std::vector<uint8_t> select_blocked;
   std::vector<uint32_t> select_ids;
+  std::vector<score_t> select_scores;
   std::vector<HnswReverseItem> rev_items;
   std::vector<uint32_t> rev_kept;
+  std::vector<score_t> rev_kept_scores;
   std::vector<uint8_t> rev_kept_processed;
 };
+
+// The "not closer than base" test: a candidate is dropped when a link already
+// selected sits closer to it than the target does. The comparison is strict
+// except between candidates exactly equidistant from the target -- without
+// that exception a group of byte-identical vectors never prunes itself, fills
+// every slot of every member, and turns the group into a sink the walk cannot
+// leave.
+inline bool HnswRedundant(score_t to_selected, score_t candidate,
+                          score_t selected) noexcept {
+  return candidate == selected ? to_selected >= candidate
+                               : to_selected > candidate;
+}
 
 template<typename Dist>
 void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
@@ -508,10 +522,13 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
   out.clear();
   SDB_ASSERT(!sorted.empty() && limit != 0);
   if (dist.CheapPair()) {
+    auto& out_scores = s.select_scores;
+    out_scores.clear();
     for (const auto& cand : sorted) {
       bool keep = true;
-      for (const auto accepted : out) {
-        if (dist.Pair(cand.node, accepted) > cand.score) {
+      for (size_t w = 0; w < out.size(); ++w) {
+        if (HnswRedundant(dist.Pair(cand.node, out[w]), cand.score,
+                          out_scores[w])) {
           keep = false;
           break;
         }
@@ -520,6 +537,7 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
         continue;
       }
       out.push_back(cand.node);
+      out_scores.push_back(cand.score);
       if (out.size() >= limit) {
         break;
       }
@@ -554,7 +572,7 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
       if (blocked[j] != 0) {
         continue;
       }
-      if (scores[k] > sorted[j].score) {
+      if (HnswRedundant(scores[k], sorted[j].score, sorted[i].score)) {
         blocked[j] = 1;
       }
       ++k;
@@ -623,22 +641,30 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   }
   items.push_back(
     {.score = dist.Pair(peer, node), .node = node, .processed = false});
-  std::ranges::sort(items,
-                    [](const HnswReverseItem& l, const HnswReverseItem& r) {
-                      return l.score > r.score;
-                    });
+  // Stable: the links the last heuristic kept are already in its order, and a
+  // score tie between two of them must not reshuffle them, or the pairs it
+  // cleared below stop lining up.
+  std::ranges::stable_sort(
+    items, [](const HnswReverseItem& l, const HnswReverseItem& r) {
+      return l.score > r.score;
+    });
 
   auto& kept = s.rev_kept;
+  auto& kept_scores = s.rev_kept_scores;
   auto& kept_processed = s.rev_kept_processed;
   kept.clear();
+  kept_scores.clear();
   kept_processed.clear();
   for (const auto& cand : items) {
     bool keep = true;
     for (size_t w = 0; w < kept.size(); ++w) {
+      // Two links a previous heuristic already kept side by side cleared this
+      // test then, against the same target and the same scores.
       if (cand.processed && kept_processed[w] != 0) {
         continue;
       }
-      if (dist.Pair(cand.node, kept[w]) > cand.score) {
+      if (HnswRedundant(dist.Pair(cand.node, kept[w]), cand.score,
+                        kept_scores[w])) {
         keep = false;
         break;
       }
@@ -647,6 +673,7 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
       continue;
     }
     kept.push_back(cand.node);
+    kept_scores.push_back(cand.score);
     kept_processed.push_back(cand.processed ? uint8_t{1} : uint8_t{0});
     if (kept.size() >= links.size()) {
       break;

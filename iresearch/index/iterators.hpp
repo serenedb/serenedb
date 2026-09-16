@@ -119,6 +119,20 @@ class LoserScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
+  // Empty the collector and put the threshold back to `seed`, for a caller
+  // that collects one segment at a time. Unlike RaiseScoreThreshold this may
+  // lower the threshold, because the hits it was protecting are gone: a
+  // per-segment caller has already taken them, re-scored them exactly, and
+  // merged them into an answer the quantized threshold cannot speak about.
+  void Restart(score_t seed) noexcept {
+    _size = 0;
+    _root = Node{};
+    *_score_threshold = seed;
+  }
+
+  // The `k`-th score this collector holds, and what a plan free to leave
+  // documents out is measured against. It only rises, and it spans every
+  // segment of the query, so a plan reads it as it goes rather than once.
   IRS_FORCE_INLINE score_t ScoreThreshold() const noexcept {
     return _score_threshold->load(std::memory_order_relaxed);
   }

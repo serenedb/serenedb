@@ -813,6 +813,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
+      .quant_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),

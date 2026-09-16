@@ -560,33 +560,35 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_hnsw_rerank_factor",
+      "sdb_hnsw_oversample",
       {
         LogicalTypeId::DOUBLE,
         "Oversample for a quantized HNSW vector-similarity query: the graph is "
-        "walked on quantized codes and ceil(sdb_hnsw_rerank_factor * k) of the "
-        "beam\'s hits are then read back at full precision and re-ordered, k "
-        "of them surviving. The beam is widened to hold the pool when the pool "
-        "is the wider of the two, because a search that returns a hundred "
-        "cannot hand four hundred to the rescorer. This is what lets a narrow "
-        "beam reach a high recall without walking more of the graph. 0 "
-        "disables the rescore: the query answers from the codes, which is "
-        "faster and caps recall at whatever the codes can tell apart -- well "
-        "below 1 for a 4-bit or binary quantizer. Elasticsearch spells this "
+        "walked on quantized codes and ceil(sdb_hnsw_oversample * k) of each "
+        "segment\'s hits are read back at full precision, re-ordered, and only "
+        "then compared against other segments -- a quantized score is an "
+        "estimate and two segments\' estimates are not comparable, because "
+        "each trains its own quantizer. The beam is widened to hold the pool "
+        "when the pool is the wider of the two, because a search that returns "
+        "a hundred cannot hand four hundred to the rescorer. 0 disables the "
+        "rescore: the query answers from the codes, which is faster and caps "
+        "recall at whatever the codes can tell apart -- well below 1 for a "
+        "4-bit or binary quantizer, and worse still across many segments. -1 "
+        "(the default) lets the engine choose by code width: no rescore at 4 "
+        "bits and wider, 1.0 below that. Elasticsearch spells this "
         "rescore_vector.oversample, with the same 0, and Qdrant splits it into "
-        "quantization.oversampling and quantization.rescore. Default 3, as "
-        "Elasticsearch\'s is. Fractional values are allowed, but a nonzero "
-        "factor below 1 is rejected because the pool must cover k. Unquantized "
-        "(quant = \'none\') indexes never rerank, regardless of this setting, "
-        "and a query whose pool exists to survive a lookup filter keeps that "
-        "pool either way.",
-        [] { return duckdb::Value::DOUBLE(3); },
+        "quantization.oversampling and quantization.rescore. Fractional values "
+        "are allowed, but a factor between 0 and 1 is rejected because the "
+        "pool must cover k. Unquantized (quant = \'none\') indexes never "
+        "rerank, regardless of this setting, and a query whose pool exists to "
+        "survive a lookup filter keeps that pool either way.",
+        [] { return duckdb::Value::DOUBLE(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
-          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
+          if (n < -1.0 || (n > 0.0 && n < 1.0) || (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_hnsw_rerank_factor\": \"",
+                                    "\"sdb_hnsw_oversample\": \"",
                                     value.ToString(), "\""));
           }
         },

@@ -193,12 +193,13 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
 // batches so the distance kernel and the quantizer's early exit apply.
 template<typename Dist>
 void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
-                  uint32_t ef, HnswSearchScratch& s) {
+                  uint32_t ef, HnswSearchScratch& s, doc_id_t first,
+                  doc_id_t last) {
   constexpr size_t kBatch = 256;
   s.nearest.clear();
   s.batch.clear();
   const auto size = graph.Size();
-  for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
+  for (auto doc = set.Probe(first); !doc_limits::eof(doc) && doc < last;
        doc = set.Probe(doc + 1)) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
     if (node >= size) {
@@ -224,11 +225,24 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
 
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
-                            HnswSearchScratch& scratch) const {
+                            HnswSearchScratch& scratch, uint32_t part,
+                            uint32_t parts) const {
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   auto set = MakeSet(_inner.get(), table, docs_count);
+  // One part of a split query: its rows are the part's doc range, and a split
+  // is only asked for where the answer is a scan (a walk moves through the
+  // whole graph, so it cannot be cut into doc ranges).
+  const auto per = (docs_count + parts - 1) / std::max<uint32_t>(parts, 1);
+  const auto first =
+    doc_limits::min() + std::min<doc_id_t>(docs_count, per * part);
+  const auto last =
+    doc_limits::min() + std::min<doc_id_t>(docs_count, per * (part + 1));
+  if (parts > 1) {
+    HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
+    return;
+  }
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -290,10 +304,31 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     case HnswFilterMode::Auto:
       break;
   }
-  HnswScanTopK(set, graph, dist, _ef, scratch);
+  HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
+std::optional<uint64_t> HnswQuery::ScanCandidates() const {
+  // The same rule RunFiltered uses, from what is known without evaluating the
+  // predicate: an inner query's own upper bound. A table filter's count needs
+  // the fold, so it is not answered here.
+  if (_inner == nullptr || _ef == 0 || _filter_mode == HnswFilterMode::Walk ||
+      _filter_mode == HnswFilterMode::Prune ||
+      _filter_mode == HnswFilterMode::TwoHop ||
+      _filter_mode == HnswFilterMode::Bridge) {
+    return std::nullopt;
+  }
+  const auto& graph = _data->graph;
+  const uint64_t matches = _inner->EstimateMax();
+  if (_filter_mode != HnswFilterMode::Scan &&
+      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size())) {
+    return std::nullopt;
+  }
+  return matches;
+}
+
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
+                                           uint32_t part,
+                                           uint32_t parts) const {
   auto& scratch = ThreadScratch();
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
@@ -301,7 +336,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                [&](auto& dist) {
                  if (_inner != nullptr || table != nullptr) {
-                   RunFiltered(dist, table, scratch);
+                   RunFiltered(dist, table, scratch, part, parts);
                    return;
                  }
                  if (_ef != 0) {

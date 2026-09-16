@@ -86,7 +86,7 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  auto hits = query.RunSearch(ctx.table);
+  auto hits = query.RunSearch(ctx.table, ctx.part, ctx.parts);
   if (hits.empty()) {
     return {};
   }

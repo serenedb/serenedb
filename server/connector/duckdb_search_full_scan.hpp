@@ -93,6 +93,13 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // The executing session's copy of the plan's vector options: the knobs and
   // the query vector of a cached plan are read at execution, so every consumer
   // must see this copy, not the bind data's planning-time values.
+  // Counts this scan while it lives, so a scan deciding whether to split its
+  // work can see how busy the machine is.
+  struct InFlight {
+    InFlight() noexcept;
+    ~InFlight();
+  } in_flight;
+
   // The top-k this execution asks for: the plan's constant LIMIT, or the value
   // of its parameter, read at execution.
   std::optional<size_t> score_top_k;

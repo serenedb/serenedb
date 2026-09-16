@@ -21,6 +21,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -63,7 +64,17 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   // keeps moving through every node but admits what the set passes, and a
   // set too sparse for the graph is answered by scanning its docs. A table
   // that does not fold is left to the caller to apply to the hits.
-  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
+  // `parts` splits the segment's rows into equal doc ranges for concurrent
+  // callers, each running one `part`: only a scan can be split that way, so a
+  // split query scans (the caller asked for it because ScanCandidates said a
+  // scan is how this query answers its filter).
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
+                                  uint32_t part = 0, uint32_t parts = 1) const;
+
+  // How many docs a scan would score, when scanning is how this query would
+  // answer its inner filter; nullopt when it would walk the graph, has no
+  // inner filter, or is a radius search.
+  std::optional<uint64_t> ScanCandidates() const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
@@ -74,7 +85,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  private:
   template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
-                   HnswSearchScratch& scratch) const;
+                   HnswSearchScratch& scratch, uint32_t part,
+                   uint32_t parts) const;
 
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;

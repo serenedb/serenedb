@@ -33,6 +33,7 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -66,6 +67,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/make.hpp>
+#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -406,6 +408,26 @@ struct TsDictLocalState : public IResearchScanLocalState {
 
 void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
                   duckdb::DataChunk& output);
+namespace {
+
+// Search scans in flight, this one included. A stand-in for how busy the
+// machine is: splitting one scan across workers pays only where there are
+// cores idle to run the parts on.
+std::atomic<uint32_t>& InFlightScans() noexcept {
+  static std::atomic<uint32_t> count{0};
+  return count;
+}
+
+}  // namespace
+
+IResearchScanGlobalState::InFlight::InFlight() noexcept {
+  InFlightScans().fetch_add(1, std::memory_order_relaxed);
+}
+
+IResearchScanGlobalState::InFlight::~InFlight() {
+  InFlightScans().fetch_sub(1, std::memory_order_relaxed);
+}
+
 void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                  TopKScanLocalState& l, duckdb::DataChunk& output);
 void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
@@ -1556,6 +1578,42 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // the first window.
       state->topk.global_kth_score.store(state->score_static_floor,
                                          std::memory_order_relaxed);
+    }
+    if (state->vector_scorer && !state->vector_scorer->exact &&
+        state->vector_scorer->kind == irs::AnnKind::Hnsw &&
+        state->total_segments != 0) {
+      // A filtered graph search that answers by scanning the predicate's rows
+      // reads them in doc order, so the rows split across workers the way a
+      // brute-force scan does: one segment, several cores, the same answer.
+      // The split is decided from what the query itself would decide, asked of
+      // a throwaway prepare of the largest segment; a walk does not split.
+      uint32_t widest = 0;
+      for (uint32_t si = 1; si < state->total_segments; ++si) {
+        if ((*state->reader)[si].docs_count() >
+            (*state->reader)[widest].docs_count()) {
+          widest = si;
+        }
+      }
+      auto probe = state->filter->PrepareSegment(
+        (*state->reader)[widest],
+        {.collector = nullptr, .thread = 0, .needs_terms = false});
+      const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
+      const auto rows =
+        hnsw != nullptr ? hnsw->ScanCandidates() : std::optional<uint64_t>{};
+      // Below a couple of thousand rows a part costs more than the distances
+      // it saves, and the split never asks for more cores than the machine has
+      // to spare: under load the other scans are already using them, and the
+      // parts would only add their own dispatch to every query.
+      constexpr uint64_t kScanRowsPerPart = 1024;
+      if (rows && *rows >= 2 * kScanRowsPerPart) {
+        const auto busy = std::max<uint32_t>(
+          1, InFlightScans().load(std::memory_order_relaxed));
+        const auto threads = static_cast<uint32_t>(
+          duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+        const auto spare = std::max<uint32_t>(1, threads / busy);
+        state->topk.parts = static_cast<uint32_t>(std::clamp<uint64_t>(
+          std::min<uint64_t>(*rows / kScanRowsPerPart, spare), 1, 32));
+      }
     }
     if (state->vector_scorer && state->vector_scorer->exact) {
       // A brute-force scan reads a segment's vectors once, sequentially: the

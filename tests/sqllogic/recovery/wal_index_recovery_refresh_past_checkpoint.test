@@ -18,15 +18,9 @@ control substitution on
 # over-claims, the tail goes missing. This guard pins both.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rpc_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY rpc_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE rpc_t(id INTEGER PRIMARY KEY, body TEXT);

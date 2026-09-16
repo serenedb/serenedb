@@ -15,7 +15,7 @@ SET refresh_interval = 0
 # deletions. Background maintenance is disabled so deletion masks persist.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mmc_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY mmc_kw AS keyword()
 
 statement ok
 CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)

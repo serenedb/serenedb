@@ -3,7 +3,7 @@
 # scalar primitive types, and VARIANT is not one of them.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY variant_path_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY variant_path_dict AS keyword();
 
 statement ok
 CREATE TABLE variant_idx_bad(id INTEGER PRIMARY KEY, v VARIANT);

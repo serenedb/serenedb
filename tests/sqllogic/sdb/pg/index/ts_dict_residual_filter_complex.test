@@ -25,12 +25,12 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ckw(template = 'keyword', frequency = true)
+CREATE TEXT SEARCH DICTIONARY ckw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ctx(template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY ctx AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE cev(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,

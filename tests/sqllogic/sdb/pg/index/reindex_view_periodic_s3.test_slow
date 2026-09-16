@@ -17,15 +17,9 @@ CREATE OR REPLACE SECRET minio_${__DATABASE__} (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rvps3_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY rvps3_en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement count 2
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body

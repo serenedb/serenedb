@@ -20,9 +20,11 @@
 
 #include "pg/option_help.h"
 
+#include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <algorithm>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <variant>
@@ -58,7 +60,8 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
       absl::StrAppend(&out, " [default: none]");
     } else {
       switch (opt.type) {
-        case OptionInfo::Type::String: {
+        case OptionInfo::Type::String:
+        case OptionInfo::Type::StringList: {
           auto str = std::get<std::string_view>(opt.default_value);
           if (!str.empty()) {
             absl::StrAppend(&out, " [default: ", str, "]");
@@ -119,6 +122,25 @@ std::string FormatHelp(const OptionGroup& group) {
   result.reserve(1024);
   FormatGroup(result, group, 0);
   return result;
+}
+
+std::string_view FindClosestName(std::span<const std::string_view> known_names,
+                                 std::string_view name) {
+  const uint8_t max_distance =
+    static_cast<uint8_t>(std::min<size_t>(name.size() / 2 + 1, 3));
+  std::string_view best;
+  uint8_t best_distance = max_distance;
+
+  for (const auto& known : known_names) {
+    uint8_t distance = absl::strings_internal::CappedDamerauLevenshteinDistance(
+      absl::string_view{name.data(), name.size()},
+      absl::string_view{known.data(), known.size()}, best_distance);
+    if (distance < best_distance) {
+      best_distance = distance;
+      best = known;
+    }
+  }
+  return best;
 }
 
 }  // namespace sdb::pg

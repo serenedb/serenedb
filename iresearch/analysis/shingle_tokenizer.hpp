@@ -45,24 +45,27 @@ struct TokenizerConfig;
 class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
                                private util::Noncopyable {
  public:
+  static constexpr byte_type kDefaultSeparator{' '};
+
   struct Options {
     using Owner = ShingleTokenizer;
     std::unique_ptr<TokenizerConfig> base_analyzer;
     uint32_t min_shingle_size = 2;
     uint32_t max_shingle_size = 2;
     bool output_unigrams = true;
-    bool output_unigrams_if_no_shingles = false;
-    bstring token_separator;
+    bool fallback_unigrams = false;
+    bstring token_separator = bstring(1, kDefaultSeparator);
     bstring filler_token;
     std::vector<bstring> frequent_words;
     bool store_tokens = true;
   };
 
-  static constexpr std::string_view type_name() noexcept { return "shingle"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "generate_shingles";
+  }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr uint32_t kMaxTokenSize = (uint32_t{1} << 30) - 1;
-  static constexpr byte_type kDefaultSeparator{0xFF};
 
   static void WriteToken(bytes_view token, bstring& out);
   static const byte_type* ReadToken(const byte_type* p,
@@ -114,7 +117,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   uint32_t _min;
   uint32_t _max;
   bool _output_unigrams;
-  bool _output_unigrams_if_no_shingles;
+  bool _fallback_unigrams;
   bool _has_frequent;
   bool _producer_dense = true;
   bool _store_tokens;
@@ -140,17 +143,16 @@ template<typename Context>
 void SerdeWrite(Context ctx, const ShingleTokenizer::Options& o) {
   irs::utils::WriteTupleOrObject(
     ctx, std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-                  o.output_unigrams, o.output_unigrams_if_no_shingles,
-                  o.token_separator, o.filler_token, o.frequent_words,
-                  o.store_tokens));
+                  o.output_unigrams, o.fallback_unigrams, o.token_separator,
+                  o.filler_token, o.frequent_words, o.store_tokens));
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, ShingleTokenizer::Options& o) {
-  auto refs = std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-                       o.output_unigrams, o.output_unigrams_if_no_shingles,
-                       o.token_separator, o.filler_token, o.frequent_words,
-                       o.store_tokens);
+  auto refs =
+    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
+             o.output_unigrams, o.fallback_unigrams, o.token_separator,
+             o.filler_token, o.frequent_words, o.store_tokens);
   irs::utils::ReadTupleOrObject(ctx, refs);
 }
 

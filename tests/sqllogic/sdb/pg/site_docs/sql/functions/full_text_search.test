@@ -6,16 +6,9 @@ statement ok
 CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, category VARCHAR, dual VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX docs_idx ON docs USING inverted (id, body en, category, dual en) INCLUDE (dual);
@@ -34,7 +27,7 @@ statement ok
 CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bigram (template = 'ngram', mingram = 2, maxgram = 2, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY bigram AS generate_ngrams(2, 2) WITH (frequency, position);
 
 statement ok
 CREATE INDEX titles_idx ON titles USING inverted (id, title bigram);
@@ -97,7 +90,7 @@ statement ok
 CREATE TABLE geo (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY gj (template = 'geojson', coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY gj AS encode_geojson(coding := 's2point');
 
 statement ok
 CREATE INDEX geo_idx ON geo USING inverted (id, geo gj);
@@ -114,16 +107,9 @@ statement ok
 CREATE TABLE scored (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY scored_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY scored_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE INDEX scored_idx ON scored USING inverted (id, body scored_en);
@@ -143,7 +129,7 @@ statement ok
 CREATE TABLE geo_demo (id INTEGER PRIMARY KEY, name VARCHAR, shape JSON);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_demo_dict (template = 'geojson');
+CREATE TEXT SEARCH DICTIONARY geo_demo_dict AS encode_geojson();
 
 statement ok
 CREATE INDEX geo_demo_idx ON geo_demo USING inverted (id, name, shape geo_demo_dict);
@@ -163,7 +149,7 @@ statement ok
 CREATE TABLE cities (id INTEGER PRIMARY KEY, name VARCHAR, loc GEOMETRY('OGC:CRS84'));
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY cities_dict (template = 'geojson', coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY cities_dict AS encode_geojson(coding := 's2point');
 
 statement ok
 CREATE INDEX cities_idx ON cities USING inverted (id, name, loc cities_dict);
@@ -182,16 +168,9 @@ statement ok
 CREATE TABLE passages (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY passages_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY passages_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX passages_idx ON passages USING inverted (id, body passages_en);
@@ -1168,11 +1147,3 @@ SELECT ts_lexize('bigram', 'help') AS ts_lexize;
 ----
 ts_lexize
 {he,el,lp}
-
-# DOCS_TEST: ts_split_by_non_alpha
-# DOCS_TEST_BODY
-query
-SELECT ts_split_by_non_alpha('The Quick-Brown FOX 2024', true) AS ts_split_by_non_alpha;
-----
-ts_split_by_non_alpha
-{the,quick,brown,fox,2024}

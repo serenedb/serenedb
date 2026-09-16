@@ -9,15 +9,9 @@ control substitution on
 # expected counts below.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY huge_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY huge_dict AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE huge_t(id INTEGER PRIMARY KEY, body TEXT);

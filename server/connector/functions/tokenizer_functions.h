@@ -24,6 +24,6 @@
 
 namespace sdb::connector {
 
-void RegisterSplitByNonAlpha(duckdb::ExtensionLoader& loader);
+void RegisterTokenizerFunctions(duckdb::ExtensionLoader& loader);
 
 }  // namespace sdb::connector

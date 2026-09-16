@@ -5,9 +5,9 @@ hash-threshold 100
 # caller with SQL set operations / outer filters over unnest(ts_dict_agg(...)).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY cmpd(template = 'text', locale = 'en_US.UTF-8',
-    case = 'none', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY cmpd AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE cmp(id INTEGER PRIMARY KEY, body VARCHAR, title VARCHAR)

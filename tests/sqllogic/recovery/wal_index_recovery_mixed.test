@@ -9,15 +9,9 @@ control substitution on
 # The accumulator must end with the authoritative *last* state per PK.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mix_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY mix_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE wal_mix_t(a INTEGER PRIMARY KEY, b TEXT);

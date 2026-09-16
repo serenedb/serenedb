@@ -7,7 +7,7 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mix_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY mix_kw AS keyword()
 
 statement ok
 CREATE TABLE mixt(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR,

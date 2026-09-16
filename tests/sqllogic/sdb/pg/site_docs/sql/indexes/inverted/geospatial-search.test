@@ -4,7 +4,7 @@ statement ok
 CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo JSON);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_shape (template = 'geojson');
+CREATE TEXT SEARCH DICTIONARY geojson_shape AS encode_geojson();
 
 statement ok
 CREATE INDEX geo_idx ON geo_data USING inverted (id, geo geojson_shape);
@@ -79,7 +79,7 @@ statement ok
 CREATE TABLE geo_shapes (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geojson_s2 (template = 'geojson', coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geojson_s2 AS encode_geojson(coding := 's2point');
 
 statement ok
 CREATE INDEX geo_shapes_idx ON geo_shapes USING inverted (id, geo geojson_s2);
@@ -129,11 +129,8 @@ statement ok
 CREATE TABLE places (id INTEGER PRIMARY KEY, loc JSON);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geopoint_dict (
-    template = 'geopoint',
-    latitude = 'lat',
-    longitude = 'lng'
-);
+CREATE TEXT SEARCH DICTIONARY geopoint_dict AS
+    encode_geopoint('lat', 'lng');
 
 statement ok
 CREATE INDEX places_idx ON places USING inverted (id, loc geopoint_dict);

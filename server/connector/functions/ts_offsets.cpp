@@ -227,13 +227,9 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& field = EnsureField(state.GetContext(), local_state, bind);
 
   SDB_ASSERT(args.ColumnCount() >= 2);
-  auto& body = args.data[1];
-  duckdb::UnifiedVectorFormat fmt;
-  body.ToUnifiedFormat(count, fmt);
+  auto bodies = args.data[1].Values<duckdb::string_t>();
 
   auto segment = local_state.memory_index.IndexChunk(count, [&](auto& doc) {
-    const auto* data =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
     const auto traits = field.tokens->Traits();
     const bool ok =
       doc.WithTokens(field.Id(), kOffsetsFeatures, nullptr,
@@ -242,11 +238,11 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        const auto layout = fld.Layout();
                        irs::doc_id_t d = doc.DocId();
                        for (duckdb::idx_t r = 0; r < count; ++r, ++d) {
-                         const auto idx = fmt.sel->get_index(r);
-                         if (!fmt.validity.RowIsValid(idx)) {
+                         auto body = bodies[r];
+                         if (!body.IsValid()) {
                            continue;
                          }
-                         const auto& s = data[idx];
+                         const auto& s = body.GetValue();
                          if (s.GetSize() > 0) {
                            field.tokens->Fill(s, d, w, {layout});
                          }

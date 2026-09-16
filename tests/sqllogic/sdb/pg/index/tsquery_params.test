@@ -10,15 +10,9 @@ statement ok
 CREATE TABLE tqp (a INTEGER PRIMARY KEY, b VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tqp_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY tqp_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX tqp_idx ON tqp USING inverted(a, b tqp_english);

@@ -5,10 +5,8 @@
 # --- BLOB list and BLOB scalar results type the tokens as BLOB ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_blob_list(
-    template = 'sql',
-    expression = '[input::BLOB]'
-)
+CREATE TEXT SEARCH DICTIONARY sql_blob_list AS
+    [$1::BLOB]
 
 
 query
@@ -26,10 +24,8 @@ token
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_blob_scalar(
-    template = 'sql',
-    expression = 'input::BLOB'
-)
+CREATE TEXT SEARCH DICTIONARY sql_blob_scalar AS
+    $1::BLOB
 
 
 query
@@ -49,10 +45,8 @@ token
 # --- Text results keep their VARCHAR typing ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sql_text(
-    template = 'sql',
-    expression = 'upper(input)'
-)
+CREATE TEXT SEARCH DICTIONARY sql_text AS
+    upper($1)
 
 
 query
@@ -87,19 +81,15 @@ ts_lexize
 # --- Any other element type is rejected when the dictionary is created ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sql_bigint(
-    template = 'sql',
-    expression = 'length(input)'
-)
+CREATE TEXT SEARCH DICTIONARY sql_bigint AS
+    length($1)
 ----
 db error: ERROR: sql: expression must return VARCHAR, BLOB, or a list of them, got BIGINT
 
 
 statement error
-CREATE TEXT SEARCH DICTIONARY sql_bigint_list(
-    template = 'sql',
-    expression = '[length(input)]'
-)
+CREATE TEXT SEARCH DICTIONARY sql_bigint_list AS
+    [length($1)]
 ----
 db error: ERROR: sql: expression must return VARCHAR, BLOB, or a list of them, got BIGINT[]
 

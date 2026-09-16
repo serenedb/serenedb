@@ -14,12 +14,12 @@ SET refresh_interval = 0
 # dirty; VACUUM (REFRESH_TABLE) commits pending data and masks.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY del_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY del_kw AS keyword()
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY del_tx(template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY del_tx AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)

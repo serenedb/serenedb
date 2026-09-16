@@ -1,16 +1,9 @@
 hash-threshold 100
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hl_simple(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = true
-)
+CREATE TEXT SEARCH DICTIONARY hl_simple AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset)
 
 
 # --- ts_highlight POSTINGS overload: basic single-token hit ---
@@ -572,16 +565,9 @@ id	ts_highlight
 # stored-offsets path would produce.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hl_no_offs(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = false
-)
+CREATE TEXT SEARCH DICTIONARY hl_no_offs AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset = false)
 
 statement ok
 CREATE TABLE hl_no_offs_docs (id INTEGER PRIMARY KEY, body VARCHAR)
@@ -877,16 +863,9 @@ DROP TABLE hl_multi
 # renders against the resulting LIST<INTEGER>.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hl_inplace_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = false
-)
+CREATE TEXT SEARCH DICTIONARY hl_inplace_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset = false)
 
 query
 SELECT ts_highlight('hl_inplace_dict', 'the quick brown fox',

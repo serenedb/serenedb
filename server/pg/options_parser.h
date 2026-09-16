@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
@@ -97,7 +96,6 @@ class OptionsParser {
     : OptionsParser{ConvertMap(std::move(named_params)), option_group,
                     std::move(context)} {}
 
- private:
   static Options ConvertMap(duckdb::named_parameter_map_t named_params) {
     Options out;
     out.reserve(named_params.size());
@@ -117,7 +115,8 @@ class OptionsParser {
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
   T EraseOptionOrDefault(std::string_view prefix = "") {
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
-    constexpr bool kIsString = Info.type == OptionInfo::Type::String;
+    constexpr bool kIsString = Info.type == OptionInfo::Type::String ||
+                               Info.type == OptionInfo::Type::StringList;
     if (const auto option = EraseOption(Info, !kIsBool, prefix)) {
       if constexpr (kIsBool) {
         if (!*option) {
@@ -269,7 +268,7 @@ class OptionsParser {
           ERR_MSG("option \"", name, "\" is not applicable in this context"),
           ERR_HINT(_help_hint));
       }
-      auto hint = FindClosestOption(known_names, name);
+      auto hint = FindClosestName(known_names, name);
       auto msg =
         hint.empty()
           ? absl::StrCat(_operation, ": option \"", name, "\" not recognized")
@@ -278,27 +277,6 @@ class OptionsParser {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
                       ERR_HINT(_help_hint));
     }
-  }
-
-  std::string_view FindClosestOption(
-    std::span<const std::string_view> known_names,
-    std::string_view name) const {
-    const uint8_t max_distance =
-      static_cast<uint8_t>(std::min<size_t>(name.size() / 2 + 1, 3));
-    std::string_view best;
-    uint8_t best_distance = max_distance;
-
-    for (const auto& known : known_names) {
-      uint8_t distance =
-        absl::strings_internal::CappedDamerauLevenshteinDistance(
-          absl::string_view{name.data(), name.size()},
-          absl::string_view{known.data(), known.size()}, best_distance);
-      if (distance < best_distance) {
-        best_distance = distance;
-        best = known;
-      }
-    }
-    return best;
   }
 
  protected:

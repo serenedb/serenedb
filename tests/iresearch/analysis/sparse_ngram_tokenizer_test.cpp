@@ -20,8 +20,10 @@
 
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -54,7 +56,7 @@ std::set<std::string> Collect(std::string_view data, bool covering,
 }
 
 TEST(sparse_ngram_tokenizer_test, consts) {
-  static_assert("sparse_ngram" ==
+  static_assert("generate_sparse_ngrams" ==
                 irs::Type<irs::analysis::SparseNGramTokenizer>::name());
 }
 
@@ -223,10 +225,30 @@ struct RefGram {
   bool operator==(const RefGram&) const = default;
 };
 
-uint32_t RefHash(const std::string& s, size_t i) {
-  const uint64_t a = static_cast<uint8_t>(s[i]) * 0xc6a4a7935bd1e995ULL +
-                     static_cast<uint8_t>(s[i + 1]) * 0x228876a7198b743ULL;
+uint32_t RefHash(uint32_t a0, uint32_t a1) {
+  const uint64_t a = a0 * 0xc6a4a7935bd1e995ULL + a1 * 0x228876a7198b743ULL;
   return static_cast<uint32_t>(a + (~a >> 47));
+}
+
+struct RefUnits {
+  std::vector<uint32_t> offsets;
+  std::vector<uint32_t> values;
+};
+
+RefUnits RefSplitUnits(const std::string& s) {
+  RefUnits units;
+  const auto* const data = reinterpret_cast<const irs::byte_type*>(s.data());
+  const auto* const end = data + s.size();
+  for (size_t i = 0; i < s.size(); ++i) {
+    if ((static_cast<uint8_t>(s[i]) & 0xC0) == 0x80) {
+      continue;
+    }
+    const auto* it = data + i;
+    units.offsets.push_back(static_cast<uint32_t>(i));
+    units.values.push_back(irs::utf8_utils::ToChar32(it, end));
+  }
+  units.offsets.push_back(static_cast<uint32_t>(s.size()));
+  return units;
 }
 
 std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
@@ -235,15 +257,18 @@ std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
     uint32_t hash;
     uint32_t pos;
   };
+  const RefUnits units = RefSplitUnits(s);
   std::vector<RefGram> out;
   std::vector<Entry> stack;
   size_t head = 0;
   const auto emit = [&](size_t b, size_t e) {
-    out.push_back({static_cast<uint32_t>(b), static_cast<uint32_t>(e)});
+    out.push_back({units.offsets[b], units.offsets[e]});
   };
-  const size_t positions = s.size() >= 2 ? s.size() - 1 : 0;
+  const size_t nunits = units.values.size();
+  const size_t positions = nunits >= 2 ? nunits - 1 : 0;
   for (size_t i = 0; i < positions; ++i) {
-    const Entry p{RefHash(s, i), static_cast<uint32_t>(i)};
+    const Entry p{RefHash(units.values[i], units.values[i + 1]),
+                  static_cast<uint32_t>(i)};
     if (!covering) {
       const size_t min_pos = i + 2 - std::min(i + 2, max_len);
       while (!stack.empty() && p.hash > stack.back().hash) {

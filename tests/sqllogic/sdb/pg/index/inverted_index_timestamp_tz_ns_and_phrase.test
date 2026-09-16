@@ -17,7 +17,7 @@ COPY (
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw (template='keyword', frequency=true, norm=true);
+CREATE TEXT SEARCH DICTIONARY kw AS keyword() WITH (frequency, norm);
 
 
 statement ok

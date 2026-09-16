@@ -99,7 +99,7 @@ BEGIN;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rbd_rb_d (template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY rbd_rb_d AS keyword();
 
 
 statement ok
@@ -202,7 +202,7 @@ CREATE ROLE rbd_ok_r;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rbd_ok_d (template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY rbd_ok_d AS keyword();
 
 
 statement ok
@@ -402,7 +402,7 @@ CREATE SEQUENCE rbd_dr_q;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rbd_dr_d (template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY rbd_dr_d AS keyword();
 
 
 statement ok

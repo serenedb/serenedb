@@ -12,15 +12,9 @@ control substitution on
 #   - replay the post-truncate inserts so they end up searchable.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY babsky_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY babsky_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE babsky_t(id INTEGER PRIMARY KEY, body TEXT);

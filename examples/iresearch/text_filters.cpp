@@ -21,7 +21,7 @@
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -69,9 +69,8 @@ inline constexpr irs::field_id kBodyFieldId = 1;
 struct TextField {
   irs::field_id id{kBodyFieldId};
   std::string_view text;
-  irs::analysis::Tokenizer::ptr tokenizer{
-    irs::analysis::SegmentationTokenizer::Make(
-      irs::analysis::SegmentationTokenizer::Options{})};
+  irs::analysis::Tokenizer::ptr tokenizer{irs::analysis::TextTokenizer::Make(
+    irs::analysis::TextTokenizer::Options{})};
 
   irs::field_id Id() const noexcept { return id; }
 

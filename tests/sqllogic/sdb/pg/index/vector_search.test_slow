@@ -215,7 +215,9 @@ t
 # Hybrid recall: text-index filter + ANN, and text + rocksdb + ANN
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY en AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok

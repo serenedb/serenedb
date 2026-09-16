@@ -42,7 +42,7 @@ n
 
 # --- inverted index ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY sic_kw (template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY sic_kw AS keyword();
 
 
 statement ok

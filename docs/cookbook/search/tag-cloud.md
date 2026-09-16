@@ -10,7 +10,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 A tag cloud or a trending words panel needs the vocabulary of a text column ranked by how often each word gets written. SereneDB keeps that tally in the [inverted index](../../sql/indexes/inverted/index.md) dictionary, so [`ts_dict_freq`](../../sql/functions/search/term-dictionary.md) ranks every term by total mentions without reading a single document.
 
-The `posts` table below holds a handful of espresso brewing tips. Its `body` column runs through a `text` dictionary that sets `frequency = true` (what `ts_dict_freq` reads) and adds a small stopword list so filler like `the` never lands in the cloud.
+The `posts` table below holds a handful of espresso brewing tips. Its `body` column runs through a `split_text` dictionary that sets `frequency = true` (what `ts_dict_freq` reads) and adds a small stopword list so filler like `the` never lands in the cloud.
 
 <details>
 <summary>Schema and sample data</summary>

@@ -1,13 +1,13 @@
 ---
-title: "geojson"
+title: "encode_geojson"
 split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-# geojson
+# encode_geojson
 
-The `geojson` template is a geospatial analyzer: instead of breaking text into word tokens, it reads a geometry and emits the [S2](http://s2geometry.io/) cell-ID terms that cover it. Those terms are what the [inverted index](../../indexes/inverted/index.md) stores and matches, so a `JSON` or `GEOMETRY` column indexed through `geojson` can be queried with spatial predicates such as containment, intersection and distance.
+The `encode_geojson` template is a geospatial analyzer: instead of breaking text into word tokens, it reads a geometry and emits the [S2](http://s2geometry.io/) cell-ID terms that cover it. Those terms are what the [inverted index](../../indexes/inverted/index.md) stores and matches, so a `JSON` or `GEOMETRY` column indexed through `encode_geojson` can be queried with spatial predicates such as containment, intersection and distance.
 
 ## How it works
 
@@ -22,15 +22,15 @@ Geometries are supplied as [GeoJSON](https://geojson.org/) in a `JSON` column, o
 
 Terms are `BLOB`s in two forms. An ancestor term is exactly 8 bytes, the big-endian S2 cell ID. A covering term is 9 bytes: a `$` marker byte followed by the same 8 bytes. Only `TYPE = shape` over a non-point geometry produces covering terms, and the geometry itself is never emitted as a term.
 
-A point — `TYPE = point`, `TYPE = centroid`, or a `Point` geometry under `TYPE = shape` — expands to one ancestor term per S2 level, walking from `MINLEVEL` to `MAXLEVEL` in steps of `LEVELMOD`, coarsest first. That is `floor((MAXLEVEL - MINLEVEL) / LEVELMOD) + 1` terms — 20 with the defaults. A covering emits, in S2 cell order for each of its cells: a covering term while the cell sits below the effective finest level (`MAXLEVEL` minus `(MAXLEVEL - MINLEVEL) mod LEVELMOD`); an ancestor term for the cell itself when it is at that effective level, and unconditionally unless `OPTIMIZEFORSPACE` is set; then ancestor terms for its ancestors, stepping down by `LEVELMOD` to `MINLEVEL` and stopping as soon as the previous covering cell already covered them. Terms are not deduplicated, so a cell can repeat where an appended centroid chain meets ancestors already emitted.
+A point — `TYPE = point`, `TYPE = centroid`, or a `Point` geometry under `TYPE = shape` — expands to one ancestor term per S2 level, walking from `MIN_LEVEL` to `MAX_LEVEL` in steps of `LEVEL_MOD`, coarsest first. That is `floor((MAX_LEVEL - MIN_LEVEL) / LEVEL_MOD) + 1` terms — 20 with the defaults. A covering emits, in S2 cell order for each of its cells: a covering term while the cell sits below the effective finest level (`MAX_LEVEL` minus `(MAX_LEVEL - MIN_LEVEL) mod LEVEL_MOD`); an ancestor term for the cell itself when it is at that effective level, and unconditionally unless `OPTIMIZE_FOR_SPACE` is set; then ancestor terms for its ancestors, stepping down by `LEVEL_MOD` to `MIN_LEVEL` and stopping as soon as the previous covering cell already covered them. Terms are not deduplicated, so a cell can repeat where an appended centroid chain meets ancestors already emitted.
 
 Geo dictionaries support no [feature flags](./index.md#feature-flags) — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` are all rejected at `CREATE TEXT SEARCH DICTIONARY` — and no text options such as `CASE` or `LOCALE` apply.
 
 A geometry that does not parse simply produces no terms: invalid JSON, a missing or non-array `coordinates`, an unrecognized `type` or `GeometryCollection`, an invalid `LineString` or `Polygon`, a non-point geometry under `TYPE = point`, and a degenerate geometry whose centroid is not a unit vector, such as a zero-area polygon. At index time such a row is indexed without geo terms and no error is raised.
 
-### When to use `geojson` vs `geopoint`
+### When to use `encode_geojson` vs `encode_geopoint`
 
-Use `geojson` when rows hold arbitrary geometries — polygons, lines, multi-geometries — points already expressed as GeoJSON, or a `GEOMETRY` column. Reach for [`geopoint`](./geopoint.md) instead when every row is a single point whose latitude and longitude live in two separate fields of a JSON object; it builds the point directly without GeoJSON assembly. Given the same level options both templates emit the same terms for a point, so a point indexed either way is queried identically.
+Use `encode_geojson` when rows hold arbitrary geometries — polygons, lines, multi-geometries — points already expressed as GeoJSON, or a `GEOMETRY` column. Reach for [`encode_geopoint`](./geopoint.md) instead when every row is a single point whose latitude and longitude live in two separate fields of a JSON object; it builds the point directly without GeoJSON assembly. Given the same level options both templates emit the same terms for a point, so a point indexed either way is queried identically.
 
 ## Options
 
@@ -38,13 +38,13 @@ Use `geojson` when rows hold arbitrary geometries — polygons, lines, multi-geo
 |---|---|---|---|
 | `TYPE` | string | `'shape'` | What each geometry is reduced to: `shape`, `centroid` or `point` |
 | `CODING` | string | `'source'` | How a representative geometry is stored: `source`, `s2point`, `s2latlngf64`, `s2latlngu32` |
-| `MINLEVEL` | integer | `4` | Coarsest S2 cell level indexed (0–30); must be ≤ `MAXLEVEL` |
-| `MAXLEVEL` | integer | `23` | Finest S2 cell level indexed (0–30); ~1 m precision at level 23 |
-| `MAXCELLS` | integer | `20` | Size target for the S2 covering (0–2147483647); only affects `TYPE = shape` over a non-point geometry |
-| `LEVELMOD` | integer | `1` | Level step between the emitted cells, counted up from `MINLEVEL` (1, 2 or 3) |
-| `OPTIMIZEFORSPACE` | boolean | `false` | Optimize the S2 covering for space rather than speed; only affects `TYPE = shape` over a non-point geometry |
+| `MIN_LEVEL` | integer | `4` | Coarsest S2 cell level indexed (0–30); must be ≤ `MAX_LEVEL` |
+| `MAX_LEVEL` | integer | `23` | Finest S2 cell level indexed (0–30); ~1 m precision at level 23 |
+| `MAX_CELLS` | integer | `20` | Size target for the S2 covering (0–2147483647); only affects `TYPE = shape` over a non-point geometry |
+| `LEVEL_MOD` | integer | `1` | Level step between the emitted cells, counted up from `MIN_LEVEL` (1, 2 or 3) |
+| `OPTIMIZE_FOR_SPACE` | boolean | `false` | Optimize the S2 covering for space rather than speed; only affects `TYPE = shape` over a non-point geometry |
 
-`TYPE` and `CODING` values are matched case-insensitively; a value outside the list fails with `invalid value in "type" parameter` or `invalid value in "coding" parameter`. `MAXCELLS` is a target rather than a hard cap: it bounds how much work the coverer does, and a covering often uses fewer cells. `MINLEVEL` takes priority over it, so a geometry that is large relative to `MINLEVEL` can produce more. Levels outside their range are reported by option name — `geo_json: 'min_level' out of bounds: [0..30].`, `geo_json: 'level_mod' out of bounds: [1..3].`, `geo_json: 'min_level' should be less than or equal to 'max_level'.`
+`TYPE` and `CODING` values are matched case-insensitively; a value outside the list fails with `invalid value in "type" parameter` or `invalid value in "coding" parameter`. `MAX_CELLS` is a target rather than a hard cap: it bounds how much work the coverer does, and a covering often uses fewer cells. `MIN_LEVEL` takes priority over it, so a geometry that is large relative to `MIN_LEVEL` can produce more. Levels outside their range are reported by option name — `geo_json: 'min_level' out of bounds: [0..30].`, `geo_json: 'level_mod' out of bounds: [1..3].`, `geo_json: 'min_level' should be less than or equal to 'max_level'.`
 
 ## Usage
 
@@ -68,4 +68,5 @@ For the full indexing-and-query walkthrough — `ST_Intersects`, `ST_Contains` a
 - [geopoint](./geopoint.md) — index points from latitude/longitude fields
 - [`GEOMETRY` data type](../../data_types/geometry.md)
 - [Geospatial Search Functions](../../functions/search/geo.md) — `ST_*` reference
+- [`encode_geojson()`](../../functions/search/tokenizers.md#encode_geojson) — the template as a function, applied to a value or a list in any query
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

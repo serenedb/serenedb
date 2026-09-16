@@ -3,7 +3,7 @@
 # functions in expressions ARE supported -- see inverted_index_expressions.)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY clickclack_dict AS keyword();
 
 
 statement ok

@@ -40,8 +40,10 @@ irs::bstring operator""_b(const char* ptr, size_t size) {
 }  // namespace
 
 TEST(ngram_token_stream_test, consts) {
-  static_assert("ngram" == irs::Type<irs::analysis::NGramTokenizer>::name());
-  static_assert("ngram" == irs::Type<irs::analysis::NGramTokenizer>::name());
+  static_assert("generate_ngrams" ==
+                irs::Type<irs::analysis::NGramTokenizer>::name());
+  static_assert("generate_ngrams" ==
+                irs::Type<irs::analysis::NGramTokenizer>::name());
 }
 
 TEST(ngram_token_stream_test, mode_names) {

@@ -251,17 +251,14 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
                      const catalog::SereneDBTableEntry& table,
                      std::span<const std::string_view> text_columns) {
   {
-    duckdb::named_parameter_map_t options;
-    options["template"] = duckdb::Value{"text"};
-    options["locale"] = duckdb::Value{"en_US.UTF-8"};
-    options["case"] = duckdb::Value{"lower"};
-    options["stemming"] = duckdb::Value::BOOLEAN(false);
-    options["accent"] = duckdb::Value::BOOLEAN(false);
-    options["frequency"] = duckdb::Value::BOOLEAN(true);
-    options["position"] = duckdb::Value::BOOLEAN(true);
-    options["norm"] = duckdb::Value::BOOLEAN(true);
+    duckdb::named_parameter_map_t features;
+    features["frequency"] = duckdb::Value::BOOLEAN(true);
+    features["position"] = duckdb::Value::BOOLEAN(true);
+    features["norm"] = duckdb::Value::BOOLEAN(true);
     pg::CreateTokenizer(GetSereneDBContext(context), kTextTokenizer, kEsSchema,
-                        /*if_not_exists=*/true, options);
+                        /*if_not_exists=*/true, features,
+                        "split_text(case := 'lower') | "
+                        "normalize_tokens('en_US.UTF-8', accent := false)");
   }
 
   std::vector<catalog::CreateIndexColumn> idx_columns;

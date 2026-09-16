@@ -9,15 +9,9 @@ control substitution on
 # must be rebuilt from the WAL so every payload reads back from the index.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY var_rec_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY var_rec_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE var_rec_t(id INTEGER PRIMARY KEY, body TEXT, payload VARIANT);

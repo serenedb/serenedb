@@ -28,7 +28,6 @@
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/utils/assert.hpp>

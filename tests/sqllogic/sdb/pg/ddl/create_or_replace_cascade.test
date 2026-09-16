@@ -280,7 +280,7 @@ DROP TABLE dashboard;
 # drop the index first.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mop_dict(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY mop_dict AS keyword();
 
 
 statement ok

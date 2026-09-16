@@ -45,7 +45,9 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "collation"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "collate_tokens";
+  }
 
   explicit CollationTokenizer(const Options& options);
 

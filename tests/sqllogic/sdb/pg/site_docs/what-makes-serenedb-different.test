@@ -28,15 +28,9 @@ INSERT INTO movies VALUES
  (12, 'Gladiator',      'A former Roman general sets out to exact vengeance against the emperor who murdered his family.',                'Action',          8.2, 18000);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY english AS
+    split_text(case := 'lower')
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX movies_idx ON movies

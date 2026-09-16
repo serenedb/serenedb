@@ -6,8 +6,8 @@ control substitution on
 # fed GeoJSON text through a WKB parser and produced no tokens.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geo_pool_dict(template = 'geojson',
-    coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY geo_pool_dict AS
+    encode_geojson(coding := 's2point');
 
 query
 SELECT count(*) > 0 AS has_tokens

@@ -318,51 +318,34 @@ void OctetLengthFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // When null_string is NULL, behaves like 2-arg form (no NULL replacement).
 void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
-  auto count = args.size();
-  auto& str_data = args.data[0];
-  auto& delim_data = args.data[1];
-  auto& null_str_data = args.data[2];
+  const auto count = args.size();
+  auto strings = args.data[0].Values<duckdb::string_t>();
+  auto delims = args.data[1].Values<duckdb::string_t>();
+  auto null_strs = args.data[2].Values<duckdb::string_t>();
+  auto rows =
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
+                                                                         count);
 
-  duckdb::UnifiedVectorFormat str_fmt, delim_fmt, null_str_fmt;
-  str_data.ToUnifiedFormat(count, str_fmt);
-  delim_data.ToUnifiedFormat(count, delim_fmt);
-  null_str_data.ToUnifiedFormat(count, null_str_fmt);
-
-  auto& list_validity = duckdb::FlatVector::ValidityMutable(result);
-  auto list_entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-
+  std::vector<std::string_view> parts;
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto str_idx = str_fmt.sel->get_index(i);
-    auto delim_idx = delim_fmt.sel->get_index(i);
-    auto null_str_idx = null_str_fmt.sel->get_index(i);
-
-    if (!str_fmt.validity.RowIsValid(str_idx) ||
-        !delim_fmt.validity.RowIsValid(delim_idx)) {
-      list_validity.SetInvalid(i);
+    auto str = strings[i];
+    auto delim = delims[i];
+    if (!str.IsValid() || !delim.IsValid()) {
+      rows.WriteNull();
       continue;
     }
-
-    auto str =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(str_fmt)[str_idx];
-    auto delim = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-      delim_fmt)[delim_idx];
-    bool has_null_str = null_str_fmt.validity.RowIsValid(null_str_idx);
-    duckdb::string_t null_str;
+    auto null_str = null_strs[i];
+    const bool has_null_str = null_str.IsValid();
     std::string_view ns;
     if (has_null_str) {
-      null_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-        null_str_fmt)[null_str_idx];
-      ns = {null_str.GetData(), null_str.GetSize()};
+      ns = {null_str.GetValue().GetData(), null_str.GetValue().GetSize()};
     }
+    const std::string_view s{str.GetValue().GetData(),
+                             str.GetValue().GetSize()};
+    const std::string_view d{delim.GetValue().GetData(),
+                             delim.GetValue().GetSize()};
 
-    std::string_view s{str.GetData(), str.GetSize()};
-    std::string_view d{delim.GetData(), delim.GetSize()};
-
-    auto& child = duckdb::ListVector::GetEntry(result);
-    auto current_size = duckdb::ListVector::GetListSize(result);
-
-    std::vector<std::string_view> parts;
+    parts.clear();
     if (d.empty()) {
       parts.push_back(s);
     } else {
@@ -378,21 +361,16 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
 
-    duckdb::ListVector::Reserve(result, current_size + parts.size());
-    auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
-    auto child_data =
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
-    for (size_t j = 0; j < parts.size(); j++) {
+    size_t j = 0;
+    for (auto& child : rows.WriteList(parts.size())) {
       if (has_null_str && parts[j] == ns) {
-        child_validity.SetInvalid(current_size + j);
-        child_data[current_size + j] = duckdb::string_t();
+        child.WriteNull();
       } else {
-        child_data[current_size + j] = duckdb::StringVector::AddString(
-          child, parts[j].data(), parts[j].size());
+        child.WriteValue(duckdb::string_t{
+          parts[j].data(), static_cast<uint32_t>(parts[j].size())});
       }
+      ++j;
     }
-    duckdb::ListVector::SetListSize(result, current_size + parts.size());
-    list_entries[i] = {current_size, parts.size()};
   }
 }
 
@@ -732,23 +710,18 @@ void QuoteLiteralFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // PG quote_nullable: like quote_literal but returns 'NULL' for NULL input
 void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                            duckdb::Vector& result) {
-  auto& input = args.data[0];
-  auto count = args.size();
-  duckdb::UnifiedVectorFormat input_data;
-  input.ToUnifiedFormat(count, input_data);
-  auto* result_data =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  const auto count = args.size();
+  auto inputs = args.data[0].Values<duckdb::string_t>();
+  auto out = duckdb::FlatVector::Writer<duckdb::string_t>(result, count);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto idx = input_data.sel->get_index(i);
-    if (!input_data.validity.RowIsValid(idx)) {
-      result_data[i] = duckdb::StringVector::AddString(result, "NULL");
+    auto input = inputs[i];
+    if (!input.IsValid()) {
+      out.WriteValue(duckdb::string_t{"NULL", 4});
       continue;
     }
-    auto str =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(input_data)[idx]
-        .GetString();
-    bool has_backslash = str.find('\\') != std::string::npos;
+    const auto str = input.GetValue().GetString();
+    const bool has_backslash = str.find('\\') != std::string::npos;
     std::string quoted;
     quoted.reserve(str.size() + 3);
     if (has_backslash) {
@@ -766,7 +739,8 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
     quoted += '\'';
-    result_data[i] = duckdb::StringVector::AddString(result, quoted);
+    out.WriteValue(
+      duckdb::string_t{quoted.data(), static_cast<uint32_t>(quoted.size())});
   }
 }
 
@@ -968,26 +942,22 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
 // Ported from Velox PgRegexpMatch.
 void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
-  duckdb::UnifiedVectorFormat tdata, pdata;
-  args.data[0].ToUnifiedFormat(tdata);
-  args.data[1].ToUnifiedFormat(pdata);
-  const auto* text_ptr =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(tdata);
-  const auto* pat_ptr =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(pdata);
-  auto* result_ptr =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t row = 0; row < args.size(); row++) {
-    auto t_idx = tdata.sel->get_index(row);
-    auto p_idx = pdata.sel->get_index(row);
-    if (!tdata.validity.RowIsValid(t_idx) ||
-        !pdata.validity.RowIsValid(p_idx)) {
-      result_validity.SetInvalid(row);
+  const auto count = args.size();
+  auto texts = args.data[0].Values<duckdb::string_t>();
+  auto patterns = args.data[1].Values<duckdb::string_t>();
+  auto rows =
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
+                                                                         count);
+
+  for (duckdb::idx_t row = 0; row < count; row++) {
+    auto text_value = texts[row];
+    auto pattern_value = patterns[row];
+    if (!text_value.IsValid() || !pattern_value.IsValid()) {
+      rows.WriteNull();
       continue;
     }
-    const auto& text = text_ptr[t_idx];
-    const auto& pattern = pat_ptr[p_idx];
+    const auto& text = text_value.GetValue();
+    const auto& pattern = pattern_value.GetValue();
     re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
                 re2::RE2::Quiet);
     if (!re.ok()) {
@@ -996,49 +966,39 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     }
 
     re2::StringPiece input(text.GetData(), text.GetSize());
-    int num_groups = re.NumberOfCapturingGroups();
-
-    auto& child = duckdb::ListVector::GetChildMutable(result);
-    auto current_size = duckdb::ListVector::GetListSize(result);
+    const int num_groups = re.NumberOfCapturingGroups();
 
     if (num_groups == 0) {
       re2::StringPiece match;
       if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
                     1)) {
-        result_validity.SetInvalid(row);
+        rows.WriteNull();
         continue;
       }
-      duckdb::ListVector::Reserve(result, current_size + 1);
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
-        child)[current_size] =
-        duckdb::StringVector::AddString(child, match.data(), match.size());
-      duckdb::ListVector::SetListSize(result, current_size + 1);
-      result_ptr[row] = duckdb::list_entry_t{current_size, 1};
+      for (auto& child : rows.WriteList(1)) {
+        child.WriteValue(
+          duckdb::string_t{match.data(), static_cast<uint32_t>(match.size())});
+      }
       continue;
     }
 
     std::vector<re2::StringPiece> groups(num_groups + 1);
     if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, groups.data(),
                   num_groups + 1)) {
-      result_validity.SetInvalid(row);
+      rows.WriteNull();
       continue;
     }
 
-    duckdb::ListVector::Reserve(result, current_size + num_groups);
-    auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
-    for (int i = 1; i <= num_groups; ++i) {
-      if (groups[i].data()) {
-        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
-          child)[current_size + i - 1] =
-          duckdb::StringVector::AddString(child, groups[i].data(),
-                                          groups[i].size());
+    int group = 1;
+    for (auto& child : rows.WriteList(static_cast<duckdb::idx_t>(num_groups))) {
+      if (groups[group].data()) {
+        child.WriteValue(duckdb::string_t{
+          groups[group].data(), static_cast<uint32_t>(groups[group].size())});
       } else {
-        child_validity.SetInvalid(current_size + i - 1);
+        child.WriteNull();
       }
+      ++group;
     }
-    duckdb::ListVector::SetListSize(result, current_size + num_groups);
-    result_ptr[row] = duckdb::list_entry_t{
-      current_size, static_cast<duckdb::idx_t>(num_groups)};
   }
 }
 

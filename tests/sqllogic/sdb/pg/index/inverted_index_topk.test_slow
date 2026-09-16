@@ -47,16 +47,9 @@ FROM generate_series(1, 5000) AS s;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en_topk_slow(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY en_topk_slow AS
+    text() | norm('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 statement ok

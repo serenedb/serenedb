@@ -21,11 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
+#include "text_chain.hpp"
 #include "token_sink_utils.hpp"
 
 namespace tests {
@@ -36,48 +36,26 @@ class AnalyzerTest : public ::testing::Test {};
 
 using namespace tests;
 
-// NOTE: the legacy `duplicate_register` test exercised the now-deleted
-// AnalyzerRegistrar / analyzers::Exists APIs and has been removed alongside
-// the registry. Variant-based dispatch has no runtime registration step so
-// there is nothing to verify here.
-
 TEST_F(AnalyzerTest, test_load) {
-  // locale with default ingnored_words
   {
-    auto analyzer = irs::analysis::TextTokenizer::Make(
-      irs::analysis::TextTokenizer::Options{
-        .locale = icu::Locale::createFromName("en"),
-      },
-      tests::Cache());
+    auto analyzer = tests::MakeTextChain({.locale = "en"});
 
     ASSERT_NE(nullptr, analyzer);
     ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
   }
 
-  // locale with provided ignored_words
   {
-    irs::analysis::TextTokenizer::Options opts{
-      .locale = icu::Locale::createFromName("en"),
-    };
-    opts.explicit_stopwords.push_back("abc");
-    opts.explicit_stopwords.push_back("def");
-    opts.explicit_stopwords.push_back("ghi");
-    opts.explicit_stopwords_set = true;
-    auto analyzer =
-      irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
+    auto analyzer = tests::MakeTextChain(
+      {.locale = "en", .stopwords = {"abc", "def", "ghi"}});
 
     ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
+    const auto tokens = tests::Analyze(*analyzer, "abc");
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_TRUE(tokens->empty());
   }
 
-  // .........................................................................
-  // invalid: missing required locale -- the old JSON path rejected "{}".
-  // Direct Options API: a default-constructed Options has `locale` set to
-  // `MakeBogusLocale()`; Make should reject because BreakIterator cannot be
-  // built from a bogus locale.
-  // .........................................................................
   {
-    ASSERT_ANY_THROW(irs::analysis::TextTokenizer::Make(
-      irs::analysis::TextTokenizer::Options{}, tests::Cache()));
+    ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
+      irs::analysis::StemmingTokenizer::Options{}));
   }
 }

@@ -137,13 +137,8 @@ HINT: Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list elem
 # --- A dictionary needing a client context cannot be part of an indexed expression ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_words(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY mh_words AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement error
 CREATE INDEX mh_lexize_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
@@ -193,10 +188,8 @@ id
 # plain list form counts list elements. ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_sql(
-    template = 'sql',
-    expression = 'minhash(regexp_split_to_array(lower(input), ''\W+''), 16)'
-);
+CREATE TEXT SEARCH DICTIONARY mh_sql AS
+    minhash(regexp_split_to_array(lower($1), '\W+'), 16);
 
 statement ok
 CREATE INDEX mh_sql_idx ON mh_docs USING inverted(id, body mh_sql);

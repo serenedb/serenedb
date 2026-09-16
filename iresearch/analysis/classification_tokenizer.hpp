@@ -51,7 +51,7 @@ class ClassificationTokenizer final
   };
 
   static constexpr std::string_view type_name() noexcept {
-    return "classification";
+    return "classify_text";
   }
 
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);

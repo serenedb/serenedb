@@ -34,7 +34,7 @@ namespace irs::analysis {
 
 StemmingTokenizer::StemmingTokenizer(const Options& options) {
   if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("stem: invalid locale"));
+    THROW_SQL_ERROR(ERR_MSG("stem_words: invalid locale"));
   }
   _stemmer = make_stemmer_ptr(options.locale.getLanguage(), nullptr);
 }

@@ -30,29 +30,29 @@ using namespace std::string_view_literals;
 
 // Geo (shared S2 options)
 
-inline constexpr OptionInfo kGeoMaxCells{"maxcells", 20,
+inline constexpr OptionInfo kGeoMaxCells{"max_cells", 20,
                                          "Maximum number of S2 cells"};
-inline constexpr OptionInfo kGeoMinLevel{"minlevel", 4,
+inline constexpr OptionInfo kGeoMinLevel{"min_level", 4,
                                          "Minimum S2 cell level (0-30)"};
 inline constexpr OptionInfo kGeoMaxLevel{
-  "maxlevel", 23, "Maximum S2 cell level (0-30), ~1m precision at level 23"};
-inline constexpr OptionInfo kGeoLevelMod{"levelmod", 1,
+  "max_level", 23, "Maximum S2 cell level (0-30), ~1m precision at level 23"};
+inline constexpr OptionInfo kGeoLevelMod{"level_mod", 1,
                                          "S2 level modifier (1, 2, or 3)"};
 inline constexpr OptionInfo kGeoOptimizeForSpace{
-  "optimizeforspace", false, "Optimize S2 index for space rather than speed"};
+  "optimize_for_space", false, "Optimize S2 index for space rather than speed"};
 
 // GeoPoint
 
 inline constexpr OptionInfo kGeoLatitude{
-  "latitude", ""sv,
-  "Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); "
-  "empty (the default) treats the indexed JSON value as a [lat, lng] "
-  "array directly. latitude and longitude must both be set or both left "
-  "empty."};
+  "latitude", OptionInfo::ListTag{},
+  "Path to the latitude field, slash-separated ('lat', 'loc/lat') or a list "
+  "of segments (['loc', 'lat']); empty (the default) treats the indexed JSON "
+  "value as a [lat, lng] array directly. latitude and longitude must both be "
+  "set or both left empty."};
 inline constexpr OptionInfo kGeoLongitude{
-  "longitude", ""sv,
-  "Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); "
-  "see latitude for empty-default semantics."};
+  "longitude", OptionInfo::ListTag{},
+  "Path to the longitude field, slash-separated ('lng', 'loc/lng') or a list "
+  "of segments; see latitude for empty-default semantics."};
 
 // GeoJson
 
@@ -80,11 +80,17 @@ inline constexpr OptionGroup kGeoPointGroup{
   irs::analysis::GeoPointTokenizer::type_name(),
   kGeoPointOptions,
   kGeoPointSubgroups,
+  "encode_geopoint",
+  TemplateKind::Tokenizer,
+  TemplateInput::Json,
 };
 inline constexpr OptionGroup kGeoJsonGroup{
   irs::analysis::GeoJsonTokenizer::type_name(),
   kGeoJsonOptions,
   kGeoJsonSubgroups,
+  "encode_geojson",
+  TemplateKind::Tokenizer,
+  TemplateInput::Json,
 };
 
 }  // namespace sdb::pg::tokenizer_options

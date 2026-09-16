@@ -19,7 +19,7 @@ set(iresearch-tests_sources
     ./analysis/pipeline_tokenizer_tests.cpp
     ./analysis/text_pipeline_equivalence_tests.cpp
     ./analysis/union_tokenizer_tests.cpp
-    ./analysis/segmentation_tokenizer_tests.cpp
+    ./analysis/text_tokenizer_tests.cpp
     ./analysis/text/case_tests.cpp
     ./analysis/text/normalize_tests.cpp
     ./analysis/text/stem_cache_tests.cpp
@@ -44,6 +44,7 @@ set(iresearch-tests_sources
     ./analysis/tokenizer_fuzz_specs.cpp
     ./analysis/tokenizer_fuzz_checks.cpp
     ./analysis/tokenizer_fuzz_tests.cpp
+    ./analysis/tokenizer_chain_fuzz_tests.cpp
     ./analysis/tokenizer_inversion_tests.cpp
     ./analysis/tokenizer_store_tests.cpp
     ./analysis/tokenizer_config_tests.cpp

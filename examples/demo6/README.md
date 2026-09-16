@@ -40,7 +40,7 @@ Two details that matter at scale:
 
 ## The tokenizer
 
-`template = 'sparse_ngram'` implements the n-gram selection scheme used by
+The `sparse_ngram` template implements the n-gram selection scheme used by
 GitHub code search ([danlark1/sparse_ngrams](https://github.com/danlark1/sparse_ngrams)).
 A monotonic stack over bigram hashes selects a sparse set of variable-length
 ngrams (3 bytes and up):

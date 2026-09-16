@@ -6,15 +6,9 @@
 DROP TABLE IF EXISTS sweep_t;
 DROP TEXT SEARCH DICTIONARY IF EXISTS sweep_en_icu;
 
-CREATE TEXT SEARCH DICTIONARY sweep_en_icu(
-  template = 'text',
-  locale = 'en_US.UTF-8',
-  case = 'lower',
-  stemming = true,
-  accent = true,
-  frequency = true,
-  position = true
-);
+CREATE TEXT SEARCH DICTIONARY sweep_en_icu AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
 
 CREATE TABLE sweep_t (
   pk INTEGER PRIMARY KEY,

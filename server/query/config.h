@@ -54,7 +54,6 @@ using IsolationLevel = duckdb::TransactionIsolationLevel;
 
 uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name);
 
-bool ReadBoolSetting(duckdb::ClientContext& context, std::string_view name);
 double ReadDoubleSetting(duckdb::ClientContext& context, std::string_view name);
 std::string ReadStringSetting(duckdb::ClientContext& context,
                               std::string_view name);

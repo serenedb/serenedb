@@ -61,14 +61,6 @@ uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
   return v.GetValue<uint32_t>();
 }
 
-bool ReadBoolSetting(duckdb::ClientContext& context, std::string_view name) {
-  duckdb::Value v;
-  auto res = context.TryGetCurrentSetting(std::string{name}, v);
-  SDB_ASSERT(res);
-  SDB_ASSERT(!v.IsNull());
-  return v.GetValue<bool>();
-}
-
 double ReadDoubleSetting(duckdb::ClientContext& context,
                          std::string_view name) {
   duckdb::Value v;
@@ -550,21 +542,24 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_hnsw_rerank_factor",
       {
         LogicalTypeId::DOUBLE,
-        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
-        "with exact distances for a quantized HNSW vector-similarity query "
-        "(pool = ceil(sdb_hnsw_rerank_factor * k), never more than the beam "
-        "and never fewer than k). This is what other engines call oversampling "
-        "or a rescore factor, and it is what lets a narrow beam reach a high "
-        "recall without widening the graph search: the beam decides how much "
-        "of the graph is walked on quantized codes, this decides how many of "
-        "its hits are then read back at full precision. 0 means re-score the "
-        "whole beam, which is what the query did before this setting existed. "
-        "A factor wider than the beam widens the beam to hold it, because a "
-        "pool the search cannot return that many of is not that pool. "
-        "Fractional values are allowed, but a nonzero factor below 1 is "
-        "rejected because the pool must cover k. Unquantized (quant = 'none') "
-        "indexes never rerank, regardless of this setting.",
-        [] { return duckdb::Value::DOUBLE(0); },
+        "Oversample for a quantized HNSW vector-similarity query: the graph is "
+        "walked on quantized codes and ceil(sdb_hnsw_rerank_factor * k) of the "
+        "beam\'s hits are then read back at full precision and re-ordered, k "
+        "of them surviving. The beam is widened to hold the pool when the pool "
+        "is the wider of the two, because a search that returns a hundred "
+        "cannot hand four hundred to the rescorer. This is what lets a narrow "
+        "beam reach a high recall without walking more of the graph. 0 "
+        "disables the rescore: the query answers from the codes, which is "
+        "faster and caps recall at whatever the codes can tell apart -- well "
+        "below 1 for a 4-bit or binary quantizer. Elasticsearch spells this "
+        "rescore_vector.oversample, with the same 0, and Qdrant splits it into "
+        "quantization.oversampling and quantization.rescore. Default 3, as "
+        "Elasticsearch\'s is. Fractional values are allowed, but a nonzero "
+        "factor below 1 is rejected because the pool must cover k. Unquantized "
+        "(quant = \'none\') indexes never rerank, regardless of this setting, "
+        "and a query whose pool exists to survive a lookup filter keeps that "
+        "pool either way.",
+        [] { return duckdb::Value::DOUBLE(3); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
           if (n < 0.0 || (n > 0.0 && n < 1.0)) {
@@ -574,24 +569,6 @@ constexpr std::pair<std::string_view, VariableDescription>
                                     value.ToString(), "\""));
           }
         },
-      },
-    },
-    {
-      "sdb_hnsw_rescore",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Whether a quantized HNSW vector-similarity query reads its candidate "
-        "pool back at full precision before answering, or answers from the "
-        "quantized codes the graph was walked on. sdb_hnsw_rerank_factor sizes "
-        "that pool; this says whether it is read at all. Qdrant spells the "
-        "pair quantization.rescore and quantization.oversampling, and "
-        "Elasticsearch spells it rescore_vector.oversample. False is faster "
-        "and caps recall at whatever the codes can tell apart, which for a "
-        "4-bit or binary quantizer is well below 1. Default true. Unquantized "
-        "(quant = 'none') indexes have nothing to re-score, and a query whose "
-        "pool exists to survive a lookup filter keeps it either way.",
-        [] { return duckdb::Value::BOOLEAN(true); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {

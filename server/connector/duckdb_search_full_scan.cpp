@@ -1113,10 +1113,6 @@ double ReadHnswRerankFactor(duckdb::ClientContext& context) {
   return ReadDoubleSetting(context, "sdb_hnsw_rerank_factor");
 }
 
-bool ReadHnswRescore(duckdb::ClientContext& context) {
-  return ReadBoolSetting(context, "sdb_hnsw_rescore");
-}
-
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
                          const SereneDBScanBindData& bind) {
   return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *g.score_top_k;
@@ -1537,6 +1533,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       const auto factor = ReadHnswRerankFactor(context);
       vs.min_ef = static_cast<uint32_t>(
         factor > 0.0 ? std::max(k, std::ceil(factor * k)) : k);
+      state->rerank_pool_k = factor > 0.0 ? std::max(k, std::ceil(factor * k))
+                                          : 0.0;
     }
     state->vector_scorer = &vs;
   }
@@ -1754,26 +1752,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       double pool;
       if (state->vector_scorer->kind == irs::AnnKind::Hnsw) {
         // The beam decides how much of the graph is walked on quantized codes;
-        // this decides how many of its hits are read back at full precision.
-        // They are separate knobs everywhere else, and were not here: the pool
-        // was the whole beam, so a beam of 512 read 512 raw vectors, which at
-        // 1024 dimensions is two megabytes a query where an oversample of four
-        // at k=10 reads a hundred and sixty kilobytes. Zero keeps the old
-        // behaviour, so nothing changes for a query that does not ask.
-        const auto factor = ReadHnswRerankFactor(context);
-        const auto beam = std::max<double>(k, state->vector_scorer->ef_search);
-        if (!state->has_lookup_filter && !ReadHnswRescore(context)) {
-          // Answer from the codes the walk already scored. The pool is also
-          // the over-fetch a lookup filter eats into, so a query that has one
-          // keeps it whatever this says.
-          pool = 0;
-        } else if (factor > 0.0) {
-          // The beam was already widened to hold this, where it had to be:
-          // min_ef is read when the filter is built, well above here.
-          pool = std::max(k, std::ceil(factor * k));
-          SDB_ASSERT(state->vector_scorer->min_ef >= pool);
-        } else {
-          pool = beam;
+        // the pool decides how many of its hits are read back at full
+        // precision. Decided above, where the beam had to be widened to hold
+        // it; zero there means the query answers from the codes.
+        pool = state->rerank_pool_k;
+        SDB_ASSERT(pool == 0.0 || state->vector_scorer->min_ef >= pool);
+        if (state->has_lookup_filter) {
+          // This pool is not about precision: a lookup filter drops rows after
+          // the collector, so the over-fetch has to be the whole beam or the
+          // query returns fewer than k. It stands whatever the rescore says.
+          pool = std::max(pool, std::max(k, static_cast<double>(
+                                              state->vector_scorer->ef_search)));
         }
       } else {
         pool = std::ceil(ReadRerankFactor(context) * k);

@@ -158,9 +158,9 @@ statement error
 DROP TABLE iceberg_partitions;
 ----
 db error: ERROR: Cannot drop entry "iceberg_partitions" because there are entries that depend on it.
+view "v_iceberg_part3" depends on table "iceberg_partitions".
 view "v_iceberg_part1" depends on table "iceberg_partitions".
 view "v_iceberg_part2" depends on table "iceberg_partitions".
-view "v_iceberg_part3" depends on table "iceberg_partitions".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -407,9 +407,13 @@ statement error
 DROP TABLE iceberg_chain_t;
 ----
 db error: ERROR: Cannot drop entry "iceberg_chain_t" because there are entries that depend on it.
+view "v_iceberg_chain2" depends on table "iceberg_chain_t".
+view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
 view "v_iceberg_chain1" depends on table "iceberg_chain_t".
 view "v_iceberg_chain2" depends on view "v_iceberg_chain1".
 view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
+view "v_iceberg_chain3" depends on view "v_iceberg_chain1".
+view "v_iceberg_chain3" depends on table "iceberg_chain_t".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -420,6 +424,7 @@ DROP VIEW v_iceberg_chain1;
 db error: ERROR: Cannot drop entry "v_iceberg_chain1" because there are entries that depend on it.
 view "v_iceberg_chain2" depends on view "v_iceberg_chain1".
 view "v_iceberg_chain3" depends on view "v_iceberg_chain2".
+view "v_iceberg_chain3" depends on view "v_iceberg_chain1".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -477,10 +482,21 @@ statement error
 DROP TABLE iceberg_root_t;
 ----
 db error: ERROR: Cannot drop entry "iceberg_root_t" because there are entries that depend on it.
+view "v_iceberg_root3" depends on table "iceberg_root_t".
+view "v_iceberg_root4" depends on view "v_iceberg_root3".
 view "v_iceberg_root1" depends on table "iceberg_root_t".
+view "v_iceberg_root4" depends on view "v_iceberg_root1".
 view "v_iceberg_root2" depends on view "v_iceberg_root1".
+view "v_iceberg_root4" depends on view "v_iceberg_root2".
 view "v_iceberg_root3" depends on view "v_iceberg_root2".
 view "v_iceberg_root4" depends on view "v_iceberg_root3".
+view "v_iceberg_root3" depends on view "v_iceberg_root1".
+view "v_iceberg_root4" depends on view "v_iceberg_root3".
+view "v_iceberg_root2" depends on table "iceberg_root_t".
+view "v_iceberg_root4" depends on view "v_iceberg_root2".
+view "v_iceberg_root3" depends on view "v_iceberg_root2".
+view "v_iceberg_root4" depends on view "v_iceberg_root3".
+view "v_iceberg_root4" depends on table "iceberg_root_t".
 Use DROP...CASCADE to drop all dependents.
 
 

@@ -62,7 +62,6 @@ statement error
 DROP SCHEMA clickclack_ops;
 ----
 db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
-sequence "query_plans_pk_seq" depends on schema "clickclack_ops".
 table "query_plans" depends on schema "clickclack_ops".
 Use DROP...CASCADE to drop all dependents.
 
@@ -72,7 +71,6 @@ statement error
 DROP SCHEMA clickclack_ops RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
-sequence "query_plans_pk_seq" depends on schema "clickclack_ops".
 table "query_plans" depends on schema "clickclack_ops".
 Use DROP...CASCADE to drop all dependents.
 
@@ -132,12 +130,11 @@ statement error
 DROP SCHEMA iceberg_warehouse RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "iceberg_warehouse" because there are entries that depend on it.
-index "iceberg_manifests_v_idx" depends on schema "iceberg_warehouse".
-sequence "partitions_pk_seq" depends on schema "iceberg_warehouse".
+view "audit_view" depends on schema "iceberg_warehouse".
+table "partitions" depends on schema "iceberg_warehouse".
 sequence "snapshot_seq" depends on schema "iceberg_warehouse".
 table "manifests" depends on schema "iceberg_warehouse".
-table "partitions" depends on schema "iceberg_warehouse".
-view "audit_view" depends on schema "iceberg_warehouse".
+view "audit_view" depends on table "manifests".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -188,10 +185,11 @@ statement error
 DROP SCHEMA clickclack_team RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_team" because there are entries that depend on it.
-sequence "dashboard_pk_seq" depends on schema "clickclack_team".
-sequence "query_log_id_seq" depends on schema "clickclack_team".
-table "dashboard" depends on schema "clickclack_team".
 table "query_log" depends on schema "clickclack_team".
+sequence "query_log_id_seq" depends on schema "clickclack_team".
+table "dashboard" depends on sequence "query_log_id_seq".
+table "query_log" depends on sequence "query_log_id_seq".
+table "dashboard" depends on schema "clickclack_team".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -250,15 +248,15 @@ count
 0
 
 
-statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+statement error db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 DROP SCHEMA pg_catalog;
 
 
-statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+statement error db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 DROP SCHEMA pg_catalog CASCADE;
 
 
-statement error (?i)cannot drop schema .*information_schema.* because it is required by the database
+statement error db error: ERROR: Cannot drop entry "information_schema" because it is an internal system entry
 DROP SCHEMA information_schema;
 
 

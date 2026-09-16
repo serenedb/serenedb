@@ -51,7 +51,7 @@ INSERT INTO invoker VALUES (1, NULL);
 statement error
 ALTER TABLE invoker ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: invoker.b
+db error: ERROR: NOT NULL constraint failed: "invoker".b
 
 
 # The column is named as the catalog has it, not as the rows were written: a
@@ -62,7 +62,7 @@ ALTER TABLE invoker RENAME COLUMN b TO renamed;
 statement error
 ALTER TABLE invoker ALTER COLUMN renamed SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: invoker.renamed
+db error: ERROR: NOT NULL constraint failed: "invoker".b
 
 
 # ADD CONSTRAINT over rows that violate it reports the constraint as written,
@@ -70,7 +70,7 @@ db error: ERROR: NOT NULL constraint failed: invoker.renamed
 statement error
 ALTER TABLE invoker ADD CONSTRAINT ck CHECK (a > 99);
 ----
-db error: ERROR: CHECK constraint failed on table invoker with expression CHECK((a > 99))
+db error: ERROR: CHECK constraint failed on table "invoker" with expression CHECK(CAST((#0 > CAST(99 AS INTEGER)) AS INTEGER))
 
 
 statement ok

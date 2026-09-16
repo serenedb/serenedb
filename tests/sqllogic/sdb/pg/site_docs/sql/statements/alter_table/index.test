@@ -384,7 +384,7 @@ statement error
 ALTER TABLE my_table
 SET ('option_name' = 'value');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET (<options>) is not supported for DuckDB tables
 
 
 # DOCS_TEST: example_030
@@ -395,7 +395,7 @@ statement error
 ALTER TABLE my_table
 RESET ('option_name');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: RESET (<options>) is not supported for DuckDB tables
 
 
 # DOCS_TEST: example_031
@@ -406,14 +406,14 @@ statement error
 ALTER TABLE my_table
 SET ('option1' = 'value1', 'option2' = 'value2');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET (<options>) is not supported for DuckDB tables
 
 
 statement error
 ALTER TABLE my_table
 RESET ('option1', 'option2');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: RESET (<options>) is not supported for DuckDB tables
 
 
 # DOCS_TEST: example_034

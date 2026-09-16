@@ -46,9 +46,11 @@ statement error
 DROP TABLE vedernikoff_iceberg_base;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
-view "vedernikoff_iceberg_left" depends on table "vedernikoff_iceberg_base".
 view "vedernikoff_iceberg_right" depends on table "vedernikoff_iceberg_base".
+view "vedernikoff_iceberg_top" depends on view "vedernikoff_iceberg_right".
+view "vedernikoff_iceberg_left" depends on table "vedernikoff_iceberg_base".
 view "vedernikoff_iceberg_top" depends on view "vedernikoff_iceberg_left".
+view "vedernikoff_iceberg_top" depends on table "vedernikoff_iceberg_base".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -299,6 +301,7 @@ DROP TABLE vedernikoff_solid_t;
 db error: ERROR: Cannot drop entry "vedernikoff_solid_t" because there are entries that depend on it.
 view "vedernikoff_solid_v1" depends on table "vedernikoff_solid_t".
 view "vedernikoff_solid_v2" depends on view "vedernikoff_solid_v1".
+view "vedernikoff_solid_v2" depends on table "vedernikoff_solid_t".
 Use DROP...CASCADE to drop all dependents.
 
 

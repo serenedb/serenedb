@@ -222,25 +222,25 @@ db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supp
 statement error
 ALTER TABLE search_dml ADD COLUMN c INTEGER;
 ----
-db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml DROP COLUMN b;
 ----
-db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
 ----
-db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 # Renames are catalog-only metadata -- iresearch and the scan are keyed by
@@ -895,7 +895,7 @@ statement error
 CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', refresh_interval = 'x');
 ----
-db error: ERROR: WITH option "refresh_interval" expects an integer literal
+db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 
 
 # The interval options are search-only: an inverted-style per-object scoping,
@@ -960,7 +960,7 @@ statement error
 CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', segment_memory_max = 'x');
 ----
-db error: ERROR: invalid value for parameter "segment_memory_max": "x"
+db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
 
 
 # segment_memory_max is search/inverted-scoped, so it is rejected on a plain

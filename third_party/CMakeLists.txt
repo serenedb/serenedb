@@ -341,13 +341,17 @@ target_link_libraries(sdb_blas INTERFACE openblas)
 ################################################################################
 ### faiss library
 ################################################################################
+# Dynamic dispatch: one library, every SIMD level compiled in, the level
+# chosen at runtime by faiss's SIMDConfig. The binary's own baseline stays
+# Haswell -- faiss compiles its common files below that and raises only the
+# per-level translation units -- so an AVX-512 machine gets AVX-512 kernels
+# without the binary requiring them. Pinning FAISS_OPT_LEVEL to avx2 instead
+# would cap every faiss kernel at AVX2 on hardware that has more.
 set(FAISS_LIB faiss)
 if(ARCH_AMD64)
-    set(FAISS_OPT_LEVEL "avx2")
-    set(FAISS_LIB faiss_avx2)
+    set(FAISS_OPT_LEVEL "dd")
 elseif(ARCH_AARCH64)
     set(FAISS_OPT_LEVEL "generic")
-    set(FAISS_LIB faiss)
 endif()
 set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
 

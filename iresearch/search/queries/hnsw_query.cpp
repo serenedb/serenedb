@@ -171,17 +171,26 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
 // count, what the scan would have cost) falls back to the scan.
 inline constexpr long double kWalkShare = 0.25L;
 
+// The rows a two-pass scan scores in full, as a multiple of the beam: the
+// `keep` of HnswScanWords.
+inline constexpr long double kScanPrefixPool = 8;
+
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
-                    uint32_t parallel = 1) noexcept {
+                    uint32_t parallel = 1, bool prefix = false) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
   const long double walk = kWalkShare * static_cast<long double>(ef) * m0 *
                            nodes / static_cast<long double>(matches);
   // A scan splits across `parallel` workers; the walk is one thread moving
-  // through the graph, so only the scan's side of the comparison shrinks.
-  const long double scan =
-    static_cast<long double>(matches) / std::max<uint32_t>(parallel, 1);
+  // through the graph, so only the scan's side of the comparison shrinks. A
+  // scan that ranks on a prefix of each code reads a quarter of the rows it
+  // scores, and scores a pool of them in full on top.
+  long double scan = static_cast<long double>(matches);
+  if (prefix) {
+    scan = scan / 4 + kScanPrefixPool * ef;
+  }
+  scan /= std::max<uint32_t>(parallel, 1);
   return scan <= walk;
 }
 
@@ -487,8 +496,12 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   } else {
     return std::nullopt;
   }
+  // The two-pass scan applies to a quantized index whose codes are long
+  // enough for a quarter of one to be fewer cache lines (HnswScanWords).
+  const bool prefix = _codebook != nullptr && _d >= 512;
   if (_filter_mode != HnswFilterMode::Scan &&
-      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), parallel)) {
+      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), parallel,
+                      prefix)) {
     return std::nullopt;
   }
   return matches;

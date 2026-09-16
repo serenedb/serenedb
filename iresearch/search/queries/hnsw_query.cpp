@@ -184,6 +184,7 @@ struct WalkFilterScratch {
   std::vector<uint64_t> pass;
   std::vector<uint32_t> dirty;
   std::vector<doc_id_t> ask;
+  std::vector<uint32_t> keep;
 
   void Grow(size_t words) {
     if (known.size() < words) {
@@ -284,12 +285,49 @@ class WalkFilter {
   doc_id_t _docs_count;
 };
 
+// A predicate the term index answers, conjoined with one only the columnstore answers.
+//
+// Building the set with both applies the column predicate to every doc the postings admit, in the
+// set's own constructor, before anything has decided how the query will be answered: on sift at a
+// million rows the conjunction row costs 1.53 ms more than the equality row of the same final
+// selectivity, which is a hundred thousand scattered column reads for a walk that reaches a few
+// hundred nodes. The set is built from the postings alone here, and the column predicate is asked
+// only about the nodes the walk reaches that the postings already admit.
+class InnerAndTableFilter {
+ public:
+  InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table) noexcept
+    : _inner{&inner}, _table{&table}, _s{ThreadWalkScratch()} {}
+
+  void Prepare(std::span<const uint32_t> batch) const {
+    auto& keep = _s.keep;
+    keep.clear();
+    for (const auto node : batch) {
+      if (_inner->Contains(node + doc_limits::min())) {
+        keep.push_back(node);
+      }
+    }
+    _table->Prepare(keep);
+  }
+
+  bool operator()(uint32_t node) const {
+    return _inner->Contains(node + doc_limits::min()) && (*_table)(node);
+  }
+
+ private:
+  detail::LazyBitset* _inner;
+  const WalkFilter* _table;
+  WalkFilterScratch& _s;
+};
+
 // The hop hook is found by shape, so a signature that drifts apart would leave
 // the walk asking one question per node with nothing to say it had stopped
 // batching. This is what that would cost: a positioned column read per node.
 static_assert(requires(const WalkFilter& f) {
   f.Prepare(std::span<const uint32_t>{});
 }, "WalkFilter::Prepare must match the hop hook HnswExpandLevel looks for");
+static_assert(requires(const InnerAndTableFilter& f) {
+  f.Prepare(std::span<const uint32_t>{});
+}, "InnerAndTableFilter::Prepare must match it too");
 
 // The walk computes on the order of `ef * m0` distances unfiltered; with a
 // predicate admitting a share `p` of the graph it needs about `1 / p` times
@@ -526,7 +564,30 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                   last);
     return;
   }
-  auto set = MakeSet(_inner.get(), table, docs_count);
+  // Which plan answers this decides how the set is built, so the count comes first and costs
+  // nothing: an inner query knows its own upper bound, and without one a bounded sample of the set
+  // stands in. Folding to decide costs more than either plan does.
+  std::optional<detail::LazyBitset> probe;
+  uint64_t matches = 0;
+  if (_inner != nullptr) {
+    matches = _inner->EstimateMax();
+  } else {
+    probe.emplace(docs_count, nullptr, table);
+    matches = probe->EstimateCount(kCountSampleWindows);
+  }
+  auto mode = _filter_mode;
+  if (_ef != 0 && mode == HnswFilterMode::Auto) {
+    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size())
+             ? HnswFilterMode::Scan
+             : HnswFilterMode::Walk;
+  }
+  // A walk asks the columnstore about the nodes it reaches; only a scan needs the predicate applied
+  // to the whole segment up front, which is what building the set with the table does.
+  const bool ask_per_hop =
+    table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk;
+  auto set = probe && !ask_per_hop
+               ? std::move(*probe)
+               : MakeSet(_inner.get(), ask_per_hop ? nullptr : table, docs_count);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -536,19 +597,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                                   scratch, admit);
     });
     return;
-  }
-  // An inner query knows its upper bound up front. A table's column predicates
-  // are only known once evaluated, so the count comes from a bounded sample of
-  // the set rather than from folding it: the plan is being chosen, and folding
-  // to choose costs more than either plan does.
-  const uint64_t matches = table != nullptr
-                             ? set.EstimateCount(kCountSampleWindows)
-                             : _inner->EstimateMax();
-  auto mode = _filter_mode;
-  if (mode == HnswFilterMode::Auto) {
-    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size())
-             ? HnswFilterMode::Scan
-             : HnswFilterMode::Walk;
   }
   // A walk over a predicate only the columnstore answers asks about the nodes
   // it reaches instead of folding the segment; anything with an inner query
@@ -589,14 +637,18 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // acceptor while they are still collecting a hop, before the hop exists, so
   // they would take one positioned read per node: worse than the fold this is
   // replacing. They keep the set.
-  if (table != nullptr && _inner == nullptr && mode == HnswFilterMode::Walk) {
+  if (ask_per_hop) {
     const WalkFilter walk_filter{*table, docs_count};
-    if (run(walk_filter)) {
+    const bool done = _inner == nullptr
+                        ? run(walk_filter)
+                        : run(InnerAndTableFilter{set, walk_filter});
+    if (done) {
       return;
     }
-    // The walk gave up: the scan answers exactly, and it needs the whole set,
-    // so the scans go back to the start before it folds.
+    // The walk gave up, so the scan answers exactly. It needs the predicate over the whole set,
+    // which this set was built without, and the scans are wherever the last hop left them.
     table->Rewind();
+    set = MakeSet(_inner.get(), table, docs_count);
   } else if (run(admit)) {
     return;
   }

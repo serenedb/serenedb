@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <optional>
 #include <span>
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
@@ -161,6 +162,92 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
   return detail::LazyBitset{std::move(node), docs_count, nullptr, table};
 }
 
+// A predicate only the columnstore answers, asked one hop at a time.
+//
+// The set above is filled as a prefix, so the first hop that lands near the end
+// of the segment evaluates the predicate over everything below it: measured on
+// sift at a million rows that is a flat 1.6 ms, against about 1.0 ms of actual
+// search, and it does not move with the beam. The walk visits a few hundred
+// nodes, so it is a million column reads to answer a few hundred questions.
+//
+// This answers the questions instead. A hop's nodes are sorted and asked in one
+// call, because the column scans require rows to ascend; the next hop starts
+// anywhere, so the scans are rewound between hops. Every answer is remembered,
+// so a node revisited on a later hop costs nothing, and the walk asks about
+// each node at most once however often it is reached.
+class WalkFilter {
+ public:
+  WalkFilter(detail::TableFilter& table, doc_id_t docs_count)
+    : _table{&table},
+      _known((docs_count + 63) / 64, 0),
+      _pass((docs_count + 63) / 64, 0),
+      _docs_count{docs_count} {}
+
+  // The hop, before anything is asked about a single node of it.
+  void Prepare(std::span<const uint32_t> batch) const {
+    _ask.clear();
+    for (const auto node : batch) {
+      if (node < _docs_count && !Bit(_known, node)) {
+        _ask.push_back(node + doc_limits::min());
+      }
+    }
+    if (_ask.empty()) {
+      return;
+    }
+    std::sort(_ask.begin(), _ask.end());
+    _ask.erase(std::unique(_ask.begin(), _ask.end()), _ask.end());
+    for (const auto doc : _ask) {
+      Set(_known, doc - doc_limits::min());
+    }
+    // The previous hop left the scans wherever it ended; this one starts
+    // anywhere, and the readers only go forwards.
+    _table->Rewind();
+    const auto kept = _table->Narrow(_ask.data(), nullptr,
+                                     static_cast<uint32_t>(_ask.size()));
+    for (uint32_t i = 0; i < kept; ++i) {
+      Set(_pass, _ask[i] - doc_limits::min());
+    }
+  }
+
+  bool operator()(uint32_t node) const {
+    if (node >= _docs_count) {
+      return false;
+    }
+    if (!Bit(_known, node)) {
+      // Reached without a hop of its own: the seed of the walk, or a node a
+      // mode admits outside the batch. One question, still ascending on its own.
+      doc_id_t doc = node + doc_limits::min();
+      Set(_known, node);
+      _table->Rewind();
+      if (_table->Narrow(&doc, nullptr, 1) == 1) {
+        Set(_pass, node);
+      }
+    }
+    return Bit(_pass, node);
+  }
+
+ private:
+  static bool Bit(const std::vector<uint64_t>& w, uint32_t i) noexcept {
+    return ((w[i / 64] >> (i % 64)) & 1U) != 0;
+  }
+  static void Set(std::vector<uint64_t>& w, uint32_t i) noexcept {
+    w[i / 64] |= uint64_t{1} << (i % 64);
+  }
+
+  detail::TableFilter* _table;
+  mutable std::vector<uint64_t> _known;
+  mutable std::vector<uint64_t> _pass;
+  mutable std::vector<doc_id_t> _ask;
+  doc_id_t _docs_count;
+};
+
+// The hop hook is found by shape, so a signature that drifts apart would leave
+// the walk asking one question per node with nothing to say it had stopped
+// batching. This is what that would cost: a positioned column read per node.
+static_assert(requires(const WalkFilter& f) {
+  f.Prepare(std::span<const uint32_t>{});
+}, "WalkFilter::Prepare must match the hop hook HnswExpandLevel looks for");
+
 // The walk computes on the order of `ef * m0` distances unfiltered; with a
 // predicate admitting a share `p` of the graph it needs about `1 / p` times
 // as many candidates before `ef` of them are admitted, but far fewer than
@@ -170,6 +257,10 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
 // the cheaper of the two; a walk that then overspends its budget (the match
 // count, what the scan would have cost) falls back to the scan.
 inline constexpr long double kWalkShare = 0.25L;
+
+// Windows of the set filled to estimate its size before a plan is chosen: about
+// thirty thousand docs, a twentieth of a millisecond on a million-row segment.
+inline constexpr uint32_t kCountSampleWindows = 8;
 
 // The rows a two-pass scan scores in full, as a multiple of the beam: the
 // `keep` of HnswScanWords.
@@ -404,55 +495,63 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     return;
   }
   // An inner query knows its upper bound up front. A table's column predicates
-  // are only known once evaluated, and evaluating them is a column scan, far
-  // cheaper than the distances that hang on the answer: fold the whole set and
-  // count it.
-  const uint64_t matches =
-    table != nullptr ? set.Count() : _inner->EstimateMax();
+  // are only known once evaluated, so the count comes from a bounded sample of
+  // the set rather than from folding it: the plan is being chosen, and folding
+  // to choose costs more than either plan does.
+  const uint64_t matches = table != nullptr
+                             ? set.EstimateCount(kCountSampleWindows)
+                             : _inner->EstimateMax();
   auto mode = _filter_mode;
   if (mode == HnswFilterMode::Auto) {
     mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size())
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
-  // Every walk is capped at what the scan would have cost and falls back to
-  // it, forced ones included: a mode is a preference, never a way to spend
-  // more than the exact answer costs. A walk that could not fill its beam
-  // although the predicate admits enough docs lost the admitted subgraph's
-  // connectivity: the scan answers exactly.
+  // A walk over a predicate only the columnstore answers asks about the nodes
+  // it reaches instead of folding the segment; anything with an inner query
+  // already has its docs from the postings, and a scan needs the whole set.
+  // The acceptor is passed through, not wrapped: a wrapper would hide the hop
+  // hook that makes a hop one question instead of thirty-two.
+  // Every walk is capped at what the scan would have cost and falls back to it,
+  // forced ones included: a mode is a preference, never a way to spend more
+  // than the exact answer costs. A walk that could not fill its beam although
+  // the predicate admits enough docs lost the admitted subgraph's connectivity:
+  // the scan answers exactly.
   const auto budget = matches;
   const auto walked = [&](bool complete) {
     return complete &&
            (scratch.nearest.size() >= _ef || scratch.nearest.size() >= matches);
   };
-  switch (mode) {
-    case HnswFilterMode::Walk:
-      if (walked(HnswSearchTopK<HnswWalk::Through>(graph, dist, _ef, scratch,
-                                                   admit, budget))) {
-        return;
-      }
-      break;
-    case HnswFilterMode::Prune:
-      if (walked(HnswSearchTopK<HnswWalk::Prune>(graph, dist, _ef, scratch,
-                                                 admit, budget))) {
-        return;
-      }
-      break;
-    case HnswFilterMode::TwoHop:
-      if (walked(HnswSearchTopK<HnswWalk::TwoHop>(graph, dist, _ef, scratch,
-                                                  admit, budget))) {
-        return;
-      }
-      break;
-    case HnswFilterMode::Bridge:
-      if (walked(HnswSearchTopK<HnswWalk::Bridge>(graph, dist, _ef, scratch,
-                                                  admit, budget))) {
-        return;
-      }
-      break;
-    case HnswFilterMode::Scan:
-    case HnswFilterMode::Auto:
-      break;
+  const auto run = [&](const auto& acc) {
+    switch (mode) {
+      case HnswFilterMode::Walk:
+        return walked(HnswSearchTopK<HnswWalk::Through>(graph, dist, _ef,
+                                                        scratch, acc, budget));
+      case HnswFilterMode::Prune:
+        return walked(HnswSearchTopK<HnswWalk::Prune>(graph, dist, _ef, scratch,
+                                                      acc, budget));
+      case HnswFilterMode::TwoHop:
+        return walked(HnswSearchTopK<HnswWalk::TwoHop>(graph, dist, _ef,
+                                                       scratch, acc, budget));
+      case HnswFilterMode::Bridge:
+        return walked(HnswSearchTopK<HnswWalk::Bridge>(graph, dist, _ef,
+                                                       scratch, acc, budget));
+      case HnswFilterMode::Scan:
+      case HnswFilterMode::Auto:
+        return false;
+    }
+    return false;
+  };
+  if (table != nullptr && _inner == nullptr && mode != HnswFilterMode::Scan) {
+    const WalkFilter walk_filter{*table, docs_count};
+    if (run(walk_filter)) {
+      return;
+    }
+    // The walk gave up: the scan answers exactly, and it needs the whole set,
+    // so the scans go back to the start before it folds.
+    table->Rewind();
+  } else if (run(admit)) {
+    return;
   }
   HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
 }

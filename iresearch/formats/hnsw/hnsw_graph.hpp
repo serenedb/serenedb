@@ -389,6 +389,16 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
     s.scored += s.batch.size();
 
+    // An acceptor that answers a whole hop at once says so, and is handed the
+    // hop before it is asked about any single node. A predicate only the
+    // columnstore answers costs a positioned read per call, so asking about
+    // thirty-two scattered nodes one at a time is thirty-two of them; asking
+    // once, in ascending order, is one. A plain callable has no Prepare and is
+    // untouched.
+    if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
+      accept.Prepare(std::span<const uint32_t>{s.batch});
+    }
+
     for (size_t i = 0; i < s.batch.size(); ++i) {
       const HnswCandidate cand{s.scores[i], s.batch[i]};
       if (nearest.size() >= ef && cand.score <= nearest.front().score) {

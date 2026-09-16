@@ -48,6 +48,12 @@ struct TableFilter {
 
   virtual uint32_t Narrow(doc_id_t base, uint64_t* mask, score_t* scores,
                           uint32_t words) = 0;
+
+  // Puts the column scans back at the start. The readers require rows to
+  // ascend across calls, so a caller that asks about one region and then an
+  // earlier one has to say so between the two. A table with no scans to move
+  // does nothing.
+  virtual void Rewind() {}
 };
 
 template<typename Table>

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -164,6 +165,40 @@ class LazyBitset {
       return 0;
     }
     return CountBitRange(_set.Words(), 0, end - kMin);
+  }
+
+  // A bounded sample of the set, for a caller that has to choose a plan before
+  // it can afford the whole thing. Counting the set outright is what forces a
+  // column predicate over the entire segment; on a million rows that is a flat
+  // 1.6 ms, spent before anything is known about whether the answer even needs
+  // it. This fills a prefix of `windows` windows, counts that, and scales to
+  // the segment, rounding up because a caller weighing a scan against a walk
+  // can recover from too large a count and not from too small a one.
+  //
+  // The prefix is filled the way `Reach` fills it, so a caller that goes on to
+  // fold the whole set pays for the sample once, not twice.
+  uint64_t EstimateCount(uint32_t windows) {
+    const auto end = _set.End();
+    if (end <= kMin) {
+      return 0;
+    }
+    const uint64_t total = end - kMin;
+    const uint64_t want =
+      std::min<uint64_t>(total, uint64_t{windows} * kWindowDocs);
+    Reach(kMin + static_cast<doc_id_t>(want));
+    const uint64_t filled = _filled - kMin;
+    if (filled == 0) {
+      return 0;
+    }
+    const uint64_t seen = CountBitRange(_set.Words(), 0, filled);
+    if (filled >= total || seen == 0) {
+      return seen;
+    }
+    const auto share =
+      static_cast<long double>(seen) / static_cast<long double>(filled);
+    const auto est = static_cast<uint64_t>(
+      std::ceil(share * static_cast<long double>(total) * 1.125L));
+    return std::min<uint64_t>(est, total);
   }
 
   bool Contains(doc_id_t doc) {

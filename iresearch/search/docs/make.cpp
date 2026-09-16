@@ -73,11 +73,11 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return memory::make_managed<Empty>();
   }
   auto plan = query.PlanDocs(ctx);
-  const auto* const docs_mask = query.Segment().docs_mask();
-  if (docs_mask == nullptr || !plan) [[likely]] {
+  auto it_mask = query.Segment().MaskedDocs();
+  if (it_mask.Empty() || !plan) [[likely]] {
     return plan;
   }
-  return memory::make_managed<Masked>(std::move(plan), *docs_mask);
+  return memory::make_managed<Masked>(std::move(plan), std::move(it_mask));
 }
 
 }  // namespace irs::docs

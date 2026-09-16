@@ -708,7 +708,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, {}};
 
   ASSERT_EQ(0, fill->windows());
   ASSERT_EQ(kMin, set.Filled());
@@ -746,13 +746,12 @@ TEST(lazy_bitset_test, drops_a_masked_tail) {
   const auto removals = [] {
     irs::DocumentMaskBuilder mask;
     mask.Add(64);
-    mask.MaskTail(kTail, kDocs + 1);
     return std::move(mask).Build();
   }();
-  ASSERT_EQ(kTail, removals.TailBegin());
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
-  irs::detail::LazyBitset set{std::move(node), kDocs, &removals};
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::MaskedDocsIterator{&removals, kTail}};
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_FALSE(set.Contains(64));
@@ -773,7 +772,7 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, {}};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.

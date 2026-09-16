@@ -75,7 +75,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeConstant(0);
   }
-  if (segment.docs_mask() == nullptr) [[likely]] {
+  if (segment.MaskedDocs().Empty()) [[likely]] {
     return query.PlanCount(ctx);
   }
   return MakeMasked(query, ctx);

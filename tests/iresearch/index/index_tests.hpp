@@ -182,13 +182,13 @@ void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 class MaskedPostings : public irs::TermPostings {
  public:
   MaskedPostings(irs::TermPostings::ptr&& postings,
-                 const irs::DocumentMask& mask) noexcept
-    : _postings{std::move(postings)}, _mask{&mask} {}
+                 irs::MaskedDocsIterator&& it_mask) noexcept
+    : _postings{std::move(postings)}, _it_mask{std::move(it_mask)} {}
 
   irs::doc_id_t Next() final {
     do {
       _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _mask->Contains(_doc));
+    } while (!irs::doc_limits::eof(_doc) && _doc == _it_mask.Seek(_doc));
     return _doc;
   }
 
@@ -198,16 +198,17 @@ class MaskedPostings : public irs::TermPostings {
 
  private:
   irs::TermPostings::ptr _postings;
-  const irs::DocumentMask* _mask;
+  irs::MaskedDocsIterator _it_mask;
 };
 
 inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
                                            irs::TermPostings::ptr&& postings) {
-  const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->Empty()) {
+  auto it_mask = segment.MaskedDocs();
+  if (it_mask.Empty()) {
     return std::move(postings);
   }
-  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+  return irs::memory::make_managed<MaskedPostings>(std::move(postings),
+                                                   std::move(it_mask));
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {

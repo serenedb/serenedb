@@ -1003,13 +1003,13 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.live_docs_count = 397;
     meta.byte_size = 666;
     meta.version = 100;
+    meta.uncommitted_begin = 400;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
       irs::DocumentMaskBuilder docs_mask;
       docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
-      docs_mask.MaskTail(400, 454);
       return std::move(docs_mask).Build();
     }());
-    ASSERT_EQ(56, meta.docs_mask->Count());
+    ASSERT_EQ(56, irs::RemovalCount(meta));
     meta.files.emplace_back("file1");
 
     std::string filename;
@@ -1030,14 +1030,16 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
 
-      const auto& mask = *read_meta.docs_mask;
-      ASSERT_EQ(56, mask.Count());
-      ASSERT_EQ(400, mask.TailBegin());
-      ASSERT_TRUE(mask.Contains(42));
-      ASSERT_FALSE(mask.Contains(43));
-      ASSERT_FALSE(mask.Contains(399));
-      ASSERT_TRUE(mask.Contains(400));
-      ASSERT_TRUE(mask.Contains(453));
+      ASSERT_EQ(56, irs::RemovalCount(read_meta));
+      ASSERT_EQ(400, read_meta.uncommitted_begin);
+
+      auto it_mask = irs::MaskedDocsIterator{read_meta.docs_mask.get(),
+                                             read_meta.uncommitted_begin};
+      ASSERT_EQ(42, it_mask.Seek(42));
+      ASSERT_EQ(100, it_mask.Seek(43));
+      ASSERT_EQ(400, it_mask.Seek(399));
+      ASSERT_EQ(400, it_mask.Seek(400));
+      ASSERT_EQ(453, it_mask.Seek(453));
     }
   }
 

@@ -78,98 +78,80 @@ struct FlushedSegmentContext {
 
   bool MakeDocumentMask(uint64_t tick, DocumentMaskBuilder& document_mask,
                         IndexSegment& index) {
-    if (flushed.docs_mask.Count() == flushed.meta.docs_count) {
+    const auto docs_count = static_cast<size_t>(flushed.meta.docs_count);
+    if (flushed.docs_mask.Count() == docs_count) {
       return true;
     }
     const auto end = flushed.docs.size();
     SDB_ASSERT(0 < end);
     SDB_ASSERT(flushed.docs.TickAt(0) <= tick);
-    const auto invalid_end = static_cast<size_t>(flushed.meta.docs_count);
     const auto visible = flushed.docs.UpperBound(tick);
     SDB_ASSERT(visible <= end);
-    if (visible == end) {
-      MaskTail(flushed.docs_mask, end, invalid_end);
-      if (flushed.docs_mask.Count() == invalid_end) {
-        return true;
-      }
+    const auto uncommitted_count = docs_count - visible;
+    if (uncommitted_count == 0) {
       document_mask = std::move(flushed.docs_mask);
       index = std::move(flushed);
       return false;
     }
-    // intentionally copy
-    document_mask = flushed.docs_mask;
-    MaskTail(document_mask, visible, invalid_end);
-    if (document_mask.Count() == invalid_end) {
-      return true;
+    const auto uncommitted_begin =
+      static_cast<doc_id_t>(visible + doc_limits::min());
+
+    if (visible == end) {
+      flushed.docs_mask.Truncate(uncommitted_begin);
+      if (flushed.docs_mask.Count() + uncommitted_count == docs_count) {
+        return true;
+      }
+      document_mask = std::move(flushed.docs_mask);
+      index = std::move(flushed);
+    } else {
+      document_mask = flushed.docs_mask;
+      document_mask.Truncate(uncommitted_begin);
+      if (document_mask.Count() + uncommitted_count == docs_count) {
+        return true;
+      }
+      index = flushed;
     }
-    index = flushed;
+    index.meta.uncommitted_begin = uncommitted_begin;
     return false;
   }
 
   void Remove(const IndexWriter::QueryContext& query);
-
- private:
-  static void MaskTail(DocumentMaskBuilder& document_mask, size_t from,
-                       size_t to) {
-    document_mask.MaskTail(static_cast<doc_id_t>(from + doc_limits::min()),
-                           static_cast<doc_id_t>(to + doc_limits::min()));
-  }
 };
 
-void RemoveFromExistingSegment(DocumentMaskBuilder& deleted_docs,
-                               const IndexWriter::QueryContext& query,
-                               const SubReader& reader) {
+bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
+                       const IndexWriter::QueryContext& query,
+                       const SubReader& reader) {
   // A deletion never scores, so nothing under it collects statistics. The
   // batch's own deletions so far are handed over: a document an earlier query
   // of this batch removed is not alive, and the segment's mask predates it.
   auto prepared = query.filter->PrepareSegment(
     reader, {.pending_docs_mask = &deleted_docs.View()});
 
-  if (!prepared) [[unlikely]] {
-    return;  // skip invalid prepared filters
-  }
-
-  auto plan = prepared->PlanLead({});
-
-  if (!plan) [[unlikely]] {
-    return;  // skip a query kind that has no plan
-  }
-
-  const auto* docs_mask = reader.docs_mask();
-  std::optional<DocumentMask::Iterator> it_mask;
-  if (docs_mask != nullptr) {
-    it_mask.emplace(docs_mask->Begin());
-  }
-  for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
-       doc_id = plan->Next()) {
-    // if the indexed doc_id was already masked then it should be skipped
-    if (it_mask && doc_id == it_mask->Seek(doc_id)) {
-      continue;
-    }
-    deleted_docs.Add(doc_id);
-  }
-}
-
-bool RemoveFromImportedSegment(DocumentMaskBuilder& deleted_docs,
-                               const IndexWriter::QueryContext& query,
-                               const SubReader& reader) {
-  // A deletion never scores, so nothing under it collects statistics. The
-  // batch's own deletions so far are handed over: a document an earlier query
-  // of this batch removed is not alive, and the segment's mask predates it.
-  auto prepared = query.filter->PrepareSegment(
-    reader, {.pending_docs_mask = &deleted_docs.View()});
   if (!prepared) [[unlikely]] {
     return false;  // skip invalid prepared filters
   }
 
   auto plan = prepared->PlanLead({});
+
   if (!plan) [[unlikely]] {
     return false;  // skip a query kind that has no plan
   }
 
+  const auto* docs_mask = reader.docs_mask();
+  const auto uncommitted_begin = reader.Meta().uncommitted_begin;
+  std::optional<DocumentMask::Iterator> it_mask;
+  if (docs_mask != nullptr) {
+    it_mask.emplace(docs_mask->Begin());
+  }
   bool modified = false;
-  for (auto doc = plan->Next(); !doc_limits::eof(doc); doc = plan->Next()) {
-    modified |= deleted_docs.Add(doc);
+  for (auto doc_id = plan->Next();
+       !doc_limits::eof(doc_id) && doc_id < uncommitted_begin;
+       doc_id = plan->Next()) {
+    // if the indexed doc_id was already masked then it should be skipped
+    if (it_mask && doc_id == it_mask->Seek(doc_id)) {
+      continue;
+    }
+    modified |= deleted_docs.Add(doc_id);
   }
 
   return modified;
@@ -440,20 +422,25 @@ std::vector<std::string_view> GetFilesToSync(
   std::span<const IndexSegment> segments,
   std::span<const PartialSync> partial_sync, size_t partial_sync_threshold) {
   // TODO(gnusi): make format dependent?
-  static constexpr size_t kMaxFilesPerSegment = 8;
+  static constexpr size_t kMaxFilesPerSegment = 16;
 
   SDB_ASSERT(partial_sync_threshold <= segments.size());
   const size_t full_sync_count = segments.size() - partial_sync_threshold;
 
   std::vector<std::string_view> files_to_sync;
   // +1 for index meta
-  files_to_sync.reserve(1 + partial_sync.size() +
-                        full_sync_count * kMaxFilesPerSegment);
+  files_to_sync.reserve(1 + (partial_sync.size() + full_sync_count) *
+                              kMaxFilesPerSegment);
 
   for (auto sync : partial_sync) {
     SDB_ASSERT(sync.segment_index < partial_sync_threshold);
     const auto& segment = segments[sync.segment_index];
     files_to_sync.emplace_back(segment.filename);
+    const auto& files = segment.meta.files;
+    SDB_ASSERT(segment.meta.docs_mask_files <= files.size());
+    files_to_sync.insert(files_to_sync.end(),
+                         files.end() - segment.meta.docs_mask_files,
+                         files.end());
   }
 
   std::for_each(segments.begin() + partial_sync_threshold, segments.end(),
@@ -2015,7 +2002,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     // (i.e. from new operations)
     apply_all_queries([&](const QueryContext& query) {
       // FIXME(gnusi): optimize PK queries
-      RemoveFromExistingSegment(deleted_docs, query, existing_segment);
+      RemoveFromSegment(deleted_docs, query, existing_segment);
     });
 
     // Write docs_mask if masks added
@@ -2038,9 +2025,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         docs_mask.Merge(deleted_docs.View());
         return std::make_shared<DocumentMask>(std::move(docs_mask).Build());
       }();
-      deleted_docs.Clear();
 
-      index_utils::FlushIndexSegment(dir, segment);  // Write with new mask
+      // Write with new mask
+      index_utils::FlushIndexSegmentPatch(dir, segment, deleted_docs.View());
+      deleted_docs.Clear();
       auto new_segment =
         existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
 
@@ -2069,6 +2057,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     auto& meta = import.segment.meta;
     auto& import_reader = import.reader;
     auto import_docs_mask = CopyMask(*import_reader);
+    DocumentMaskBuilder import_deleted_docs;
 
     bool docs_mask_modified = false;
 
@@ -2140,14 +2129,16 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         if (import.tick <= query.tick) {
           // FIXME(gnusi): optimize PK queries
           docs_mask_modified |=
-            RemoveFromImportedSegment(import_docs_mask, query, *import_reader);
+            RemoveFromSegment(import_deleted_docs, query, *import_reader);
         }
       });
+      import_docs_mask.Merge(import_deleted_docs.View());
     }
 
     // Skip empty segments
-    if (meta.docs_count <= import_docs_mask.Count()) {
-      SDB_ASSERT(meta.docs_count == import_docs_mask.Count());
+    if (const auto masked = import_docs_mask.Count() + UncommittedCount(meta);
+        meta.docs_count <= masked) {
+      SDB_ASSERT(meta.docs_count == masked);
       modified = true;  // FIXME(gnusi): looks strange
       continue;
     }
@@ -2157,8 +2148,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         std::make_shared<DocumentMask>(std::move(import_docs_mask).Build());
     }
 
-    if (docs_mask_modified || pending_compaction) {
-      index_utils::FlushIndexSegment(dir, import.segment, !pending_compaction);
+    if (pending_compaction) {
+      index_utils::FlushIndexSegment(dir, import.segment, false);
+    } else if (docs_mask_modified) {
+      index_utils::FlushIndexSegmentPatch(dir, import.segment,
+                                          import_deleted_docs.View());
     }
 
     if (docs_mask_modified) {
@@ -2318,16 +2312,16 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         continue;
       }
       SDB_ASSERT(segment_ctx.flushed.meta.version == new_segment.meta.version);
+      if (!document_mask.Empty()) {
+        new_segment.meta.docs_mask =
+          std::make_shared<DocumentMask>(std::move(document_mask).Build());
+      }
       const bool need_flush =
-        segment_ctx.flushed.was_flush || !document_mask.Empty();
+        segment_ctx.flushed.was_flush || RemovalCount(new_segment.meta) != 0;
       segment_ctx.flushed.was_flush = true;
       if (need_flush) {
         ++new_segment.meta.version;
         ++segment_ctx.flushed.meta.version;
-      }
-      if (!document_mask.Empty()) {
-        new_segment.meta.docs_mask =
-          std::make_shared<DocumentMask>(std::move(document_mask).Build());
       }
       if (need_flush || !segment_ctx.flushed.meta_on_disk) {
         index_utils::FlushIndexSegment(dir, new_segment, false);

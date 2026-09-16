@@ -2850,14 +2850,13 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
     auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
     EnsurePlanned(node != nullptr);
-    const auto* removals = _seg->docs_mask();
     if (auto* folded = node->Folded(); folded != nullptr) {
-      _live =
-        std::make_unique<irs::detail::LazyBitset>(std::move(*folded), removals);
+      _live = std::make_unique<irs::detail::LazyBitset>(std::move(*folded),
+                                                        _seg->MaskedDocs());
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
-        removals);
+        _seg->MaskedDocs());
     }
   }
   return *_live;

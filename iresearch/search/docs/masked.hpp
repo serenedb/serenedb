@@ -30,11 +30,12 @@ namespace irs::docs {
 
 class Masked : public Root {
  public:
-  Masked(Root::ptr&& plan, const DocumentMask& mask) noexcept
-    : _plan{std::move(plan)}, _it_mask{mask.Begin()}, _tail{mask.TailBegin()} {}
+  Masked(Root::ptr&& plan, MaskedDocsIterator&& it_mask) noexcept
+    : _plan{std::move(plan)}, _it_mask{std::move(it_mask)} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+    const auto uncommitted = _it_mask.UncommittedBegin();
     for (;;) {
       const auto n = _plan->Run(out, capacity);
       if (n == 0) {
@@ -47,7 +48,7 @@ class Masked : public Root {
         out[kept] = doc;
         kept += static_cast<uint32_t>(doc < _it_mask.Seek(doc));
       }
-      if (kept != 0 || last >= _tail) {
+      if (kept != 0 || last >= uncommitted) {
         return kept;
       }
     }
@@ -55,8 +56,7 @@ class Masked : public Root {
 
  private:
   Root::ptr _plan;
-  DocumentMask::Iterator _it_mask;
-  doc_id_t _tail;
+  MaskedDocsIterator _it_mask;
 };
 
 }  // namespace irs::docs

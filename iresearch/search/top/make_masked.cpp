@@ -27,12 +27,12 @@
 namespace irs::top {
 
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
-                     const DocumentMask& mask) {
+                     MaskedDocsIterator&& it_mask) {
   auto node = query.PlanLead(ScoredOf(ctx));
   if (!node) {
     return {};
   }
-  return MakeShape<Masked, lead::Erased>(ctx, ctx.fetcher, mask,
+  return MakeShape<Masked, lead::Erased>(ctx, ctx.fetcher, std::move(it_mask),
                                          lead::Erased{std::move(node)});
 }
 

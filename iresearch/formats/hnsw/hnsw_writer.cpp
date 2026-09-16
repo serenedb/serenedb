@@ -107,7 +107,6 @@ struct HnswRawDist {
 struct MergeDonor {
   const HnswIndex* index = nullptr;
   const SubReader* reader = nullptr;
-  const DocumentMask* mask = nullptr;
   uint64_t out_base = 0;
   uint64_t alive = 0;
 };
@@ -140,7 +139,6 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
     }
     best = MergeDonor{.index = &hnsw,
                       .reader = src.reader,
-                      .mask = src.mask,
                       .out_base = base,
                       .alive = src.alive_count};
   }
@@ -645,13 +643,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
-  std::optional<DocumentMask::Iterator> it_mask;
-  if (donor.mask != nullptr) {
-    it_mask.emplace(donor.mask->Begin());
-  }
+  auto it_mask = donor.reader->MaskedDocs();
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (it_mask && doc == it_mask->Seek(doc)) {
+    if (doc == it_mask.Seek(doc)) {
       continue;
     }
     if (donor.out_base + rank >= rows) {

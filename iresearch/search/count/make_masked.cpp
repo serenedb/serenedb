@@ -31,15 +31,15 @@
 namespace irs::count {
 
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx) {
-  const auto* docs_mask = query.Segment().docs_mask();
-  SDB_ASSERT(docs_mask != nullptr);
+  auto it_mask = query.Segment().MaskedDocs();
+  SDB_ASSERT(!it_mask.Empty());
   auto node = query.PlanLead({});
   if (!node) {
     return {};
   }
   return MakeShape<BooleanSparse, lead::Erased, utils::Empty, probe::MaskDocs>(
     ctx, std::piecewise_construct, std::forward_as_tuple(std::move(node)),
-    std::forward_as_tuple(), std::forward_as_tuple(*docs_mask));
+    std::forward_as_tuple(), std::forward_as_tuple(std::move(it_mask)));
 }
 
 }  // namespace irs::count

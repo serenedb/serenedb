@@ -38,11 +38,10 @@ class Masked : public Root {
   static constexpr uint32_t kBatch = kScoreBlock;
 
   template<typename... Args>
-  Masked(Table table, ColumnArgsFetcher& fetcher, const DocumentMask& mask,
+  Masked(Table table, ColumnArgsFetcher& fetcher, MaskedDocsIterator&& it_mask,
          Args&&... args)
     : _fetcher{fetcher},
-      _it_mask{mask.Begin()},
-      _tail{mask.TailBegin()},
+      _it_mask{std::move(it_mask)},
       _node{std::forward<Args>(args)...},
       _admit{table} {
     _score = _node.PrepareScore();
@@ -50,8 +49,9 @@ class Masked : public Root {
 
   void Run(LoserScoreCollector& collector) final {
     uint32_t batch = 0;
+    const auto uncommitted = _it_mask.UncommittedBegin();
 
-    for (auto doc = _node.Next(); doc < _tail; doc = _node.Next()) {
+    for (auto doc = _node.Next(); doc < uncommitted; doc = _node.Next()) {
       if (doc == _it_mask.Seek(doc)) {
         continue;
       }
@@ -86,8 +86,7 @@ class Masked : public Root {
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kBatch];
   ABSL_CACHELINE_ALIGNED score_t _scores[kBatch];
   ColumnArgsFetcher& _fetcher;
-  DocumentMask::Iterator _it_mask;
-  doc_id_t _tail;
+  MaskedDocsIterator _it_mask;
   NodeType _node;
   ScoreFunction _score;
   [[no_unique_address]] Admit<Table> _admit;

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <roaring/roaring.hh>
 #include <span>
 #include <utility>
@@ -38,88 +39,60 @@ class DocumentMask final {
  public:
   class Iterator final {
    public:
-    explicit Iterator(const DocumentMask& mask) noexcept
-      : _tail_begin{mask._tail_begin}, _tail_end{mask._tail_end} {
+    explicit Iterator(const DocumentMask& mask) noexcept {
       roaring::api::roaring_iterator_init(&mask._set.roaring, &_it);
-      _value = _it.has_value ? _it.current_value : TailOrEof();
+      _value = _it.has_value ? _it.current_value : doc_limits::eof();
     }
 
     doc_id_t Value() const noexcept { return _value; }
 
     doc_id_t Next() noexcept {
-      if (doc_limits::eof(_value)) {
-        return _value;
-      }
-      if (_value >= _tail_begin) {
-        const auto next = _value + 1;
-        return _value = next < _tail_end ? next : doc_limits::eof();
-      }
       return _value = roaring::api::roaring_uint32_iterator_advance(&_it)
                         ? _it.current_value
-                        : TailOrEof();
+                        : doc_limits::eof();
     }
 
     doc_id_t Seek(doc_id_t target) noexcept {
-      SDB_ASSERT(_prev <= target);
 #ifdef SDB_DEV
+      SDB_ASSERT(_prev <= target);
       _prev = target;
 #endif
       if (target <= _value) {
         return _value;
       }
-      if (target >= _tail_begin) {
-        return _value = target < _tail_end ? target : doc_limits::eof();
-      }
-      return _value =
-               roaring::api::roaring_uint32_iterator_move_equalorlarger(&_it,
-                                                                       target)
-                 ? _it.current_value
-                 : TailOrEof();
+      return _value = roaring::api::roaring_uint32_iterator_move_equalorlarger(
+                        &_it, target)
+                        ? _it.current_value
+                        : doc_limits::eof();
     }
 
    private:
-    doc_id_t TailOrEof() const noexcept {
-      return _tail_begin < _tail_end ? _tail_begin : doc_limits::eof();
-    }
-
     roaring::api::roaring_uint32_iterator_t _it;
     doc_id_t _value;
-    doc_id_t _tail_begin;
-    doc_id_t _tail_end;
+#ifdef SDB_DEV
     doc_id_t _prev = doc_limits::invalid();
+#endif
   };
 
   Iterator Begin() const noexcept { return Iterator{*this}; }
 
-  static DocumentMask Read(const char* buf, size_t size, doc_id_t tail_begin,
-                           doc_id_t tail_end) {
-    SDB_ASSERT(tail_begin <= tail_end);
+  static DocumentMask Read(const char* buf, size_t size) {
     DocumentMask mask;
     mask._set = roaring::Roaring::readSafe(buf, size);
-    mask._tail_begin = tail_begin;
-    mask._tail_end = tail_end;
     return mask;
   }
 
   bool operator==(const DocumentMask& other) const noexcept {
-    return _tail_begin == other._tail_begin && _tail_end == other._tail_end &&
-           _set == other._set;
+    return _set == other._set;
   }
 
-  bool Contains(doc_id_t doc) const noexcept {
-    return doc >= _tail_begin ? doc < _tail_end : _set.contains(doc);
-  }
+  bool Contains(doc_id_t doc) const noexcept { return _set.contains(doc); }
 
   size_t Count() const noexcept {
-    return static_cast<size_t>(_set.cardinality()) + (_tail_end - _tail_begin);
+    return static_cast<size_t>(_set.cardinality());
   }
 
-  bool Empty() const noexcept {
-    return _tail_begin == _tail_end && _set.isEmpty();
-  }
-
-  doc_id_t TailBegin() const noexcept { return _tail_begin; }
-  doc_id_t TailEnd() const noexcept { return _tail_end; }
+  bool Empty() const noexcept { return _set.isEmpty(); }
 
   size_t ByteSize() const noexcept {
     return _set.isEmpty() ? 0 : _set.getSizeInBytes();
@@ -131,8 +104,49 @@ class DocumentMask final {
   friend class DocumentMaskBuilder;
 
   roaring::Roaring _set;
-  doc_id_t _tail_begin = doc_limits::eof();
-  doc_id_t _tail_end = doc_limits::eof();
+};
+
+class MaskedDocsIterator final {
+ public:
+  MaskedDocsIterator() = default;
+
+  MaskedDocsIterator(const DocumentMask* mask,
+                     doc_id_t uncommitted_begin) noexcept
+    : _uncommitted{uncommitted_begin}, _value{uncommitted_begin} {
+    if (mask == nullptr) {
+      return;
+    }
+    _it.emplace(mask->Begin());
+    _value = std::min(_it->Value(), _uncommitted);
+  }
+
+  doc_id_t UncommittedBegin() const noexcept { return _uncommitted; }
+
+  bool Empty() const noexcept { return doc_limits::eof(_value); }
+
+  doc_id_t Value() const noexcept { return _value; }
+
+  doc_id_t Next() noexcept {
+    if (_value >= _uncommitted) {
+      return _value;
+    }
+    return _value = std::min(_it->Next(), _uncommitted);
+  }
+
+  doc_id_t Seek(doc_id_t target) noexcept {
+    if (target <= _value) {
+      return _value;
+    }
+    if (target >= _uncommitted) {
+      return _value = target;
+    }
+    return _value = std::min(_it->Seek(target), _uncommitted);
+  }
+
+ private:
+  std::optional<DocumentMask::Iterator> _it;
+  doc_id_t _uncommitted = doc_limits::eof();
+  doc_id_t _value = doc_limits::eof();
 };
 
 class DocumentMaskBuilder final {
@@ -150,55 +164,28 @@ class DocumentMaskBuilder final {
   bool Add(doc_id_t doc) noexcept {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
-    if (doc >= _mask._tail_begin) {
-      return false;
-    }
     return _mask._set.addChecked(doc);
   }
 
   void Add(std::span<const doc_id_t> docs) noexcept {
     SDB_ASSERT(std::ranges::all_of(docs, doc_limits::valid));
-    SDB_ASSERT(_mask._tail_begin == _mask._tail_end);
     _mask._set.addMany(docs.size(), docs.data());
   }
 
   void AddRange(doc_id_t first, doc_id_t last) noexcept {
     SDB_ASSERT(doc_limits::valid(first));
     SDB_ASSERT(first <= last);
-    SDB_ASSERT(last <= _mask._tail_begin);
     _mask._set.addRange(first, last);
   }
 
-  void MaskTail(doc_id_t first, doc_id_t end) noexcept {
+  void Truncate(doc_id_t first) noexcept {
     SDB_ASSERT(doc_limits::valid(first));
-    SDB_ASSERT(first <= end);
-    if (first == end) {
-      return;
-    }
-    SDB_ASSERT(_mask._tail_begin == _mask._tail_end || _mask._tail_end == end);
-    _mask._set.removeRange(first, end);
-    _mask._tail_begin = std::min(_mask._tail_begin, first);
-    _mask._tail_end = end;
+    _mask._set.removeRange(first, uint64_t{doc_limits::eof()} + 1);
   }
 
-  void Merge(const DocumentMask& other) noexcept {
-    _mask._set |= other._set;
-    if (other._tail_begin != other._tail_end) {
-      SDB_ASSERT(_mask._tail_begin == _mask._tail_end ||
-                 _mask._tail_end == other._tail_end);
-      _mask._tail_begin = std::min(_mask._tail_begin, other._tail_begin);
-      _mask._tail_end = other._tail_end;
-    }
-    if (_mask._tail_begin != _mask._tail_end) {
-      _mask._set.removeRange(_mask._tail_begin, _mask._tail_end);
-    }
-  }
+  void Merge(const DocumentMask& other) noexcept { _mask._set |= other._set; }
 
-  void Clear() noexcept {
-    _mask._set = roaring::Roaring{};
-    _mask._tail_begin = doc_limits::eof();
-    _mask._tail_end = doc_limits::eof();
-  }
+  void Clear() noexcept { _mask._set = roaring::Roaring{}; }
 
   DocumentMask Build() && noexcept {
     _mask._set.runOptimize();

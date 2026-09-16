@@ -48,11 +48,12 @@ struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
 
   const DocumentMask* mask = nullptr;
+  doc_id_t uncommitted_begin = doc_limits::eof();
   doc_id_t base_id = doc_limits::invalid();
   ManagedVector<doc_id_t> id_map;
 
   bool IsMasked(doc_id_t src) const noexcept {
-    return mask != nullptr && mask->Contains(src);
+    return src >= uncommitted_begin || (mask != nullptr && mask->Contains(src));
   }
 
   doc_id_t Remap(doc_id_t src) const noexcept {

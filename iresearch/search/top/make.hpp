@@ -132,7 +132,7 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
 
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
-                     const DocumentMask& mask);
+                     MaskedDocsIterator&& it_mask);
 
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);

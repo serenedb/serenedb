@@ -46,7 +46,15 @@ struct SegmentInfo {
   uint32_t live_docs_count = 0;  // Total number of live documents in a segment
   uint64_t byte_size = 0;        // Size of a segment in bytes
   uint64_t version = 0;
+  doc_id_t uncommitted_begin = doc_limits::eof();
 };
+
+inline doc_id_t UncommittedCount(const SegmentInfo& meta) noexcept {
+  const auto end = doc_limits::min() + meta.docs_count;
+  return meta.uncommitted_begin != doc_limits::eof()
+           ? end - meta.uncommitted_begin
+           : 0;
+}
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
@@ -57,17 +65,20 @@ struct SegmentMeta : SegmentInfo {
            codec == rhs.codec &&
            (docs_mask == rhs.docs_mask ||
             (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask)) &&
-           docs_mask_size == rhs.docs_mask_size;
+           docs_mask_size == rhs.docs_mask_size &&
+           docs_mask_files == rhs.docs_mask_files;
   }
 
   std::vector<std::string> files;
   std::shared_ptr<const Format> codec;
   std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
+  uint32_t docs_mask_files = 0;
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
-  return meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->Count()) : 0;
+  return (meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->Count()) : 0) +
+         UncommittedCount(meta);
 }
 
 inline bool HasRemovals(const SegmentInfo& meta) noexcept {

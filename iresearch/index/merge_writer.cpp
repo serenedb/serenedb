@@ -523,10 +523,10 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
 
     SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
-    const bool has_mask = src.mask && !src.mask->Empty();
-    std::optional<DocumentMask::Iterator> it_mask;
+    const bool has_mask = HasRemovals(src.reader->Meta());
+    std::optional<MaskedDocsIterator> it_mask;
     if (has_mask) {
-      it_mask.emplace(src.mask->Begin());
+      it_mask.emplace(src.reader->MaskedDocs());
     }
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
@@ -671,6 +671,7 @@ bool ComputeDocMappingsAndFieldMeta(
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
       reader_ctx.remap.mask = reader.docs_mask();
+      reader_ctx.remap.uncommitted_begin = reader.Meta().uncommitted_begin;
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -697,7 +698,6 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
     sources.push_back(MergeSource{
       .reader = ctx.reader,
       .col_reader = ctx.reader->GetColReader(),
-      .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }

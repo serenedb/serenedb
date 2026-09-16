@@ -276,6 +276,8 @@ constexpr std::string_view kIPMetric = "ip";
 
 constexpr std::string_view kSQ8Quant = "sq8";
 constexpr std::string_view kSQ4Quant = "sq4";
+constexpr std::string_view kUSQ8Quant = "usq8";
+constexpr std::string_view kUSQ4Quant = "usq4";
 constexpr std::string_view kPQQuant = "pq";
 constexpr std::string_view kRaBitQQuant = "rabitq";
 constexpr std::string_view kTQQuant = "tq";
@@ -446,11 +448,14 @@ std::string DescribeIVFOptions() {
   const std::string metrics = absl::StrJoin(
     std::array{kL2Metric, kL1Metric, kCosineMetric, kIPMetric}, "|");
   const std::string quants =
-    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant,
+    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kUSQ8Quant, kUSQ4Quant,
+                             kPQQuant, kRaBitQQuant,
                              kTQQuant, kNoneQuant},
                   "|");
   const std::string quants_cosine =
-    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kTQQuant}, "|");
+    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kUSQ8Quant, kUSQ4Quant,
+                             kPQQuant, kTQQuant},
+                  "|");
   return absl::StrCat(
     "metric (string: ", metrics, ", REQUIRED), ", "quant (string: ", quants,
     ", default ", kSQ8Quant, " for ", kL2Metric, "|", kIPMetric, "|",
@@ -497,6 +502,8 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
     {
       {kSQ8Quant, irs::VectorQuantization::SQ8},
       {kSQ4Quant, irs::VectorQuantization::SQ4},
+      {kUSQ8Quant, irs::VectorQuantization::USQ8},
+      {kUSQ4Quant, irs::VectorQuantization::USQ4},
       {kPQQuant, irs::VectorQuantization::PQ},
       {kRaBitQQuant, irs::VectorQuantization::RaBitQ},
       {kTQQuant, irs::VectorQuantization::TQ},
@@ -510,7 +517,8 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
     ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
-            "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant, " ", kPQQuant,
+            "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant, " ",
+            kUSQ8Quant, " ", kUSQ4Quant, " ", kPQQuant,
             " ", kRaBitQQuant, " ", kTQQuant, " ", kNoneQuant));
 }
 
@@ -870,7 +878,8 @@ void ApplyHNSWOptions(std::string_view column_name,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("Column '", column_name,
                             "': hnsw supports only quant = ", kNoneQuant, ", ",
-                            kSQ8Quant, ", ", kSQ4Quant, " or ", kTQQuant));
+                            kSQ8Quant, ", ", kSQ4Quant, ", ", kUSQ8Quant,
+                            ", ", kUSQ4Quant, " or ", kTQQuant));
   }
   if (cfg.quant != irs::VectorQuantization::None &&
       cfg.metric == irs::VectorMetric::L1) {

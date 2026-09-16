@@ -73,7 +73,26 @@ enum class VectorQuantization : uint8_t {
   PQ,
   RaBitQ,
   TQ,
+  // Uniform scalar quantization: one (min, max) for the whole vector rather
+  // than one per dimension. Coarser per dimension, but every component then
+  // shares a scale, which is what lets the distance kernel fold the squared
+  // term into an integer accumulator -- and what lets a future kernel use an
+  // integer dot product outright. Qdrant's and Lucene's scalar quantizers are
+  // both uniform; ours was per-dimension only.
+  USQ8,
+  USQ4,
 };
+
+/// True for the scalar quantizers whose range is shared by every dimension.
+inline constexpr bool IsUniformScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::USQ8 || q == VectorQuantization::USQ4;
+}
+
+/// True for every scalar quantizer, uniform or per-dimension.
+inline constexpr bool IsScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::SQ8 || q == VectorQuantization::SQ4 ||
+         IsUniformScalar(q);
+}
 
 inline constexpr uint32_t kRaBitQMinBits = 1;
 inline constexpr uint32_t kRaBitQMaxBits = 9;

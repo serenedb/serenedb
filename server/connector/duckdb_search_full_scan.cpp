@@ -1170,6 +1170,8 @@ double AutoOversample(const VectorScorerOptions& vs) noexcept {
       return 2.0;
     case irs::VectorQuantization::SQ8:
     case irs::VectorQuantization::SQ4:
+    case irs::VectorQuantization::USQ8:
+    case irs::VectorQuantization::USQ4:
     case irs::VectorQuantization::PQ:
     case irs::VectorQuantization::RaBitQ:
       return 1.0;

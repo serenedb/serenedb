@@ -81,6 +81,10 @@ faiss::ScalarQuantizer::QuantizerType FaissScalarType(
   switch (quant) {
     case VectorQuantization::SQ4:
       return faiss::ScalarQuantizer::QuantizerType::QT_4bit;
+    case VectorQuantization::USQ8:
+      return faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform;
+    case VectorQuantization::USQ4:
+      return faiss::ScalarQuantizer::QuantizerType::QT_4bit_uniform;
     default:
       return faiss::ScalarQuantizer::QuantizerType::QT_8bit;
   }
@@ -562,7 +566,14 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
       _sq{d, FaissScalarType(quant)},
       _vmin(d, std::numeric_limits<float>::max()),
       _vmax(d, std::numeric_limits<float>::lowest()) {
-    _sq.trained.assign(2 * static_cast<size_t>(_d), 0.f);
+    // faiss lays `trained` out per quantizer: [vmin(d), vdiff(d)] for the
+    // per-dimension types, [vmin, vdiff] for the uniform ones.
+    _sq.trained.assign(TrainedSize(_quant, _d), 0.f);
+  }
+
+  /// Floats faiss expects in `trained` for this quantizer.
+  static size_t TrainedSize(VectorQuantization quant, uint32_t d) noexcept {
+    return IsUniformScalar(quant) ? 2 : 2 * static_cast<size_t>(d);
   }
 
   size_t TrainSamples(size_t /*rows*/) const noexcept final {
@@ -579,6 +590,14 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
         _vmin[j] = std::min(_vmin[j], v[j]);
         _vmax[j] = std::max(_vmax[j], v[j]);
       }
+    }
+    if (IsUniformScalar(_quant)) {
+      // One range for the whole vector: the widest span any dimension needs.
+      const float lo = *std::min_element(_vmin.begin(), _vmin.end());
+      const float hi = *std::max_element(_vmax.begin(), _vmax.end());
+      _sq.trained[0] = lo;
+      _sq.trained[1] = hi - lo;
+      return;
     }
     for (uint32_t j = 0; j < _d; ++j) {
       _sq.trained[j] = _vmin[j];
@@ -632,7 +651,8 @@ class ScalarQuantizerStats final : public QuantizerStats {
   ScalarQuantizerStats(uint32_t d, VectorQuantization quant,
                        std::span<const byte_type> stats)
     : _sq{d, FaissScalarType(quant)}, _quant{quant} {
-    _sq.trained.assign(2 * static_cast<size_t>(d), 0.f);
+    _sq.trained.assign(
+      ScalarQuantizerWriter::TrainedSize(quant, d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
     SDB_ASSERT(stats.size() >= want);
     std::memcpy(_sq.trained.data(), stats.data(), want);
@@ -795,7 +815,9 @@ class ScalarQuantizerReader final : public QuantizerReader {
     // faiss dispatches the kernel by runtime SIMD level, so there is no CPU
     // probe here any more: AVX-512 where the machine has it, AVX2 or NEON
     // otherwise, and a scalar loop on anything else.
-    _fast = _cb->Sq().qtype == faiss::ScalarQuantizer::QT_8bit &&
+    const auto qt = _cb->Sq().qtype;
+    _fast = (qt == faiss::ScalarQuantizer::QT_8bit ||
+             qt == faiss::ScalarQuantizer::QT_8bit_uniform) &&
             _cb->Sq().code_size == _cb->Sq().d;
     if (_fast) {
       faiss::scalar_quantizer::sq8_batch_train(
@@ -2735,6 +2757,8 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
       return std::make_unique<PanoramaQuantizerWriter>(d, metric);
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
+    case VectorQuantization::USQ8:
+    case VectorQuantization::USQ4:
       return std::make_unique<ScalarQuantizerWriter>(d, quant);
     case VectorQuantization::PQ:
       return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
@@ -2760,6 +2784,8 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
       return MakePanoramaStats(metric, d, stats);
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
+    case VectorQuantization::USQ8:
+    case VectorQuantization::USQ4:
       return MakeStatsWithMetric<ScalarQuantizerStats>(metric, d, quant, stats);
     case VectorQuantization::PQ:
       return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);

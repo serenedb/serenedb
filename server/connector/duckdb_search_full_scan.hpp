@@ -155,7 +155,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // applied during the source lookup, so it forbids the fast collector/bulk
   // paths (which never run the lookup per candidate) -- forces streaming.
   bool has_lookup_filter = false;
-  // The rescore pool for an HNSW query, ceil(sdb_hnsw_rerank_factor * k), or 0
+  // The rescore pool for an HNSW query, ceil(sdb_hnsw_oversample * k), or 0
   // when the query answers from the quantized codes. Decided next to the beam
   // it widens, because the beam is captured when the filter is built and the
   // pool is read long after; see IResearchScanInitGlobal.

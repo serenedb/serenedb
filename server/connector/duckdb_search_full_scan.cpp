@@ -247,7 +247,32 @@ struct TopKScanLocalState : public SegDocBufferedScanLocalState {
   // that branch, not to every top-k scan.
   ColFilterVerify col_verify;
 
+  // Per-segment rescoring. A quantized score is an estimate, and estimates
+  // from two segments are not comparable: each segment trains its own
+  // quantizer, so the same true distance reads differently in each. Letting
+  // segments compete on quantized scores inside one pool is what loses recall
+  // -- badly at low bit widths, where the estimate's error approaches the
+  // spread between neighbours. So when the pool exists to be re-scored, each
+  // segment keeps its own pool, that pool is re-scored exactly the moment the
+  // segment is done, and only exact scores ever cross a segment boundary.
+  // `answer` is this worker's running top-k on exact scores; the collector is
+  // restarted for every segment. Qdrant merges segments this way and it is the
+  // right property; Elasticsearch merges on quantized scores first and we used
+  // to as well.
+  bool per_segment_rescore = false;
+  std::vector<irs::ScoreDoc> answer;
+  size_t answer_size = 0;
+
+  void FlushSegmentPool(IResearchScanGlobalState& g);
   void PrepareEmitBuffer(IResearchScanGlobalState& g);
+};
+
+// `answer` is a min-heap on score, so front() is the worst of the best: the
+// k-th, and what a later segment has to beat.
+struct AnswerWorstFirst {
+  bool operator()(const irs::ScoreDoc& l, const irs::ScoreDoc& r) const {
+    return l.score > r.score;
+  }
 };
 
 struct StreamScanLocalState : public SegDocBufferedScanLocalState {
@@ -1109,8 +1134,53 @@ double ReadRerankFactor(duckdb::ClientContext& context) {
   return ReadDoubleSetting(context, "sdb_rerank_factor");
 }
 
-double ReadHnswRerankFactor(duckdb::ClientContext& context) {
-  return ReadDoubleSetting(context, "sdb_hnsw_rerank_factor");
+// -1 asks the engine to choose, by quantizer. HNSW accepts none, sq8, sq4 and
+// tq; pq and rabitq are IVF's and go through sdb_rerank_factor.
+//
+// How many candidates `auto` re-scores at minimum. A multiple of k is the
+// wrong shape on its own at small k: how many codes can be misranked ahead of
+// the true answer follows the quantizer's error, not the number of rows asked
+// for, so `LIMIT 1` at an oversample of 2 re-scores two candidates and returns
+// the wrong row. An explicit oversample is left exactly as written -- this
+// floor applies only where the engine chose the value.
+inline constexpr double kAutoMinRescorePool = 16.0;
+
+// Measured on two fixtures, both asking for an exact small top-k:
+//
+//   one-hot (inverted_index_hnsw_tq.test, 64 rows on 8 axes) -- neighbours a
+//   whole axis or magnitude step apart, so codes separate them easily:
+//     sq8 and sq4 exact even at 0; tq needs 1.0 at 1, 4 and 5 bits, 2.0 at 2
+//     and 3.
+//
+//   collinear (inverted_index_ann_prepared.test, 512 points at x = i on one
+//   axis) -- neighbours one unit apart while sq8's step over that range is two
+//   units, so the codes cannot tell adjacent points apart at all:
+//     sq8 is wrong at 0, right as soon as anything is re-scored.
+//
+// The collinear case binds, and is why `auto` re-scores for every quantizer
+// rather than following Qdrant and Elasticsearch, both of which leave scalar
+// codes unrescored by default. Being right here is cheap: the floor above is
+// sixteen vectors, against a beam that already reads dozens of codes and the
+// graph around them. TurboQuant gets 2.0 because it needed it at two widths.
+// The non-monotonicity in the tq row is real rather than noise -- 3 and 5 bits
+// are full TurboQuant with the QJL refinement stage, 1, 2 and 4 are MSE-only.
+double AutoOversample(const VectorScorerOptions& vs) noexcept {
+  switch (vs.quant) {
+    case irs::VectorQuantization::TQ:
+      return 2.0;
+    case irs::VectorQuantization::SQ8:
+    case irs::VectorQuantization::SQ4:
+    case irs::VectorQuantization::PQ:
+    case irs::VectorQuantization::RaBitQ:
+      return 1.0;
+    case irs::VectorQuantization::None:
+      return 0.0;  // nothing to re-score
+  }
+  return 0.0;
+}
+
+double ReadHnswOversample(duckdb::ClientContext& context) {
+  return ReadDoubleSetting(context, "sdb_hnsw_oversample");
 }
 
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
@@ -1530,11 +1600,20 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
       // reason; docs/hnsw-parity.md in vectorbench has the mapping.
       const auto k = static_cast<double>(*state->score_top_k);
-      const auto factor = ReadHnswRerankFactor(context);
-      vs.min_ef = static_cast<uint32_t>(
-        factor > 0.0 ? std::max(k, std::ceil(factor * k)) : k);
-      state->rerank_pool_k = factor > 0.0 ? std::max(k, std::ceil(factor * k))
-                                          : 0.0;
+      auto factor = ReadHnswOversample(context);
+      const bool chosen_here = factor < 0.0;
+      if (chosen_here) {
+        factor = AutoOversample(vs);
+      }
+      double pool = 0.0;
+      if (factor > 0.0) {
+        pool = std::max(k, std::ceil(factor * k));
+        if (chosen_here) {
+          pool = std::max(pool, kAutoMinRescorePool);
+        }
+      }
+      vs.min_ef = static_cast<uint32_t>(pool > 0.0 ? pool : k);
+      state->rerank_pool_k = pool;
     }
     state->vector_scorer = &vs;
   }
@@ -2366,6 +2445,13 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   }
   using C = irs::LoserScoreCollector;
   if (!std::holds_alternative<C>(s.collector)) {
+    // A pool that exists to be re-scored is kept per segment, so no quantized
+    // score ever decides between two segments; see TopKScanLocalState. A pool
+    // that exists to survive a lookup filter is not a rescore and keeps the
+    // old shape, as does an index whose scores are already exact.
+    s.per_segment_rescore = g.topk.rerank_pool > 0 && !g.has_lookup_filter &&
+                            g.vector_scorer != nullptr &&
+                            g.vector_scorer->quant != irs::VectorQuantization::None;
     s.collector.template emplace<C>(s.local_threshold, s.hit_slice);
   }
   auto& collector = std::get<C>(s.collector);
@@ -2379,8 +2465,14 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   // later k-th -- taken over hits accepted under the older, lower threshold --
   // from writing the threshold back down, which `SetScoreThreshold` asserts
   // cannot happen.
-  collector.RaiseScoreThreshold(
-    g.topk.global_kth_score.load(std::memory_order_relaxed));
+  //
+  // Not on the per-segment path: there the published k-th is an exact score
+  // and the collector ranks quantized ones, and comparing the two needs a
+  // bound on the quantizer's error that does not exist yet.
+  if (!s.per_segment_rescore) {
+    collector.RaiseScoreThreshold(
+      g.topk.global_kth_score.load(std::memory_order_relaxed));
+  }
 
   const auto& seg_query = [&]() -> const irs::QueryBuilder& {
     if (g.topk.parts <= 1) {
@@ -2405,6 +2497,11 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
      .parts = g.topk.parts});
   EnsurePlanned(plan != nullptr);
   plan->Run(collector);
+
+  if (s.per_segment_rescore) {
+    s.FlushSegmentPool(g);
+    return;
+  }
 
   const irs::score_t kth = s.local_threshold;
   auto cur = g.topk.global_kth_score.load(std::memory_order_relaxed);
@@ -2438,10 +2535,52 @@ void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
   }
 }
 
+void TopKScanLocalState::FlushSegmentPool(IResearchScanGlobalState& g) {
+  auto& c = std::get<Collector>(collector);
+  const size_t accepted = c.AcceptedCount();
+  if (accepted != 0) {
+    auto pool = hit_slice.subspan(0, accepted);
+    // Ascending by doc so the exact vectors come off the columnstore in one
+    // forward pass instead of a scatter.
+    SortScoreDocsBySegDoc(pool);
+    RerankHits(g, pool);
+
+    const size_t k = *g.score_top_k;
+    if (answer.size() < k) {
+      answer.resize(k);
+    }
+    for (const auto& hit : pool) {
+      if (answer_size < k) {
+        answer[answer_size++] = hit;
+        std::push_heap(answer.begin(), answer.begin() + answer_size,
+                       AnswerWorstFirst{});
+      } else if (hit.score > answer.front().score) {
+        std::pop_heap(answer.begin(), answer.begin() + k, AnswerWorstFirst{});
+        answer[k - 1] = hit;
+        std::push_heap(answer.begin(), answer.begin() + k, AnswerWorstFirst{});
+      }
+    }
+  }
+  // The next segment starts from nothing. Seeding it with this segment's
+  // quantized k-th is exactly the comparison this path exists to avoid, and
+  // the exact k-th cannot seed a quantized threshold either without a bound on
+  // the quantizer's error -- that bound is the next piece of work, and until
+  // it lands the segment is walked unpruned rather than pruned wrongly.
+  c.Restart(std::numeric_limits<irs::score_t>::lowest());
+}
+
 void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
   emit_prepared = true;
   if (std::holds_alternative<std::monostate>(collector)) {
     return;  // no segments claimed by this thread
+  }
+  if (per_segment_rescore) {
+    // Every segment already re-scored and merged itself; `answer` is the
+    // worker's top-k on exact scores and nothing else needs doing to it.
+    auto slice = std::span{answer}.subspan(0, answer_size);
+    SortScoreDocsBySegDoc(slice);
+    top_hits = slice;
+    return;
   }
 
   const size_t accepted = std::visit(

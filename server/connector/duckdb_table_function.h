@@ -101,6 +101,10 @@ struct VectorScorerOptions {
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
+  // Bits per component for the quantizers that take a width (tq, rabitq); 0
+  // where the kind fixes it (sq8, sq4, pq). Read by the `auto` oversample,
+  // which rescores coarse codes and leaves 4-bit-and-wider ones alone.
+  uint32_t quant_bits = 0;
   irs::AnnKind kind = irs::AnnKind::Ivf;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 16;

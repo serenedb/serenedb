@@ -572,6 +572,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "of the graph is walked on quantized codes, this decides how many of "
         "its hits are then read back at full precision. 0 means re-score the "
         "whole beam, which is what the query did before this setting existed. "
+        "A factor wider than the beam widens the beam to hold it, because a "
+        "pool the search cannot return that many of is not that pool. "
         "Fractional values are allowed, but a nonzero factor below 1 is "
         "rejected because the pool must cover k. Unquantized (quant = 'none') "
         "indexes never rerank, regardless of this setting.",
@@ -585,6 +587,24 @@ constexpr std::pair<std::string_view, VariableDescription>
                                     value.ToString(), "\""));
           }
         },
+      },
+    },
+    {
+      "sdb_hnsw_rescore",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Whether a quantized HNSW vector-similarity query reads its candidate "
+        "pool back at full precision before answering, or answers from the "
+        "quantized codes the graph was walked on. sdb_hnsw_rerank_factor sizes "
+        "that pool; this says whether it is read at all. Qdrant spells the "
+        "pair quantization.rescore and quantization.oversampling, and "
+        "Elasticsearch spells it rescore_vector.oversample. False is faster "
+        "and caps recall at whatever the codes can tell apart, which for a "
+        "4-bit or binary quantizer is well below 1. Default true. Unquantized "
+        "(quant = 'none') indexes have nothing to re-score, and a query whose "
+        "pool exists to survive a lookup filter keeps it either way.",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {

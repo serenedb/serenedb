@@ -29,6 +29,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <optional>
 #include <yaclib/async/run.hpp>
 #include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
@@ -644,9 +645,13 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
+  std::optional<DocumentMask::Iterator> it_mask;
+  if (donor.mask != nullptr) {
+    it_mask.emplace(donor.mask->Begin());
+  }
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (donor.mask != nullptr && donor.mask->contains(doc)) {
+    if (it_mask && doc == it_mask->Seek(doc)) {
       continue;
     }
     if (donor.out_base + rank >= rows) {

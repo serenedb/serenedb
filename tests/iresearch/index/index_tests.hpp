@@ -188,7 +188,7 @@ class MaskedPostings : public irs::TermPostings {
   irs::doc_id_t Next() final {
     do {
       _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _mask->contains(_doc));
+    } while (!irs::doc_limits::eof(_doc) && _mask->Contains(_doc));
     return _doc;
   }
 
@@ -204,7 +204,7 @@ class MaskedPostings : public irs::TermPostings {
 inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
                                            irs::TermPostings::ptr&& postings) {
   const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->empty()) {
+  if (mask == nullptr || mask->Empty()) {
     return std::move(postings);
   }
   return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
@@ -226,12 +226,6 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
-
-  void sort(const irs::Comparer& comparator) {
-    for (auto& segment : _index) {
-      segment.sort(comparator);
-    }
-  }
 
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,

@@ -512,6 +512,7 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC roaring::roaring
     PUBLIC s2
     PUBLIC streamvbyte
     PUBLIC duckdb_static

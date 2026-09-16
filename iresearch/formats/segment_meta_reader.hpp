@@ -51,21 +51,25 @@ inline std::vector<std::string> ReadStrings(DataInput& in) {
 }
 
 inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMask(DataInput& in, IResourceManager& rm) {
-  auto count = in.ReadV32();
+ReadDocumentMask(DataInput& in) {
+  const auto count = in.ReadV32();
 
   if (!count) {
     return {};
   }
 
-  auto docs_mask = std::make_shared<DocumentMask>(rm);
-  docs_mask->reserve(count);
-
   const auto pos = in.Position();
-  while (count--) {
-    static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
+  const auto tail_begin = in.ReadV32();
+  const auto tail_end = in.ReadV32();
+  const auto blob = ReadString<std::string>(in);
 
-    docs_mask->insert(in.ReadV32());
+  auto docs_mask = std::make_shared<DocumentMask>(
+    DocumentMask::Read(blob.data(), blob.size(), tail_begin, tail_end));
+
+  if (docs_mask->Count() != count) [[unlikely]] {
+    throw IndexError{absl::StrCat("Corrupted document mask, expected ", count,
+                                  " masked documents, got ",
+                                  docs_mask->Count())};
   }
 
   return {std::move(docs_mask), in.Position() - pos};
@@ -90,10 +94,9 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   auto name = ReadString<std::string>(*in);
   const auto segment_version = in->ReadV64();
   const auto live_docs_count = in->ReadV32();
-  auto [docs_mask, docs_mask_size] =
-    ReadDocumentMask(*in, *dir.ResourceManager().readers);
+  auto [docs_mask, docs_mask_size] = ReadDocumentMask(*in);
   const auto docs_count =
-    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->size() : 0);
+    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->Count() : 0);
   const auto size = in->ReadV64();
   auto files = ReadStrings(*in);
   format_utils::CheckFooter(*in, checksum);

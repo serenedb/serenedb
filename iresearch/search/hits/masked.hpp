@@ -31,7 +31,7 @@ namespace irs::hits {
 class Masked : public Root {
  public:
   Masked(Root::ptr&& plan, const DocumentMask& mask) noexcept
-    : _plan{std::move(plan)}, _mask{&mask} {}
+    : _plan{std::move(plan)}, _it_mask{mask.Begin()}, _tail{mask.TailBegin()} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
                uint32_t capacity) final {
@@ -41,14 +41,15 @@ class Masked : public Root {
       if (n == 0) {
         return 0;
       }
+      const auto last = out[n - 1];
       uint32_t kept = 0;
       for (uint32_t i = 0; i != n; ++i) {
         const auto doc = out[i];
         out[kept] = doc;
         scores[kept] = scores[i];
-        kept += static_cast<uint32_t>(!_mask->contains(doc));
+        kept += static_cast<uint32_t>(doc < _it_mask.Seek(doc));
       }
-      if (kept != 0) {
+      if (kept != 0 || last >= _tail) {
         return kept;
       }
     }
@@ -56,7 +57,8 @@ class Masked : public Root {
 
  private:
   Root::ptr _plan;
-  const DocumentMask* _mask;
+  DocumentMask::Iterator _it_mask;
+  doc_id_t _tail;
 };
 
 }  // namespace irs::hits

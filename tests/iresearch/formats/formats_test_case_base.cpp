@@ -960,9 +960,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.byte_size = 666;
     meta.version = 100;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask{irs::IResourceManager::gNoop};
-      docs_mask.insert({42, 100});
-      return docs_mask;
+      irs::DocumentMaskBuilder docs_mask;
+      docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
+      return std::move(docs_mask).Build();
     }());
     meta.files.emplace_back("file1");
     meta.files.emplace_back("index_file2");
@@ -993,6 +993,51 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
       ASSERT_EQ(meta.files, read_meta.files);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
+    }
+  }
+
+  {
+    irs::SegmentMeta meta;
+    meta.name = "tailed_meta_name";
+    meta.docs_count = 453;
+    meta.live_docs_count = 397;
+    meta.byte_size = 666;
+    meta.version = 100;
+    meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
+      irs::DocumentMaskBuilder docs_mask;
+      docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
+      docs_mask.MaskTail(400, 454);
+      return std::move(docs_mask).Build();
+    }());
+    ASSERT_EQ(56, meta.docs_mask->Count());
+    meta.files.emplace_back("file1");
+
+    std::string filename;
+
+    {
+      auto writer = codec()->get_segment_meta_writer();
+      writer->write(dir(), filename, meta);
+    }
+
+    {
+      irs::SegmentMeta read_meta;
+      read_meta.name = meta.name;
+      read_meta.version = 100;
+
+      auto reader = codec()->get_segment_meta_reader();
+      reader->read(dir(), read_meta);
+      ASSERT_EQ(meta.docs_count, read_meta.docs_count);
+      ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
+      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
+
+      const auto& mask = *read_meta.docs_mask;
+      ASSERT_EQ(56, mask.Count());
+      ASSERT_EQ(400, mask.TailBegin());
+      ASSERT_TRUE(mask.Contains(42));
+      ASSERT_FALSE(mask.Contains(43));
+      ASSERT_FALSE(mask.Contains(399));
+      ASSERT_TRUE(mask.Contains(400));
+      ASSERT_TRUE(mask.Contains(453));
     }
   }
 
@@ -1126,8 +1171,6 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     };
 
     irs::SegmentMeta meta;
-    irs::DocumentMask docs_mask{{irs::IResourceManager::gNoop}};
-    docs_mask.insert({42, 100, 200});
     meta.name = "broken_meta_name";
     meta.docs_count = 1453;
     meta.live_docs_count = 1451;

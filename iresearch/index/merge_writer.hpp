@@ -52,7 +52,7 @@ struct DocRemap {
   ManagedVector<doc_id_t> id_map;
 
   bool IsMasked(doc_id_t src) const noexcept {
-    return mask != nullptr && mask->contains(src);
+    return mask != nullptr && mask->Contains(src);
   }
 
   doc_id_t Remap(doc_id_t src) const noexcept {

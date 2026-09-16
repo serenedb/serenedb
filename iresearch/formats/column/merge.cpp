@@ -111,6 +111,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
   std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
     kept_cache(sources.size());
+  std::vector<std::optional<DocumentMask::Iterator>> it_masks(sources.size());
   auto kept_for = [&](size_t si, const DocumentMask& mask,
                       uint64_t pos) -> const std::vector<duckdb::sel_t>& {
     auto& windows = kept_cache[si];
@@ -122,9 +123,13 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     if (!slot) {
       slot.emplace();
       slot->reserve(STANDARD_VECTOR_SIZE);
+      auto& it_mask = it_masks[si];
+      if (!it_mask) {
+        it_mask.emplace(mask.Begin());
+      }
       for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
         const auto src_doc = static_cast<doc_id_t>(pos + i + doc_limits::min());
-        if (!mask.contains(src_doc)) {
+        if (src_doc != it_mask->Seek(src_doc)) {
           slot->push_back(static_cast<duckdb::sel_t>(i));
         }
       }
@@ -170,7 +175,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       SDB_ASSERT(col->Type() == first_col->Type(),
                  "schema evolution between merge sources not supported");
       const auto* mask = s.mask;
-      const bool has_mask = mask && !mask->empty();
+      const bool has_mask = mask && !mask->Empty();
 
       const bool stored_hll =
         opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);

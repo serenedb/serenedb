@@ -22,6 +22,7 @@
 
 #include "segment_reader_impl.hpp"
 
+#include <algorithm>
 #include <duckdb/common/types.hpp>
 #include <vector>
 
@@ -65,18 +66,20 @@ class SegmentLiveDocs : public lead::Node {
  public:
   SegmentLiveDocs(doc_id_t begin, doc_id_t end,
                   const DocumentMask& docs_mask) noexcept
-    : _docs_mask{docs_mask}, _end{end}, _next{begin} {
+    : _it_mask{docs_mask.Begin()}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
     SDB_ASSERT(!doc_limits::eof(end));
+    _it_mask.Seek(begin);
   }
 
   doc_id_t Next() noexcept final {
     while (_next < _end) {
-      _doc = _next++;
-      if (!_docs_mask.contains(_doc)) {
-        return _doc;
+      const auto doc = _next++;
+      if (doc < _it_mask.Value()) {
+        return _doc = doc;
       }
+      _it_mask.Next();
     }
     return _doc = doc_limits::eof();
   }
@@ -86,11 +89,12 @@ class SegmentLiveDocs : public lead::Node {
       return _doc;
     }
     _next = target;
+    _it_mask.Seek(target);
     return Next();
   }
 
  private:
-  const DocumentMask& _docs_mask;
+  DocumentMask::Iterator _it_mask;
   const doc_id_t _end;
   doc_id_t _next;
   doc_id_t _doc = doc_limits::invalid();
@@ -193,10 +197,12 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
     return memory::make_managed<SegmentAllDocs>(_info.docs_count);
   }
-  SDB_ASSERT(!_docs_mask->empty());
+  SDB_ASSERT(!_docs_mask->Empty());
 
   return memory::make_managed<SegmentLiveDocs>(
-    doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
+    doc_limits::min(),
+    std::min(doc_limits::min() + _info.docs_count, _docs_mask->TailBegin()),
+    *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

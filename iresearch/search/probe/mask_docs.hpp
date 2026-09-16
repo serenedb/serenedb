@@ -28,14 +28,15 @@ namespace irs::probe {
 
 class MaskDocs {
  public:
-  explicit MaskDocs(const DocumentMask& mask) noexcept : _mask{&mask} {}
+  explicit MaskDocs(const DocumentMask& mask) noexcept
+    : _it_mask{mask.Begin()} {}
 
-  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t doc) const noexcept {
-    return _mask->contains(doc) ? doc : doc + 1;
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t doc) noexcept {
+    return doc == _it_mask.Seek(doc) ? doc : doc + 1;
   }
 
  private:
-  const DocumentMask* _mask;
+  DocumentMask::Iterator _it_mask;
 };
 
 }  // namespace irs::probe

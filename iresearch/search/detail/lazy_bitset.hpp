@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "iresearch/index/index_meta.hpp"
@@ -152,6 +153,9 @@ class LazyBitset {
     if (removals == nullptr) {
       return;
     }
+    if (!_it_mask) {
+      _it_mask.emplace(removals->Begin());
+    }
     auto* const words = _set.Words();
     last = std::min(last, size_t{_set.WordCount()});
     for (auto w = first; w < last; ++w) {
@@ -160,7 +164,7 @@ class LazyBitset {
         const auto bit = static_cast<size_t>(std::countr_zero(rest));
         rest &= rest - 1;
         const auto doc = static_cast<doc_id_t>(kMin + w * kBits + bit);
-        if (removals->contains(doc)) {
+        if (doc == _it_mask->Seek(doc)) {
           UnsetBit(words[w], bit);
         }
       }
@@ -177,6 +181,7 @@ class LazyBitset {
   BitsetStorage _set;
   FillNode::ptr _node;
   const DocumentMask* _removals = nullptr;
+  std::optional<DocumentMask::Iterator> _it_mask;
   doc_id_t _filled = kMin;
 };
 

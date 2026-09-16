@@ -51,7 +51,6 @@ class DatabaseInstance;
 
 namespace irs {
 
-class Comparer;
 struct SegmentMeta;
 struct FieldMeta;
 struct FlushState;
@@ -64,14 +63,10 @@ struct PostingsWriter;
 struct Scorer;
 struct ScoreBoundWriter;
 
-using DocMap = ManagedVector<doc_id_t>;
-using DocMapView = std::span<const doc_id_t>;
-
 struct AnnBuildEnv;
 
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;
-  const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
   // Enables the typed .col on the segment. Lifetime of `*db` must

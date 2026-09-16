@@ -115,7 +115,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    if (mask != nullptr && mask->contains(doc)) {
+    if (mask != nullptr && mask->Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});

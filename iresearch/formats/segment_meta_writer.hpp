@@ -47,20 +47,21 @@ inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
 }
 
 inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
-  // TODO(gnusi): better format
-  uint32_t mask_size = docs_mask ? static_cast<uint32_t>(docs_mask->size()) : 0;
+  const uint32_t mask_size =
+    docs_mask ? static_cast<uint32_t>(docs_mask->Count()) : 0;
   SDB_ASSERT(mask_size < doc_limits::eof());
 
+  out.WriteV32(mask_size);
+
   if (!mask_size) {
-    out.WriteV32(0);
     return 0;
   }
 
-  out.WriteV32(mask_size);
   const auto pos = out.Position();
-  for (auto mask : *docs_mask) {
-    out.WriteV32(mask);
-  }
+  out.WriteV32(docs_mask->TailBegin());
+  out.WriteV32(docs_mask->TailEnd());
+  std::string blob(docs_mask->ByteSize(), '\0');
+  WriteStr(out, blob.data(), docs_mask->Write(blob.data()));
   return out.Position() - pos;
 }
 

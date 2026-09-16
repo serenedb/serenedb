@@ -23,24 +23,17 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
-
 #include <optional>
 #include <span>
 #include <vector>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-using DocumentMask =
-  absl::flat_hash_set<doc_id_t,
-                      absl::container_internal::hash_default_hash<doc_id_t>,
-                      absl::container_internal::hash_default_eq<doc_id_t>,
-                      ManagedTypedAllocator<doc_id_t>>;
 
 class Format;
 class IndexWriter;
@@ -74,7 +67,7 @@ struct SegmentMeta : SegmentInfo {
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
-  return meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->size()) : 0;
+  return meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->Count()) : 0;
 }
 
 inline bool HasRemovals(const SegmentInfo& meta) noexcept {

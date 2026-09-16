@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/docs/boolean_bitset.hpp>
@@ -735,6 +736,33 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   ASSERT_FALSE(set.Contains(8999));
   ASSERT_EQ(3, fill->windows());
   ASSERT_TRUE(irs::doc_limits::eof(set.Probe(9001)));
+}
+
+TEST(lazy_bitset_test, drops_a_masked_tail) {
+  constexpr irs::doc_id_t kDocs = 10000;
+  constexpr irs::doc_id_t kTail = 5000;
+  const std::vector<irs::doc_id_t> docs{3, 64, 4999, kTail, 5001, 9000};
+
+  const auto removals = [] {
+    irs::DocumentMaskBuilder mask;
+    mask.Add(64);
+    mask.MaskTail(kTail, kDocs + 1);
+    return std::move(mask).Build();
+  }();
+  ASSERT_EQ(kTail, removals.TailBegin());
+
+  auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
+  irs::detail::LazyBitset set{std::move(node), kDocs, &removals};
+
+  ASSERT_TRUE(set.Contains(3));
+  ASSERT_FALSE(set.Contains(64));
+  ASSERT_TRUE(set.Contains(4999));
+  ASSERT_FALSE(set.Contains(kTail));
+  ASSERT_FALSE(set.Contains(5001));
+  ASSERT_FALSE(set.Contains(9000));
+
+  ASSERT_EQ(4999, set.Probe(4));
+  ASSERT_TRUE(irs::doc_limits::eof(set.Probe(kTail)));
 }
 
 // A window the clause holds nothing in is never opened: the fill says where

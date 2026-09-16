@@ -41,7 +41,8 @@ class Masked : public Root {
   Masked(Table table, ColumnArgsFetcher& fetcher, const DocumentMask& mask,
          Args&&... args)
     : _fetcher{fetcher},
-      _mask{&mask},
+      _it_mask{mask.Begin()},
+      _tail{mask.TailBegin()},
       _node{std::forward<Args>(args)...},
       _admit{table} {
     _score = _node.PrepareScore();
@@ -50,8 +51,8 @@ class Masked : public Root {
   void Run(LoserScoreCollector& collector) final {
     uint32_t batch = 0;
 
-    for (auto doc = _node.Next(); !doc_limits::eof(doc); doc = _node.Next()) {
-      if (_mask->contains(doc)) {
+    for (auto doc = _node.Next(); doc < _tail; doc = _node.Next()) {
+      if (doc == _it_mask.Seek(doc)) {
         continue;
       }
       _docs[batch] = doc;
@@ -85,7 +86,8 @@ class Masked : public Root {
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kBatch];
   ABSL_CACHELINE_ALIGNED score_t _scores[kBatch];
   ColumnArgsFetcher& _fetcher;
-  const DocumentMask* _mask;
+  DocumentMask::Iterator _it_mask;
+  doc_id_t _tail;
   NodeType _node;
   ScoreFunction _score;
   [[no_unique_address]] Admit<Table> _admit;

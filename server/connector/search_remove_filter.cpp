@@ -30,7 +30,7 @@ namespace sdb::connector {
 namespace {
 
 bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc) noexcept {
-  return segment_mask != nullptr && segment_mask->contains(doc);
+  return segment_mask != nullptr && segment_mask->Contains(doc);
 }
 
 // A removal is asked for a document stream and for nothing else -- the index

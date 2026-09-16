@@ -559,21 +559,21 @@ statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Intersects' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'
 
 
 # --- Error: GEOMETRY constant with Z / M dimensions ---

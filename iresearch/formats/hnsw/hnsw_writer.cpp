@@ -938,7 +938,15 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
 
   uint64_t trained_rows = 0;
   if (_qw) {
-    const uint64_t sample = std::min<uint64_t>(_rows, kHnswTrainSample);
+    // A streaming trainer asked for every row and has to get every row. For
+    // scalar quantization what it trains is a per-dimension min/max, and
+    // faiss silently clamps a component outside that range -- so a row the
+    // trainer never saw encodes with an error the range cannot describe, and
+    // on a segment past the sample that was three quarters of the rows. The
+    // pass costs one sequential read of a column this build reads again to
+    // encode, and the arithmetic is two comparisons per component. Trainers
+    // that want a bounded sample (k-means and friends) still get one.
+    const uint64_t sample = train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
     trained_rows = ScanVectors(
       col, ctx, sample, _d, normalize, batch_buf,
       [&](const float* rows, size_t n, uint64_t, const duckdb::ValidityMask&) {

@@ -93,7 +93,6 @@
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
-#include "connector/decoded_column_cache.hpp"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
@@ -149,10 +148,6 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint32_t Narrow(irs::doc_id_t base, uint64_t* mask, irs::score_t* scores,
                   uint32_t words) final;
 
-  // True when every column predicate is an interval on a decoded numeric
-  // column: a window is then narrowed on the decoded values, no codec walk.
-  bool Direct() const noexcept { return _direct; }
-
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
@@ -169,14 +164,6 @@ class ColFilterVerify : public irs::detail::TableFilter {
   // scores already in memory, so it runs before the columnstore is read.
   const duckdb::TableFilter* _score_filter = nullptr;
   duckdb::TableFilterState* _score_state = nullptr;
-  // The column predicates compiled against decoded columns, when every one
-  // of them is an interval on a plain numeric column.
-  std::vector<DecodedPredicate> _direct_preds;
-  // The rows every predicate passes, as one bitset over the segment, when the
-  // predicates are selective enough that listing their rows from the value
-  // order beats comparing every row; a window is then narrowed by an AND.
-  std::vector<uint64_t> _direct_set;
-  bool _direct = false;
 };
 
 // Per-worker scan state, one family per ScanMode. Base holds what every mode
@@ -1371,53 +1358,6 @@ std::optional<size_t> EvaluateTopK(duckdb::ClientContext& context,
   return static_cast<size_t>(k);
 }
 
-// An upper bound on the rows the segment's column predicates admit: the
-// narrowest one's slice of its column's value order, which the decoded-column
-// cache answers without reading the segment. Nothing is estimated unless every
-// predicate is an interval on a column it can decode, so a scan over any other
-// table filter stays unsplit.
-std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
-                                              IResearchScanGlobalState& g) {
-  if (g.col_filters.empty()) {
-    return std::nullopt;
-  }
-  const auto* col_reader = seg.GetColReader();
-  if (col_reader == nullptr) {
-    return std::nullopt;
-  }
-  const auto budget = static_cast<size_t>(ReadIntSetting(
-                        *g.client_context, "sdb_column_cache_mb")) *
-                      (size_t{1} << 20);
-  if (budget == 0) {
-    return std::nullopt;
-  }
-  irs::ColFilterStateCache states;
-  irs::ColFilterClassification cls;
-  ClassifySegmentColFilters(seg, g, states, cls);
-  if (cls.segment_dead) {
-    return uint64_t{0};
-  }
-  auto narrowest = std::numeric_limits<uint64_t>::max();
-  for (const auto& spec : cls.active) {
-    if (spec.is_score || spec.filter->filter_type !=
-                           duckdb::TableFilterType::EXPRESSION_FILTER) {
-      return std::nullopt;
-    }
-    auto column =
-      DecodedColumnCache::Instance().Get(seg, *col_reader, spec.field, budget);
-    auto pred = CompileDecodedPredicate(
-      *spec.filter->Cast<duckdb::ExpressionFilter>().expr, std::move(column));
-    if (!pred) {
-      return std::nullopt;
-    }
-    const auto [begin, end] = pred->Range();
-    narrowest = std::min<uint64_t>(narrowest, end - begin);
-  }
-  if (narrowest == std::numeric_limits<uint64_t>::max()) {
-    return std::nullopt;
-  }
-  return narrowest;
-}
 
 // The query vector of a parameterized statement, from the parameters bound
 // to this execution.
@@ -1668,8 +1608,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (*state->reader)[widest],
         {.collector = nullptr, .thread = 0, .needs_terms = false});
       const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
-      const auto table_rows =
-        EstimateColFilterRows((*state->reader)[widest], *state);
+      // A predicate the term index answers carries its own upper bound, which
+      // the query reads from its inner iterator. A predicate only the
+      // columnstore answers (a range on a numeric column) has no bound here,
+      // so such a query keeps the graph walk rather than guessing at a scan.
+      const std::optional<uint64_t> table_rows;
       // The plan choice credits the split with only a little parallelism: a
       // scan's parts share the memory the codes come from, so its wall time
       // does not fall in proportion to the cores it is given, and a walk that
@@ -2198,67 +2141,6 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   }
   _chain.Bind(*col_reader, *_ctx, active, *g.client_context, states);
   _chain.FinishBind();
-  // The decoded-column path: every column predicate an interval on a numeric
-  // column the cache holds (or decodes now, once per segment and column).
-  _direct = false;
-  _direct_preds.clear();
-  const auto budget = static_cast<size_t>(ReadIntSetting(
-                        *g.client_context, "sdb_column_cache_mb")) *
-                      (size_t{1} << 20);
-  if (budget == 0) {
-    return;
-  }
-  for (const auto& spec : active) {
-    if (spec.is_score) {
-      continue;
-    }
-    if (spec.filter->filter_type !=
-        duckdb::TableFilterType::EXPRESSION_FILTER) {
-      _direct_preds.clear();
-      return;
-    }
-    auto column =
-      DecodedColumnCache::Instance().Get(seg, *col_reader, spec.field, budget);
-    auto pred = CompileDecodedPredicate(
-      *spec.filter->Cast<duckdb::ExpressionFilter>().expr, std::move(column));
-    if (!pred) {
-      _direct_preds.clear();
-      return;
-    }
-    _direct_preds.push_back(std::move(*pred));
-  }
-  _direct = !_direct_preds.empty();
-  _direct_set.clear();
-  if (!_direct) {
-    return;
-  }
-  // Below a quarter of the rows, the value order lists the passing rows in
-  // fewer steps than comparing every row of every window would take.
-  const uint64_t rows = _direct_preds.front().column->rows;
-  uint64_t narrowest = rows;
-  for (const auto& pred : _direct_preds) {
-    const auto [b, e] = pred.Range();
-    narrowest = std::min<uint64_t>(narrowest, e - b);
-  }
-  if (narrowest * 4 > rows) {
-    return;
-  }
-  const auto words = (rows + 63) / 64;
-  _direct_set.assign(words, 0);
-  bool first = true;
-  std::vector<uint64_t> other;
-  for (const auto& pred : _direct_preds) {
-    if (first) {
-      pred.Fill(_direct_set.data());
-      first = false;
-      continue;
-    }
-    other.assign(words, 0);
-    pred.Fill(other.data());
-    for (size_t w = 0; w < words; ++w) {
-      _direct_set[w] &= other[w];
-    }
-  }
 }
 
 uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
@@ -2281,28 +2163,6 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
   if (_score_filter != nullptr) {
     irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
                                           scores, words);
-  }
-  if (_direct) {
-    const uint64_t first = base - irs::doc_limits::min();
-    if (!_direct_set.empty() && first % 64 == 0) {
-      // Windows start on a word boundary, so the set is ANDed word by word.
-      const auto w0 = first / 64;
-      uint64_t left = 0;
-      for (uint32_t w = 0; w < words; ++w) {
-        const auto set = w0 + w < _direct_set.size() ? _direct_set[w0 + w] : 0;
-        mask[w] &= set;
-        left += static_cast<uint64_t>(std::popcount(mask[w]));
-      }
-      return static_cast<uint32_t>(left);
-    }
-    uint64_t left = 0;
-    for (const auto& pred : _direct_preds) {
-      left = pred.Narrow(first, mask, words);
-      if (left == 0) {
-        break;
-      }
-    }
-    return static_cast<uint32_t>(left);
   }
   return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
 }

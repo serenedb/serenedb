@@ -13,7 +13,6 @@ target_sources(
         geo_filter_builder.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
-        decoded_column_cache.cpp
         scan/col_filter_verify.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp

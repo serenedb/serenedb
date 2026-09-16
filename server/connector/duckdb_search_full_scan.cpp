@@ -1645,9 +1645,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
       return std::clamp<uint32_t>(threads / busy, 1, cap);
     };
-    // A filtered scan chooses between plans, so its share stays modest; a
+    // A filtered scan chooses between plans, so its share is bounded; a
     // brute-force scan reads the same bytes either way and only wants cores.
-    const auto spare = fair_share(8);
+    const auto spare = fair_share(16);
     if ((where != nullptr || !state->col_filters.empty()) &&
         state->vector_scorer && !state->vector_scorer->exact &&
         state->vector_scorer->kind == irs::AnnKind::Hnsw &&
@@ -1670,9 +1670,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
       const auto table_rows =
         EstimateColFilterRows((*state->reader)[widest], *state);
-      const auto rows = hnsw != nullptr
-                          ? hnsw->ScanCandidates(spare, table_rows)
-                          : std::optional<uint64_t>{};
+      // The plan choice credits the split with only a little parallelism: a
+      // scan's parts share the memory the codes come from, so its wall time
+      // does not fall in proportion to the cores it is given, and a walk that
+      // looks slower per-core can still be the cheaper answer. The width of
+      // the split, once a scan is chosen, is a separate question.
+      const auto rows =
+        hnsw != nullptr
+          ? hnsw->ScanCandidates(std::min<uint32_t>(spare, 2), table_rows)
+          : std::optional<uint64_t>{};
       // Below a couple of thousand rows a part costs more than the distances
       // it saves.
       constexpr uint64_t kScanRowsPerPart = 1024;

@@ -1579,7 +1579,21 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->topk.global_kth_score.store(state->score_static_floor,
                                          std::memory_order_relaxed);
     }
-    if (state->vector_scorer && !state->vector_scorer->exact &&
+    // This scan's fair share of the machine: the cores it may spread over,
+    // capped so an idle server never picks a plan that costs many times the
+    // CPU of the one a busy server would pick.
+    const auto fair_share = [&](uint32_t cap) {
+      const auto busy =
+        std::max<uint32_t>(1, InFlightScans().load(std::memory_order_relaxed));
+      const auto threads = static_cast<uint32_t>(
+        duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+      return std::clamp<uint32_t>(threads / busy, 1, cap);
+    };
+    // A filtered scan chooses between plans, so its share stays modest; a
+    // brute-force scan reads the same bytes either way and only wants cores.
+    const auto spare = fair_share(8);
+    if (where != nullptr && state->vector_scorer &&
+        !state->vector_scorer->exact &&
         state->vector_scorer->kind == irs::AnnKind::Hnsw &&
         state->total_segments != 0) {
       // A filtered graph search that answers by scanning the predicate's rows
@@ -1598,19 +1612,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (*state->reader)[widest],
         {.collector = nullptr, .thread = 0, .needs_terms = false});
       const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
-      const auto rows =
-        hnsw != nullptr ? hnsw->ScanCandidates() : std::optional<uint64_t>{};
+      const auto rows = hnsw != nullptr ? hnsw->ScanCandidates(spare)
+                                        : std::optional<uint64_t>{};
       // Below a couple of thousand rows a part costs more than the distances
-      // it saves, and the split never asks for more cores than the machine has
-      // to spare: under load the other scans are already using them, and the
-      // parts would only add their own dispatch to every query.
+      // it saves.
       constexpr uint64_t kScanRowsPerPart = 1024;
       if (rows && *rows >= 2 * kScanRowsPerPart) {
-        const auto busy = std::max<uint32_t>(
-          1, InFlightScans().load(std::memory_order_relaxed));
-        const auto threads = static_cast<uint32_t>(
-          duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
-        const auto spare = std::max<uint32_t>(1, threads / busy);
         state->topk.parts = static_cast<uint32_t>(std::clamp<uint64_t>(
           std::min<uint64_t>(*rows / kScanRowsPerPart, spare), 1, 32));
       }
@@ -1625,8 +1632,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         largest =
           std::max<uint64_t>(largest, (*state->reader)[si].docs_count());
       }
-      state->topk.parts =
-        static_cast<uint32_t>(std::clamp<uint64_t>(largest / 65536, 1, 32));
+      // As with the filtered scan, no more parts than the machine has cores
+      // to spare: fifteen parts per query is a win at one client and a tax at
+      // thirty-two.
+      state->topk.parts = static_cast<uint32_t>(std::clamp<uint64_t>(
+        std::min<uint64_t>(largest / 65536, fair_share(32)), 1, 32));
     }
     if (state->vector_scorer && !state->vector_scorer->exact &&
         (state->vector_scorer->quant != irs::VectorQuantization::None ||

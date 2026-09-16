@@ -74,7 +74,10 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   // How many docs a scan would score, when scanning is how this query would
   // answer its inner filter; nullopt when it would walk the graph, has no
   // inner filter, or is a radius search.
-  std::optional<uint64_t> ScanCandidates() const;
+  // `parallel` is how many workers a scan may spread over: a scan that splits
+  // is cheaper per worker, so it wins the comparison at selectivities where a
+  // single-threaded scan would not.
+  std::optional<uint64_t> ScanCandidates(uint32_t parallel = 1) const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 

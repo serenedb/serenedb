@@ -158,14 +158,18 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
 // count, what the scan would have cost) falls back to the scan.
 inline constexpr long double kWalkShare = 0.25L;
 
-bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0,
-                    uint64_t nodes) noexcept {
+bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
+                    uint32_t parallel = 1) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
   const long double walk = kWalkShare * static_cast<long double>(ef) * m0 *
                            nodes / static_cast<long double>(matches);
-  return static_cast<long double>(matches) <= walk;
+  // A scan splits across `parallel` workers; the walk is one thread moving
+  // through the graph, so only the scan's side of the comparison shrinks.
+  const long double scan =
+    static_cast<long double>(matches) / std::max<uint32_t>(parallel, 1);
+  return scan <= walk;
 }
 
 template<typename Dist>
@@ -307,7 +311,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
 }
 
-std::optional<uint64_t> HnswQuery::ScanCandidates() const {
+std::optional<uint64_t> HnswQuery::ScanCandidates(uint32_t parallel) const {
   // The same rule RunFiltered uses, from what is known without evaluating the
   // predicate: an inner query's own upper bound. A table filter's count needs
   // the fold, so it is not answered here.
@@ -320,7 +324,7 @@ std::optional<uint64_t> HnswQuery::ScanCandidates() const {
   const auto& graph = _data->graph;
   const uint64_t matches = _inner->EstimateMax();
   if (_filter_mode != HnswFilterMode::Scan &&
-      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size())) {
+      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), parallel)) {
     return std::nullopt;
   }
   return matches;

@@ -120,6 +120,11 @@ struct HnswSearchScratch {
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
   std::vector<score_t> scores;
+  // A split scan's own rows, their scores on a prefix of the dimensions, and
+  // the order that ranks them: the first pass of a two-pass scan.
+  std::vector<uint32_t> rows;
+  std::vector<score_t> prefix_scores;
+  std::vector<uint32_t> prefix_order;
   // Distances computed by the level walk of the current search.
   uint64_t scored = 0;
 };

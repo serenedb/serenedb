@@ -21,7 +21,9 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -95,6 +97,16 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   void RunFiltered(Dist& dist, detail::TableFilter* table,
                    HnswSearchScratch& scratch, uint32_t part,
                    uint32_t parts) const;
+
+  // The docs the predicate admits, folded once for all the parts of a split
+  // scan: every part would otherwise fold the set from the first doc up to the
+  // end of its own range, which is most of the work of the scan itself.
+  std::span<const uint64_t> FoldOnce(detail::TableFilter* table,
+                                     doc_id_t docs_count) const;
+
+  mutable std::mutex _fold_lock;
+  mutable std::vector<uint64_t> _folded;
+  mutable bool _folded_done = false;
 
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;

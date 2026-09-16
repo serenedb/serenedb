@@ -21,6 +21,7 @@
 #include "iresearch/search/queries/hnsw_query.hpp"
 
 #include <algorithm>
+#include <numeric>
 #include <span>
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
@@ -43,6 +44,12 @@ struct HnswQueryDist {
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t = 0.f) const noexcept {
     HnswComputeDistances<M>(q, base, d, ids, out);
+  }
+
+  uint32_t PrefixDims() const noexcept { return 0; }
+
+  void BatchPrefix(std::span<const uint32_t> ids, score_t* out) const noexcept {
+    Batch(ids, out);
   }
 
   score_t One(uint32_t id) const noexcept {
@@ -74,6 +81,12 @@ struct HnswCodeDist {
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t threshold = kHnswNoThreshold) {
     qr->ComputeGathered(codes, record_size, ids, threshold, out);
+  }
+
+  uint32_t PrefixDims() const noexcept { return qr->PrefixDims(); }
+
+  void BatchPrefix(std::span<const uint32_t> ids, score_t* out) {
+    qr->ComputeGatheredPrefix(codes, record_size, ids, out);
   }
 
   void Prefetch(uint32_t id) const noexcept {
@@ -195,6 +208,129 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
 
 // Top-`ef` over the set's docs, no graph: every match is scored once, in
 // batches so the distance kernel and the quantizer's early exit apply.
+// The rows a split scan's part reads, gathered from the folded set.
+inline void HnswCollectRange(std::span<const uint64_t> words,
+                             const HnswGraph& graph, doc_id_t first,
+                             doc_id_t last, std::vector<uint32_t>& out) {
+  constexpr auto kBits = detail::LazyBitset::kBits;
+  constexpr auto kMin = detail::LazyBitset::kMin;
+  out.clear();
+  const auto size = graph.Size();
+  const auto stop = std::min<uint64_t>(last - kMin, words.size() * kBits);
+  for (auto bit = static_cast<uint64_t>(first - kMin); bit < stop;) {
+    const auto word_idx = bit / kBits;
+    auto word = words[word_idx] & (~uint64_t{0} << (bit % kBits));
+    const auto word_end = (word_idx + 1) * kBits;
+    if (word_end > stop) {
+      const auto keep = kBits - (word_end - stop);
+      word &= keep == kBits ? ~uint64_t{0} : ((uint64_t{1} << keep) - 1);
+    }
+    while (word != 0) {
+      const auto node =
+        static_cast<uint32_t>(word_idx * kBits + std::countr_zero(word));
+      word &= word - 1;
+      if (node >= size) {
+        return;
+      }
+      // A row without a vector owns a node id but no place in the graph.
+      if (graph.LevelOf(node) != 0) {
+        out.push_back(node);
+      }
+    }
+    bit = word_end;
+  }
+}
+
+// Two passes over the part's rows when the codes are long enough that reading
+// a quarter of one ranks it well: the first scores every row on that prefix
+// and keeps the best `keep`, the second scores those in full. The answer is
+// the exact top-`ef` of what the first pass kept.
+template<typename Dist>
+void HnswScanPrefix(std::span<const uint32_t> rows, Dist& dist, uint32_t ef,
+                    HnswSearchScratch& s, uint32_t keep) {
+  constexpr size_t kBatch = 256;
+  auto& partial = s.prefix_scores;
+  partial.resize(rows.size());
+  for (size_t i = 0; i < rows.size(); i += kBatch) {
+    const auto n = std::min<size_t>(kBatch, rows.size() - i);
+    dist.BatchPrefix(rows.subspan(i, n), partial.data() + i);
+  }
+  auto& order = s.prefix_order;
+  order.resize(rows.size());
+  std::iota(order.begin(), order.end(), uint32_t{0});
+  std::nth_element(
+    order.begin(), order.begin() + keep, order.end(),
+    [&](uint32_t l, uint32_t r) { return partial[l] > partial[r]; });
+  s.nearest.clear();
+  s.batch.clear();
+  for (uint32_t i = 0; i < keep; ++i) {
+    s.batch.push_back(rows[order[i]]);
+    if (s.batch.size() == kBatch) {
+      HnswAdmit(dist, ef, s);
+    }
+  }
+  if (!s.batch.empty()) {
+    HnswAdmit(dist, ef, s);
+  }
+}
+
+// Top-`ef` over the docs a folded set names within [first, last): the same
+// scan, reading bits that are already there rather than filling them.
+template<typename Dist>
+void HnswScanWords(std::span<const uint64_t> words, const HnswGraph& graph,
+                   Dist& dist, uint32_t ef, HnswSearchScratch& s,
+                   doc_id_t first, doc_id_t last) {
+  // A pool wide enough that the rows the prefix pass drops were never
+  // contenders, and enough rows for its second read of the best of them to be
+  // worth the first read of all of them.
+  const auto keep = std::max<uint32_t>(8 * ef, 128);
+  if (dist.PrefixDims() != 0) {
+    HnswCollectRange(words, graph, first, last, s.rows);
+    if (s.rows.size() > 2 * static_cast<size_t>(keep)) {
+      HnswScanPrefix(std::span<const uint32_t>{s.rows}, dist, ef, s, keep);
+      return;
+    }
+  }
+  constexpr size_t kBatch = 256;
+  constexpr auto kBits = detail::LazyBitset::kBits;
+  constexpr auto kMin = detail::LazyBitset::kMin;
+  s.nearest.clear();
+  s.batch.clear();
+  const auto size = graph.Size();
+  const auto stop = std::min<uint64_t>(last - kMin, words.size() * kBits);
+  for (auto bit = static_cast<uint64_t>(first - kMin); bit < stop;) {
+    const auto word_idx = bit / kBits;
+    auto word = words[word_idx] & (~uint64_t{0} << (bit % kBits));
+    const auto word_end = (word_idx + 1) * kBits;
+    if (word_end > stop) {
+      const auto keep = kBits - (word_end - stop);
+      word &= keep == kBits ? ~uint64_t{0} : ((uint64_t{1} << keep) - 1);
+    }
+    while (word != 0) {
+      const auto node =
+        static_cast<uint32_t>(word_idx * kBits + std::countr_zero(word));
+      word &= word - 1;
+      if (node >= size) {
+        bit = stop;
+        word = 0;
+        break;
+      }
+      // A row without a vector owns a node id but no place in the graph.
+      if (graph.LevelOf(node) == 0) {
+        continue;
+      }
+      s.batch.push_back(node);
+      if (s.batch.size() == kBatch) {
+        HnswAdmit(dist, ef, s);
+      }
+    }
+    bit = word_end;
+  }
+  if (!s.batch.empty()) {
+    HnswAdmit(dist, ef, s);
+  }
+}
+
 template<typename Dist>
 void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
                   uint32_t ef, HnswSearchScratch& s, doc_id_t first,
@@ -234,7 +370,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  auto set = MakeSet(_inner.get(), table, docs_count);
   // One part of a split query: its rows are the part's doc range, and a split
   // is only asked for where the answer is a scan (a walk moves through the
   // whole graph, so it cannot be cut into doc ranges).
@@ -244,9 +379,11 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   const auto last =
     doc_limits::min() + std::min<doc_id_t>(docs_count, per * (part + 1));
   if (parts > 1) {
-    HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
+    HnswScanWords(FoldOnce(table, docs_count), graph, dist, _ef, scratch, first,
+                  last);
     return;
   }
+  auto set = MakeSet(_inner.get(), table, docs_count);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -309,6 +446,21 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       break;
   }
   HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
+}
+
+std::span<const uint64_t> HnswQuery::FoldOnce(detail::TableFilter* table,
+                                              doc_id_t docs_count) const {
+  std::lock_guard<std::mutex> lock{_fold_lock};
+  if (!_folded_done) {
+    auto set = MakeSet(_inner.get(), table, docs_count);
+    set.Reach(set.End());
+    const auto words =
+      (set.End() - detail::LazyBitset::kMin + detail::LazyBitset::kBits - 1) /
+      detail::LazyBitset::kBits;
+    _folded.assign(set.Words(), set.Words() + words);
+    _folded_done = true;
+  }
+  return _folded;
 }
 
 std::optional<uint64_t> HnswQuery::ScanCandidates(

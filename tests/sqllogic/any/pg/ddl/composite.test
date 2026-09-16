@@ -9,7 +9,7 @@ CREATE TYPE address AS (
 query error
 CREATE TYPE address AS (x INTEGER);
 ----
-db error: ERROR: type "address" already exists
+db error: ERROR: Type with name "address" already exists!
 
 
 query error

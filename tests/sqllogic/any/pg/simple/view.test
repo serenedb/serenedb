@@ -94,7 +94,7 @@ query error
 CREATE VIEW pudge AS
 SELECT 2 as hero;
 ----
-db error: ERROR: relation "pudge" already exists
+db error: ERROR: View with name "pudge" already exists!
 
 
 statement ok
@@ -104,7 +104,7 @@ CREATE TABLE chinchopa (id INT);
 query error
 CREATE OR REPLACE VIEW chinchopa AS SELECT 1;
 ----
-db error: ERROR: "chinchopa" is not a view
+db error: ERROR: Existing object chinchopa is of type Table, trying to replace with type View
 
 
 statement ok

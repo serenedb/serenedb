@@ -20,7 +20,7 @@ SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 statement error
 CREATE TABLE vedernikoff AS SELECT 1 AS id;
 ----
-db error: ERROR: relation "vedernikoff" already exists
+db error: ERROR: Table with name "vedernikoff" already exists!
 
 
 statement ok
@@ -36,7 +36,7 @@ SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 statement error
 CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 ----
-db error: ERROR: relation "vedernikoff" already exists
+db error: ERROR: Table with name "vedernikoff" already exists!
 
 
 statement error
@@ -114,13 +114,13 @@ SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 statement error
 SELECT 1 AS id INTO vedernikoff;
 ----
-db error: ERROR: relation "vedernikoff" already exists
+db error: ERROR: Table with name "vedernikoff" already exists!
 
 
 statement error
 CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 ----
-db error: ERROR: relation "vedernikoff" already exists
+db error: ERROR: Table with name "vedernikoff" already exists!
 
 
 skipif serenedb # TODO(Pasha) better column names
@@ -184,7 +184,7 @@ query
 EXPLAIN CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-╭─ SDB_CREATE_TABLE_AS ─────╮
+╭─ CREATE_TABLE_AS ─────────╮
 ╰─────────────┬─────────────╯
 ╭─ GENERATE_SERIES ─────────╮
 │ Function: GENERATE_SERIES │

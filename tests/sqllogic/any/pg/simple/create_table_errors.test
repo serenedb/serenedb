@@ -79,7 +79,7 @@ CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
 statement error
 CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
 ----
-db error: ERROR: relation "vedernikoff" already exists
+db error: ERROR: Table with name "vedernikoff" already exists!
 
 
 statement error

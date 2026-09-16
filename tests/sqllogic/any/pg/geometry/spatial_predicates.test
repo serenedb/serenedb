@@ -1,5 +1,5 @@
 # PostGIS-compatible spatial predicates, verified to return identical results on
-# SereneDB (duckdb-spatial + GEOS) and reference PostgreSQL + PostGIS 3.6.
+# SereneDB (duckdb-spatial + Boost.Geometry) and reference PostgreSQL + PostGIS 3.6.
 # Boolean results carry no formatting divergence, so they are portable.
 
 onlyif postgres

@@ -66,8 +66,7 @@ FROM dd_idx ORDER BY term
 ----
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────────────────────╮
-│ Order By:                                           │
-│ unnest(ts_dict_agg(dd_idx.cat)) ASC                 │
+│ Order By: dd_idx.cat)) ASC                          │
 │ ~1 row                                              │
 ╰──────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ─────────────┴──────────────────────────╮

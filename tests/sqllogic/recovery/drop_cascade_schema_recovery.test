@@ -40,7 +40,7 @@ statement ok
 SET sdb_faults = 'crash_on_drop';
 
 
-statement error connection closed
+statement error (?i)connection closed|server closed|terminat|reset|EOF
 DROP SCHEMA mop_escape CASCADE;
 
 

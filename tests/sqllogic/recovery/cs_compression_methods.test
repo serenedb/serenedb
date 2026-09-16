@@ -77,11 +77,13 @@ n	s
 256	2688
 
 
-# --- 4. DICTIONARY / FSST (superseded by dict_fsst) ---------------------
-# At our storage version duckdb's CompressionTypeIsAvailable reports both
-# as deprecated, so CREATE INDEX rejects the option up front; users wanting
-# either behavior go through `compression = 'dict_fsst'` instead (covered
-# later in this file).
+# --- 4. DICTIONARY / FSST (catalog rejects: superseded by dict_fsst) ----
+# At storage_version VERSION_NUMBER_UPPER the DuckDB analyzers for both
+# COMPRESSION_DICTIONARY and COMPRESSION_FSST return nullptr from
+# init_analyze (dict_fsst replaces them). kMap omits both names so the
+# catalog gate rejects them with an "unknown compression" parse error;
+# users wanting either behavior go through `compression = 'dict_fsst'`
+# instead (covered later in this file).
 statement error
 CREATE INDEX cs_dict_idx ON cs_unc USING inverted(txt cs_eng)
   INCLUDE (pk, v included (compression = 'dictionary'));
@@ -112,9 +114,13 @@ n	s
 # --- 6. (FSST slot intentionally empty -- see section 4) ----------------
 
 
-# --- 7-8. CHIMP / PATAS  (deprecated upstream) --------------------------
-# duckdb's CompressionTypeIsAvailable reports both as deprecated, so the
-# option is rejected before the writer ever sees the choice.
+# --- 7-8. CHIMP / PATAS  (deprecated upstream; names not in kMap) -------
+# DuckDB's Chimp* and Patas* init_compression bodies throw
+# InternalException("...has been deprecated, can no longer be used to
+# compress data"). init_analyze still exists, so a static
+# TryGetCompressionFunction would falsely accept the name. kMap omits
+# both, so the parse-time gate rejects them as "unknown compression"
+# before the writer ever sees the choice.
 statement error
 CREATE INDEX cs_chimp_idx ON cs_unc USING inverted(txt cs_eng)
   INCLUDE (pk, v included (compression = 'chimp'));

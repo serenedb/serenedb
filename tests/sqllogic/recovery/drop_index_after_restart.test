@@ -104,21 +104,6 @@ a	b
 2	20
 
 
-# duckdb refuses ALTER COLUMN TYPE on a table that carries an index, whether
-# or not the index covers the column; the reloaded edge has to be dropped
-# first, and that drop is the lookup that must bind.
-connection after_crash
-statement error
-ALTER TABLE dir_type ALTER COLUMN b TYPE BIGINT;
-----
-db error: ERROR: Cannot alter entry "dir_type" because there are entries that depend on it.<slt:ignore>
-
-
-connection after_crash
-statement ok
-DROP INDEX dir_type_idx;
-
-
 connection after_crash
 statement ok
 ALTER TABLE dir_type ALTER COLUMN b TYPE BIGINT;
@@ -133,8 +118,7 @@ a	b
 2	20
 
 
-# The surviving index still answers lookups after all of that, and the table
-# that lost its index still scans.
+# The surviving indexes still answer lookups after all of that.
 connection after_crash
 query
 SELECT a FROM dir_col WHERE a = 2;

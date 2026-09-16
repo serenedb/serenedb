@@ -50,36 +50,23 @@ cid	name	type	notnull	dflt_value	pk
 4	maybe	INTEGER	f	NULL	f
 
 
-# An index is readable as a relation through the replacement scan, but a pragma
-# takes a name and resolves it in the catalog's table set, where an index is not:
-# `duckdb_indexes()` is what describes an index.
+# FROM-index entries expose the indexed table's columns.
 query
-SELECT count(*) FROM pin_inv;
-----
-count
-5000
-
-
-statement error
 SELECT * FROM pragma_table_info('pin_inv');
 ----
-db error: ERROR: Table with name pin_inv does not exist!<slt:ignore>
-
-
-statement error
-SELECT * FROM pragma_table_info('pin_sec');
-----
-db error: ERROR: Table with name pin_sec does not exist!<slt:ignore>
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	j	INTEGER	f	NULL	f
 
 
 query
-SELECT index_name, table_name FROM duckdb_indexes()
-WHERE table_name = 'pin_txn' ORDER BY index_name;
+SELECT * FROM pragma_table_info('pin_sec');
 ----
-index_name	table_name
-pin_inc	pin_txn
-pin_inv	pin_txn
-pin_sec	pin_txn
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	j	INTEGER	f	NULL	f
 
 
 query
@@ -112,17 +99,29 @@ j
 s
 
 
-# --- pragma_storage_info: search table --------------------------------------
+# --- pragma_storage_info: search table (iresearch .col metadata) -----------
 
 # Flush the staged rows into iresearch segments deterministically.
 statement ok
 VACUUM (REFRESH_TABLE) pin_search;
 
-# storage_info describes duckdb's row-group column segments. A search table keeps
-# its columns in iresearch segments instead, so it reports none of those -- what
-# it holds is described by the search catalog views.
 query
-SELECT count(*) FROM pragma_storage_info('pin_search');
+SELECT row_group_id, column_name, column_id, column_path, segment_type, start, count, persistent, block_id FROM pragma_storage_info('pin_search') ORDER BY column_id, column_path;
+----
+row_group_id	column_name	column_id	column_path	segment_type	start	count	persistent	block_id
+0	i	0	[0]	INTEGER	0	2000	t	-1
+0	s	1	[1]	VARCHAR	0	2000	t	-1
+0	tags	2	[2, 1]	VARCHAR	0	4000	t	-1
+0	tags	2	[2]	VARCHAR[]	0	2000	t	-1
+0	info	3	[3, 1]	INTEGER	0	2000	t	-1
+0	info	3	[3, 2]	VARCHAR	0	2000	t	-1
+0	maybe	4	[4, 0]	VALIDITY	0	2000	t	-1
+0	maybe	4	[4]	INTEGER	0	2000	t	-1
+
+
+# Stats and block offsets are populated for synthesized rows.
+query
+SELECT count(*) FROM pragma_storage_info('pin_search') WHERE stats IS NULL OR block_offset IS NULL;
 ----
 count
 0
@@ -140,35 +139,45 @@ statement ok
 VACUUM (REFRESH_TABLE) pin_nopk;
 
 query
-SELECT count(*) FROM pragma_storage_info('pin_nopk');
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count FROM pragma_storage_info('pin_nopk') ORDER BY column_path;
 ----
-count
-0
+row_group_id	column_name	column_id	column_path	segment_type	count
+0	s	0	[0]	VARCHAR	2
+0	rowid	NULL	[rowid]	BIGINT	2
 
 
 # --- pragma_storage_info: FROM-index entries -------------------------------
 
+# The INCLUDE column is stored in the inverted index's column store, next to
+# the encoded-primary-key column that carries row identity (no physical
+# column backs it, so it surfaces under the row-identity virtual column --
+# named after the PK column -- with a NULL column_id).
 statement ok
 VACUUM (REFRESH_TABLE) pin_txn;
 
-# storage_info resolves a name in the catalog's table set, so an index name is
-# not a target for it.
-statement error
-SELECT * FROM pragma_storage_info('pin_inc');
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
 ----
-db error: ERROR: Table with name pin_inc does not exist!<slt:ignore>
+row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	j	2	[2]	INTEGER	5000	t
+0	i	NULL	[i]	BIGINT	5000	t
 
 
-statement error
-SELECT * FROM pragma_storage_info('pin_inv');
+# A plain inverted index stores values only for the encoded primary key.
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
 ----
-db error: ERROR: Table with name pin_inv does not exist!<slt:ignore>
+row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	i	NULL	[i]	BIGINT	5000	t
 
 
-statement error
-SELECT * FROM pragma_storage_info('pin_sec');
+# A secondary index is a native ART on the store table; it has no column
+# storage of its own, so it reports no segments.
+query
+SELECT count(*) FROM pragma_storage_info('pin_sec');
 ----
-db error: ERROR: Table with name pin_sec does not exist!<slt:ignore>
+count
+0
 
 
 # Views have no storage.
@@ -181,7 +190,7 @@ db error: ERROR: pin_view is not an table
 # --- CALL spelling ----------------------------------------------------------
 
 query
-SELECT count(*) > 0 FROM (SELECT * FROM pragma_storage_info('pin_txn'));
+SELECT count(*) > 0 FROM (SELECT * FROM pragma_storage_info('pin_search'));
 ----
 ?column?
 t

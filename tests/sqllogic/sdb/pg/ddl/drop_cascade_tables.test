@@ -1,5 +1,6 @@
-# Vedernikoff cascade scenarios -- pure SQL (no custom function bodies).
-# Tables, sequences, views, types, schemas, CHECK constraints, column DEFAULTs.
+# Vedernikoff cascade scenarios -- pure SQL (no custom function bodies) so the
+# test file runs verbatim on real PG too. Tables, sequences, views, types,
+# schemas, CHECK constraints, column DEFAULTs.
 
 # --- 1. View tower on a single table ---------------------------------------
 
@@ -37,28 +38,41 @@ id
 statement error
 DROP TABLE vedernikoff_iceberg_base;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
+view "vedernikoff_iceberg_tower1" depends on table "vedernikoff_iceberg_base".
+view "vedernikoff_iceberg_tower2" depends on view "vedernikoff_iceberg_tower1".
+view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP TABLE vedernikoff_iceberg_base RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
+view "vedernikoff_iceberg_tower1" depends on table "vedernikoff_iceberg_base".
+view "vedernikoff_iceberg_tower2" depends on view "vedernikoff_iceberg_tower1".
+view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_tower1;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower1" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower1" because there are entries that depend on it.
+view "vedernikoff_iceberg_tower2" depends on view "vedernikoff_iceberg_tower1".
+view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_tower2;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower2" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower2" because there are entries that depend on it.
+view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -108,25 +122,16 @@ statement ok
 DROP TABLE vedernikoff_iceberg_base CASCADE;
 
 
-statement error
+statement error (?i).*vedernikoff_iceberg_tower1.* does not exist
 SELECT * FROM vedernikoff_iceberg_tower1;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_tower1 does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_iceberg_tower2.* does not exist
 SELECT * FROM vedernikoff_iceberg_tower2;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_tower2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_iceberg_tower3.* does not exist
 SELECT * FROM vedernikoff_iceberg_tower3;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_tower3 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 2. Sequence DEFAULT shared across three tables ------------------------
@@ -192,23 +197,65 @@ id	tag
 statement error
 DROP SEQUENCE vedernikoff_mop_offer_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_seq" because there are entries that depend on it.
+table "vedernikoff_mop_listings_alpha" depends on sequence "vedernikoff_mop_offer_seq".
+table "vedernikoff_mop_listings_bravo" depends on sequence "vedernikoff_mop_offer_seq".
+table "vedernikoff_mop_listings_charlie" depends on sequence "vedernikoff_mop_offer_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
-# CASCADE drops each dependent table whole, not just its column DEFAULT.
 statement ok
 DROP SEQUENCE vedernikoff_mop_offer_seq CASCADE;
 
 
+# All three DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_mop_listings_alpha (tag) VALUES ('after_a');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_bravo (tag) VALUES ('after_b');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_charlie (tag) VALUES ('after_c');
+
+
 query
-SELECT count(*) AS n FROM pg_class WHERE relname IN (
-  'vedernikoff_mop_listings_alpha',
-  'vedernikoff_mop_listings_bravo',
-  'vedernikoff_mop_listings_charlie');
+SELECT id, tag FROM vedernikoff_mop_listings_alpha ORDER BY tag;
 ----
-n
-0
+id	tag
+NULL	after_a
+100	outreach_a
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_bravo ORDER BY tag;
+----
+id	tag
+NULL	after_b
+101	outreach_b
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_charlie ORDER BY tag;
+----
+id	tag
+NULL	after_c
+102	outreach_c
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_alpha;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_bravo;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_charlie;
 
 
 # --- 3. SERIAL primary keys: clean drop sanity -----------------------------
@@ -227,14 +274,6 @@ INSERT INTO vedernikoff_clickclack_writeups (topic) VALUES
 
 statement ok
 DROP TABLE vedernikoff_clickclack_writeups;
-
-
-# The SERIAL sequence is not owned by the table and outlives it.
-statement error
-DROP SEQUENCE vedernikoff_clickclack_writeups_id_seq;
-----
-db error: ERROR: Sequence with name vedernikoff_clickclack_writeups_id_seq does not exist!<slt:ignore>
-
 
 
 # Recreate, then a sibling references the auto-PK seq.
@@ -260,10 +299,17 @@ statement count 1
 INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
 
 
-# The sibling's DEFAULT depends on the sequence, not on the table, so the
-# plain DROP TABLE goes through and leaves the sequence behind.
 statement error
 DROP TABLE vedernikoff_clickclack_owner;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
+table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP TABLE vedernikoff_clickclack_owner RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
 table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
@@ -275,17 +321,12 @@ statement ok
 DROP TABLE vedernikoff_clickclack_dashboard;
 
 
-statement error
-DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
-----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
-table "vedernikoff_clickclack_owner" depends on sequence "vedernikoff_clickclack_owner_id_seq".
-Use DROP...CASCADE to drop all dependents.
-
+statement ok
+DROP TABLE vedernikoff_clickclack_owner;
 
 
 # Same but resolved via CASCADE.
-statement error db error: ERROR: Table with name "vedernikoff_clickclack_owner" already exists!
+statement ok
 CREATE TABLE vedernikoff_clickclack_owner (
   id SERIAL PRIMARY KEY,
   name TEXT
@@ -303,36 +344,19 @@ statement ok
 DROP TABLE vedernikoff_clickclack_owner CASCADE;
 
 
-# CASCADE does not reach the sequence either, so the DEFAULT still fires.
-statement error
+statement count 1
 INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_cascade');
-----
-db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
-Did you mean "<slt:ignore>"?
 
 
-
-query error
+query
 SELECT id, payload FROM vedernikoff_clickclack_dashboard;
 ----
-db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
-Did you mean "<slt:ignore>"?
+id	payload
+NULL	post_cascade
 
 
-
-statement error
+statement ok
 DROP TABLE vedernikoff_clickclack_dashboard;
-----
-db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
-Did you mean "<slt:ignore>"?
-
-
-
-statement error
-DROP SEQUENCE vedernikoff_clickclack_owner_id_seq;
-----
-db error: ERROR: Sequence with name vedernikoff_clickclack_owner_id_seq does not exist!<slt:ignore>
-
 
 
 # --- 4. View on a sequence: nextval() in body ------------------------------
@@ -359,11 +383,8 @@ statement ok
 DROP SEQUENCE vedernikoff_iceberg_audit_seq CASCADE;
 
 
-statement error
+statement error (?i).*vedernikoff_iceberg_audit_pulse.* does not exist
 SELECT * FROM vedernikoff_iceberg_audit_pulse;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_audit_pulse does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 5. View chain on a sequence -------------------------------------------
@@ -390,21 +411,30 @@ CREATE VIEW vedernikoff_solid_review_p3 AS
 statement error
 DROP SEQUENCE vedernikoff_solid_review_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_review_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_review_seq" because there are entries that depend on it.
+view "vedernikoff_solid_review_p1" depends on sequence "vedernikoff_solid_review_seq".
+view "vedernikoff_solid_review_p2" depends on view "vedernikoff_solid_review_p1".
+view "vedernikoff_solid_review_p3" depends on view "vedernikoff_solid_review_p2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_solid_review_p1;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_review_p1" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_review_p1" because there are entries that depend on it.
+view "vedernikoff_solid_review_p2" depends on view "vedernikoff_solid_review_p1".
+view "vedernikoff_solid_review_p3" depends on view "vedernikoff_solid_review_p2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_solid_review_p2;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_review_p2" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_review_p2" because there are entries that depend on it.
+view "vedernikoff_solid_review_p3" depends on view "vedernikoff_solid_review_p2".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -412,25 +442,16 @@ statement ok
 DROP SEQUENCE vedernikoff_solid_review_seq CASCADE;
 
 
-statement error
+statement error (?i).*vedernikoff_solid_review_p1.* does not exist
 SELECT * FROM vedernikoff_solid_review_p1;
-----
-db error: ERROR: Table with name vedernikoff_solid_review_p1 does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_solid_review_p2.* does not exist
 SELECT * FROM vedernikoff_solid_review_p2;
-----
-db error: ERROR: Table with name vedernikoff_solid_review_p2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_solid_review_p3.* does not exist
 SELECT * FROM vedernikoff_solid_review_p3;
-----
-db error: ERROR: Table with name vedernikoff_solid_review_p3 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 6. ENUM TYPE shared by three sibling tables ---------------------------
@@ -469,31 +490,40 @@ statement count 1
 INSERT INTO vedernikoff_mop_pipeline_c VALUES ('vedernikoff', 'hired');
 
 
-# A column's type records no dependency, so the plain DROP TYPE succeeds and
-# every table keeps its column and its rows.
-statement ok
+statement error
 DROP TYPE vedernikoff_mop_stage;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_mop_stage" because there are entries that depend on it.
+table "vedernikoff_mop_pipeline_a" depends on type "vedernikoff_mop_stage".
+table "vedernikoff_mop_pipeline_b" depends on type "vedernikoff_mop_stage".
+table "vedernikoff_mop_pipeline_c" depends on type "vedernikoff_mop_stage".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP TYPE vedernikoff_mop_stage CASCADE;
 
 
 query
-SELECT candidate, stage FROM vedernikoff_mop_pipeline_a;
+SELECT candidate FROM vedernikoff_mop_pipeline_a;
 ----
-candidate	stage
-vedernikoff	screened
+candidate
+vedernikoff
 
 
 query
-SELECT candidate, stage FROM vedernikoff_mop_pipeline_b;
+SELECT candidate FROM vedernikoff_mop_pipeline_b;
 ----
-candidate	stage
-vedernikoff	offer
+candidate
+vedernikoff
 
 
 query
-SELECT candidate, stage FROM vedernikoff_mop_pipeline_c;
+SELECT candidate FROM vedernikoff_mop_pipeline_c;
 ----
-candidate	stage
-vedernikoff	hired
+candidate
+vedernikoff
 
 
 statement ok
@@ -583,7 +613,12 @@ INSERT INTO vedernikoff_solid_b (msg) VALUES ('two');
 statement error
 DROP SEQUENCE vedernikoff_solid_ticket_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_ticket_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_ticket_seq" because there are entries that depend on it.
+table "vedernikoff_solid_a" depends on sequence "vedernikoff_solid_ticket_seq".
+table "vedernikoff_solid_b" depends on sequence "vedernikoff_solid_ticket_seq".
+view "vedernikoff_solid_view_x" depends on table "vedernikoff_solid_a".
+view "vedernikoff_solid_view_y" depends on sequence "vedernikoff_solid_ticket_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -591,14 +626,46 @@ statement ok
 DROP SEQUENCE vedernikoff_solid_ticket_seq CASCADE;
 
 
-# Both DEFAULT-holding tables are dropped whole, and view_x goes with the
-# table it selects from even though it never names the sequence.
+# View_x (only references the table, not the seq) survives. View_y (uses seq)
+# is gone.
 query
-SELECT count(*) AS n FROM pg_class
-  WHERE relname IN ('vedernikoff_solid_view_x', 'vedernikoff_solid_view_y');
+SELECT msg FROM vedernikoff_solid_view_x ORDER BY msg;
 ----
-n
-0
+msg
+one
+
+
+statement error (?i).*vedernikoff_solid_view_y.* does not exist
+SELECT * FROM vedernikoff_solid_view_y;
+
+
+# Both DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_solid_a (msg) VALUES ('three');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_b (msg) VALUES ('four');
+
+
+query
+SELECT id, msg FROM vedernikoff_solid_a ORDER BY msg;
+----
+id	msg
+1000	one
+NULL	three
+
+
+statement ok
+DROP VIEW vedernikoff_solid_view_x;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_a;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_b;
 
 
 # --- 10. SERIAL primary key with auto-pk dropped via CASCADE ---------------
@@ -619,15 +686,6 @@ statement ok
 DROP TABLE vedernikoff_iceberg_runs CASCADE;
 
 
-# The auto-pk sequence is not owned by the table: CASCADE leaves it running.
-query error
+# Auto-pk sequence is gone too.
+statement error (?i).*vedernikoff_iceberg_runs_id_seq.* does not exist
 SELECT nextval('vedernikoff_iceberg_runs_id_seq');
-----
-db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!<slt:ignore>
-
-
-
-statement error
-DROP SEQUENCE vedernikoff_iceberg_runs_id_seq;
-----
-db error: ERROR: Sequence with name vedernikoff_iceberg_runs_id_seq does not exist!<slt:ignore>

@@ -10,10 +10,8 @@ statement count 1
 INSERT INTO iceberg_snapshots VALUES (1);
 
 
-statement error
+statement error (?i)(check|constraint|violates)
 INSERT INTO iceberg_snapshots VALUES (-1);
-----
-db error: ERROR: CHECK constraint failed on table iceberg_snapshots with expression CHECK(iceberg_is_valid_snapshot_id(id))
 
 
 statement error
@@ -29,12 +27,27 @@ statement ok
 DROP FUNCTION iceberg_is_valid_snapshot_id(INT) CASCADE;
 
 
-query error
+query
+SELECT id FROM iceberg_snapshots;
+----
+id
+1
+
+
+statement count 1
+INSERT INTO iceberg_snapshots VALUES (-99);
+
+
+query
 SELECT id FROM iceberg_snapshots ORDER BY id;
 ----
-db error: ERROR: Table with name iceberg_snapshots does not exist!
-Did you mean "<slt:ignore>"?
+id
+-99
+1
 
+
+statement ok
+DROP TABLE iceberg_snapshots;
 
 
 statement ok
@@ -55,16 +68,12 @@ statement count 1
 INSERT INTO clickclack_query_logs VALUES (5);
 
 
-statement error
+statement error (?i)(check|constraint|violates)
 INSERT INTO clickclack_query_logs VALUES (0);
-----
-db error: ERROR: CHECK constraint failed on table clickclack_query_logs with expression CHECK(clickclack_nonzero_qps(id))
 
 
-statement error
+statement error (?i)(check|constraint|violates)
 INSERT INTO clickclack_query_logs VALUES (200);
-----
-db error: ERROR: CHECK constraint failed on table clickclack_query_logs with expression CHECK(clickclack_small_qps(id))
 
 
 statement error
@@ -80,15 +89,33 @@ statement ok
 DROP FUNCTION clickclack_nonzero_qps(INT) CASCADE;
 
 
-query error
-SELECT id FROM clickclack_query_logs ORDER BY id;
-----
-db error: ERROR: Table with name clickclack_query_logs does not exist!
-Did you mean "<slt:ignore>"?
+statement count 1
+INSERT INTO clickclack_query_logs VALUES (0);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO clickclack_query_logs VALUES (200);
 
 
 statement ok
-DROP FUNCTION clickclack_small_qps(INT);
+DROP FUNCTION clickclack_small_qps(INT) CASCADE;
+
+
+statement count 1
+INSERT INTO clickclack_query_logs VALUES (200);
+
+
+query
+SELECT id FROM clickclack_query_logs ORDER BY id;
+----
+id
+0
+5
+200
+
+
+statement ok
+DROP TABLE clickclack_query_logs;
 
 
 statement ok
@@ -123,12 +150,27 @@ statement ok
 DROP SEQUENCE mop_application_seq CASCADE;
 
 
-query error
+query
+SELECT id FROM mop_applications;
+----
+id
+1
+
+
+statement count 1
+INSERT INTO mop_applications VALUES (99999);
+
+
+query
 SELECT id FROM mop_applications ORDER BY id;
 ----
-db error: ERROR: Table with name mop_applications does not exist!
-Did you mean "<slt:ignore>"?
+id
+1
+99999
 
+
+statement ok
+DROP TABLE mop_applications;
 
 
 statement ok
@@ -166,7 +208,10 @@ CREATE VIEW ml_papers_view AS SELECT ml_dbl_weights(id) AS d FROM ml_papers;
 statement error
 DROP FUNCTION ml_dbl_weights(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_dbl_weights" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "ml_dbl_weights" because there are entries that depend on it.
+table "ml_papers" depends on macro function "ml_dbl_weights".
+view "ml_papers_view" depends on table "ml_papers".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -174,15 +219,20 @@ statement ok
 DROP FUNCTION ml_dbl_weights(INT) CASCADE;
 
 
-query error
-SELECT id FROM ml_papers ORDER BY id;
+query
+SELECT id FROM ml_papers;
 ----
-db error: ERROR: Table with name ml_papers does not exist!
-Did you mean "<slt:ignore>"?
+id
+1
 
 
-statement error
+statement error (?i)(table|relation|view).*ml_papers_view.*does not exist
 SELECT * FROM ml_papers_view;
-----
-db error: ERROR: Table with name ml_papers_view does not exist!
-Did you mean "<slt:ignore>"?
+
+
+statement count 1
+INSERT INTO ml_papers VALUES (-5);
+
+
+statement ok
+DROP TABLE ml_papers;

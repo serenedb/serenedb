@@ -216,30 +216,31 @@ CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)
 
 
-# Search tables have a fixed iresearch schema: only renames are implemented,
-# every other structural ALTER falls through to duckdb's generic rejection.
+# Search tables have a fixed iresearch schema: structural ALTERs are rejected.
+# The guard runs before column/constraint resolution, so even a missing
+# constraint name reports the search-table rejection.
 statement error
 ALTER TABLE search_dml ADD COLUMN c INTEGER;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP COLUMN b;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
 
 
 # Renames are catalog-only metadata -- iresearch and the scan are keyed by
@@ -894,7 +895,7 @@ statement error
 CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', refresh_interval = 'x');
 ----
-db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
+db error: ERROR: WITH option "refresh_interval" expects an integer literal
 
 
 # The interval options are search-only: an inverted-style per-object scoping,
@@ -959,7 +960,7 @@ statement error
 CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', segment_memory_max = 'x');
 ----
-db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
+db error: ERROR: invalid value for parameter "segment_memory_max": "x"
 
 
 # segment_memory_max is search/inverted-scoped, so it is rejected on a plain

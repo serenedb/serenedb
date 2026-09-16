@@ -215,6 +215,7 @@ geom_stats
 query
 SELECT crs_name, auth_name, auth_code
 FROM sdb_coordinate_systems()
+WHERE auth_name = 'OGC'
 ORDER BY crs_name;
 ----
 crs_name	auth_name	auth_code

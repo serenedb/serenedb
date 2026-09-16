@@ -35,28 +35,42 @@ vedernikoff_step5
 statement error
 DROP FUNCTION vedernikoff_step1(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step1" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_step1" because there are entries that depend on it.
+macro function "vedernikoff_step2" depends on macro function "vedernikoff_step1".
+macro function "vedernikoff_step3" depends on macro function "vedernikoff_step2".
+macro function "vedernikoff_step4" depends on macro function "vedernikoff_step3".
+macro function "vedernikoff_step5" depends on macro function "vedernikoff_step4".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step2(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step2" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_step2" because there are entries that depend on it.
+macro function "vedernikoff_step3" depends on macro function "vedernikoff_step2".
+macro function "vedernikoff_step4" depends on macro function "vedernikoff_step3".
+macro function "vedernikoff_step5" depends on macro function "vedernikoff_step4".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step3(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step3" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_step3" because there are entries that depend on it.
+macro function "vedernikoff_step4" depends on macro function "vedernikoff_step3".
+macro function "vedernikoff_step5" depends on macro function "vedernikoff_step4".
+Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step4(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step4" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_step4" because there are entries that depend on it.
+macro function "vedernikoff_step5" depends on macro function "vedernikoff_step4".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -105,18 +119,12 @@ statement ok
 DROP FUNCTION vedernikoff_step1(INT) CASCADE;
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_step2.*does not exist
 SELECT vedernikoff_step2(0);
-----
-db error: ERROR: Scalar Function with name vedernikoff_step2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_step5.*does not exist
 SELECT vedernikoff_step5(0);
-----
-db error: ERROR: Scalar Function with name vedernikoff_step5 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 2. Function depending on sequence -------------------------------------
@@ -150,11 +158,8 @@ statement ok
 DROP SEQUENCE vedernikoff_iceberg_snap_seq CASCADE;
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_iceberg_next_snap.*does not exist
 SELECT vedernikoff_iceberg_next_snap();
-----
-db error: ERROR: Scalar Function with name vedernikoff_iceberg_next_snap does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 3. View depending on a function depending on a sequence --------------
@@ -192,7 +197,10 @@ count
 statement error
 DROP SEQUENCE vedernikoff_solid_partition_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_partition_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_partition_seq" because there are entries that depend on it.
+macro function "vedernikoff_solid_next_partition" depends on sequence "vedernikoff_solid_partition_seq".
+view "vedernikoff_solid_manifest_feed" depends on sequence "vedernikoff_solid_partition_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -200,18 +208,12 @@ statement ok
 DROP SEQUENCE vedernikoff_solid_partition_seq CASCADE;
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_solid_next_partition.*does not exist
 SELECT vedernikoff_solid_next_partition();
-----
-db error: ERROR: Scalar Function with name vedernikoff_solid_next_partition does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_solid_manifest_feed.*does not exist
 SELECT * FROM vedernikoff_solid_manifest_feed;
-----
-db error: ERROR: Table with name vedernikoff_solid_manifest_feed does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # Underlying table is fine.
@@ -250,7 +252,11 @@ CREATE VIEW vedernikoff_clickclack_view_c AS
 statement error
 DROP FUNCTION vedernikoff_clickclack_fan_root();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_fan_root" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_fan_root" because there are entries that depend on it.
+view "vedernikoff_clickclack_view_a" depends on macro function "vedernikoff_clickclack_fan_root".
+view "vedernikoff_clickclack_view_b" depends on macro function "vedernikoff_clickclack_fan_root".
+view "vedernikoff_clickclack_view_c" depends on macro function "vedernikoff_clickclack_fan_root".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -258,25 +264,16 @@ statement ok
 DROP FUNCTION vedernikoff_clickclack_fan_root() CASCADE;
 
 
-statement error
+statement error (?i).*vedernikoff_clickclack_view_a.*does not exist
 SELECT * FROM vedernikoff_clickclack_view_a;
-----
-db error: ERROR: Table with name vedernikoff_clickclack_view_a does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_clickclack_view_b.*does not exist
 SELECT * FROM vedernikoff_clickclack_view_b;
-----
-db error: ERROR: Table with name vedernikoff_clickclack_view_b does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_clickclack_view_c.*does not exist
 SELECT * FROM vedernikoff_clickclack_view_c;
-----
-db error: ERROR: Table with name vedernikoff_clickclack_view_c does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 5. Function used by column DEFAULT on multiple tables -----------------
@@ -315,7 +312,10 @@ INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch1');
 statement error
 DROP FUNCTION vedernikoff_mop_next_listing();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_next_listing" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_mop_next_listing" because there are entries that depend on it.
+table "vedernikoff_mop_active" depends on macro function "vedernikoff_mop_next_listing".
+table "vedernikoff_mop_archived" depends on macro function "vedernikoff_mop_next_listing".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -323,13 +323,37 @@ statement ok
 DROP FUNCTION vedernikoff_mop_next_listing() CASCADE;
 
 
-# Both tables defaulted from the function, so both are dropped.
+# Both DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_mop_active (body) VALUES ('a2');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch2');
+
+
 query
-SELECT count(*) FROM information_schema.tables WHERE table_name IN (
-  'vedernikoff_mop_active', 'vedernikoff_mop_archived');
+SELECT id, body FROM vedernikoff_mop_active ORDER BY body;
 ----
-count
-0
+id	body
+1	a1
+NULL	a2
+
+
+query
+SELECT id, body FROM vedernikoff_mop_archived ORDER BY body;
+----
+id	body
+2	arch1
+NULL	arch2
+
+
+statement ok
+DROP TABLE vedernikoff_mop_active;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_archived;
 
 
 statement ok
@@ -360,28 +384,26 @@ CREATE TABLE vedernikoff_iceberg_t_charlie (
 );
 
 
-statement error
+statement error (?i)
 INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
-----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_alpha with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error
+statement error (?i)
 INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
-----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_bravo with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error
+statement error (?i)
 INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
-----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_charlie with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 statement error
 DROP FUNCTION vedernikoff_iceberg_threshold(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_threshold" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_threshold" because there are entries that depend on it.
+table "vedernikoff_iceberg_t_alpha" depends on macro function "vedernikoff_iceberg_threshold".
+table "vedernikoff_iceberg_t_bravo" depends on macro function "vedernikoff_iceberg_threshold".
+table "vedernikoff_iceberg_t_charlie" depends on macro function "vedernikoff_iceberg_threshold".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -389,27 +411,29 @@ statement ok
 DROP FUNCTION vedernikoff_iceberg_threshold(INT) CASCADE;
 
 
-# Every table CHECKing the function is dropped with it.
-query error
-SELECT v FROM vedernikoff_iceberg_t_alpha ORDER BY v;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_t_alpha does not exist!
-Did you mean "<slt:ignore>"?
+# CHECKs cleared on every table.
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
 
 
-query error
-SELECT v FROM vedernikoff_iceberg_t_bravo ORDER BY v;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_t_bravo does not exist!
-Did you mean "<slt:ignore>"?
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
 
 
-query error
-SELECT v FROM vedernikoff_iceberg_t_charlie ORDER BY v;
-----
-db error: ERROR: Table with name vedernikoff_iceberg_t_charlie does not exist!
-Did you mean "<slt:ignore>"?
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
 
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_alpha;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_bravo;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_charlie;
 
 
 # --- 7. Mixed: function used by view, DEFAULT, and CHECK simultaneously ---
@@ -443,7 +467,10 @@ INSERT INTO vedernikoff_grand_records (payload) VALUES ('start');
 statement error
 DROP FUNCTION vedernikoff_grand_master_next();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_grand_master_next" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_grand_master_next" because there are entries that depend on it.
+table "vedernikoff_grand_records" depends on macro function "vedernikoff_grand_master_next".
+view "vedernikoff_grand_pulse" depends on macro function "vedernikoff_grand_master_next".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -452,27 +479,29 @@ DROP FUNCTION vedernikoff_grand_master_next() CASCADE;
 
 
 # View and function gone.
-statement error
+statement error (?i).*vedernikoff_grand_pulse.*does not exist
 SELECT * FROM vedernikoff_grand_pulse;
-----
-db error: ERROR: Table with name vedernikoff_grand_pulse does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_grand_master_next.*does not exist
 SELECT vedernikoff_grand_master_next();
-----
-db error: ERROR: Scalar Function with name vedernikoff_grand_master_next does not exist!
-Did you mean "<slt:ignore>"?
 
 
-# The record table reached the function through both DEFAULT and CHECK.
-query error
+# Record table survives, CHECK cleared, DEFAULT cleared.
+statement ok
+INSERT INTO vedernikoff_grand_records (payload) VALUES ('after');
+
+
+query
 SELECT id, payload FROM vedernikoff_grand_records ORDER BY payload;
 ----
-db error: ERROR: Table with name vedernikoff_grand_records does not exist!
-Did you mean "<slt:ignore>"?
+id	payload
+NULL	after
+100	start
 
+
+statement ok
+DROP TABLE vedernikoff_grand_records;
 
 
 statement ok
@@ -508,7 +537,11 @@ v
 statement error
 DROP FUNCTION vedernikoff_solid_root_fn();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_root_fn" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_solid_root_fn" because there are entries that depend on it.
+macro function "vedernikoff_solid_mid_fn" depends on macro function "vedernikoff_solid_root_fn".
+macro function "vedernikoff_solid_top_fn" depends on macro function "vedernikoff_solid_mid_fn".
+view "vedernikoff_solid_dashboard" depends on macro function "vedernikoff_solid_root_fn".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -516,25 +549,16 @@ statement ok
 DROP FUNCTION vedernikoff_solid_root_fn() CASCADE;
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_solid_mid_fn.*does not exist
 SELECT vedernikoff_solid_mid_fn();
-----
-db error: ERROR: Scalar Function with name vedernikoff_solid_mid_fn does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i)(macro|function).*vedernikoff_solid_top_fn.*does not exist
 SELECT vedernikoff_solid_top_fn();
-----
-db error: ERROR: Scalar Function with name vedernikoff_solid_top_fn does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error
+statement error (?i).*vedernikoff_solid_dashboard.*does not exist
 SELECT * FROM vedernikoff_solid_dashboard;
-----
-db error: ERROR: Table with name vedernikoff_solid_dashboard does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # --- 9. Self-overlapping: same seq used as DEFAULT AND CHECK on one table -
@@ -559,7 +583,9 @@ INSERT INTO vedernikoff_ml_journal (body) VALUES ('entry_alpha');
 statement error
 DROP SEQUENCE vedernikoff_ml_journal_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_journal_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_ml_journal_seq" because there are entries that depend on it.
+table "vedernikoff_ml_journal" depends on sequence "vedernikoff_ml_journal_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -567,13 +593,13 @@ statement ok
 DROP SEQUENCE vedernikoff_ml_journal_seq CASCADE;
 
 
-# One table, two edges to the sequence (DEFAULT and CHECK): dropped once.
-query error
-SELECT id, body FROM vedernikoff_ml_journal ORDER BY id;
-----
-db error: ERROR: Table with name vedernikoff_ml_journal does not exist!
-Did you mean "<slt:ignore>"?
+# Both DEFAULT and CHECK gone.
+statement count 1
+INSERT INTO vedernikoff_ml_journal (body) VALUES (repeat('z', 5000));
 
+
+statement ok
+DROP TABLE vedernikoff_ml_journal;
 
 
 # --- 10. Mutually overlapping chain: fn1 used by fn2 used by view used by
@@ -608,7 +634,10 @@ id	name
 statement error
 DROP FUNCTION vedernikoff_ml_base(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_base" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "vedernikoff_ml_base" because there are entries that depend on it.
+macro function "vedernikoff_ml_mid" depends on macro function "vedernikoff_ml_base".
+table "vedernikoff_ml_runs" depends on macro function "vedernikoff_ml_mid".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -616,16 +645,22 @@ statement ok
 DROP FUNCTION vedernikoff_ml_base(INT) CASCADE;
 
 
-# Mid is gone, and the table whose DEFAULT called it goes with it.
-statement error
+# Mid is gone, DEFAULT cleared.
+statement error (?i)(macro|function).*vedernikoff_ml_mid.*does not exist
 SELECT vedernikoff_ml_mid(1);
-----
-db error: ERROR: Scalar Function with name vedernikoff_ml_mid does not exist!
-Did you mean "<slt:ignore>"?
 
 
-query error
+statement ok
+INSERT INTO vedernikoff_ml_runs (name) VALUES ('after');
+
+
+query
 SELECT id, name FROM vedernikoff_ml_runs ORDER BY name;
 ----
-db error: ERROR: Table with name vedernikoff_ml_runs does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+NULL	after
+12	first
+
+
+statement ok
+DROP TABLE vedernikoff_ml_runs;

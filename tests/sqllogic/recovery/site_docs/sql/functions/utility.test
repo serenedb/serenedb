@@ -317,7 +317,7 @@ db error: ERROR: access_mode
 # DOCS_TEST: force_checkpoint
 # DOCS_TEST_BODY
 statement ok
-FORCE CHECKPOINT;
+SELECT force_checkpoint();
 
 # DOCS_TEST: gen_random_uuid
 

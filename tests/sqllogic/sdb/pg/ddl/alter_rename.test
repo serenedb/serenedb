@@ -102,10 +102,10 @@ statement ok
 ALTER TABLE pudge_view_tmp RENAME TO pudge_view;
 
 statement ok
-ALTER INDEX deadinside RENAME TO deadinside_tmp;
+ALTER TABLE deadinside RENAME TO deadinside_tmp;
 
 statement ok
-ALTER INDEX deadinside_tmp RENAME TO deadinside;
+ALTER TABLE deadinside_tmp RENAME TO deadinside;
 
 
 statement ok
@@ -122,11 +122,11 @@ statement ok
 ALTER INDEX deadinside_renamed RENAME TO deadinside;
 
 
-# ALTER INDEX names an index, and pudge is a table.
-statement error
+statement ok
 ALTER INDEX pudge RENAME TO pudge_tmp;
-----
-db error: ERROR: Index with name pudge does not exist!<slt:ignore>
+
+statement ok
+ALTER INDEX pudge_tmp RENAME TO pudge;
 
 
 statement ok
@@ -161,7 +161,7 @@ ALTER VIEW pudge RENAME TO something;
 statement error
 ALTER VIEW deadinside RENAME TO something;
 ----
-db error: ERROR: View with name deadinside does not exist!<slt:ignore>
+db error: ERROR: "deadinside" is not a view
 
 
 statement error
@@ -181,102 +181,93 @@ db error: ERROR: View with name nonexistent does not exist!
 statement error
 ALTER INDEX nonexistent RENAME TO something;
 ----
-db error: ERROR: Index with name nonexistent does not exist!<slt:ignore>
+db error: ERROR: Table with name nonexistent does not exist!
+<slt:ignore>
 
 
 statement error
 ALTER FUNCTION nonexistent RENAME TO something;
 ----
-db error: ERROR: Macro Function with name nonexistent does not exist!<slt:ignore>
+db error: ERROR: could not find a function named "nonexistent"
 
 
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: Could not rename "pudge" to <slt:ignore>
+db error: ERROR: relation "invoker" already exists
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge;
 ----
-db error: ERROR: Could not rename "pudge_view" to "pudge"<slt:ignore>
+db error: ERROR: relation "pudge" already exists
 
 
-# Indexes live in a namespace of their own, so an index may take a table's name.
-statement ok
+statement error
 ALTER INDEX deadinside RENAME TO pudge;
-
-
-statement ok
-ALTER INDEX pudge RENAME TO deadinside;
+----
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: relation "pudge" already exists
 
 
-statement ok
+statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
+----
+db error: ERROR: relation "pudge_view" already exists
 
 
-statement ok
+statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
+----
+db error: ERROR: relation "clickclack" already exists
 
 
 statement error
 ALTER FUNCTION pudge RENAME TO something;
 ----
-db error: ERROR: Macro Function with name pudge does not exist!<slt:ignore>
+db error: ERROR: could not find a function named "pudge"
 
 
-# pudge_view and clickclack read pudge by column name, so duckdb refuses to
-# rename its columns while they exist.
-statement error
+statement ok
 ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
-----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.<slt:ignore>
-
-
-statement ok
-CREATE TABLE techies(a integer, b text);
-
-statement ok
-ALTER TABLE techies RENAME COLUMN a TO a_renamed;
 
 query
-SELECT a_renamed FROM techies;
+SELECT a_renamed FROM pudge;
 ----
 a_renamed
 
 
 statement error
-SELECT a FROM techies;
+SELECT a FROM pudge;
 ----
 db error: ERROR: Referenced column "a" not found in FROM clause!
 <slt:ignore>
 
 
 statement ok
-ALTER TABLE techies RENAME COLUMN a_renamed TO a;
+ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
 
 query
-SELECT a FROM techies;
+SELECT a FROM pudge;
 ----
 a
 
 
 statement error
-ALTER TABLE techies RENAME COLUMN nonexistent TO something;
+ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
 ----
-db error: ERROR: Table "techies" does not have a column with name "nonexistent"
+db error: ERROR: Table "pudge" does not have a column with name "nonexistent"
 
 Did you mean: "a"
 
 
 statement error
-ALTER TABLE techies RENAME COLUMN a TO b;
+ALTER TABLE pudge RENAME COLUMN a TO b;
 ----
 db error: ERROR: Column with name b already exists!
 
@@ -289,7 +280,7 @@ db error: ERROR: Table with name nonexistent does not exist!
 
 
 statement ok
-ALTER TABLE techies RENAME COLUMN a TO a;
+ALTER TABLE pudge RENAME COLUMN a TO a;
 
 
 statement ok
@@ -301,7 +292,7 @@ ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_positiv
 statement error
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
 ----
-db error: ERROR: constraint "constr_test_pos" of table "constr_test" does not exist<slt:ignore>
+db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not exist
 
 
 statement ok
@@ -331,43 +322,13 @@ ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 statement error
 ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
+db error: ERROR: cannot rename columns of a non-table relation
 
 
 statement error
 ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!<slt:ignore>
-
-
-# A renamed index still has to be found by its new name when it is dropped,
-# otherwise it keeps enforcing.
-statement ok
-CREATE TABLE ghost(a integer);
-
-statement ok
-INSERT INTO ghost VALUES (1);
-
-statement ok
-CREATE UNIQUE INDEX ghost_idx ON ghost(a);
-
-statement ok
-ALTER INDEX ghost_idx RENAME TO ghost_renamed;
-
-statement error
-INSERT INTO ghost VALUES (1);
-----
-db error: ERROR: Duplicate key "a: 1" violates unique constraint.
-
-
-statement ok
-DROP INDEX ghost_renamed;
-
-statement ok
-INSERT INTO ghost VALUES (1);
-
-statement ok
-DROP TABLE ghost;
+db error: ERROR: constraint "foo" for table "pudge_view" does not exist
 
 
 statement ok
@@ -387,9 +348,6 @@ DROP TABLE kostya.babsky;
 
 statement ok
 DROP TABLE invoker;
-
-statement ok
-DROP TABLE techies;
 
 statement ok
 DROP TABLE pudge;

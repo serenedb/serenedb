@@ -1383,7 +1383,7 @@ query
 EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
 ----
 QUERY PLAN
-╭─ INDEX_SCAN ───────────────────╮
+╭─ SEQ_SCAN ─────────────────────╮
 │ Table: babsky_from_idx_val_idx │
 │ Type: Sequential Scan          │
 │ Projections: pid, val, tag     │

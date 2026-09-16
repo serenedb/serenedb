@@ -33,9 +33,7 @@ CREATE INDEX con_sec ON con(ck2);
 statement ok
 CREATE UNIQUE INDEX con_usec ON con(nn2);
 
-# pg_constraint: every constraint type; an explicit name is kept, and an unnamed
-# one is named the way postgres names it (<table>_pkey, <table>_<col>_key,
-# _check, _not_null, _fkey).
+# pg_constraint: every constraint type, explicit name kept, auto name PG-shaped.
 query
 SELECT conname || ' ' || contype::text AS c FROM pg_constraint
 WHERE conrelid = 'con'::regclass ORDER BY contype::text, conname;

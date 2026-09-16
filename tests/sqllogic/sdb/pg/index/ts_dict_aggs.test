@@ -44,13 +44,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~36 rows                                             │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -59,12 +58,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -75,7 +74,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -120,18 +119,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -139,7 +138,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -155,13 +154,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -170,12 +168,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -191,7 +189,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -242,18 +240,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -266,7 +264,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -282,13 +280,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -297,12 +294,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -318,7 +315,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -373,18 +370,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -397,7 +394,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -413,13 +410,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -428,12 +424,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -449,7 +445,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -506,18 +502,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -530,7 +526,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -546,13 +542,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -561,12 +556,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -582,7 +577,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -636,18 +631,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -660,7 +655,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -676,13 +671,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -691,12 +685,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -712,7 +706,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -764,18 +758,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -788,7 +782,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -804,13 +798,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~36 rows                                             │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -819,12 +812,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -840,7 +833,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -891,18 +884,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -915,7 +908,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -931,13 +924,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~36 rows                                             │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -946,12 +938,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -968,7 +960,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -1024,18 +1016,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~36 rows                                             │
+│ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -1049,7 +1041,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -1065,13 +1057,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -1080,12 +1071,12 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -1104,7 +1095,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -1161,18 +1152,18 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -1188,7 +1179,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -1204,13 +1195,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
-│ ~7 rows                                              │
+│ Order By: agg_idx.body)) ASC                         │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections: term, raw, docs, freq, score            │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
@@ -1219,17 +1209,17 @@ QUERY PLAN
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT),   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0, #1                                       │
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮
 │ Expression:                                          │
 │ length(sdb_inverted_index_term$body) = 5             │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -1240,7 +1230,7 @@ QUERY PLAN
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body,                   │
 │ sdb_inverted_index_term_score$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -1266,14 +1256,14 @@ QUERY PLAN
 ╭─ FILTER ────────────┴────────────────────╮
 │ Expression:                              │
 │ length(sdb_inverted_index_term$body) = 5 │
-│ ~14 rows                                 │
+│ ~460 rows                                │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: agg_idx                           │
 │ TsDict: body                             │
 │ Projections:                             │
 │ sdb_inverted_index_term$body             │
-│ ~72 rows                                 │
+│ ~2,304 rows                              │
 ╰──────────────────────────────────────────╯
 
 query
@@ -1297,23 +1287,23 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term$body IS NOT NULL, #1,        │
 │ #1 IS NOT NULL                                       │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~7 rows                                              │
+│ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮
 │ Expression:                                          │
 │ length(sdb_inverted_index_term$body) = 5             │
-│ ~14 rows                                             │
+│ ~460 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -1321,7 +1311,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~72 rows                                             │
+│ ~2,304 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query

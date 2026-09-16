@@ -658,8 +658,7 @@ db error: ERROR: No function matches the given name and argument types 'bm25(BIG
 query error
 SELECT id, BM25(docs.tableoid) FROM docs WHERE id > 0;
 ----
-db error: ERROR: Table "docs" does not have a column named "tableoid"
-Candidate bindings: "body"
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 # EXPLAIN for BM25 basic scan

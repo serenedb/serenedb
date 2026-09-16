@@ -56,8 +56,12 @@ statement ok
 DROP SCHEMA dcr_seq_src CASCADE;
 
 
-statement ok
+statement error (?i)table "entries" depends on schema "dcr_seq_user"
 DROP SCHEMA dcr_seq_user;
+
+
+statement ok
+DROP SCHEMA dcr_seq_user CASCADE;
 
 
 statement ok

@@ -845,7 +845,8 @@ QUERY PLAN
 │ ╰──────────────────────╯  ╰─────────────────────╯ │
 │ Offsets: title, body                              │
 │ Projections:                                      │
-│ title, body, id, sdb_inverted_index_offsets$<slt:ignore>
+│ title, body, id,                                  │
+│ sdb_inverted_index_offsets$<slt:ignore>
 │ sdb_inverted_index_offsets$<slt:ignore>
 │ ~1 row                                            │
 ╰───────────────────────────────────────────────────╯

@@ -33,8 +33,10 @@ ALTER TABLE ccd_rename RENAME TO ccd_rename_x;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_rename;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 # The refused drop left its connection usable.
@@ -81,8 +83,10 @@ COMMENT ON TABLE ccd_comment IS 'kept';
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_comment;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -118,8 +122,10 @@ COMMENT ON COLUMN ccd_colcomment.a IS 'kept';
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_colcomment;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -154,8 +160,10 @@ ALTER TABLE ccd_renamecol RENAME COLUMN b TO b2;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_renamecol;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -167,9 +175,7 @@ statement ok
 DROP TABLE ccd_renamecol;
 
 
-# --- CREATE INDEX racing DROP TABLE: duckdb lets the drop through and fails
-# the index creator at commit, when its dependency on the relation can no
-# longer be committed ---
+# --- CREATE INDEX: the new index holds the relation it hangs off ---
 
 statement ok
 CREATE TABLE ccd_index(a INTEGER, b TEXT);
@@ -186,15 +192,15 @@ CREATE INDEX ccd_index_i ON ccd_index(a);
 
 
 connection s2
-statement ok
+statement error
 DROP TABLE ccd_index;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
-statement error
+statement ok
 COMMIT;
-----
-db error: ERROR: Failed to commit: Could not commit creation of dependency<slt:ignore>
 
 
 connection s1
@@ -203,6 +209,12 @@ SELECT relname FROM pg_class
 WHERE relname IN ('ccd_index', 'ccd_index_i') ORDER BY 1;
 ----
 relname
+ccd_index
+ccd_index_i
+
+
+statement ok
+DROP TABLE ccd_index;
 
 
 # --- ALTER INDEX ... SET ---
@@ -226,8 +238,10 @@ ALTER INDEX ccd_altidx_i SET (segment_docs_max = 200);
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_altidx CASCADE;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -260,8 +274,10 @@ GRANT SELECT ON ccd_grant TO ccd_grantee;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_grant;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -298,8 +314,10 @@ ALTER TABLE ccd_owner OWNER TO ccd_grantee;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_owner;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -328,8 +346,10 @@ ALTER ROLE ccd_victim NOSUPERUSER;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP ROLE ccd_victim;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -366,8 +386,10 @@ DROP VIEW ccd_dropview_v;
 
 
 connection s2
-statement error Catalog write-write conflict on alter
+statement error
 DROP TABLE ccd_dropview CASCADE;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -418,8 +440,10 @@ DROP TABLE ccd_late;
 
 
 connection s3
-statement error Catalog write-write conflict on alter
+statement error
 COMMENT ON TABLE ccd_late IS 'doomed';
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s3
@@ -451,9 +475,9 @@ DROP TABLE ccd_pin;
 # --- the same direction for a role ---
 #
 # Roles live in their own attachment, which starts its transaction the first
-# time a statement touches it. Reading the role inside the transaction pins
-# that view before the drop, so the later ALTER works on a role another
-# transaction has since deleted: duckdb's write-write conflict.
+# time a statement touches it -- after the drop, here. duckdb's own conflict
+# check cannot see the loss from that read view, so the install refuses the
+# resurrection itself and names the object.
 
 statement ok
 CREATE TABLE ccd_rolepin(a INTEGER);
@@ -469,11 +493,8 @@ BEGIN;
 
 
 connection s5
-query
-SELECT rolname FROM pg_roles WHERE rolname = 'ccd_gone';
-----
-rolname
-ccd_gone
+statement ok
+COMMENT ON TABLE ccd_rolepin IS 'pins the read view';
 
 
 connection s6
@@ -485,7 +506,7 @@ connection s5
 statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccd_gone"
+db error: ERROR: could not serialize access due to concurrent delete of "ccd_gone"
 
 
 connection s5
@@ -571,8 +592,10 @@ DROP TABLE ccd_plain;
 
 
 connection s9
-statement error Catalog write-write conflict on alter
+statement error
 ALTER TABLE ccd_plain RENAME TO ccd_plain_x;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s9

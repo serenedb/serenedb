@@ -26,10 +26,11 @@ CREATE VIEW sf_v AS SELECT id, name FROM sf_t
 statement ok
 CREATE INDEX sf_idx ON sf_t USING inverted (name)
 
-# duckdb takes a macro's overloads in one statement; a second CREATE under the
-# same name is a conflict, as function.test pins.
 statement ok
-CREATE MACRO sf_scalar(a) AS a + 1, (a, b) AS a + b
+CREATE MACRO sf_scalar(a) AS a + 1
+
+statement ok
+CREATE MACRO sf_scalar(a, b) AS a + b
 
 statement ok
 CREATE MACRO sf_tab() AS TABLE SELECT 1 AS x
@@ -167,7 +168,7 @@ ORDER BY column_name
 ----
 table_name	column_name	data_type
 sf_t	id	INTEGER
-sf_t	mood	ENUM('ok', 'bad')
+sf_t	mood	sf_mood
 sf_t	name	VARCHAR
 
 query

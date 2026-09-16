@@ -198,19 +198,19 @@ CREATE SEQUENCE rbd_ok_q;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rbd_ok_d (template = 'keyword');
-
-
-statement ok
-COMMIT;
-
-
-statement ok
 CREATE ROLE rbd_ok_r;
 
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY rbd_ok_d (template = 'keyword');
+
+
+statement ok
 CREATE DATABASE rbd_ok_db;
+
+
+statement ok
+COMMIT;
 
 
 # ----------------------------------------------------------------------
@@ -272,15 +272,19 @@ BEGIN;
 
 
 statement ok
-ALTER TABLE rbd_keep_t OWNER TO rbd_owner;
+ALTER TABLE rbd_keep_t RENAME TO rbd_keep_t_renamed;
 
 
 statement ok
-GRANT SELECT ON rbd_keep_t TO rbd_grantee;
+ALTER TABLE rbd_keep_t_renamed OWNER TO rbd_owner;
 
 
 statement ok
-GRANT SELECT (a) ON rbd_keep_t TO rbd_grantee;
+GRANT SELECT ON rbd_keep_t_renamed TO rbd_grantee;
+
+
+statement ok
+GRANT SELECT (a) ON rbd_keep_t_renamed TO rbd_grantee;
 
 
 statement ok
@@ -293,16 +297,6 @@ COMMENT ON COLUMN rbd_keep_v.vb IS 'changed col';
 
 statement ok
 ALTER INDEX rbd_keep_ii SET (segment_docs_max = 4242);
-
-
-# One transaction writes to one attached database, and role DDL lands in the
-# cluster catalog, so the cluster half rolls back in a transaction of its own.
-statement ok
-ROLLBACK;
-
-
-statement ok
-BEGIN;
 
 
 statement ok
@@ -333,15 +327,19 @@ BEGIN;
 
 
 statement ok
-ALTER TABLE rbd_move_t OWNER TO rbd_owner;
+ALTER TABLE rbd_move_t RENAME TO rbd_move_t_renamed;
 
 
 statement ok
-GRANT SELECT ON rbd_move_t TO rbd_grantee;
+ALTER TABLE rbd_move_t_renamed OWNER TO rbd_owner;
 
 
 statement ok
-GRANT SELECT (a) ON rbd_move_t TO rbd_grantee;
+GRANT SELECT ON rbd_move_t_renamed TO rbd_grantee;
+
+
+statement ok
+GRANT SELECT (a) ON rbd_move_t_renamed TO rbd_grantee;
 
 
 statement ok
@@ -354,16 +352,6 @@ COMMENT ON COLUMN rbd_move_v.vb IS 'committed col';
 
 statement ok
 ALTER INDEX rbd_move_ii SET (segment_docs_max = 777);
-
-
-# The cluster half commits in a transaction of its own: one transaction writes
-# to one attached database.
-statement ok
-COMMIT;
-
-
-statement ok
-BEGIN;
 
 
 statement ok
@@ -506,10 +494,12 @@ schema	view	function	type	sequence	role	tokenizer	database
 # grants, the old comments, the old index option.
 connection after_crash
 query
-SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_ii';
+SELECT
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t') AS original;
 ----
-count
-1
+renamed	original
+0	1
 
 
 connection after_crash
@@ -605,18 +595,19 @@ rbd_owner	r	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
 connection after_crash
 query
 SELECT
-  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_ii') AS original,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t') AS original,
   (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_dropme') AS dropped;
 ----
-original	dropped
-1	0
+renamed	original	dropped
+1	0	0
 
 
 connection after_crash
 query
 SELECT pg_get_userbyid(relowner) AS owner,
        coalesce(array_to_string(relacl, '|'), '-') AS acl
-FROM pg_class WHERE relname = 'rbd_move_t';
+FROM pg_class WHERE relname = 'rbd_move_t_renamed';
 ----
 owner	acl
 rbd_owner	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
@@ -626,7 +617,7 @@ connection after_crash
 query
 SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
 FROM pg_attribute
-WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_move_t')
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_move_t_renamed')
   AND attname = 'a';
 ----
 colacl
@@ -719,14 +710,7 @@ statement ok
 CREATE VIEW rbd_crash_v AS SELECT 1 AS a;
 
 
-# The cluster half is a transaction of its own -- one transaction writes to one
-# attached database -- and is left open across the crash too.
-connection after_crash_cluster
-statement ok
-BEGIN;
-
-
-connection after_crash_cluster
+connection after_crash
 statement ok
 CREATE ROLE rbd_crash_r;
 

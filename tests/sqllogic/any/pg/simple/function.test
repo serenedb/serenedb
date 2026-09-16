@@ -420,20 +420,12 @@ SELECT * FROM zhme as zhma, zhme();
 lmao	zhme
 
 
-# ── One name, one function ──
+# ── Overload merging (CREATE FUNCTION with multiple signatures) ──
 
 statement ok
 CREATE FUNCTION ovl_test(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql;
 
 
-onlyif serenedb
-statement error
-CREATE FUNCTION ovl_test(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql;
-----
-db error: ERROR: Macro Function with name "ovl_test" already exists!<slt:ignore>
-
-
-skipif serenedb # Postgres overloads by argument type
 statement ok
 CREATE FUNCTION ovl_test(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql;
 
@@ -445,7 +437,6 @@ ovl_test
 42
 
 
-skipif serenedb
 query
 SELECT ovl_test('hello');
 ----
@@ -453,7 +444,7 @@ ovl_test
 hello
 
 
-# CREATE OR REPLACE swaps the definition
+# CREATE OR REPLACE preserves other overloads
 statement ok
 CREATE OR REPLACE FUNCTION ovl_test(x INTEGER) RETURNS INTEGER AS $$ SELECT x + 1 $$ LANGUAGE sql;
 
@@ -465,20 +456,19 @@ ovl_test
 43
 
 
-skipif serenedb
 query
 SELECT ovl_test('hello');
 ----
 ovl_test
 hello
 
-# ── DROP FUNCTION with a signature: the signature names the function ──
+# ── DROP FUNCTION with overload signature ──
 
+# Drop only the INTEGER overload
 statement ok
 DROP FUNCTION ovl_test(INTEGER);
 
-
-skipif serenedb
+# TEXT overload still works
 query
 SELECT ovl_test('hello');
 ----
@@ -486,11 +476,12 @@ ovl_test
 hello
 
 
+# INTEGER overload is gone
 statement error
 SELECT ovl_test(42);
 
 
-skipif serenedb
+# Drop remaining overload (no parens = all overloads)
 statement ok
 DROP FUNCTION ovl_test;
 

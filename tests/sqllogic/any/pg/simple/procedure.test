@@ -47,15 +47,6 @@ statement ok
 CREATE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x $$ LANGUAGE sql;
 
 
-# A name holds one procedure: a second definition under it needs OR REPLACE.
-onlyif serenedb
-statement error
-CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
-----
-db error: ERROR: Table Macro Function with name "proc_ovl" already exists!<slt:ignore>
-
-
-skipif serenedb # Postgres overloads by argument type
 statement ok
 CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
 
@@ -64,12 +55,11 @@ statement ok
 CALL proc_ovl(42);
 
 
-skipif serenedb
 statement ok
 CALL proc_ovl('hello');
 
 
-# ── CREATE OR REPLACE PROCEDURE swaps the definition ──
+# ── CREATE OR REPLACE PROCEDURE preserves other overloads ──
 
 statement ok
 CREATE OR REPLACE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x + 1 $$ LANGUAGE sql;
@@ -79,7 +69,6 @@ statement ok
 CALL proc_ovl(42);
 
 
-skipif serenedb
 statement ok
 CALL proc_ovl('hello');
 
@@ -90,23 +79,14 @@ statement ok
 DROP PROCEDURE proc_ovl(INTEGER);
 
 
-# The signature names the procedure; the name is what the drop takes.
-onlyif serenedb
-statement error
-CALL proc_ovl(42);
-
-
-skipif serenedb
 statement ok
 CALL proc_ovl('hello');
 
 
-skipif serenedb
 statement error
 CALL proc_ovl(42);
 
 
-skipif serenedb
 statement ok
 DROP PROCEDURE proc_ovl(TEXT);
 
@@ -115,50 +95,34 @@ statement error
 CALL proc_ovl('hello');
 
 
-# ── DROP FUNCTION on procedure ──
-# duckdb keeps functions and procedures in one macro set, so either DROP takes
-# the entry; PostgreSQL refuses the mismatched kind.
+# ── DROP FUNCTION on procedure is an error ──
 
 statement ok
 CREATE PROCEDURE drop_mismatch_proc() AS $$ SELECT 1 $$ LANGUAGE sql;
 
 
-skipif serenedb
 statement error
 DROP FUNCTION drop_mismatch_proc();
 ----
 db error: ERROR: drop_mismatch_proc() is not a function
 
 
-onlyif serenedb
-statement ok
-DROP FUNCTION drop_mismatch_proc();
-
-
-skipif serenedb
 statement ok
 DROP PROCEDURE drop_mismatch_proc();
 
 
-# ── DROP PROCEDURE on function ──
+# ── DROP PROCEDURE on function is an error ──
 
 statement ok
 CREATE FUNCTION drop_mismatch_func() RETURNS INTEGER AS $$ SELECT 1 $$ LANGUAGE sql;
 
 
-skipif serenedb
 statement error
 DROP PROCEDURE drop_mismatch_func();
 ----
 db error: ERROR: drop_mismatch_func() is not a procedure
 
 
-onlyif serenedb
-statement ok
-DROP PROCEDURE drop_mismatch_func();
-
-
-skipif serenedb
 statement ok
 DROP FUNCTION drop_mismatch_func();
 

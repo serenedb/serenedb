@@ -9,6 +9,20 @@
 # reason: refusing a duplicate is the only assertion that proves the physical
 # half is still attached, which is why the checks below are INSERTs rather than
 # catalog queries.
+#
+# None of this was reachable before the catalog split: SereneDBIndexEntry did
+# not derive from DuckIndexEntry, so no rolled-back index version was
+# compensated at all. Deriving from it also inherits the hook's blast radius --
+# stock DuckIndexEntry::Rollback removed unconditionally, ignoring which
+# version it was undoing, so a rolled-back COMMENT ON INDEX dropped the table's
+# ART. This fork re-versions index entries far more often than upstream (RENAME
+# INDEX, COMMENT ON INDEX, ALTER INVERTED options, and ALTER COLUMN TYPE
+# re-putting every index of the relation), so each non-creating version that
+# can be rolled back gets a case below.
+#
+# The inverted-index versions of these cases are in
+# inverted_index_rollback_alters.test; rolled-back DROP INDEX is not
+# compensated and is pinned as a known gap in index_rollback_drop_gap.test.
 
 
 statement ok
@@ -75,10 +89,8 @@ n
 1
 
 
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_t VALUES (4, 30, 'delta');
-----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +130,8 @@ kept
 
 
 # The ART is still on the relation: the key is still enforced.
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_t VALUES (5, 30, 'echo');
-----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 # ... and a non-conflicting row still lands and is still found.
@@ -149,10 +159,8 @@ comment
 committed
 
 
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_t VALUES (6, 50, 'foxtrot');
-----
-db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +195,8 @@ relname
 ixrb_rank_idx
 
 
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_t VALUES (7, 50, 'golf');
-----
-db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
 
 
 statement ok
@@ -198,10 +204,11 @@ DROP TABLE ixrb_t;
 
 
 # ---------------------------------------------------------------------------
-# ALTER TABLE ... ALTER COLUMN TYPE inside a transaction on a relation that
-# carries indexes. duckdb refuses the type change while any index exists, even
-# on a column no index covers; the refusal aborts the transaction and must
-# leave every index version, and the ARTs behind them, untouched.
+# Rolled-back ALTER TABLE ... ALTER COLUMN TYPE on a relation that carries
+# indexes. This road re-puts EVERY index of the relation, so a rollback of it
+# undoes one index version per index -- none of them creating ones. The type
+# change itself is on a column no index covers (a covered one is refused; see
+# alter_table_inverted_index.test).
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -224,10 +231,8 @@ statement ok
 BEGIN;
 
 
-statement error
+statement ok
 ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
-----
-db error: ERROR: Cannot alter entry "ixrb_at" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -265,10 +270,8 @@ ixrb_at_rank_idx
 
 
 # ... and the UNIQUE one is still physically attached.
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_at VALUES (3, 10, 300, 'charlie');
-----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
 
 
 statement ok
@@ -282,12 +285,9 @@ score
 300
 
 
-# The same statement outside a transaction is refused the same way, and the
-# indexes stay attached.
-statement error
+# The committed control: the same statement, kept this time.
+statement ok
 ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
-----
-db error: ERROR: Cannot alter entry "ixrb_at" because there are entries that depend on it.<slt:ignore>
 
 
 query
@@ -297,13 +297,11 @@ WHERE a.attrelid = (SELECT oid FROM pg_class WHERE relname = 'ixrb_at')
   AND a.attname = 'score';
 ----
 data_type
-integer
+bigint
 
 
-statement error
+statement error (?i)duplicate key
 INSERT INTO ixrb_at VALUES (4, 30, 400, 'delta');
-----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 statement ok

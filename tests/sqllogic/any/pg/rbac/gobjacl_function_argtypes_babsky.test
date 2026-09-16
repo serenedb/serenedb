@@ -47,7 +47,8 @@ statement ok
 GRANT EXECUTE ON ROUTINE gobjacl_arg_babsky(int) TO gobjacl_arg_vedernikoff;
 
 
-statement error
+# ALL FUNCTIONS IN SCHEMA applies to every function in the schema.
+statement ok
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO gobjacl_arg_vedernikoff;
 
 

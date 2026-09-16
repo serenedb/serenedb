@@ -52,21 +52,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~48 rows                                             │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -74,7 +72,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~96 rows                                             │
+│ ~3,072 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -112,21 +110,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -139,7 +135,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -154,21 +150,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -181,7 +175,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -200,21 +194,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~48 rows                                             │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -227,7 +219,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~96 rows                                             │
+│ ~3,072 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -247,21 +239,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -274,7 +264,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -295,21 +285,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -322,7 +310,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -340,21 +328,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -367,7 +353,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -388,21 +374,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -415,7 +399,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -431,21 +415,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -458,7 +440,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -474,21 +456,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~48 rows                                             │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -501,7 +481,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~96 rows                                             │
+│ ~3,072 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -516,21 +496,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~48 rows                                             │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~48 rows                                             │
+│ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -544,7 +522,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~96 rows                                             │
+│ ~3,072 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -563,21 +541,19 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -593,7 +569,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -611,26 +587,24 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By:                                            │
-│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
-│ unnest(ts_dict_count(cart_idx.body)) ASC             │
-│ ~9 rows                                              │
+│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~9 rows                                              │
+│ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮
 │ Expression:                                          │
 │ length(sdb_inverted_index_term$body) = 5             │
-│ ~19 rows                                             │
+│ ~614 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
@@ -638,7 +612,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~96 rows                                             │
+│ ~3,072 rows                                          │
 ╰──────────────────────────────────────────────────────╯
 
 query

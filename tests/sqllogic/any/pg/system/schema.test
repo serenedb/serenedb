@@ -1,22 +1,27 @@
 statement error
 DROP SCHEMA pg_catalog;
 ----
-db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
+db error: ERROR: cannot drop schema pg_catalog because it is required by the database system
 
 
 statement error
 CREATE SCHEMA pg_catalog;
 ----
-db error: ERROR: Schema with name "pg_catalog" already exists!
+db error: ERROR: unacceptable schema name "pg_catalog"
+DETAIL: The prefix "pg_" is reserved for system schemas.
 
 
-statement ok
+statement error
 CREATE SCHEMA pg_foo;
+----
+db error: ERROR: unacceptable schema name "pg_foo"
+DETAIL: The prefix "pg_" is reserved for system schemas.
+
 
 statement error
 CREATE SCHEMA information_schema;
 ----
-db error: ERROR: Schema with name "information_schema" already exists!
+db error: ERROR: schema "information_schema" already exists
 
 
 # IF NOT EXISTS silently succeeds for system-catalog schemas

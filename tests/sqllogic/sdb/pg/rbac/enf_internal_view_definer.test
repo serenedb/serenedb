@@ -3,34 +3,15 @@
 # nested lookup in its body was refused -- for a superuser too. DuckDB's
 # sqlite_* compatibility views are view-over-view, so all of them were
 # unreadable by anyone; pragma_database_list, whose body calls a table function
-# instead, was fine. An internal entry with no owner is transparent when the
-# effective principal is resolved, so the nearest owning view decides.
+# instead, was fine. An internal entry with no owner is now the bootstrap
+# superuser's, which is what the pg_catalog views already record explicitly.
 #
 # The deny paths are asserted alongside: the fix must not make any of these
 # readable by an unprivileged role, and it must not weaken definer rights on
 # ordinary user views.
-#
-# Schema-level GRANT is not supported, so every object lives in the default
-# schema and the unprivileged definer view is handed over with ALTER ... OWNER.
 
 statement ok
-DROP VIEW IF EXISTS zebrafin_w_escalate
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_sqlite
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_alias
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_source
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_owned
+DROP SCHEMA IF EXISTS zebrafin_pub CASCADE
 
 
 statement ok
@@ -53,6 +34,14 @@ statement ok
 CREATE ROLE zebrafin_clerk LOGIN PASSWORD 'zebrafin_clerk_pw'
 
 
+statement ok
+CREATE SCHEMA zebrafin_pub
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA zebrafin_pub TO zebrafin_clerk
+
+
 # ---- the fix: engine-generated view-over-view resolves for a superuser ----
 
 query
@@ -69,6 +58,24 @@ t	t	t	t	t
 
 # sqlite_schema is a view over sqlite_master, which is itself a view over
 # duckdb_tables / duckdb_views / duckdb_indexes: two nesting levels resolve.
+
+query
+SELECT (SELECT count(*) FROM sqlite_master WHERE name = 'zebrafin_vault') AS master,
+       (SELECT count(*) FROM sqlite_schema WHERE name = 'zebrafin_vault') AS schema_
+----
+master	schema_
+1	1
+
+
+# The rows are the real catalog, not an empty stand-in.
+
+query
+SELECT type, name FROM sqlite_master WHERE name = 'zebrafin_vault'
+----
+type	name
+table	zebrafin_vault
+
+
 # The sdb_* alias views are internal and ownerless for the same reason, so they
 # ride the same rule.
 
@@ -115,37 +122,37 @@ db error: ERROR: permission denied for table zebrafin_vault<slt:ignore>
 # ---- definer rights on ordinary user views are unchanged ----
 
 statement ok
-CREATE VIEW zebrafin_w_owned AS SELECT id, secret FROM zebrafin_vault
+CREATE VIEW zebrafin_pub.w_owned AS SELECT id, secret FROM zebrafin_vault
 
 
 statement ok
-CREATE VIEW zebrafin_w_source AS
+CREATE VIEW zebrafin_pub.w_source AS
 SELECT * FROM system.main.duckdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok
-CREATE VIEW zebrafin_w_alias AS
+CREATE VIEW zebrafin_pub.w_alias AS
 SELECT * FROM system.main.sdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok
-CREATE VIEW zebrafin_w_sqlite AS SELECT * FROM sqlite_master
+CREATE VIEW zebrafin_pub.w_sqlite AS SELECT * FROM sqlite_master
 
 
 statement ok
-GRANT SELECT ON zebrafin_w_owned TO zebrafin_clerk
+GRANT SELECT ON zebrafin_pub.w_owned TO zebrafin_clerk
 
 
 statement ok
-GRANT SELECT ON zebrafin_w_source TO zebrafin_clerk
+GRANT SELECT ON zebrafin_pub.w_source TO zebrafin_clerk
 
 
 statement ok
-GRANT SELECT ON zebrafin_w_alias TO zebrafin_clerk
+GRANT SELECT ON zebrafin_pub.w_alias TO zebrafin_clerk
 
 
 statement ok
-GRANT SELECT ON zebrafin_w_sqlite TO zebrafin_clerk
+GRANT SELECT ON zebrafin_pub.w_sqlite TO zebrafin_clerk
 
 
 # The owner's rights still carry the body: the clerk reads the vault through a
@@ -153,7 +160,7 @@ GRANT SELECT ON zebrafin_w_sqlite TO zebrafin_clerk
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 query
-SELECT count(*) AS visible FROM zebrafin_w_owned
+SELECT count(*) AS visible FROM zebrafin_pub.w_owned
 ----
 visible
 2
@@ -165,9 +172,9 @@ visible
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 query
 SELECT
-  (SELECT count(*) FROM zebrafin_w_source) AS source_rows,
-  (SELECT count(*) FROM zebrafin_w_alias) AS alias_rows,
-  (SELECT count(*) >= 0 FROM zebrafin_w_sqlite) AS sqlite_wrapper
+  (SELECT count(*) FROM zebrafin_pub.w_source) AS source_rows,
+  (SELECT count(*) FROM zebrafin_pub.w_alias) AS alias_rows,
+  (SELECT count(*) >= 0 FROM zebrafin_pub.w_sqlite) AS sqlite_wrapper
 ----
 source_rows	alias_rows	sqlite_wrapper
 1	1	t
@@ -175,49 +182,30 @@ source_rows	alias_rows	sqlite_wrapper
 
 # ---- no escalation: an unprivileged definer view is still its owner's ----
 
+connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 statement ok
-CREATE VIEW zebrafin_w_escalate AS SELECT id, secret FROM zebrafin_vault
-
-
-statement ok
-ALTER VIEW zebrafin_w_escalate OWNER TO zebrafin_clerk
+CREATE VIEW zebrafin_pub.w_escalate AS SELECT id, secret FROM zebrafin_vault
 
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 statement error
-SELECT count(*) FROM zebrafin_w_escalate;
+SELECT count(*) FROM zebrafin_pub.w_escalate;
 ----
 db error: ERROR: permission denied for table zebrafin_vault<slt:ignore>
 
 
 # The same view read by a superuser runs as its owner, the clerk, so it is
 # refused there too -- an ownerless internal entry is the only thing the rule
-# leaves to the reader.
+# treats as the bootstrap superuser's.
 
 statement error
-SELECT count(*) FROM zebrafin_w_escalate;
+SELECT count(*) FROM zebrafin_pub.w_escalate;
 ----
 db error: ERROR: permission denied for table zebrafin_vault<slt:ignore>
 
 
 statement ok
-DROP VIEW IF EXISTS zebrafin_w_escalate
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_sqlite
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_alias
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_source
-
-
-statement ok
-DROP VIEW IF EXISTS zebrafin_w_owned
+DROP SCHEMA IF EXISTS zebrafin_pub CASCADE
 
 
 statement ok

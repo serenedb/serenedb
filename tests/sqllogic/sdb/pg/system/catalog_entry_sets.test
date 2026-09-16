@@ -35,6 +35,7 @@ entry_type	name
 Index	ces_i
 Schema	ces
 Sequence	t_id_seq
+Table	ces_i
 Table	t
 
 

@@ -5,7 +5,7 @@ CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression'
 query error
 CREATE TYPE diagnosis AS ENUM ('something');
 ----
-db error: ERROR: Type with name "diagnosis" already exists!
+db error: ERROR: type "diagnosis" already exists
 
 
 query error
@@ -106,13 +106,17 @@ query
 SELECT illness FROM vedernikoff_patients WHERE illness > 'panicataka' ORDER BY illness;
 ----
 illness
-shiza
+depression
+norma
 
 
 query
 SELECT illness FROM vedernikoff_patients WHERE illness >= 'shiza' AND illness <= 'depression' ORDER BY illness;
 ----
 illness
+shiza
+panicataka
+depression
 
 
 query error
@@ -135,17 +139,12 @@ SELECT illness FROM vedernikoff_patients WHERE illness < 'shiza' ORDER BY illnes
 ----
 illness
 bipolyarka
-panicataka
-depression
-norma
 
 
 query
 SELECT illness FROM vedernikoff_patients WHERE illness > 'depression' ORDER BY illness;
 ----
 illness
-shiza
-panicataka
 norma
 
 
@@ -159,8 +158,6 @@ query
 SELECT illness FROM vedernikoff_patients WHERE illness > 'norma';
 ----
 illness
-shiza
-panicataka
 
 
 query
@@ -169,17 +166,12 @@ SELECT illness FROM vedernikoff_patients WHERE illness <= 'shiza' ORDER BY illne
 illness
 bipolyarka
 shiza
-panicataka
-depression
-norma
 
 
 query
 SELECT illness FROM vedernikoff_patients WHERE illness >= 'depression' ORDER BY illness;
 ----
 illness
-shiza
-panicataka
 depression
 norma
 
@@ -244,6 +236,9 @@ query
 SELECT illness FROM vedernikoff_patients WHERE illness BETWEEN 'shiza' AND 'depression' ORDER BY illness;
 ----
 illness
+shiza
+panicataka
+depression
 
 
 query
@@ -323,6 +318,7 @@ query
 SELECT patient, dept FROM psycho_hospital WHERE illness >= 'shiza' ORDER BY dept;
 ----
 patient	dept
+kostya	tikhiy
 bigfgun	nabludenie
 
 

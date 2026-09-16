@@ -81,17 +81,6 @@ AA	a
 statement ok
 CREATE INDEX mishustin_case_ix ON mishustin_case ("a");
 
-# duckdb refuses DROP COLUMN while an index depends on the column; the index
-# goes first.
-statement error
-ALTER TABLE mishustin_case DROP COLUMN "a";
-----
-db error: ERROR: Cannot drop this column: an index depends on it!
-
-
-statement ok
-DROP INDEX mishustin_case_ix;
-
 statement ok
 ALTER TABLE mishustin_case DROP COLUMN "a";
 

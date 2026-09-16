@@ -135,8 +135,11 @@ GRANT SELECT ON ddl_priv_grant_t TO postgres;
 statement ok
 CREATE TABLE ddl_priv_revoke_t(a int);
 
-statement ok
+statement error
 REVOKE SELECT ON ddl_priv_revoke_t FROM postgres;
+----
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # ddl_priv: SET ROLE

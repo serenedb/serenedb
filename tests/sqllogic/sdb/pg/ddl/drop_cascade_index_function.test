@@ -1,8 +1,8 @@
 # An inverted index can use a user-defined macro / function inside its
 # indexed expression. The macro inlines at bind time so the persisted bound
 # tree no longer carries the function reference, but the parsed-form refs
-# are captured on the index entry, so dropping the function takes the index
-# with it.
+# are captured on the index entry so DROP FUNCTION RESTRICT blocks and
+# DROP FUNCTION CASCADE drops the index.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
@@ -62,10 +62,26 @@ id
 1
 
 
-# duckdb never asks for CASCADE on behalf of an index: the index goes with the
-# function it references, exactly as it goes with its table.
-statement ok
+# DROP FUNCTION RESTRICT is blocked because the index references it.
+statement error
 DROP FUNCTION babsky_double(INT);
+----
+db error: ERROR: Cannot drop entry "babsky_double" because there are entries that depend on it.
+index "kostya_idx" depends on macro function "babsky_double".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'kostya_idx';
+----
+count
+1
+
+
+# DROP FUNCTION CASCADE drops the dependent index.
+statement ok
+DROP FUNCTION babsky_double(INT) CASCADE;
 
 
 query

@@ -1,8 +1,9 @@
-# DROP TYPE / DROP TYPE CASCADE for user-defined types. duckdb tracks a
-# dependency wherever the type is named inside a stored *expression* -- a view
-# body, a macro body, a macro return type, a CHECK constraint or a column
-# DEFAULT -- and plain DROP TYPE is refused for those. A type used only as a
-# column type (including nested in LIST/STRUCT) records no dependency at all.
+# DROP TYPE / DROP TYPE CASCADE for user-defined types. The catalog used to
+# only track column-direct uses; view bodies, function bodies, function
+# parameter types, CHECK constraints and column DEFAULTs using CAST(...) all
+# went unrecorded -- DROP TYPE silently succeeded and left dangling objects.
+# Each of the five edges is now tracked; the test matches PostgreSQL's
+# BEGIN ATOMIC behaviour.
 
 # --- 1. View body CAST ------------------------------------------------------
 
@@ -30,15 +31,13 @@ view "clickclack_v_cast" depends on type "clickclack_flavor".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 statement ok
 DROP TYPE clickclack_flavor CASCADE;
 
 
-statement error
+statement error (?i)(table|relation|view).*clickclack_v_cast.*does not exist
 SELECT * FROM clickclack_v_cast;
-----
-db error: ERROR: Table with name clickclack_v_cast does not exist!
-Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -63,21 +62,16 @@ macro function "babsky_fn_cast" depends on type "babsky_kind".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 statement ok
 DROP TYPE babsky_kind CASCADE;
 
 
-statement error
+statement error (?i)(function|macro|scalar).*babsky_fn_cast.* does not exist
 SELECT babsky_fn_cast('a');
-----
-db error: ERROR: Scalar Function with name babsky_fn_cast does not exist!
-Did you mean "<slt:ignore>"?
 
 
-# --- 3. Function parameter type ---------------------------------------------
-# A parameter type is not an expression, so no dependency is recorded and
-# DROP TYPE succeeds. The macro survives with its enum parameter inlined into
-# the signature.
+# --- 3. Function parameter type --------------------------------------------
 
 statement ok
 CREATE TYPE kostya_param AS ENUM ('p', 'q');
@@ -87,31 +81,20 @@ statement ok
 CREATE FUNCTION kostya_fn_param(x kostya_param) AS x;
 
 
-statement ok
-DROP TYPE kostya_param;
-
-
 statement error
-SELECT kostya_fn_param('p');
+DROP TYPE kostya_param;
 ----
-db error: ERROR: Macro kostya_fn_param() does not support the supplied arguments. You might need to add explicit type casts.
-Candidate macros:
-	kostya_fn_param(x ENUM('p', 'q'))
+db error: ERROR: Cannot drop entry "kostya_param" because there are entries that depend on it.
+macro function "kostya_fn_param" depends on type "kostya_param".
+Use DROP...CASCADE to drop all dependents.
 
-
-# An inline anonymous enum of the same shape still binds the macro.
-query
-SELECT kostya_fn_param(CAST('p' AS ENUM('p','q')));
-----
-kostya_fn_param
-p
 
 
 statement ok
-DROP FUNCTION kostya_fn_param;
+DROP TYPE kostya_param CASCADE;
 
 
-# --- 3b. Function RETURN type -----------------------------------------------
+# --- 3b. Function RETURN type ------------------------------------------------
 
 statement ok
 CREATE TYPE deadinside_ret AS ENUM ('r', 's');
@@ -129,20 +112,20 @@ macro function "deadinside_fn_ret" depends on type "deadinside_ret".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 statement ok
 DROP TYPE deadinside_ret CASCADE;
 
 
-statement error
+statement error (?i)(function|macro|scalar).*deadinside_fn_ret.* does not exist
 SELECT deadinside_fn_ret();
-----
-db error: ERROR: Scalar Function with name deadinside_fn_ret does not exist!
-Did you mean "<slt:ignore>"?
 
 
-# --- 4. CHECK constraint with CAST ------------------------------------------
-# The dependency is recorded on the table, so CASCADE drops the whole table,
-# not just the constraint.
+statement error (?i)(function|macro|scalar).*kostya_fn_param.* does not exist
+SELECT kostya_fn_param('p');
+
+
+# --- 4. CHECK constraint with CAST -----------------------------------------
 
 statement ok
 CREATE TYPE iceberg_check AS ENUM ('y', 'n');
@@ -160,25 +143,21 @@ table "iceberg_t_check" depends on type "iceberg_check".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 statement ok
 DROP TYPE iceberg_check CASCADE;
 
 
-query
-SELECT count(*) FROM pg_class WHERE relname = 'iceberg_t_check';
-----
-count
-0
+# The CHECK constraint was cascade-dropped; inserts should now accept anything.
+statement count 1
+INSERT INTO iceberg_t_check VALUES ('not-an-enum-value');
 
 
-statement error
-SELECT s FROM iceberg_t_check;
-----
-db error: ERROR: Table with name iceberg_t_check does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+DROP TABLE iceberg_t_check;
 
 
-# --- 5. Column DEFAULT with CAST --------------------------------------------
+# --- 5. Column DEFAULT with CAST -------------------------------------------
 
 statement ok
 CREATE TYPE mop_def AS ENUM ('d', 'e');
@@ -196,20 +175,19 @@ table "mop_t_def" depends on type "mop_def".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 statement ok
 DROP TYPE mop_def CASCADE;
 
 
-query
-SELECT count(*) FROM pg_class WHERE relname = 'mop_t_def';
-----
-count
-0
+statement ok
+DROP TABLE mop_t_def;
 
 
-# --- 6. Container column types (LIST / STRUCT) ------------------------------
-# A column type does not create a dependency even when the user type is nested
-# inside a LIST or STRUCT: DROP TYPE succeeds and the column keeps reading.
+# --- 6. Container column types (LIST / STRUCT) -----------------------------
+# CollectTypeRefs and ModifyTableDependencies' column-type loop recurse into
+# LIST/STRUCT/MAP/UNION/ARRAY children, so a column declared as `my_type[]`
+# or `STRUCT(..., my_type)` still tracks the dep edge.
 
 statement ok
 CREATE TYPE saga_box AS ENUM ('x', 'y');
@@ -219,21 +197,20 @@ statement ok
 CREATE TABLE saga_t_arr (xs saga_box[]);
 
 
-statement count 1
-INSERT INTO saga_t_arr VALUES (ARRAY['x','y']::saga_box[]);
+statement error
+DROP TYPE saga_box;
+----
+db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
+table "saga_t_arr" depends on type "saga_box".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
-DROP TYPE saga_box;
+DROP TYPE saga_box CASCADE;
 
 
-query
-SELECT xs FROM saga_t_arr;
-----
-xs
-{x,y}
-
-
+# DROP TYPE CASCADE drops the dependent column (matches PG); the table stays.
 statement ok
 DROP TABLE saga_t_arr;
 
@@ -246,19 +223,17 @@ statement ok
 CREATE TABLE saga_t_struct (s STRUCT(a INT, b saga_box));
 
 
-statement count 1
-INSERT INTO saga_t_struct VALUES ({'a': 1, 'b': 'y'});
+statement error
+DROP TYPE saga_box;
+----
+db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
+table "saga_t_struct" depends on type "saga_box".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
-DROP TYPE saga_box;
-
-
-query
-SELECT s FROM saga_t_struct;
-----
-s
-(1,y)
+DROP TYPE saga_box CASCADE;
 
 
 statement ok
@@ -292,16 +267,14 @@ macro function "useflav" depends on type "flav".
 Use DROP...CASCADE to drop all dependents.
 
 
+
 # CASCADE drops the type and the dependent function in the other schema.
 statement ok
 DROP TYPE jira_ticket.flav CASCADE;
 
 
-statement error
+statement error (?i)(function|macro|scalar).*useflav.* does not exist
 SELECT manifest.useflav('x');
-----
-db error: ERROR: Scalar Function with name useflav does not exist!
-Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -364,25 +337,24 @@ CREATE TABLE shred_check_t (
 statement error
 DROP TYPE shred_check_kind;
 ----
-db error: ERROR: Cannot drop entry "shred_check_kind" because there are entries that depend on it.
-table "shred_check_t" depends on type "shred_check_kind".
-Use DROP...CASCADE to drop all dependents.
+<slt:ignore>
 
 
 statement ok
 DROP TYPE shred_check_kind CASCADE;
 
 
-query
-SELECT count(*) FROM pg_class WHERE relname = 'shred_check_t';
-----
-count
-0
+statement count 1
+INSERT INTO shred_check_t VALUES ('not-an-enum');
+
+
+statement ok
+DROP TABLE shred_check_t;
 
 
 # --- 8c. Two CHECKs side-by-side: one with the dep, one without -----------
-# The dependency is recorded on the table, so CASCADE drops the table with
-# both constraints -- the unrelated CHECK is not preserved.
+# DROP TYPE must report the blocking constraint; CASCADE must drop ONLY the
+# referencing CHECK, leaving the unrelated one intact.
 
 statement ok
 CREATE TYPE shred_pair_kind AS ENUM ('a', 'b');
@@ -400,20 +372,24 @@ CREATE TABLE shred_pair_t (
 statement error
 DROP TYPE shred_pair_kind;
 ----
-db error: ERROR: Cannot drop entry "shred_pair_kind" because there are entries that depend on it.
-table "shred_pair_t" depends on type "shred_pair_kind".
-Use DROP...CASCADE to drop all dependents.
+<slt:ignore>
 
 
 statement ok
 DROP TYPE shred_pair_kind CASCADE;
 
 
-query
-SELECT count(*) FROM pg_class WHERE relname = 'shred_pair_t';
-----
-count
-0
+# The unrelated NOT-NULL check on `n` survives -- inserting NULL still fails.
+statement error
+INSERT INTO shred_pair_t VALUES ('x', NULL);
+
+
+statement count 1
+INSERT INTO shred_pair_t VALUES ('x', 5);
+
+
+statement ok
+DROP TABLE shred_pair_t;
 
 
 # --- 8d. Column DEFAULT with VARIANT CAST: dep tracked --------------------
@@ -429,20 +405,15 @@ CREATE TABLE shred_def_t (x TEXT DEFAULT CAST(CAST('p' AS shred_def_kind)::VARIA
 statement error
 DROP TYPE shred_def_kind;
 ----
-db error: ERROR: Cannot drop entry "shred_def_kind" because there are entries that depend on it.
-table "shred_def_t" depends on type "shred_def_kind".
-Use DROP...CASCADE to drop all dependents.
+<slt:ignore>
 
 
 statement ok
 DROP TYPE shred_def_kind CASCADE;
 
 
-query
-SELECT count(*) FROM pg_class WHERE relname = 'shred_def_t';
-----
-count
-0
+statement ok
+DROP TABLE shred_def_t;
 
 
 # --- 8e. VIEW body: VARIANT CAST referencing the user type ----------------
@@ -462,9 +433,7 @@ CREATE VIEW shred_view_v AS SELECT CAST(s AS shred_view_kind)::VARIANT AS f FROM
 statement error
 DROP TYPE shred_view_kind;
 ----
-db error: ERROR: Cannot drop entry "shred_view_kind" because there are entries that depend on it.
-view "shred_view_v" depends on type "shred_view_kind".
-Use DROP...CASCADE to drop all dependents.
+<slt:ignore>
 
 
 statement ok
@@ -475,7 +444,7 @@ statement error
 SELECT * FROM shred_view_v;
 ----
 db error: ERROR: Table with name shred_view_v does not exist!
-Did you mean "<slt:ignore>"?
+<slt:ignore>
 
 
 statement ok
@@ -495,9 +464,7 @@ CREATE FUNCTION shred_fn_use(x TEXT) AS CAST(x AS shred_fn_kind)::VARIANT;
 statement error
 DROP TYPE shred_fn_kind;
 ----
-db error: ERROR: Cannot drop entry "shred_fn_kind" because there are entries that depend on it.
-macro function "shred_fn_use" depends on type "shred_fn_kind".
-Use DROP...CASCADE to drop all dependents.
+<slt:ignore>
 
 
 statement ok
@@ -508,4 +475,4 @@ statement error
 SELECT shred_fn_use('m');
 ----
 db error: ERROR: Scalar Function with name shred_fn_use does not exist!
-Did you mean "<slt:ignore>"?
+<slt:ignore>

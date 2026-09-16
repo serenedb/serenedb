@@ -6,8 +6,6 @@ statement ok
 CREATE TABLE clickclack_dashboard (id BIGINT DEFAULT nextval('public.clickclack_query_log_id_seq'), v TEXT);
 
 
-# The SERIAL sequence is not owned by the table, so DROP TABLE succeeds and
-# leaves the sequence (and clickclack_dashboard's DEFAULT) intact.
 statement error
 DROP TABLE clickclack_query_log;
 ----
@@ -17,24 +15,12 @@ Use DROP...CASCADE to drop all dependents.
 
 
 
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_query_log';
-----
-n
-1
-
-
 statement error
-DROP SEQUENCE clickclack_query_log_id_seq;
+DROP TABLE clickclack_query_log RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.<slt:ignore>
-
-
-
-statement error
-DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
-----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
+table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -42,13 +28,8 @@ statement ok
 DROP TABLE clickclack_dashboard;
 
 
-statement error
-DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
-----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_query_log" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
-
+statement ok
+DROP TABLE clickclack_query_log RESTRICT;
 
 
 statement ok
@@ -93,14 +74,6 @@ DROP TABLE iceberg_manifest;
 
 statement ok
 DROP TABLE iceberg_snapshot;
-
-
-statement error
-DROP SEQUENCE iceberg_snapshot_id_seq;
-----
-db error: ERROR: Sequence with name iceberg_snapshot_id_seq does not exist!
-Did you mean "<slt:ignore>"?
-
 
 
 statement ok
@@ -159,16 +132,24 @@ serial_col	static_col	text_col	payload
 1	42	hello	row1
 
 
-# CASCADE granularity: the dependent TABLE goes, not just the column DEFAULT.
 statement ok
 DROP SEQUENCE solid_principle_seq CASCADE;
 
 
+statement count 1
+INSERT INTO solid_violations (payload) VALUES ('row2');
+
+
 query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'solid_violations';
+SELECT serial_col IS NULL AS s_null, static_col, text_col, payload
+  FROM solid_violations WHERE payload = 'row2';
 ----
-n
-0
+s_null	static_col	text_col	payload
+t	42	hello	row2
+
+
+statement ok
+DROP TABLE solid_violations;
 
 
 statement ok
@@ -197,51 +178,32 @@ Use DROP...CASCADE to drop all dependents.
 
 
 
-# All three SERIAL sequences outlive the table.
-query
-SELECT relname FROM pg_class
-  WHERE relname IN ('clickclack_ingest_job', 'clickclack_ingest_job_a_seq', 'clickclack_ingest_job_b_seq', 'clickclack_ingest_job_c_seq')
-  ORDER BY relname;
-----
-relname
-clickclack_ingest_job
-clickclack_ingest_job_a_seq
-clickclack_ingest_job_b_seq
-clickclack_ingest_job_c_seq
-
-
-statement error
-DROP SEQUENCE clickclack_ingest_job_b_seq;
-----
-db error: ERROR: Cannot drop entry "clickclack_ingest_job_b_seq" because there are entries that depend on it.<slt:ignore>
-
-
-
 statement ok
-DROP SEQUENCE clickclack_ingest_job_b_seq CASCADE;
+DROP TABLE clickclack_ingest_job CASCADE;
 
 
 query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_ingest_log';
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('clickclack_ingest_job', 'clickclack_ingest_job_a_seq', 'clickclack_ingest_job_b_seq', 'clickclack_ingest_job_c_seq');
 ----
-n
+count
 0
 
 
-statement error
-DROP SEQUENCE clickclack_ingest_job_a_seq;
+statement count 1
+INSERT INTO clickclack_ingest_log (v) VALUES ('after-cascade');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM clickclack_ingest_log ORDER BY v;
 ----
-db error: ERROR: Sequence with name clickclack_ingest_job_a_seq does not exist!
-Did you mean "<slt:ignore>"?
+v	id_null
+after-cascade	t
+r	f
 
 
-
-statement error
-DROP SEQUENCE clickclack_ingest_job_c_seq;
-----
-db error: ERROR: Sequence with name clickclack_ingest_job_c_seq does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+DROP TABLE clickclack_ingest_log;
 
 
 statement ok
@@ -260,11 +222,8 @@ statement ok
 DROP SEQUENCE mop_listing_seq CASCADE;
 
 
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'mop_application';
-----
-n
-0
+statement ok
+DROP TABLE mop_application RESTRICT;
 
 
 statement ok
@@ -295,6 +254,10 @@ Use DROP...CASCADE to drop all dependents.
 
 
 
+statement ok
+DROP TABLE iceberg_audits.snapshots CASCADE;
+
+
 query
 SELECT v FROM public.clickclack_audit_ref;
 ----
@@ -302,30 +265,12 @@ v
 cross
 
 
-statement error
-DROP SEQUENCE iceberg_audits.snapshots_id_seq;
-----
-db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.<slt:ignore>
+statement ok
+DROP TABLE public.clickclack_audit_ref;
 
 
-
-statement error
-DROP SCHEMA iceberg_audits;
-----
-db error: ERROR: Cannot drop entry "iceberg_audits" because there are entries that depend on it.<slt:ignore>
-
-
-
-# The cascade reaches across schemas: the sequence takes public.clickclack_audit_ref with it.
 statement ok
 DROP SCHEMA iceberg_audits CASCADE;
-
-
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_audit_ref';
-----
-n
-0
 
 
 statement ok
@@ -340,17 +285,8 @@ statement count 1
 INSERT INTO vedernikoff_diary (v) VALUES ('before');
 
 
-# CASCADE walks to dependents, not to the sequence the table itself depends on.
 statement ok
 DROP TABLE vedernikoff_diary CASCADE;
-
-
-query
-SELECT relname FROM pg_class
-  WHERE relname IN ('vedernikoff_diary', 'vedernikoff_diary_id_seq')
-  ORDER BY relname;
-----
-relname
 
 
 statement ok
@@ -368,52 +304,20 @@ id	v
 1	after
 
 
-statement error
+statement count 1
 INSERT INTO vedernikoff_diary_index (id, v) VALUES (777, 'explicit');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM vedernikoff_diary_index ORDER BY v;
 ----
-db error: ERROR: Table with name vedernikoff_diary_index does not exist!
-Did you mean "<slt:ignore>"?
-
-
-
-statement error
-INSERT INTO vedernikoff_diary_index (v) VALUES ('defaulted');
-----
-db error: ERROR: Table with name vedernikoff_diary_index does not exist!
-Did you mean "<slt:ignore>"?
-
-
-
-query error
-SELECT v, id FROM vedernikoff_diary_index ORDER BY v;
-----
-db error: ERROR: Table with name vedernikoff_diary_index does not exist!
-Did you mean "<slt:ignore>"?
-
+v	id_null
+explicit	f
 
 
 statement ok
 DROP TABLE vedernikoff_diary;
 
 
-statement error
+statement ok
 DROP TABLE vedernikoff_diary_index;
-----
-db error: ERROR: Table with name vedernikoff_diary_index does not exist!
-Did you mean "<slt:ignore>"?
-
-
-
-statement error
-DROP SEQUENCE vedernikoff_diary_id_seq;
-----
-db error: ERROR: Sequence with name vedernikoff_diary_id_seq does not exist!
-Did you mean "<slt:ignore>"?
-
-
-
-statement error
-DROP SEQUENCE vedernikoff_diary_id_seq1;
-----
-db error: ERROR: Sequence with name vedernikoff_diary_id_seq1 does not exist!
-Did you mean "<slt:ignore>"?

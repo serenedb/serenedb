@@ -59,7 +59,7 @@ connection s2
 statement error
 ALTER TABLE ccso_t OWNER TO ccso_owner
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccso_t"
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s1
@@ -117,7 +117,7 @@ connection s4
 statement error
 GRANT SELECT ON ccso_u TO ccso_grantee
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccso_u"
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s3
@@ -155,7 +155,7 @@ connection s6
 statement error
 ALTER TABLE ccso_v RENAME TO ccso_v2
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccso_v"
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s5
@@ -191,7 +191,7 @@ connection s10
 statement error
 ALTER TABLE ccso_r RENAME TO ccso_r2
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccso_r"
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s9
@@ -236,7 +236,7 @@ connection s12
 statement error
 ALTER TABLE ccso_n RENAME TO ccso_n2
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccso_n"
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
 
 
 connection s11

@@ -17,9 +17,8 @@ INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
 statement ok
 DROP SEQUENCE id_sequence CASCADE;
 
-# CASCADE drops the whole dependent table, not just its DEFAULT.
-query error
+query
 SELECT * FROM tbl;
 ----
-db error: ERROR: Table with name tbl does not exist!
-Did you mean "<slt:ignore>"?
+id	s
+1	default is the next value from id_sequence

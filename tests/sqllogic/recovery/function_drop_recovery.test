@@ -2,9 +2,9 @@ control substitution on
 
 
 # Vedernikoff DROP TABLE CASCADE recovery on a SERIAL anchor while a
-# cross-tree sibling table holds a DEFAULT pointing at the anchor's PK
-# sequence. Crash mid-finalize, then verify the sibling survives and still
-# draws from that sequence, which the drop left behind.
+# cross-tree sibling table holds a DEFAULT pointing at the anchor's
+# owned PK sequence. Crash mid-finalize, then verify the sibling
+# survives with its DEFAULT cleared.
 
 statement ok
 CREATE TABLE vedernikoff_iceberg_owner (
@@ -42,7 +42,7 @@ statement ok
 SET sdb_faults = 'crash_on_drop';
 
 
-statement error connection closed
+statement error (?i)connection closed|server closed|terminat|reset|EOF
 DROP TABLE vedernikoff_iceberg_owner CASCADE;
 
 
@@ -51,26 +51,37 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# The table is gone, and its SERIAL sequence went with it: the sequence is owned
-# by the table.
+# Owner and its auto-PK seq are gone.
 connection after_crash
 query
-SELECT relname FROM pg_class
+SELECT count(*) FROM pg_class
   WHERE relname IN ('vedernikoff_iceberg_owner', 'vedernikoff_iceberg_owner_id_seq');
 ----
-relname
+count
+0
 
 
-# The proxy went with the CASCADE: its column DEFAULT reads the owner's sequence,
-# the sequence is owned by the owner table, and a dependency on a sequence is
-# recorded against the whole entry -- so the cascade reaches the table, not just
-# the default.
+# Proxy survived, DEFAULT cleared, pre-crash row preserved.
 connection after_crash
-statement error
+query
 SELECT id, body FROM vedernikoff_iceberg_proxy;
 ----
-db error: ERROR: Table with name vedernikoff_iceberg_proxy does not exist!
-Did you mean "<slt:ignore>"?
+id  body
+4   pre_crash
+
+
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_iceberg_proxy (body) VALUES ('post_crash');
+
+
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_iceberg_proxy ORDER BY body;
+----
+id    body
+NULL  post_crash
+4     pre_crash
 
 
 # Survivor.
@@ -80,6 +91,11 @@ SELECT id, body FROM vedernikoff_solid_witness;
 ----
 id  body
 1   untouched
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_iceberg_proxy;
 
 
 connection after_crash

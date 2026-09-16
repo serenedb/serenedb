@@ -45,3 +45,621 @@ SELECT typeof(ST_SetCRS('POINT(1 2)'::GEOMETRY, 'OGC:CRS84')) AS type;
 ----
 type
 GEOMETRY('OGC:CRS84')
+
+# DOCS_TEST: st_point
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Point(1, 2)) AS geom;
+----
+geom
+POINT (1 2)
+
+# DOCS_TEST: st_makeline
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_MakeLine('POINT(0 0)'::GEOMETRY, 'POINT(2 2)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (0 0, 2 2)
+
+# DOCS_TEST: st_makepolygon
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_MakePolygon('LINESTRING(0 0,4 0,4 4,0 0)'::GEOMETRY)) AS geom;
+----
+geom
+POLYGON ((0 0, 4 0, 4 4, 0 0))
+
+# DOCS_TEST: st_makeenvelope
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_MakeEnvelope(0, 0, 2, 1)) AS geom;
+----
+geom
+POLYGON ((0 0, 0 1, 2 1, 2 0, 0 0))
+
+# DOCS_TEST: st_collect
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Collect(ARRAY['POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY])) AS geom;
+----
+geom
+MULTIPOINT (0 0, 1 1)
+
+# DOCS_TEST: st_points
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Points('LINESTRING(0 0,1 1)'::GEOMETRY)) AS geom;
+----
+geom
+MULTIPOINT (0 0, 1 1)
+
+# DOCS_TEST: st_multi
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Multi('POINT(1 2)'::GEOMETRY)) AS geom;
+----
+geom
+MULTIPOINT (1 2)
+
+# DOCS_TEST: st_geomfromtext
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_GeomFromText('POINT(1 2)')) AS geom;
+----
+geom
+POINT (1 2)
+
+# DOCS_TEST: st_geomfromgeojson
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"Point","coordinates":[1,2]}')) AS geom;
+----
+geom
+POINT (1 2)
+
+# DOCS_TEST: st_asgeojson
+# DOCS_TEST_BODY
+query
+SELECT ST_AsGeoJSON('POINT(1 2)'::GEOMETRY) AS geojson;
+----
+geojson
+{"type":"Point","coordinates":[1.0,2.0]}
+
+# DOCS_TEST: st_ashexwkb
+# DOCS_TEST_BODY
+query
+SELECT ST_AsHEXWKB('POINT(1 2)'::GEOMETRY) AS hexwkb;
+----
+hexwkb
+0101000000000000000000F03F0000000000000040
+
+# DOCS_TEST: st_assvg
+# DOCS_TEST_BODY
+query
+SELECT ST_AsSVG('POINT(1 2)'::GEOMETRY, false, 2) AS svg;
+----
+svg
+cx="1" cy="-2"
+
+# DOCS_TEST: st_geometrytype
+# DOCS_TEST_BODY
+query
+SELECT ST_GeometryType('LINESTRING(0 0,1 1)'::GEOMETRY) AS type;
+----
+type
+LINESTRING
+
+# DOCS_TEST: st_dimension
+# DOCS_TEST_BODY
+query
+SELECT ST_Dimension('LINESTRING(0 0,2 2)'::GEOMETRY) AS dim;
+----
+dim
+1
+
+# DOCS_TEST: st_x
+# DOCS_TEST_BODY
+query
+SELECT ST_X('POINT(30 10)'::GEOMETRY) AS x, ST_Y('POINT(30 10)'::GEOMETRY) AS y;
+----
+x	y
+30	10
+
+# DOCS_TEST: st_z
+# DOCS_TEST_BODY
+query
+SELECT ST_Z('POINT Z(1 2 3)'::GEOMETRY) AS z, ST_M('POINT ZM(1 2 3 4)'::GEOMETRY) AS m;
+----
+z	m
+3	4
+
+# DOCS_TEST: st_extremes
+# DOCS_TEST_BODY
+query
+SELECT ST_XMin('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS xmin, ST_XMax('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS xmax, ST_YMin('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS ymin, ST_YMax('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS ymax;
+----
+xmin	xmax	ymin	ymax
+0	4	0	4
+
+# DOCS_TEST: st_npoints
+# DOCS_TEST_BODY
+query
+SELECT ST_NPoints('LINESTRING(0 0,2 2,4 4)'::GEOMETRY) AS npoints;
+----
+npoints
+3
+
+# DOCS_TEST: st_numgeometries
+# DOCS_TEST_BODY
+query
+SELECT ST_NumGeometries('MULTIPOINT(0 0,1 1)'::GEOMETRY) AS n;
+----
+n
+2
+
+# DOCS_TEST: st_numinteriorrings
+# DOCS_TEST_BODY
+query
+SELECT ST_NumInteriorRings('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'::GEOMETRY) AS n;
+----
+n
+1
+
+# DOCS_TEST: st_interiorringn
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_InteriorRingN('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'::GEOMETRY, 1)) AS geom;
+----
+geom
+LINESTRING (2 2, 4 2, 4 4, 2 4, 2 2)
+
+# DOCS_TEST: st_exteriorring
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_ExteriorRing('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (0 0, 4 0, 4 4, 0 4, 0 0)
+
+# DOCS_TEST: st_pointn
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_PointN('LINESTRING(0 0,1 1,2 2)'::GEOMETRY, 2)) AS geom;
+----
+geom
+POINT (1 1)
+
+# DOCS_TEST: st_startpoint
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_StartPoint('LINESTRING(0 0,1 1,2 2)'::GEOMETRY)) AS start, ST_AsText(ST_EndPoint('LINESTRING(0 0,1 1,2 2)'::GEOMETRY)) AS "end";
+----
+start	end
+POINT (0 0)	POINT (2 2)
+
+# DOCS_TEST: st_dump
+# DOCS_TEST_BODY
+query
+SELECT g.path AS path, ST_AsText(g.geom) AS geom FROM unnest(ST_Dump('MULTIPOINT(0 0,1 1)'::GEOMETRY)) AS g;
+----
+path	geom
+{1}	POINT (0 0)
+{2}	POINT (1 1)
+
+
+# DOCS_TEST: st_collectionextract
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_CollectionExtract('GEOMETRYCOLLECTION(POINT(1 1),LINESTRING(0 0,2 2))'::GEOMETRY, 1)) AS geom;
+----
+geom
+MULTIPOINT (1 1)
+
+# DOCS_TEST: st_area
+# DOCS_TEST_BODY
+query
+SELECT ST_Area('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS area;
+----
+area
+16
+
+# DOCS_TEST: st_length
+# DOCS_TEST_BODY
+query
+SELECT ST_Length('LINESTRING(0 0,3 4)'::GEOMETRY) AS length;
+----
+length
+5
+
+# DOCS_TEST: st_perimeter
+# DOCS_TEST_BODY
+query
+SELECT ST_Perimeter('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS perimeter;
+----
+perimeter
+16
+
+# DOCS_TEST: st_distance
+# DOCS_TEST_BODY
+query
+SELECT ST_Distance('POINT(0 0)'::GEOMETRY, 'POINT(3 4)'::GEOMETRY) AS distance;
+----
+distance
+5
+
+# DOCS_TEST: st_azimuth
+# DOCS_TEST_BODY
+query
+SELECT (ST_Azimuth('POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY) * 1000000)::bigint AS azimuth_micro;
+----
+azimuth_micro
+785398
+
+# DOCS_TEST: st_extent
+# DOCS_TEST_BODY
+query
+SELECT ST_Extent('LINESTRING(0 0,2 3)'::GEOMETRY)::text AS extent;
+----
+extent
+BOX(0 0, 2 3)
+
+# DOCS_TEST: st_intersects
+# DOCS_TEST_BODY
+query
+SELECT ST_Intersects('POINT(1 1)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS intersects;
+----
+intersects
+t
+
+# DOCS_TEST: st_contains
+# DOCS_TEST_BODY
+query
+SELECT ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POINT(1 1)'::GEOMETRY) AS contains, ST_Within('POINT(1 1)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS within;
+----
+contains	within
+t	t
+
+# DOCS_TEST: st_covers
+# DOCS_TEST_BODY
+query
+SELECT ST_Covers('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POINT(0 0)'::GEOMETRY) AS covers, ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POINT(0 0)'::GEOMETRY) AS contains;
+----
+covers	contains
+t	f
+
+# DOCS_TEST: st_containsproperly
+# DOCS_TEST_BODY
+query
+SELECT ST_ContainsProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POINT(1 1)'::GEOMETRY) AS properly;
+----
+properly
+t
+
+# DOCS_TEST: st_crosses
+# DOCS_TEST_BODY
+query
+SELECT ST_Crosses('LINESTRING(0 0,4 4)'::GEOMETRY, 'LINESTRING(0 4,4 0)'::GEOMETRY) AS crosses;
+----
+crosses
+t
+
+# DOCS_TEST: st_disjoint
+# DOCS_TEST_BODY
+query
+SELECT ST_Disjoint('POINT(9 9)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS disjoint;
+----
+disjoint
+t
+
+# DOCS_TEST: st_equals
+# DOCS_TEST_BODY
+query
+SELECT ST_Equals('LINESTRING(0 0,2 2)'::GEOMETRY, 'LINESTRING(2 2,0 0)'::GEOMETRY) AS equals;
+----
+equals
+t
+
+# DOCS_TEST: st_overlaps
+# DOCS_TEST_BODY
+query
+SELECT ST_Overlaps('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::GEOMETRY) AS overlaps;
+----
+overlaps
+t
+
+# DOCS_TEST: st_touches
+# DOCS_TEST_BODY
+query
+SELECT ST_Touches('LINESTRING(0 0,1 1)'::GEOMETRY, 'LINESTRING(1 1,2 2)'::GEOMETRY) AS touches;
+----
+touches
+t
+
+# DOCS_TEST: st_dwithin
+# DOCS_TEST_BODY
+query
+SELECT ST_DWithin('POINT(0 0)'::GEOMETRY, 'POINT(3 4)'::GEOMETRY, 5.0) AS within_5;
+----
+within_5
+t
+
+# DOCS_TEST: st_isvalid
+# DOCS_TEST_BODY
+query
+SELECT ST_IsValid('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS valid, ST_IsEmpty('POLYGON EMPTY'::GEOMETRY) AS empty;
+----
+valid	empty
+t	t
+
+# DOCS_TEST: st_isclosed
+# DOCS_TEST_BODY
+query
+SELECT ST_IsClosed('LINESTRING(0 0,1 0,1 1,0 0)'::GEOMETRY) AS closed, ST_IsRing('LINESTRING(0 0,1 0,1 1,0 0)'::GEOMETRY) AS ring, ST_IsSimple('LINESTRING(0 0,1 1,2 2)'::GEOMETRY) AS simple;
+----
+closed	ring	simple
+t	t	t
+
+# DOCS_TEST: st_haszm
+# DOCS_TEST_BODY
+query
+SELECT ST_HasZ('POINT Z(1 2 3)'::GEOMETRY) AS has_z, ST_HasM('POINT ZM(1 2 3 4)'::GEOMETRY) AS has_m, ST_ZMFlag('POINT Z(1 2 3)'::GEOMETRY) AS zm_flag;
+----
+has_z	has_m	zm_flag
+t	t	2
+
+# DOCS_TEST: st_intersection
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::GEOMETRY)) AS geom;
+----
+geom
+POLYGON ((2 4, 4 4, 4 2, 2 2, 2 4))
+
+# DOCS_TEST: st_union
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Union('POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY)) AS geom;
+----
+geom
+MULTIPOINT (0 0, 1 1)
+
+# DOCS_TEST: st_difference
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Difference('LINESTRING(0 0,4 0)'::GEOMETRY, 'LINESTRING(1 0,2 0)'::GEOMETRY)) AS geom;
+----
+geom
+MULTILINESTRING ((0 0, 1 0), (2 0, 4 0))
+
+# DOCS_TEST: st_symdifference
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_SymDifference('LINESTRING(0 0,2 0)'::GEOMETRY, 'LINESTRING(1 0,3 0)'::GEOMETRY)) AS geom;
+----
+geom
+MULTILINESTRING ((0 0, 1 0), (2 0, 3 0))
+
+# DOCS_TEST: st_buffer
+# DOCS_TEST_BODY
+query
+SELECT ST_NPoints(ST_Buffer('POINT(0 0)'::GEOMETRY, 1, 2)) AS npoints;
+----
+npoints
+9
+
+# DOCS_TEST: st_convexhull
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_ConvexHull('MULTIPOINT(0 0,2 0,2 2,0 2,1 1)'::GEOMETRY)) AS geom;
+----
+geom
+POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))
+
+# DOCS_TEST: st_simplify
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Simplify('LINESTRING(0 0,1 0.1,2 0)'::GEOMETRY, 0.5)) AS geom;
+----
+geom
+LINESTRING (0 0, 2 0)
+
+# DOCS_TEST: st_centroid
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Centroid('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) AS geom;
+----
+geom
+POINT (2 2)
+
+# DOCS_TEST: st_envelope
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Envelope('LINESTRING(0 0,2 3)'::GEOMETRY)) AS geom;
+----
+geom
+POLYGON ((0 0, 0 3, 2 3, 2 0, 0 0))
+
+# DOCS_TEST: st_boundary
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Boundary('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (0 0, 0 4, 4 4, 4 0, 0 0)
+
+# DOCS_TEST: st_pointonsurface
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_PointOnSurface('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) AS geom;
+----
+geom
+POINT (2 2)
+
+# DOCS_TEST: st_closestpoint
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_ClosestPoint('LINESTRING(0 0,4 0)'::GEOMETRY, 'POINT(2 2)'::GEOMETRY)) AS geom;
+----
+geom
+POINT (2 0)
+
+# DOCS_TEST: st_shortestline
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_ShortestLine('LINESTRING(0 0,4 0)'::GEOMETRY, 'POINT(2 2)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (2 0, 2 2)
+
+# DOCS_TEST: st_expand
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Expand('POINT(1 1)'::GEOMETRY, 1)) AS geom;
+----
+geom
+POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))
+
+# DOCS_TEST: st_reverse
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Reverse('LINESTRING(0 0,1 1,2 2)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (2 2, 1 1, 0 0)
+
+# DOCS_TEST: st_normalize
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Normalize('LINESTRING(0 0,1 1)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (0 0, 1 1)
+
+# DOCS_TEST: st_flipcoordinates
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_FlipCoordinates('POINT(1 2)'::GEOMETRY)) AS geom;
+----
+geom
+POINT (2 1)
+
+# DOCS_TEST: st_affine
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Affine('POINT(1 1)'::GEOMETRY, 2, 0, 0, 2, 1, 1)) AS geom;
+----
+geom
+POINT (3 3)
+
+# DOCS_TEST: st_removerepeatedpoints
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_RemoveRepeatedPoints('LINESTRING(0 0,0 0,1 1)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (0 0, 1 1)
+
+# DOCS_TEST: st_lineinterpolatepoint
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_LineInterpolatePoint('LINESTRING(0 0,4 0)'::GEOMETRY, 0.25)) AS geom;
+----
+geom
+POINT (1 0)
+
+# DOCS_TEST: st_linesubstring
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_LineSubstring('LINESTRING(0 0,4 0)'::GEOMETRY, 0.25, 0.75)) AS geom;
+----
+geom
+LINESTRING (1 0, 3 0)
+
+# DOCS_TEST: st_linelocatepoint
+# DOCS_TEST_BODY
+query
+SELECT (ST_LineLocatePoint('LINESTRING(0 0,4 0)'::GEOMETRY, 'POINT(1 0)'::GEOMETRY) * 100)::bigint AS pct;
+----
+pct
+25
+
+# DOCS_TEST: st_locatealong
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_LocateAlong('LINESTRING M(0 0 0,4 0 4)'::GEOMETRY, 2)) AS geom;
+----
+geom
+POINT M (2 0 2)
+
+# DOCS_TEST: st_locatebetween
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_LocateBetween('LINESTRING M(0 0 0,4 0 4)'::GEOMETRY, 1, 3)) AS geom;
+----
+geom
+LINESTRING M (1 0 1, 3 0 3)
+
+# DOCS_TEST: st_distance_sphere
+# DOCS_TEST_BODY
+query
+SELECT ST_Distance_Sphere('POINT(0 0)'::GEOMETRY, 'POINT(1 0)'::GEOMETRY)::bigint AS meters;
+----
+meters
+111195
+
+# DOCS_TEST: st_area_spheroid
+# DOCS_TEST_BODY
+query
+SELECT ST_Area_Spheroid('POLYGON((0 0,1 0,1 1,0 1,0 0))'::GEOMETRY)::bigint AS sq_meters;
+----
+sq_meters
+12308778361
+
+# DOCS_TEST: st_length_spheroid
+# DOCS_TEST_BODY
+query
+SELECT ST_Length_Spheroid('LINESTRING(0 0,1 0)'::GEOMETRY)::bigint AS meters;
+----
+meters
+110574
+
+# DOCS_TEST: st_perimeter_spheroid
+# DOCS_TEST_BODY
+query
+SELECT ST_Perimeter_Spheroid('POLYGON((0 0,1 0,1 1,0 1,0 0))'::GEOMETRY)::bigint AS meters;
+----
+meters
+443771
+
+# DOCS_TEST: st_hilbert
+# DOCS_TEST_BODY
+query
+SELECT ST_Hilbert('POINT(1 2)'::GEOMETRY) AS hilbert;
+----
+hilbert
+3355443200
+
+# DOCS_TEST: st_quadkey
+# DOCS_TEST_BODY
+query
+SELECT ST_QuadKey('POINT(11 22)'::GEOMETRY, 5) AS quadkey;
+----
+quadkey
+12202
+
+# DOCS_TEST: st_force2d
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Force2D('POINT Z(1 2 3)'::GEOMETRY)) AS geom;
+----
+geom
+POINT (1 2)
+
+# DOCS_TEST: st_tileenvelope
+# DOCS_TEST_BODY
+query
+SELECT ST_Area(ST_TileEnvelope(1, 0, 0))::bigint AS area;
+----
+area
+401501740587349

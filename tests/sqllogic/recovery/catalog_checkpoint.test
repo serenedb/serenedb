@@ -79,11 +79,11 @@ COMMENT ON TABLE ckp.t IS 'checkpointed';
 
 
 statement ok
-CREATE TABLE ckp.trigger_compaction(x INTEGER);
+SET sdb_faults = 'compact_inside_ddl';
 
 
 statement ok
-CHECKPOINT;
+CREATE TABLE ckp.trigger_compaction(x INTEGER);
 
 
 statement ok
@@ -199,6 +199,11 @@ count
 # fold fires from that commit's own hook.
 connection after_checkpoint
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_checkpoint
+statement ok
 CREATE ROLE ckp_window_role;
 
 
@@ -289,6 +294,11 @@ CREATE ROLE ckp_db_role;
 
 connection after_window
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_window
+statement ok
 CREATE DATABASE ckp_window_db;
 
 
@@ -334,7 +344,102 @@ statement ok
 DROP ROLE ckp_db_role;
 
 
-# --- 4. the same window, for a sequence ---
+# --- 4. the same window, for a schema ---
+#
+# A schema's entry is the object too, and its owner and ACL travel beside the
+# definition rather than inside it, so a checkpoint has to read both off the
+# catalog the commit published. Same shape as the database above: the create
+# survives such a rewrite by accident, so the assertions are on the owner change
+# and the grant, which are the last things written before the crash.
+
+connection after_db_window
+statement ok
+CREATE ROLE ckp_schema_role;
+
+
+connection after_db_window
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_db_window
+statement ok
+CREATE SCHEMA ckp_schema_window;
+
+
+connection after_db_window
+statement ok
+CREATE TABLE ckp_schema_window.t(x INTEGER);
+
+
+connection after_db_window
+statement ok
+ALTER SCHEMA ckp_schema_window OWNER TO ckp_schema_role;
+
+
+connection after_db_window
+statement ok
+GRANT USAGE ON SCHEMA ckp_schema_window TO ckp_role;
+
+
+connection after_db_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_db_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_schema_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_namespace WHERE nspname = 'ckp_schema_window';
+----
+count
+1
+
+
+connection after_schema_window
+query
+SELECT r.rolname AS owner
+FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
+WHERE n.nspname = 'ckp_schema_window';
+----
+owner
+ckp_schema_role
+
+
+connection after_schema_window
+query
+SELECT nspacl::text LIKE '%ckp_role=U/%' AS has_grant
+FROM pg_namespace WHERE nspname = 'ckp_schema_window';
+----
+has_grant
+t
+
+
+# The entry came back owning its contents: a schema rebuilt without the
+# CatalogSets underneath it would leave the table unreachable.
+connection after_schema_window
+query
+SELECT count(*) FROM ckp_schema_window.t;
+----
+count
+0
+
+
+connection after_schema_window
+statement ok
+DROP SCHEMA ckp_schema_window CASCADE;
+
+
+connection after_schema_window
+statement ok
+DROP ROLE ckp_schema_role;
+
+
+# --- 5. the same window, for a sequence ---
 #
 # A sequence's entry is the object, and it is the one kind with state outside its
 # definition: the counter's durable horizon is its own record, appended off the
@@ -367,17 +472,19 @@ first
 
 connection after_schema_window
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+# The last catalog write before the crash: a comment and a grant, both of which
+# rewrite the definition beside the same counter.
+connection after_schema_window
+statement ok
 COMMENT ON SEQUENCE ckp_seq_window.s IS 'checkpointed sequence';
 
 
 connection after_schema_window
 statement ok
 GRANT USAGE ON SEQUENCE ckp_seq_window.s TO ckp_seq_role;
-
-
-connection after_schema_window
-statement ok
-CHECKPOINT;
 
 
 connection after_schema_window
@@ -444,10 +551,10 @@ connection after_seq_window
 statement error
 SELECT nextval('ckp_seq_window.s');
 ----
-db error: ERROR: nextval: reached maximum value of sequence "s" (900)
+db error: ERROR: nextval: reached maximum value of sequence "ckp_seq_window.s" (900)
 
 
-# --- 5. the same window, for a text search dictionary ---
+# --- 6. the same window, for a text search dictionary ---
 #
 # A dictionary's entry is the object too, and it is the first schema-scoped kind
 # of which that is true: its set belongs to the schema entry above it, not to the
@@ -464,6 +571,11 @@ CREATE SCHEMA ckp_dict_window;
 
 connection after_seq_window
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_seq_window
+statement ok
 CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -473,11 +585,6 @@ CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
     frequency = true,
     position = true
 );
-
-
-connection after_seq_window
-statement ok
-CHECKPOINT;
 
 
 connection after_seq_window
@@ -532,20 +639,14 @@ count
 100
 
 
-# The index-to-dictionary edge came back with them: duckdb never asks for
-# CASCADE on behalf of an index, so the drop goes through and takes the
-# index with the dictionary.
+# RESTRICT still refuses: the index-to-dictionary edge came back with them.
 connection after_dict_window
-statement ok
+statement error
 DROP TEXT SEARCH DICTIONARY ckp_dict_window.d;
-
-
-connection after_dict_window
-query
-SELECT count(*) FROM pg_class WHERE relname = 'ckp_dict_inv';
 ----
-count
-0
+db error: ERROR: Cannot drop entry "d" because there are entries that depend on it.
+index "ckp_dict_inv" depends on tokenizer "d".
+Use DROP...CASCADE to drop all dependents.
 
 
 connection after_dict_window
@@ -553,7 +654,7 @@ statement ok
 DROP SCHEMA ckp_dict_window CASCADE;
 
 
-# --- 6. a drop open across a checkpoint ---
+# --- 7. a drop open across a checkpoint ---
 
 connection after_dict_window
 statement ok
@@ -567,12 +668,12 @@ CREATE INDEX ckp_gone_inv ON ckp.gone USING inverted(a);
 
 connection after_dict_window
 statement ok
-DROP TABLE ckp.gone;
+SET sdb_faults = 'compact_inside_drop';
 
 
 connection after_dict_window
 statement ok
-CHECKPOINT;
+DROP TABLE ckp.gone;
 
 
 connection after_dict_window

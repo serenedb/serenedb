@@ -25,7 +25,7 @@ CREATE INDEX sc_idx_3 ON sc_idx_t (a DESC);
 statement ok
 CREATE UNIQUE INDEX sc_idx_4 ON sc_idx_t (b);
 
-# --- Partial indexes (WHERE predicate) ---
+# --- Partial indexes (WHERE predicate; inverted-only -> Partial) ---
 
 statement ok
 CREATE TABLE sc_idx_part_t (a INTEGER, t TEXT);
@@ -34,8 +34,10 @@ CREATE TABLE sc_idx_part_t (a INTEGER, t TEXT);
 statement ok
 CREATE INDEX sc_idx_part ON sc_idx_part_t USING inverted(t) WHERE a > 5;
 
-statement ok
+statement error
 CREATE INDEX sc_idx_part_plain ON sc_idx_part_t (a) WHERE a > 5;
+----
+db error: ERROR: partial indexes are only supported for inverted indexes
 
 
 # --- Foreign Keys (syntax accepted; not enforced -> Partial) ---

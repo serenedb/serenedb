@@ -72,7 +72,7 @@ This threshold is configurable via the `geometry_minimum_shredding_size` setting
 
 The primary benefit of shredding is significantly improved compression, but in the future we plan to add ways to expose the shredded representation directly to the execution engine without having to "reassemble" the geometry back into binary again.
 
-The following example illustrates the effects of shredding on the storage footprint of a `GEOMETRY` column.
+The following example shows the effect of shredding on how a `GEOMETRY` column is stored. Shredding is decided when a row group is written, so the setting has to be in place before the checkpoint that flushes it.
 
 <SqlLogicTest id="sql/data_types/geometry/example_004" />
 
@@ -106,7 +106,7 @@ This is done by passing a CRS "identifier" as a parameter of the `GEOMETRY` type
 
 CRS identifiers in SereneDB are always strings. `OGC:CRS84` is the identifier for a common geographic coordinate system spanning the whole globe where the `X` coordinate represents longitude and the `Y` coordinate represents latitude. SereneDB only knows this because the identifier 'OGC:CRS84' is registered as a _known_ CRS in the system catalog.
 
-Only a handful of common CRSs are registered as known in this build of SereneDB. Registering additional CRSs, such as the over 7000 CRSs from the [EPSG Geodetic Parameter Dataset](https://epsg.org/home.html), is not available in this build.
+Only `OGC:CRS84` and `OGC:CRS83` are registered as shorthand identifiers. SereneDB does not ship a database of coordinate-system definitions, so identifiers from other authorities, `EPSG:4326` among them, are not resolvable; give the full definition instead, as described below.
 
 You can list all available CRSs known to SereneDB using the [`sdb_coordinate_systems()`](../../sql/functions/metadata.md#sdb_coordinate_systems) function:
 
@@ -119,7 +119,7 @@ If you try to create a `GEOMETRY` column with an unknown CRS identifier, either 
 
 <SqlLogicTest id="sql/data_types/geometry/example_007" />
 
-This restriction exists because SereneDB needs the complete CRS definition, not just an identifier, to perform coordinate transformations and to export to formats that embed CRS metadata, such as GeoParquet. Without a system catalog entry, there is no way to resolve an identifier to its full definition.
+This restriction exists because SereneDB needs the complete CRS definition, not just an identifier, to export to formats that embed CRS metadata, such as GeoParquet. Without a system catalog entry, there is no way to resolve an identifier to its full definition.
 
 You can set the `ignore_unknown_crs` configuration option to `true` to simply skip any unknown CRSs and create `GEOMETRY` columns without CRS instead.
 
@@ -133,9 +133,9 @@ It is currently not possible to define a custom CRS from within SQL, or to persi
 
 One benefit of tracking CRSs as part of the type system is that it prevents a lot of common mistakes that can occur when working with geometries from different coordinate systems. Most spatial functions that operate on multiple `GEOMETRY` values verify that all input expressions have the same CRS before performing the operation. Similarly, `GEOMETRY` columns can only be implicitly cast to and from other `GEOMETRY` columns if the source or the target don't have a CRS specified.
 
-Converting a geometry from one CRS to another with `ST_Transform(geom, crs)` is not available in this build of SereneDB.
+SereneDB records and checks the CRS but does not reproject between systems, so there is no `ST_Transform`. Geometries have to reach the database already in the coordinate system you want them in.
 
-You can also use the `ST_SetCRS(geom, crs)` function to assign a CRS to a geometry that doesn't have one, or to reassign a CRS without transforming coordinates (e.g., when the data is already in the correct coordinate system but lacks the correct CRS).
+Use the `ST_SetCRS(geom, crs)` function to assign a CRS to a geometry that doesn't have one, or to reassign a CRS without transforming coordinates (e.g., when the data is already in the correct coordinate system but lacks the correct CRS).
 
 <SqlLogicTest id="sql/data_types/geometry/example_010" />
 

@@ -159,3 +159,37 @@ Let's see typical usages.
 1) Run tests with only SereneDB PostgreSQL-compatible backend: just use `tests/sqllogic/sdb/pg/*/*.test` path pattern.
 2) Run tests with both SereneDB PostgreSQL-compatible and reference PostreSQL: just use `tests/sqllogic/any/pg/*/*.test` path pattern.
 3) You're adding new features and want to run SereneDB PostgreSQL-compatible on PostgreSQL tests that prevoiusly weren't passed: just use `tests/sqllogic/any/pg/new_feature/*.test` path pattern.
+
+## Reference PostgreSQL image
+
+Tests under `any/pg/` also run against real PostgreSQL in the `validate-pg` job,
+so everything they use has to exist there too. `any/pg/geometry/` needs PostGIS,
+which the stock `postgres` images do not ship, so that job builds its own image
+from `fixtures/postgres/Dockerfile`: `postgres:18.3` plus the PostGIS package
+from the PGDG apt repo the base image already configures.
+
+Installing the package does not enable it. A test that needs an extension asks
+for it itself, guarded so SereneDB -- where the same functionality is built in
+-- never sees the statement:
+
+```
+onlyif postgres
+statement ok
+CREATE EXTENSION IF NOT EXISTS postgis;
+```
+
+Do **not** install extensions into `template1` instead. The runner gives every
+test file its own database copied from `template1`, so an extension there lands
+in all of them: PostGIS alone adds `spatial_ref_sys` to `public` and grantable
+privileges on ~1000 functions, which breaks unrelated tests that enumerate
+tables or drop roles.
+
+To make another extension available, append its package to the `apt-get install`
+line. PGDG carries ~200 packages for PostgreSQL 18 (`pgvector`, `h3`, `cron`,
+`hll`, `hypopg`, ...); `apt-cache search postgresql-18-` inside the image lists
+them.
+
+One more trap in that setup: the healthcheck has to probe over TCP
+(`pg_isready -h 127.0.0.1`). While `docker-entrypoint.sh` runs the init scripts
+the server listens on the unix socket only, so a socket probe reports ready
+before the database is reachable from the `tests` container.

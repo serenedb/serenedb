@@ -264,6 +264,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
       return Logical2Pg(duckdb::ListType::GetChildType(type), context, true);
     case ARRAY:
       return Logical2Pg(duckdb::ArrayType::GetChildType(type), context, true);
+    case GEOMETRY:
+      return make(kGeometry, kGeometryArray, -1);
     case VARIANT:
       return make(kVariant, kVariantArray, -1);
     case UNION:
@@ -323,6 +325,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())
     SDB_OID2TYPE(kUnion, LogicalType::VARCHAR)
+    SDB_OID2TYPE(kGeometry, LogicalType::GEOMETRY())
     default: {
       // A user-defined type is not in the snapshot -- its entry is the object
       // -- so the oid resolves through this session's database.
@@ -453,6 +456,7 @@ std::string RegtypeOut(uint64_t oid) {
     SDB_REGTYPE_OUT(kPgBrinMinmaxMultiSummary, "pg_brin_minmax_multi_summary")
     SDB_REGTYPE_WITH_ARRAY_OUT(kVariant, "variant")
     SDB_REGTYPE_WITH_ARRAY_OUT(kUnion, "union")
+    SDB_REGTYPE_WITH_ARRAY_OUT(kGeometry, "geometry")
   }
   return absl::StrCat(oid);
 }
@@ -591,7 +595,8 @@ static const irs::containers::FlatHashMap<std::string_view, PgTypeOID>
       .SDB_REGTYPE_IN("pg_brin_bloom_summary", kPgBrinBloomSummary)
       .SDB_REGTYPE_IN("pg_brin_minmax_multi_summary", kPgBrinMinmaxMultiSummary)
       .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant)
-      .SDB_REGTYPE_WITH_ARRAY_IN("union", kUnion);
+      .SDB_REGTYPE_WITH_ARRAY_IN("union", kUnion)
+      .SDB_REGTYPE_WITH_ARRAY_IN("geometry", kGeometry);
     return std::move(builder.map);
   }();
 

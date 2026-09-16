@@ -323,6 +323,30 @@ struct VarcharBinCore {
   }
 };
 
+template<WrapContext InContainer>
+struct GeometryTextCore {
+  using Value = duckdb::string_t;
+  static constexpr const char* kArrayDelim = ":";
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    static constexpr char kHexUpper[] = "0123456789ABCDEF";
+    const std::string_view value{raw.GetData(), raw.GetSize()};
+    auto* data = ctx.writer->Alloc(2 * value.size());
+    char* out = reinterpret_cast<char*>(data);
+    for (const char c : value) {
+      const auto byte = static_cast<unsigned char>(c);
+      *out++ = kHexUpper[byte >> 4U];
+      *out++ = kHexUpper[byte & 0x0FU];
+    }
+  }
+};
+
+struct GeometryBinCore {
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
+  }
+};
+
 template<WrapContext InContainer, typename T>
 IRS_FORCE_INLINE void EnumTextLabel(
   SerializationContext& ctx, const duckdb::RecursiveUnifiedVectorFormat& vdata,
@@ -1712,6 +1736,15 @@ bool RecordTextField(SerializationContext& ctx, const RUVF& v,
 // Emit the element run of a one-dimensional array (no surrounding braces /
 // binary header -- the array core writes those). `off`/`count` come from the
 // resolved array slice. Returns whether any element was NULL.
+template<typename Core, typename = void>
+struct ArrayDelim {
+  static constexpr const char* kValue = ",";
+};
+template<typename Core>
+struct ArrayDelim<Core, std::void_t<decltype(Core::kArrayDelim)>> {
+  static constexpr const char* kValue = Core::kArrayDelim;
+};
+
 template<typename Core, VarFormat Format>
 IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
                                      duckdb::idx_t off, duckdb::idx_t count) {
@@ -1765,7 +1798,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   } else {
     for (duckdb::idx_t i = 0; i < count; ++i) {
       if (i > 0) {
-        ctx.writer->Write(",");
+        ctx.writer->Write(ArrayDelim<Core>::kValue);
       }
       const auto idx = cv.unified.sel->get_index(off + i);
       if (!cv.unified.validity.RowIsValid(idx)) {
@@ -1931,7 +1964,7 @@ struct MultiDimArrayCore {
         context.writer->Write("{");
         for (duckdb::idx_t i = 0; i < array_size; ++i) {
           if (i > 0) {
-            context.writer->Write(",");
+            context.writer->Write(ArrayDelim<Core>::kValue);
           }
           // A NULL sub-list/element must not be resolved further (its
           // list_entry is undefined); render it as the literal NULL like the
@@ -2222,6 +2255,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
       return MakeArraySerializer<ByteaEscapeTextCore<WrapContext::Array>,
                                  ByteaBinCore, kBytea>(format, context, kind);
+    case GEOMETRY:
+      return MakeArraySerializer<GeometryTextCore<WrapContext::Array>,
+                                 GeometryBinCore, kGeometry>(format, context,
+                                                             kind);
     case DATE:
       return MakeArraySerializer<DateTextCore, DateBinCore, kDate>(
         format, context, kind);
@@ -2477,6 +2514,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<ByteaEscapeTextCore<WrapContext::None>,
                                    ByteaEscapeTextCore<WrapContext::Record>,
                                    ByteaBinCore>(format, context);
+    case GEOMETRY:
+      return SelectFieldSerializer<GeometryTextCore<WrapContext::None>,
+                                   GeometryTextCore<WrapContext::Record>,
+                                   GeometryBinCore>(format, context);
     case DATE:
       return SelectFieldSerializer<DateTextCore, DateTextCore, DateBinCore>(
         format, context);

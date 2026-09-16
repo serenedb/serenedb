@@ -288,6 +288,8 @@ enum PgTypeOID : int32_t {
   kTsqueryArray = kMinSystem + 103,
   kUnion = kMinSystem + 104,
   kUnionArray = kMinSystem + 105,
+  kGeometry = kMinSystem + 106,
+  kGeometryArray = kMinSystem + 107,
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

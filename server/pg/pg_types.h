@@ -44,27 +44,25 @@ inline constexpr uint64_t kInvalidOid = 0;
 // pg_authid row can carry, which is what lets an acl item name "everybody".
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
-// Fixed PostgreSQL catalog oids. These are not catalog state -- duckdb assigns
-// every entry an oid of its own -- they exist so the pg_catalog projections
-// render the numbers PostgreSQL clients expect. Boot assigns them to the
-// objects that must carry them.
+inline constexpr duckdb::idx_t kMinSystem = 1000000;
+
 inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
-inline constexpr duckdb::idx_t kPgInformationSchema = 13;
+inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;
 inline constexpr duckdb::idx_t kPgPublicSchema = 2200;
 inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
 
-inline constexpr duckdb::idx_t kRootUser = 1000000;
+inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
-inline constexpr duckdb::idx_t kPgAmSecondary = 1010001;
-inline constexpr duckdb::idx_t kPgAmInverted = 1010002;
-inline constexpr duckdb::idx_t kPgAmIresearch = 1010003;
+inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
+inline constexpr duckdb::idx_t kPgAmIresearch = kMinSystem + 301;
+inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
 
-inline constexpr duckdb::idx_t kPgOpclassIncluded = 1020001;
-inline constexpr duckdb::idx_t kPgOpclassIvf = 1020002;
-inline constexpr duckdb::idx_t kPgOpclassHnsw = 1020003;
+inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
+inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
+inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
 
-inline constexpr duckdb::idx_t kFirstSystemView = 1200000;
-inline constexpr duckdb::idx_t kFirstBuiltinFunction = 1300000;
+inline constexpr duckdb::idx_t kFirstSystemView = kMinSystem + 1000;
+inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
 
 inline constexpr uint64_t kKeyIndexOidBit = uint64_t{1} << 62;
 
@@ -284,16 +282,12 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  // serenedb's own types have no postgres oid to borrow. They sit in a
-  // reserved block above every builtin oid postgres assigns (<10000) and below
-  // the system-relation oids this server hands out, so neither can grow into
-  // the other.
-  kVariant = 990001,
-  kVariantArray = 990002,
-  kTsquery = 990003,
-  kTsqueryArray = 990004,
-  kUnion = 990005,
-  kUnionArray = 990006,
+  kVariant = kMinSystem + 100,
+  kVariantArray = kMinSystem + 101,
+  kTsquery = kMinSystem + 102,
+  kTsqueryArray = kMinSystem + 103,
+  kUnion = kMinSystem + 104,
+  kUnionArray = kMinSystem + 105,
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

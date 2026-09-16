@@ -48,7 +48,7 @@ Use `geojson` when rows hold arbitrary geometries — polygons, lines, multi-geo
 
 ## Usage
 
-Create the dictionary, then attach it to a `JSON` or `GEOMETRY` column in a `USING inverted` index. A plain `VARCHAR` column is rejected for geo analyzers, and a `GEOMETRY` column must declare a CRS84 coordinate reference system (`EPSG:4326`, `OGC:CRS84` or `4326`).
+Create the dictionary, then attach it to a `JSON` or `GEOMETRY` column in a `USING inverted` index. A plain `VARCHAR` column is rejected for geo analyzers, and a `GEOMETRY` column must declare the CRS84 coordinate reference system, which is spelled `OGC:CRS84`.
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/geojson/example_001" />
 

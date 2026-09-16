@@ -51,6 +51,9 @@
 * [duckdb-avro](https://github.com/duckdb/duckdb-avro)
 * [duckdb-azure](https://github.com/duckdb/duckdb-azure)
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg)
+* [duckdb-spatial](https://github.com/duckdb/duckdb-spatial)
+* [protozero](https://github.com/mapbox/protozero) (BSD-2-Clause, vendored in `duckdb_spatial/src/third_party/protozero`)
+* [shapelib](https://github.com/OSGeo/shapelib) (vendored in `duckdb_spatial/src/third_party/shapelib`)
 * [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
 * [duckdb_markdown](https://github.com/teaguesterling/duckdb_markdown)
 * [database-connector](https://github.com/duckdb/database-connector)
@@ -61,6 +64,7 @@
 * [fmt](https://github.com/fmtlib/fmt)
 * [jansson](https://github.com/akheron/jansson)
 * [CRoaring](https://github.com/RoaringBitmap/CRoaring)
+* [GeographicLib](https://geographiclib.sourceforge.io) (MIT/X11, see `duckdb_spatial/src/third_party/geographiclib/LICENSE`; the C geodesic routines behind the spatial extension's `*_Spheroid` functions, taken from PROJ 9.3.1's copy)
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet)
 * [brotli](https://github.com/google/brotli)
 

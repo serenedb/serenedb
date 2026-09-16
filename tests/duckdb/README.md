@@ -53,9 +53,10 @@ Every vendored duckdb repo carries a linear SereneDB patchset on top of one upst
 | `third_party/duckdb_inet` | `bf675673d9` | duckdb/duckdb-inet | Merge pull request #24 from Maxxen/main |
 | `third_party/duckdb_markdown` | `340c0cd597` | teaguesterling/duckdb_markdown | fix: unwrap nested table bodies in legacy Pandoc table rows |
 | `third_party/duckdb_azure` | `ed1c69cf05` | duckdb/duckdb-azure | pass etags through for improved caching (#182) |
+| `third_party/duckdb_spatial` | `2b072abd2a` | duckdb/duckdb-spatial | Merge pull request #851 from Maxxen/main-dev |
 | `third_party/database-connector` | `7777dac887` | duckdb/database-connector | Apply Identifier patch |
 
-Five of the nine fork points are upstream *merge* commits, because those repos merge PRs; duckdb's, duckdb_azure's, duckdb_markdown's and database-connector's are plain commits (duckdb squash-merges upstream). So "the last merge commit before our first commit" is a good first guess but not a rule.
+Six of the ten fork points are upstream *merge* commits, because those repos merge PRs; duckdb's, duckdb_azure's, duckdb_markdown's and database-connector's are plain commits (duckdb squash-merges upstream). So "the last merge commit before our first commit" is a good first guess but not a rule.
 
 Do **not** infer the boundary from authorship: in `database-connector` the last five upstream commits and our first are hard to tell apart from the log alone. Do not use a local `main` either -- those refs are stale and `git merge-base main HEAD` answers far too early.
 

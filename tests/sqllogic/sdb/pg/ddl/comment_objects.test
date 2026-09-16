@@ -71,7 +71,7 @@ db error: ERROR: View "cob_v" does not have a column with name "nope"
 statement error
 COMMENT ON VIEW cob_t IS 'x';
 ----
-db error: ERROR: "cob_t" is not a view
+db error: ERROR: Can only modify table with ALTER TABLE statement
 
 
 # --- sequences ---------------------------------------------------------------

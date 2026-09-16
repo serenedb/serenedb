@@ -151,7 +151,7 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
-  void Rewind() {
+  void Rewind() final {
     if (_ctx) {
       _chain.Rewind(*_ctx);
     }

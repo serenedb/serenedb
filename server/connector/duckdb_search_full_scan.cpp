@@ -1368,6 +1368,54 @@ std::optional<size_t> EvaluateTopK(duckdb::ClientContext& context,
   return static_cast<size_t>(k);
 }
 
+// An upper bound on the rows the segment's column predicates admit: the
+// narrowest one's slice of its column's value order, which the decoded-column
+// cache answers without reading the segment. Nothing is estimated unless every
+// predicate is an interval on a column it can decode, so a scan over any other
+// table filter stays unsplit.
+std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
+                                              IResearchScanGlobalState& g) {
+  if (g.col_filters.empty()) {
+    return std::nullopt;
+  }
+  const auto* col_reader = seg.GetColReader();
+  if (col_reader == nullptr) {
+    return std::nullopt;
+  }
+  const auto budget = static_cast<size_t>(ReadIntSetting(
+                        *g.client_context, "sdb_column_cache_mb")) *
+                      (size_t{1} << 20);
+  if (budget == 0) {
+    return std::nullopt;
+  }
+  irs::ColFilterStateCache states;
+  irs::ColFilterClassification cls;
+  ClassifySegmentColFilters(seg, g, states, cls);
+  if (cls.segment_dead) {
+    return uint64_t{0};
+  }
+  auto narrowest = std::numeric_limits<uint64_t>::max();
+  for (const auto& spec : cls.active) {
+    if (spec.is_score || spec.filter->filter_type !=
+                           duckdb::TableFilterType::EXPRESSION_FILTER) {
+      return std::nullopt;
+    }
+    auto column =
+      DecodedColumnCache::Instance().Get(seg, *col_reader, spec.field, budget);
+    auto pred = CompileDecodedPredicate(
+      *spec.filter->Cast<duckdb::ExpressionFilter>().expr, std::move(column));
+    if (!pred) {
+      return std::nullopt;
+    }
+    const auto [begin, end] = pred->Range();
+    narrowest = std::min<uint64_t>(narrowest, end - begin);
+  }
+  if (narrowest == std::numeric_limits<uint64_t>::max()) {
+    return std::nullopt;
+  }
+  return narrowest;
+}
+
 // The query vector of a parameterized statement, from the parameters bound
 // to this execution.
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
@@ -1592,8 +1640,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     // A filtered scan chooses between plans, so its share stays modest; a
     // brute-force scan reads the same bytes either way and only wants cores.
     const auto spare = fair_share(8);
-    if (where != nullptr && state->vector_scorer &&
-        !state->vector_scorer->exact &&
+    if ((where != nullptr || !state->col_filters.empty()) &&
+        state->vector_scorer && !state->vector_scorer->exact &&
         state->vector_scorer->kind == irs::AnnKind::Hnsw &&
         state->total_segments != 0) {
       // A filtered graph search that answers by scanning the predicate's rows
@@ -1612,8 +1660,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (*state->reader)[widest],
         {.collector = nullptr, .thread = 0, .needs_terms = false});
       const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
-      const auto rows = hnsw != nullptr ? hnsw->ScanCandidates(spare)
-                                        : std::optional<uint64_t>{};
+      const auto table_rows =
+        EstimateColFilterRows((*state->reader)[widest], *state);
+      const auto rows = hnsw != nullptr
+                          ? hnsw->ScanCandidates(spare, table_rows)
+                          : std::optional<uint64_t>{};
       // Below a couple of thousand rows a part costs more than the distances
       // it saves.
       constexpr uint64_t kScanRowsPerPart = 1024;

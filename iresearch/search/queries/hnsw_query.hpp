@@ -76,8 +76,11 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   // inner filter, or is a radius search.
   // `parallel` is how many workers a scan may spread over: a scan that splits
   // is cheaper per worker, so it wins the comparison at selectivities where a
-  // single-threaded scan would not.
-  std::optional<uint64_t> ScanCandidates(uint32_t parallel = 1) const;
+  // single-threaded scan would not. `table_rows` is an upper bound on what the
+  // caller's table filter admits, for a query whose predicate lives there.
+  std::optional<uint64_t> ScanCandidates(
+    uint32_t parallel = 1,
+    std::optional<uint64_t> table_rows = std::nullopt) const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 

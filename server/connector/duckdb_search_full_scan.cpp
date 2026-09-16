@@ -1109,6 +1109,10 @@ double ReadRerankFactor(duckdb::ClientContext& context) {
   return ReadDoubleSetting(context, "sdb_rerank_factor");
 }
 
+double ReadHnswRerankFactor(duckdb::ClientContext& context) {
+  return ReadDoubleSetting(context, "sdb_hnsw_rerank_factor");
+}
+
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
                          const SereneDBScanBindData& bind) {
   return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *g.score_top_k;
@@ -1738,8 +1742,18 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       const auto k = static_cast<double>(*state->score_top_k);
       double pool;
       if (state->vector_scorer->kind == irs::AnnKind::Hnsw) {
-        // Every hit of the beam is reranked: the pool is ef, at least k.
-        pool = std::max<double>(k, state->vector_scorer->ef_search);
+        // The beam decides how much of the graph is walked on quantized codes;
+        // this decides how many of its hits are read back at full precision.
+        // They are separate knobs everywhere else, and were not here: the pool
+        // was the whole beam, so a beam of 512 read 512 raw vectors, which at
+        // 1024 dimensions is two megabytes a query where an oversample of four
+        // at k=10 reads a hundred and sixty kilobytes. Zero keeps the old
+        // behaviour, so nothing changes for a query that does not ask.
+        const auto factor = ReadHnswRerankFactor(context);
+        const auto beam =
+          std::max<double>(k, state->vector_scorer->ef_search);
+        pool = factor > 0.0 ? std::min(beam, std::max(k, std::ceil(factor * k)))
+                            : beam;
       } else {
         pool = std::ceil(ReadRerankFactor(context) * k);
       }

@@ -539,6 +539,34 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_hnsw_rerank_factor",
+      {
+        LogicalTypeId::DOUBLE,
+        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
+        "with exact distances for a quantized HNSW vector-similarity query "
+        "(pool = ceil(sdb_hnsw_rerank_factor * k), never more than the beam "
+        "and never fewer than k). This is what other engines call oversampling "
+        "or a rescore factor, and it is what lets a narrow beam reach a high "
+        "recall without widening the graph search: the beam decides how much "
+        "of the graph is walked on quantized codes, this decides how many of "
+        "its hits are then read back at full precision. 0 means re-score the "
+        "whole beam, which is what the query did before this setting existed. "
+        "Fractional values are allowed, but a nonzero factor below 1 is "
+        "rejected because the pool must cover k. Unquantized (quant = 'none') "
+        "indexes never rerank, regardless of this setting.",
+        [] { return duckdb::Value::DOUBLE(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<double>();
+          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_hnsw_rerank_factor\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_levenshtein_max_terms",
       {
         LogicalTypeId::INTEGER,

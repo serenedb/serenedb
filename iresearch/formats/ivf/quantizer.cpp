@@ -724,7 +724,7 @@ inline bool HasAvx512ForSq8() noexcept {
 template<bool L2>
 __attribute__((target("avx512f,avx512bw,avx512vl,avx512dq,fma"))) void
 Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
-              float out[4]) {
+              float out[4], uint32_t dims) {
   __m512 acc[4], acc2[4];
   for (int k = 0; k < 4; ++k) {
     acc[k] = _mm512_setzero_ps();
@@ -733,7 +733,7 @@ Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
   const float* a = w.a.data();
   const float* b = w.b.data();
   uint32_t i = 0;
-  for (; i + 16 <= w.d; i += 16) {
+  for (; i + 16 <= dims; i += 16) {
     const __m512 va = _mm512_loadu_ps(a + i);
     const __m512 vb = L2 ? _mm512_loadu_ps(b + i) : _mm512_setzero_ps();
     for (int k = 0; k < 4; ++k) {
@@ -745,8 +745,8 @@ Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
       }
     }
   }
-  if (i < w.d) {
-    const __mmask16 m = static_cast<__mmask16>((1u << (w.d - i)) - 1u);
+  if (i < dims) {
+    const __mmask16 m = static_cast<__mmask16>((1u << (dims - i)) - 1u);
     const __m512 va = _mm512_maskz_loadu_ps(m, a + i);
     const __m512 vb =
       L2 ? _mm512_maskz_loadu_ps(m, b + i) : _mm512_setzero_ps();
@@ -783,8 +783,14 @@ Sq8Dot4Avx512(const Sq8Weights& w, const byte_type* const codes[4],
 inline constexpr size_t kSq8Lookahead = 8;
 
 template<bool L2, typename Row>
-void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out) {
-  const size_t bytes = w.d;
+void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out,
+                    uint32_t dims = 0) {
+  if (dims == 0 || dims > w.d) {
+    dims = w.d;
+  }
+  // Only the bytes the kernel reads are fetched: a prefix pass touches a
+  // quarter of each code's cache lines, which is the point of it.
+  const size_t bytes = dims;
   const auto prefetch = [&](size_t j) {
     if (j < n) {
       const byte_type* p = row(j);
@@ -802,7 +808,7 @@ void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out) {
       prefetch(j);
     }
     const byte_type* codes[4] = {row(i), row(i + 1), row(i + 2), row(i + 3)};
-    Sq8Dot4Avx512<L2>(w, codes, out + i);
+    Sq8Dot4Avx512<L2>(w, codes, out + i, dims);
   }
   if (i < n) {
     const byte_type* codes[4] = {row(i), row(i), row(i), row(i)};
@@ -810,7 +816,7 @@ void Sq8ScoreAvx512(const Sq8Weights& w, Row&& row, size_t n, float* out) {
       codes[k] = row(i + k);
     }
     float tail[4];
-    Sq8Dot4Avx512<L2>(w, codes, tail);
+    Sq8Dot4Avx512<L2>(w, codes, tail, dims);
     std::copy_n(tail, n - i, out + i);
   }
 }
@@ -864,6 +870,36 @@ class ScalarQuantizerReader final : public QuantizerReader {
         out[i] = -out[i];
       }
     }
+  }
+
+  // A quarter of the dimensions, rounded to a cache line, once that is enough
+  // of the code to rank by: below it the read is a cache line either way.
+  uint32_t PrefixDims() const noexcept final {
+#if defined(__x86_64__)
+    if (!_fast || _weights.d < 512) {
+      return 0;
+    }
+    return (_weights.d / 4 + 63) & ~uint32_t{63};
+#else
+    return 0;
+#endif
+  }
+
+  void ComputeGatheredPrefix(const byte_type* base, uint32_t record_size,
+                             std::span<const uint32_t> ids,
+                             score_t* out) final {
+#if defined(__x86_64__)
+    const auto dims = PrefixDims();
+    if (dims != 0) {
+      const auto row = [&](size_t j) {
+        return base + static_cast<size_t>(ids[j]) * record_size;
+      };
+      Sq8ScoreAvx512<M == VectorMetric::L2Sqr>(_weights, row, ids.size(), out,
+                                               dims);
+      return;
+    }
+#endif
+    ComputeGathered(base, record_size, ids, kHnswNoThresholdValue, out);
   }
 
   void ComputeGathered(const byte_type* base, uint32_t record_size,

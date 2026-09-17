@@ -19,21 +19,21 @@ CREATE SCHEMA s2;
 # Inverted opclasses resolve dictionaries from the target table's schema, so
 # each schema in this test gets its own copy of the `en` dictionary.
 statement ok
-CREATE TEXT SEARCH DICTIONARY public.en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
-    accent = false, frequency = true, position = true, norm = true);
+CREATE TEXT SEARCH DICTIONARY public.en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s1.en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
-    accent = false, frequency = true, position = true, norm = true);
+CREATE TEXT SEARCH DICTIONARY s1.en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s2.en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
-    accent = false, frequency = true, position = true, norm = true);
+CREATE TEXT SEARCH DICTIONARY s2.en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 
 statement ok

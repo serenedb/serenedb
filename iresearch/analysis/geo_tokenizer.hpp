@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,7 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -122,7 +121,9 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "geopoint"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "encode_geopoint";
+  }
 
   explicit GeoPointTokenizer(const Options& options);
 
@@ -181,7 +182,9 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr std::string_view type_name() noexcept { return "geojson"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "encode_geojson";
+  }
 
   explicit GeoJsonTokenizer(const Options& options);
 

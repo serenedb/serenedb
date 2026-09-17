@@ -1,0 +1,461 @@
+control substitution on
+
+
+# CHARACTER-AWARE GRAM FAMILY
+# Every gram tokenizer cuts on character boundaries, never inside a multi-byte
+# code point, so every emitted term is valid UTF-8 and a substring of the input.
+
+# --- sparse grams over 2-byte characters ---
+
+query
+SELECT generate_sparse_ngrams('héllo wörld') AS t;
+----
+t
+{hél,éll,héll,llo,héllo,"lo ","o w","lo w"," wö","lo wö",wör,örl,rld}
+
+
+query
+SELECT generate_sparse_ngrams('héllo wörld', covering := true) AS t;
+----
+t
+{héllo,rld,örl,wör,"lo wö"}
+
+
+# --- sparse grams over 3-byte characters ---
+
+query
+SELECT generate_sparse_ngrams('日本語テキスト') AS t;
+----
+t
+{日本語,本語テ,語テキ,本語テキ,日本語テキ,テキス,キスト}
+
+
+query
+SELECT generate_sparse_ngrams('日本語テキスト', covering := true) AS t;
+----
+t
+{キスト,テキス,日本語テキ}
+
+
+# --- sparse grams over 4-byte characters ---
+
+query
+SELECT generate_sparse_ngrams('🎉🎊🎈🎁') AS t;
+----
+t
+{🎉🎊🎈,🎊🎈🎁}
+
+
+query
+SELECT generate_sparse_ngrams('αβγδε') AS t;
+----
+t
+{αβγ,βγδ,γδε}
+
+
+# --- gram length counts characters, not bytes: a 5-character value with 6
+# bytes still yields grams of 3..5 characters ---
+
+query
+SELECT generate_sparse_ngrams('héllo') AS t, length('héllo') AS chars, octet_length('héllo') AS bytes;
+----
+t	chars	bytes
+{hél,éll,héll,llo,héllo}	5	6
+
+
+# --- inputs shorter than the 3-character minimum produce no grams, even when
+# they are longer than 3 bytes ---
+
+query
+SELECT generate_sparse_ngrams('日') AS one, generate_sparse_ngrams('日本') AS two;
+----
+one	two
+{}	{}
+
+
+# --- fixed-width and wildcard grams are character-aware too ---
+
+query
+SELECT generate_ngrams('héllo', 2, 3) AS t;
+----
+t
+{hé,hél,él,éll,ll,llo,lo}
+
+
+query
+SELECT generate_ngrams('日本語', 1, 2) AS t;
+----
+t
+{日,日本,本,本語,語}
+
+
+query
+SELECT generate_ngrams('🎉🎊🎈', 1, 2) AS t;
+----
+t
+{🎉,🎉🎊,🎊,🎊🎈,🎈}
+
+
+query
+SELECT generate_ngrams('北京市', 2, 3, mode := 'only_prefix') AS t;
+----
+t
+{北京,北京市}
+
+
+# --- wildcard grams carry a 0x1F boundary marker on the first and last gram,
+# so they are compared as bytes; the marker aside, every gram is a run of whole
+# characters ---
+
+query
+SELECT list_transform(generate_wildcard_ngrams('héllo', 3), x -> hex(x::BLOB)) AS t;
+----
+t
+{1F68C3A9,68C3A96C,C3A96C6C,6C6C6F,6C6F1F,6F1F}
+
+
+query
+SELECT list_transform(generate_wildcard_ngrams('日本語テキスト', 3), x -> hex(x::BLOB)) AS t;
+----
+t
+{1FE697A5E69CAC,E697A5E69CACE8AA9E,E69CACE8AA9EE38386,E8AA9EE38386E382AD,E38386E382ADE382B9,E382ADE382B9E38388,E382B9E383881F,E383881F}
+
+
+# --- empty and NULL values behave as for ASCII ---
+
+query
+SELECT generate_sparse_ngrams('') AS empty_v, generate_sparse_ngrams(NULL::VARCHAR) IS NULL AS null_v;
+----
+empty_v	null_v
+{}	t
+
+
+# --- a value past the internal batch size takes the long path: 12000
+# characters of 3 bytes each, filled over several hash batches ---
+
+query
+SELECT array_length(generate_sparse_ngrams(repeat('日本語', 4000)), 1) AS n;
+----
+n
+19996
+
+
+# SPLIT FAMILY
+
+query
+SELECT split_text('Café MENÚ 北京 москва Ωμέγα', case := 'lower') AS t;
+----
+t
+{café,menú,北,京,москва,ωμέγα}
+
+
+query
+SELECT split_text('Grüße, Welt! 北京', break := 'sentence') AS t;
+----
+t
+{"Grüße, Welt!",北京}
+
+
+# --- split_by_non_alpha knows ASCII letters only: every non-ASCII letter is a
+# separator, so a purely non-ASCII word yields nothing ---
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123', case := 'lower') AS t;
+----
+t
+{gr,e,welt,123}
+
+
+query
+SELECT split_text_csv('café;naïve;北京', ';') AS t;
+----
+t
+{café,naïve,北京}
+
+
+query
+SELECT split_by_delimiters('a—b—c', ['—']) AS t;
+----
+t
+{a,b,c}
+
+
+query
+SELECT expand_path('α/β/γ', '/') AS t;
+----
+t
+{α,α/β,α/β/γ}
+
+
+query
+SELECT expand_path('α→β→γ', '→') AS t;
+----
+t
+{α,α→β,α→β→γ}
+
+
+# --- \w is ASCII-only in a pattern, \p{L} is not; the default group := -1
+# splits on the match, group := 0 returns the match itself ---
+
+query
+SELECT split_by_pattern('café naïve 北京', '\w+') AS t;
+----
+t
+{"é ",ï," 北京"}
+
+
+query
+SELECT split_by_pattern('café naïve 北京', '\w+', group := 0) AS t;
+----
+t
+{caf,na,ve}
+
+
+query
+SELECT split_by_pattern('café naïve 北京', '\p{L}+', group := 0) AS t;
+----
+t
+{café,naïve,北京}
+
+
+# SHINGLES
+
+query
+SELECT generate_shingles(['Ωμέγα', 'ΟΔΟΣ', '北京'], 2, 2, store_tokens := false) AS t;
+----
+t
+{Ωμέγα,"Ωμέγα ΟΔΟΣ",ΟΔΟΣ,"ΟΔΟΣ 北京",北京}
+
+
+# --- the separator may itself be multi-byte ---
+
+query
+SELECT generate_shingles(['Ωμέγα', '北京'], 2, 2, store_tokens := false, token_separator := '—') AS t;
+----
+t
+{Ωμέγα,Ωμέγα—北京,北京}
+
+
+# NORMALIZATION, STEMMING, SEGMENTATION
+
+# --- accent := false folds diacritics across scripts; accent := true keeps them ---
+
+query
+SELECT normalize_tokens(['Grüße', 'ÅNGSTRÖM', 'Ωμέγα'], 'en_US.UTF-8', case := 'lower', accent := false) AS t;
+----
+t
+{gruße,angstrom,ωμεγα}
+
+
+query
+SELECT normalize_tokens(['Grüße', 'Ωμέγα'], 'en_US.UTF-8', case := 'lower', accent := true) AS t;
+----
+t
+{grüße,ωμέγα}
+
+
+query
+SELECT stem_words(['läuft', 'gelaufen'], 'de_DE.UTF-8') AS t;
+----
+t
+{lauft,gelauf}
+
+
+query
+SELECT split_text_icu('日本語のテキストを分割する', 'ja_JP.UTF-8') AS t;
+----
+t
+{日本語,の,テキスト,を,分割,する}
+
+
+query
+SELECT remove_stopwords(['der', 'Grüße', 'die', '北京'], ['der', 'die']) AS t;
+----
+t
+{Grüße,北京}
+
+
+# A STAGE'S OUTPUT, NOT THE PIPELINE'S INPUT
+# A stage may turn ASCII input into non-ASCII output: Turkish lowercase maps
+# I to the dotless i, and a shingle separator may itself be multi-byte. The
+# next stage has to see what the previous one actually produced, so a chain
+# agrees with the equivalent nested function calls.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tr_words AS
+    normalize_tokens('tr_TR.UTF-8', case := 'lower') | split_text()
+
+
+query
+SELECT list_transform(ts_lexize('tr_words', 'IIIII'), x -> hex(x::BLOB)) AS chain,
+       list_transform(split_text(normalize_tokens(['IIIII'], 'tr_TR.UTF-8', case := 'lower')), x -> hex(x::BLOB)) AS nested;
+----
+chain	nested
+{C4B1C4B1C4B1C4B1C4B1}	{C4B1C4B1C4B1C4B1C4B1}
+
+
+# The grams of that output stay whole characters rather than half of one.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tr_grams AS
+    normalize_tokens('tr_TR.UTF-8', case := 'lower') | generate_ngrams(1, 2)
+
+
+query
+SELECT list_transform(ts_lexize('tr_grams', 'II'), x -> hex(x::BLOB)) AS chain,
+       list_transform(generate_ngrams('ıı', 1, 2), x -> hex(x::BLOB)) AS nested;
+----
+chain	nested
+{C4B1,C4B1C4B1,C4B1}	{C4B1,C4B1C4B1,C4B1}
+
+
+# A multi-byte token separator is the same situation without a locale.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sh_mb_grams AS
+    generate_shingles(split_text(), 2, 2, store_tokens := false, token_separator := '—')
+    | generate_ngrams(1, 2)
+
+
+query
+SELECT list_transform(ts_lexize('sh_mb_grams', 'ab cd'), x -> hex(x::BLOB)) AS chain;
+----
+chain
+{61,6162,62,61,6162,62,62E28094,E28094,E2809463,63,6364,64,63,6364,64}
+
+
+# A locale that keeps ASCII output keeps the ASCII kernels downstream.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_words AS
+    normalize_tokens('en_US.UTF-8', case := 'lower') | split_text()
+
+
+query
+SELECT list_transform(ts_lexize('en_words', 'IIIII'), x -> hex(x::BLOB)) AS t;
+----
+t
+{6969696969}
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_words
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sh_mb_grams
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tr_grams
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tr_words
+
+
+# INVERTED INDEX ROUND TRIP
+# The column mixes non-ASCII and pure ASCII values, so the ASCII decision is
+# made per value: an ASCII document in a non-ASCII block still matches.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY u_grams AS generate_sparse_ngrams()
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY u_grams_cov AS generate_sparse_ngrams(covering := true)
+
+
+query
+SELECT generate_sparse_ngrams('日本語テキスト') = ts_lexize('u_grams', '日本語テキスト') AS same;
+----
+same
+t
+
+
+statement ok
+CREATE TABLE u_docs(id INT, body TEXT)
+
+
+statement ok
+INSERT INTO u_docs VALUES
+    (1, '日本語のテキストを分割する'),
+    (2, 'Grüße aus München, Straße 42'),
+    (3, 'Ελληνικό κείμενο για δοκιμή'),
+    (4, 'plain ascii text here')
+
+
+statement ok
+CREATE INDEX u_idx ON u_docs USING inverted(id, body u_grams)
+
+
+query
+SELECT id FROM u_idx WHERE body @@ ts_all(ts_tokenize(ARRAY['テキスト'], 'u_grams_cov')) ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM u_idx WHERE body @@ ts_all(ts_tokenize(ARRAY['München'], 'u_grams_cov')) ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT id FROM u_idx WHERE body @@ ts_all(ts_tokenize(ARRAY['κείμενο'], 'u_grams_cov')) ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM u_idx WHERE body @@ ts_all(ts_tokenize(ARRAY['ascii'], 'u_grams_cov')) ORDER BY id;
+----
+id
+4
+
+
+query
+SELECT id FROM u_idx WHERE body @@ ts_all(ts_tokenize(ARRAY['存在しない'], 'u_grams_cov')) ORDER BY id;
+----
+id
+
+
+# --- highlight wraps the matched region on character boundaries ---
+
+query
+SELECT ts_highlight(body) FROM u_idx WHERE body @@ ts_all(ts_lexize('u_grams_cov', 'München')) ORDER BY id;
+----
+ts_highlight
+Grüße aus <b>München</b>, Straße 42
+
+
+query
+SELECT ts_highlight(body) FROM u_idx WHERE body @@ ts_all(ts_lexize('u_grams_cov', 'テキスト')) ORDER BY id;
+----
+ts_highlight
+日本語の<b>テキスト</b>を分割する
+
+
+# --- offsets are byte offsets and land on character boundaries: 日本語の is
+# 12 bytes, テキスト is another 12 ---
+
+query
+SELECT ts_offsets(body) FROM u_idx WHERE body @@ ts_all(ts_lexize('u_grams_cov', 'テキスト')) ORDER BY id;
+----
+ts_offsets
+{12,21,15,24}
+
+
+statement ok
+DROP TABLE u_docs
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY u_grams_cov
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY u_grams

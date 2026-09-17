@@ -30,7 +30,6 @@
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/process_tokens.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
@@ -46,6 +45,7 @@
 #include "pipeline_reference.hpp"
 #include "test_resources.hpp"
 #include "tests_config.hpp"
+#include "text_chain.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
@@ -86,16 +86,11 @@ irs::analysis::Tokenizer::ptr MakeText(std::string_view locale,
                                        irs::Case case_convert, bool stemming,
                                        std::vector<std::string> stopwords = {},
                                        bool accent = true) {
-  irs::analysis::TextTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName(std::string(locale).c_str());
-  opts.case_convert = case_convert;
-  opts.stemming = stemming;
-  opts.accent = accent;
-  for (auto& w : stopwords) {
-    opts.explicit_stopwords.push_back(std::move(w));
-  }
-  opts.explicit_stopwords_set = true;
-  return irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
+  return tests::MakeTextChain({.locale = std::string{locale},
+                               .convert = case_convert,
+                               .stemming = stemming,
+                               .accent = accent,
+                               .stopwords = std::move(stopwords)});
 }
 
 class PipelineTestAnalyzer
@@ -425,16 +420,9 @@ TEST(pipeline_token_stream_test, source_modification_tokenizer) {
 }
 
 TEST(pipeline_token_stream_test, signle_tokenizer) {
-  irs::analysis::TextTokenizer::Options text_opts;
-  text_opts.locale = icu::Locale::createFromName("en_US.UTF-8");
-  text_opts.case_convert = irs::Case::Lower;
-  text_opts.stemming = true;
-  text_opts.accent = true;
-  text_opts.explicit_stopwords_set = true;
-
   irs::analysis::PipelineTokenizer::Options opts;
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
-    irs::analysis::TokenizerConfig{std::move(text_opts)}));
+    tests::TextChainConfig({.convert = irs::Case::Lower})));
 
   auto stream =
     irs::analysis::PipelineTokenizer::Make(std::move(opts), tests::Cache());
@@ -544,15 +532,9 @@ TEST(pipeline_token_stream_test, test_construct) {
     irs::analysis::TokenizerConfig{
       irs::analysis::DelimitedTokenizer::Options{.delimiter = "A"}}));
 
-  irs::analysis::TextTokenizer::Options text_opts;
-  text_opts.locale = icu::Locale::createFromName("en_US.UTF-8");
-  text_opts.case_convert = irs::Case::Lower;
-  text_opts.accent = false;
-  text_opts.stemming = true;
-  text_opts.explicit_stopwords.push_back("fox");
-  text_opts.explicit_stopwords_set = true;
-  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
-    irs::analysis::TokenizerConfig{std::move(text_opts)}));
+  opts.children.push_back(
+    std::make_unique<irs::analysis::TokenizerConfig>(tests::TextChainConfig(
+      {.convert = irs::Case::Lower, .accent = false, .stopwords = {"fox"}})));
 
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
@@ -1563,7 +1545,7 @@ TEST(pipeline_token_stream_test, sole_stage_unwrapped_by_make) {
 std::vector<irs::analysis::Tokenizer::ptr> MakeStableChildren() {
   std::vector<irs::analysis::Tokenizer::ptr> subs;
   subs.push_back(
-    irs::analysis::SegmentationTokenizer::Make({.convert = irs::Case::None}));
+    irs::analysis::TextTokenizer::Make({.convert = irs::Case::None}));
   subs.push_back(MakeStopwords({"the", "and", "of", "a"}));
   return subs;
 }

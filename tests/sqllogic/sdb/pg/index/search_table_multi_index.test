@@ -8,16 +8,14 @@
 
 # --- Two analyzers on one column: stemming vs non-stemming ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY stem_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = true, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY stem_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY plain_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY plain_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT)
@@ -89,10 +87,9 @@ id
 # A keyword index terms the whole string; an analyzer index tokenizes it. Both
 # on `txt`, each with its own term field.
 statement ok
-CREATE TEXT SEARCH DICTIONARY tok_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY tok_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE k (id BIGINT PRIMARY KEY, txt TEXT)

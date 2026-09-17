@@ -60,7 +60,7 @@ WordnetSynonymsTokenizer::SynonymsMap MakeMap(SynonymsEntries entries) {
 }  // namespace
 
 TEST(wordnet_synonyms_tests, consts) {
-  static_assert("wordnet_synonyms" ==
+  static_assert("expand_wordnet_synonyms" ==
                 irs::Type<WordnetSynonymsTokenizer>::name());
 }
 
@@ -303,7 +303,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_short_line) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+                "expand_wordnet_synonyms: failed to parse synonyms: "
+                "Failed parse "
                 "line 1");
     }
   }
@@ -322,7 +323,8 @@ TEST(wordnet_synonyms_tests, parsing_broken_synonym) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+                "expand_wordnet_synonyms: failed to parse synonyms: "
+                "Failed parse "
                 "line 1");
     }
   }
@@ -335,7 +337,7 @@ TEST(wordnet_synonyms_tests, parsing_broken_second_line) {
     FAIL() << "expected irs::SqlException";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
-              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "expand_wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 2");
   }
 }
@@ -347,7 +349,7 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_more_param) {
     FAIL() << "expected irs::SqlException";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
-              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "expand_wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 1");
   }
 }
@@ -359,7 +361,7 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
     FAIL() << "expected irs::SqlException";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.message(),
-              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "expand_wordnet_synonyms: failed to parse synonyms: Failed parse "
               "line 1");
   }
 }

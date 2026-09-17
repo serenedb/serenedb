@@ -65,9 +65,9 @@
     { "cat": "natural", "q": "docker install", "expect": ["/docs/installation/docker", "/docs/installation"] },
     { "cat": "natural", "q": "json search", "expect": ["/docs/cookbook/search/json-search", "/docs/sql/indexes/inverted/json"] },
     { "cat": "natural", "q": "highlight matches", "expect": ["/docs/cookbook/search/highlighting", "/docs/sql/functions/search/highlighting"] },
-    { "cat": "natural", "q": "synonyms", "expect": ["/docs/cookbook/search/synonyms", "/docs/sql/statements/create_text_search_dictionary/solr-synonyms"] },
-    { "cat": "natural", "q": "stemming", "expect": ["/docs/cookbook/search/stemming", "/docs/sql/statements/create_text_search_dictionary/stem"] },
-    { "cat": "natural", "q": "stop words", "expect": ["/docs/cookbook/search/stemming", "/docs/sql/statements/create_text_search_dictionary/stopwords"] },
+    { "cat": "natural", "q": "synonyms", "expect": ["/docs/cookbook/search/synonyms", "/docs/sql/functions/search/tokenizers/expand_solr_synonyms"] },
+    { "cat": "natural", "q": "stemming", "expect": ["/docs/cookbook/search/stemming", "/docs/sql/functions/search/tokenizers/stem_words"] },
+    { "cat": "natural", "q": "stop words", "expect": ["/docs/cookbook/search/stemming", "/docs/sql/functions/search/tokenizers/remove_stopwords"] },
     { "cat": "natural", "q": "export to parquet", "expect": ["/docs/cookbook/file_formats/parquet_export"] },
     { "cat": "natural", "q": "attach postgres database", "expect": ["/docs/sql/statements/attach/postgres", "/docs/cookbook/database_integration/postgres", "/docs/sql/statements/attach"] },
     { "cat": "natural", "q": "window functions", "expect": ["/docs/sql/query_syntax/window", "/docs/sql/functions/window_functions"] }

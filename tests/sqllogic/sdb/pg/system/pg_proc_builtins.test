@@ -144,6 +144,30 @@ user_macro
 1
 
 
+# Every type a signature names has to resolve: psql's \df, an ORM and a fuzzer
+# all look each oid up in pg_type, and an oid with no row there is a dangling
+# reference. The tokenizer functions take a UNION for their list options, which
+# is how the pseudo-type gets into a signature at all.
+
+query
+SELECT
+  (SELECT count(*) FROM pg_proc p, LATERAL unnest(p.proargtypes) AS u(argtype)
+     WHERE u.argtype <> 0
+       AND u.argtype NOT IN (SELECT oid FROM pg_type)) AS dangling_args,
+  (SELECT count(*) FROM pg_proc p
+     WHERE p.prorettype <> 0
+       AND p.prorettype NOT IN (SELECT oid FROM pg_type)) AS dangling_returns
+----
+dangling_args	dangling_returns
+0	0
+
+query
+SELECT typtype, typcategory FROM pg_type WHERE typname = 'union'
+----
+typtype	typcategory
+p	P
+
+
 # The downstream views that were empty because pg_proc was.
 
 query

@@ -22,41 +22,59 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
+#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
 namespace {
 
 constexpr size_t kBatch = 8 * 1024;
 constexpr size_t kHeadSlack = 64;
+constexpr size_t kNoStop = std::numeric_limits<size_t>::max();
 
 constexpr uint64_t kMul1 = 0xc6a4a7935bd1e995ULL;
 constexpr uint64_t kMul2 = 0x228876a7198b743ULL;
 
-inline uint32_t HashBigram(const char* begin) {
-  const uint64_t a = static_cast<uint8_t>(begin[0]) * kMul1 +
-                     static_cast<uint8_t>(begin[1]) * kMul2;
+IRS_FORCE_INLINE uint32_t HashPair(uint32_t a0, uint32_t a1) {
+  const uint64_t a = a0 * kMul1 + a1 * kMul2;
   return a + (~a >> 47);
 }
 
-void FillHashesScalar(const char* data, size_t count, uint32_t* out) {
+IRS_FORCE_INLINE uint64_t FillHashesScalar(const char* data, size_t count,
+                                           uint32_t* out) {
+  uint64_t acc = 0;
   for (size_t j = 0; j < count; ++j) {
-    out[j] = HashBigram(data + j);
+    const auto lead = static_cast<uint8_t>(data[j]);
+    acc |= lead;
+    out[j] = HashPair(lead, static_cast<uint8_t>(data[j + 1]));
   }
+  return acc;
 }
 
 #if defined(__x86_64__)
-__attribute__((target("avx512f,avx512dq"))) void FillHashesAvx512(
-  const char* data, size_t count, uint32_t* out) {
-  for (size_t j = 0; j < count; ++j) {
-    out[j] = HashBigram(data + j);
-  }
+__attribute__((target("avx512f,avx512dq"))) uint64_t
+FillHashesAvx512(const char* data, size_t count, uint32_t* out) {
+  return FillHashesScalar(data, count, out);
 }
 #endif
 
-using FillHashesFn = void (*)(const char*, size_t, uint32_t*);
+void FillHashesCp(const byte_type* data, const byte_type* end,
+                  const uint32_t* bounds, size_t count, uint32_t* out) {
+  const auto* it = data + bounds[0];
+  uint32_t prev = utf8_utils::ToChar32(it, end);
+  for (size_t j = 0; j < count; ++j) {
+    const auto* next = data + bounds[j + 1];
+    const uint32_t cur = utf8_utils::ToChar32(next, end);
+    out[j] = HashPair(prev, cur);
+    prev = cur;
+  }
+}
+
+using FillHashesFn = uint64_t (*)(const char*, size_t, uint32_t*);
 
 FillHashesFn ResolveFillHashes() {
 #if defined(__x86_64__)
@@ -89,16 +107,25 @@ void SparseNGramTokenizer::EnsureScratch() {
   _hashes.resize(kBatch);
 }
 
-void SparseNGramTokenizer::FillHashes(Cursor& ctx) {
-  const auto* data = reinterpret_cast<const char*>(ctx.data.data());
-  const size_t end = std::min(ctx.data.size() - 1, ctx.pos + kBatch);
-  kFillHashes(data + ctx.pos, end - ctx.pos, _hashes.data());
+template<bool Symbols>
+uint64_t SparseNGramTokenizer::FillHashes(Cursor& ctx) {
+  const size_t end = std::min(ctx.units - 1, ctx.pos + kBatch);
+  uint64_t acc = 0;
+  if constexpr (Symbols) {
+    FillHashesCp(ctx.data.data(), ctx.data.data() + ctx.data.size(),
+                 _bounds.data() + ctx.pos, end - ctx.pos, _hashes.data());
+  } else {
+    const auto* data = reinterpret_cast<const char*>(ctx.data.data());
+    acc = kFillHashes(data + ctx.pos, end - ctx.pos, _hashes.data());
+  }
   ctx.hash_base = ctx.pos;
   ctx.hash_end = end;
+  return acc;
 }
 
+template<bool Symbols>
 bool SparseNGramTokenizer::Next(Cursor& ctx) {
-  const size_t pos_end = ctx.data.size() >= 2 ? ctx.data.size() - 1 : 0;
+  const size_t pos_end = ctx.units >= 2 ? ctx.units - 1 : 0;
   HashAndPos* const base = _stack.data();
   HashAndPos* const limit = base + _stack.size();
   HashAndPos* top = base + ctx.top;
@@ -109,7 +136,7 @@ bool SparseNGramTokenizer::Next(Cursor& ctx) {
   while (out == pending) {
     if (ctx.pos < pos_end) {
       if (ctx.pos >= ctx.hash_end) {
-        FillHashes(ctx);
+        FillHashes<Symbols>(ctx);
       }
       const uint32_t* hashes = _hashes.data() - ctx.hash_base;
       const size_t end_i = std::min(pos_end, ctx.hash_end);
@@ -210,18 +237,65 @@ void SparseNGramTokenizer::StepCovering(HashAndPos* base, HashAndPos*& top,
   *top++ = {hash, static_cast<uint32_t>(i)};
 }
 
-template<TokenLayout Layout>
-bool SparseNGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, bool Detect>
+bool SparseNGramTokenizer::FillBytes(duckdb::string_t raw, TokenSink& sink) {
   const size_t size = raw.GetSize();
-  EnsureScratch();
   const EmitKSlot* const pending = _pending.data();
-  Cursor ctx{.data = {reinterpret_cast<const byte_type*>(raw.GetData()), size}};
-  while (Next(ctx)) {
+  Cursor ctx{.data = {reinterpret_cast<const byte_type*>(raw.GetData()), size},
+             .units = size};
+  if constexpr (Detect) {
+    if (size > kBatch) {
+      if (!classify::IsAsciiValue(raw.GetData(), size)) {
+        return false;
+      }
+    } else if (size >= 2) {
+      const uint64_t bytes = FillHashes<false>(ctx) | ctx.data.back();
+      if ((bytes & 0x80) != 0) {
+        return false;
+      }
+    }
+  }
+  const size_t stop = _options.covering ? kNoStop : (size >= 2 ? size - 1 : 0);
+  while (Next<false>(ctx)) {
     sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
                        ctx.data.data() + ctx.data.size(),
                        [&](size_t j) IRS_FORCE_INLINE { return pending[j]; });
+    if (ctx.pos >= stop) {
+      break;
+    }
   }
   return true;
+}
+
+template<TokenLayout Layout>
+bool SparseNGramTokenizer::FillSymbols(duckdb::string_t raw, TokenSink& sink) {
+  const size_t size = raw.GetSize();
+  const EmitKSlot* const pending = _pending.data();
+  const auto* const data = reinterpret_cast<const byte_type*>(raw.GetData());
+  const size_t units = classify::BuildUtf8CpBounds(data, size, true, _bounds);
+  Cursor ctx{.data = {data, size}, .units = units};
+  const uint32_t* const bounds = _bounds.data();
+  while (Next<true>(ctx)) {
+    sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
+                       ctx.data.data() + ctx.data.size(),
+                       [&](size_t j) IRS_FORCE_INLINE {
+                         const auto slot = pending[j];
+                         return EmitKSlot{bounds[slot.begin], bounds[slot.end]};
+                       });
+  }
+  return true;
+}
+
+template<TokenLayout Layout, bool KnownAscii>
+bool SparseNGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  EnsureScratch();
+  if constexpr (KnownAscii) {
+    return FillBytes<Layout, false>(raw, sink);
+  } else if (FillBytes<Layout, true>(raw, sink)) {
+    return true;
+  } else {
+    return FillSymbols<Layout>(raw, sink);
+  }
 }
 
 template class TypedTokenizer<SparseNGramTokenizer>;

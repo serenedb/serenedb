@@ -141,15 +141,14 @@ class UpperTokenizer final
 };
 
 ShingleTokenizer MakeAnalyzer(uint32_t min, uint32_t max, bool output_unigrams,
-                              bool output_unigrams_if_no_shingles = false) {
-  return ShingleTokenizer{
-    std::make_unique<WhitespaceTokenizer>(),
-    {
-      .min_shingle_size = min,
-      .max_shingle_size = max,
-      .output_unigrams = output_unigrams,
-      .output_unigrams_if_no_shingles = output_unigrams_if_no_shingles,
-    }};
+                              bool fallback_unigrams = false) {
+  return ShingleTokenizer{std::make_unique<WhitespaceTokenizer>(),
+                          {
+                            .min_shingle_size = min,
+                            .max_shingle_size = max,
+                            .output_unigrams = output_unigrams,
+                            .fallback_unigrams = fallback_unigrams,
+                          }};
 }
 
 std::string ToString(irs::bytes_view v) {
@@ -160,7 +159,8 @@ std::string Shingle(std::initializer_list<std::string_view> tokens) {
   std::string out;
   for (auto t : tokens) {
     if (!out.empty()) {
-      out.push_back('\xFF');
+      out.push_back(
+        static_cast<char>(irs::analysis::ShingleTokenizer::kDefaultSeparator));
     }
     out.append(t);
   }
@@ -311,6 +311,61 @@ TEST(ShingleTokenizerTest, bigrams_without_unigrams) {
   EXPECT_EQ(expected, Emit(analyzer, "a b c"));
 }
 
+TEST(ShingleTokenizerTest, default_token_separator_is_a_space) {
+  EXPECT_EQ(' ', static_cast<char>(ShingleTokenizer::kDefaultSeparator));
+  auto analyzer = MakeAnalyzer(2, 2, true);
+  const std::vector<std::string> expected{
+    "quick", "quick brown", "brown", "brown fox", "fox",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "quick brown fox"));
+}
+
+TEST(ShingleTokenizerTest, token_separator_multi_byte) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 3,
+                              .output_unigrams = true,
+                              .token_separator = Bytes("::"),
+                            }};
+  const std::vector<std::string> expected{
+    "a", "a::b", "a::b::c", "b", "b::c", "b::c::d", "c", "c::d", "d",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "a b c d"));
+  EXPECT_EQ((std::vector<std::string>{"a", "b", "c", "d"}),
+            StoreOf(analyzer, "a b c d"));
+}
+
+TEST(ShingleTokenizerTest, empty_token_separator_concatenates) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 3,
+                              .output_unigrams = true,
+                              .token_separator = {},
+                            }};
+  const std::vector<std::string> expected{
+    "a", "ab", "abc", "b", "bc", "bcd", "c", "cd", "d",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "a b c d"));
+  EXPECT_EQ((std::vector<std::string>{"a", "b", "c", "d"}),
+            StoreOf(analyzer, "a b c d"));
+}
+
+TEST(ShingleTokenizerTest, empty_token_separator_keeps_positions) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 2,
+                              .output_unigrams = true,
+                              .token_separator = {},
+                            }};
+  const std::vector<TermInc> expected{
+    {"a", 1}, {"ab", 0}, {"b", 1}, {"bc", 0}, {"c", 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "a b c"));
+}
+
 TEST(ShingleTokenizerTest, min2_max3_with_unigrams) {
   auto analyzer = MakeAnalyzer(2, 3, true);
   const std::vector<std::string> expected{
@@ -327,7 +382,7 @@ TEST(ShingleTokenizerTest, single_token_emits_unigram) {
   EXPECT_EQ((std::vector<std::string>{"lonely"}), StoreOf(analyzer, "lonely"));
 }
 
-TEST(ShingleTokenizerTest, output_unigrams_if_no_shingles) {
+TEST(ShingleTokenizerTest, fallback_unigrams) {
   auto with = MakeAnalyzer(2, 2, false, true);
   EXPECT_EQ((std::vector<std::string>{"solo"}), Emit(with, "solo"));
 
@@ -521,6 +576,44 @@ TEST(ShingleTokenizerTest, generated_base_tokens_are_copied) {
 
 TEST(ShingleTokenizerTest, column_fill_matches_per_value) {
   auto analyzer = MakeAnalyzer(2, 3, true);
+  const std::vector<std::string> values{"quick brown fox", "a b c d", "lonely",
+                                        "", "one two"};
+
+  std::vector<std::vector<std::string>> expected;
+  for (const auto& v : values) {
+    expected.push_back(Emit(analyzer, v));
+  }
+
+  std::vector<duckdb::string_t> vals;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+  }
+  std::vector<std::vector<std::string>> got(values.size());
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        got[run.doc - 1].emplace_back(t.GetData(), t.GetSize());
+      }
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPos, collect};
+  tests::FillColumn(analyzer, vals, 1, sink.writer, sink.layout);
+  sink.writer.Finish();
+  EXPECT_EQ(expected, got);
+}
+
+TEST(ShingleTokenizerTest, empty_separator_column_fill_matches_per_value) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 3,
+                              .output_unigrams = true,
+                              .token_separator = {},
+                            }};
   const std::vector<std::string> values{"quick brown fox", "a b c d", "lonely",
                                         "", "one two"};
 

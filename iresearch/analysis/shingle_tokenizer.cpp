@@ -118,7 +118,7 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
     _min{options.min_shingle_size},
     _max{options.max_shingle_size},
     _output_unigrams{options.output_unigrams},
-    _output_unigrams_if_no_shingles{options.output_unigrams_if_no_shingles},
+    _fallback_unigrams{options.fallback_unigrams},
     _store_tokens{options.store_tokens},
     _separator{std::move(options.token_separator)},
     _filler{std::move(options.filler_token)} {
@@ -126,9 +126,6 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
     _analyzer = std::make_unique<KeywordTokenizer>();
   }
   _producer_dense = !_analyzer->Traits().explicit_pos;
-  if (_separator.empty()) {
-    _separator.push_back(kDefaultSeparator);
-  }
   if (_filler.empty()) {
     _filler.push_back(static_cast<byte_type>('_'));
   }
@@ -253,8 +250,7 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
                        });
   };
 
-  const bool unigrams =
-    OutputUnigrams || (_output_unigrams_if_no_shingles && no_shingles);
+  const bool unigrams = OutputUnigrams || (_fallback_unigrams && no_shingles);
   uint32_t run_end = 0;
   for (uint32_t i = 0; i < n; ++i) {
     const uint32_t pos = tpos[i];

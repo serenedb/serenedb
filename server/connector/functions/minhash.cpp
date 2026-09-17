@@ -98,38 +98,27 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    ->Cast<MinHashLocalState>()
                    .sketch;
 
-  duckdb::UnifiedVectorFormat lists;
-  args.data[0].ToUnifiedFormat(lists);
-  const auto* entries =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(lists);
-  duckdb::UnifiedVectorFormat elements;
-  duckdb::ListVector::GetChild(args.data[0]).ToUnifiedFormat(elements);
-  const auto* tokens =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(elements);
+  auto lists = args.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto* out_entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  auto out_entries =
+    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
   auto& signatures = duckdb::ListVector::GetChildMutable(result);
   duckdb::idx_t offset = 0;
 
   for (duckdb::idx_t row = 0; row < count; ++row) {
-    const auto idx = lists.sel->get_index(row);
-    if (!lists.validity.RowIsValid(idx)) {
-      validity.SetInvalid(row);
-      out_entries[row] = {offset, 0};
+    auto list = lists[row];
+    if (!list.IsValid()) {
+      out_entries.WriteNull({offset, 0});
       continue;
     }
     sketch.Clear();
-    const auto entry = entries[idx];
-    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
-      const auto token_idx = elements.sel->get_index(entry.offset + k);
-      if (!elements.validity.RowIsValid(token_idx)) {
+    for (auto element : list.GetChildValues()) {
+      if (!element.IsValid()) {
         continue;
       }
-      const auto& token = tokens[token_idx];
+      const auto& token = element.GetValue();
       sketch.Insert(utils::WyHash(token.GetData(), token.GetSize(), kHashSeed));
     }
     const auto row_offset = offset;
@@ -144,7 +133,7 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       data[offset++] = duckdb::StringVector::AddStringOrBlob(
         signatures, reinterpret_cast<const char*>(&value), sizeof value);
     }
-    out_entries[row] = {row_offset, offset - row_offset};
+    out_entries.WriteValue({row_offset, offset - row_offset});
   }
   duckdb::ListVector::SetListSize(result, offset);
 }

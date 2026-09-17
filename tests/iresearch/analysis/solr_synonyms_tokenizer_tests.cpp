@@ -55,7 +55,8 @@ SolrSynonymsTokenizer::SynonymsMap MakeMap(SynonymsEntries entries) {
 }  // namespace
 
 TEST(solr_synonyms_tests, consts) {
-  static_assert("solr_synonyms" == irs::Type<SolrSynonymsTokenizer>::name());
+  static_assert("expand_solr_synonyms" ==
+                irs::Type<SolrSynonymsTokenizer>::name());
 }
 
 TEST(solr_synonyms_tests, test_masking) {
@@ -245,7 +246,7 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: More than one "
+                "expand_solr_synonyms: failed to parse synonyms: More than one "
                 "explicit mapping specified on the line 1");
     }
   }
@@ -257,7 +258,8 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+                "expand_solr_synonyms: failed to parse synonyms: Failed "
+                "parse line 1");
     }
   }
 
@@ -268,7 +270,8 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+                "expand_solr_synonyms: failed to parse synonyms: Failed "
+                "parse line 1");
     }
   }
 
@@ -279,7 +282,8 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+                "expand_solr_synonyms: failed to parse synonyms: Failed "
+                "parse line 1");
     }
   }
 
@@ -290,7 +294,8 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+                "expand_solr_synonyms: failed to parse synonyms: Failed "
+                "parse line 1");
     }
   }
   {
@@ -300,7 +305,8 @@ TEST(solr_synonyms_tests, parsing) {
       FAIL() << "expected irs::SqlException";
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.message(),
-                "solr_synonyms: failed to parse synonyms: Failed parse line 3");
+                "expand_solr_synonyms: failed to parse synonyms: Failed "
+                "parse line 3");
     }
   }
 

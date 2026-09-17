@@ -4,7 +4,9 @@
 --  r      = hash(id+999983)%100    -> filter independent of score (selectivity sweeps)
 --  g      = id/5000                -> filter clustered in storage order (rg-prune)
 --  zebra  in ~1% (rare query term, for df comparison)
-CREATE TEXT SEARCH DICTIONARY en(template='text', locale='en_US.UTF-8', case='none', stemming=false, accent=false, frequency=true, position=true, norm=true);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 CREATE TABLE d (id INTEGER PRIMARY KEY, tf_col INTEGER, r INTEGER, g INTEGER, body VARCHAR);
 CREATE INDEX dt ON d USING inverted(id, body en) INCLUDE (tf_col, r, g);
 INSERT INTO d (id, tf_col, r, g, body)

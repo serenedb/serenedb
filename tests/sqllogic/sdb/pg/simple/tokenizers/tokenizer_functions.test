@@ -1,0 +1,427 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_words AS split_text(case := 'lower');
+
+query
+SELECT split_text('The Quick fox-trot.', case := 'lower') AS t;
+----
+t
+{the,quick,fox,trot}
+
+query
+SELECT split_text('The Quick fox-trot.', 'lower') = ts_lexize('fn_words', 'The Quick fox-trot.') AS same;
+----
+same
+t
+
+query
+SELECT split_text('The Quick fox-trot.') AS t;
+----
+t
+{The,Quick,fox,trot}
+
+query
+SELECT split_text('Hello world. Second sentence!', break := 'sentence') AS t;
+----
+t
+{"Hello world.","Second sentence!"}
+
+query
+SELECT SPLIT_TEXT('A b', Case := 'upper') AS t;
+----
+t
+{A,B}
+
+query
+SELECT split_text('A b', case := NULL) AS t;
+----
+t
+{A,b}
+
+query
+SELECT split_text(NULL::VARCHAR) IS NULL AS n;
+----
+n
+t
+
+query
+SELECT split_text(['Quick Fox', 'lazy DOG'], case := 'lower') AS t;
+----
+t
+{quick,fox,lazy,dog}
+
+query
+SELECT split_text([NULL, 'One two']::VARCHAR[]) AS t;
+----
+t
+{One,two}
+
+query
+SELECT split_text_csv('red,green,blue', ',') AS t;
+----
+t
+{red,green,blue}
+
+query
+SELECT split_by_delimiters('a,b;c', [',', ';']) AS t;
+----
+t
+{a,b,c}
+
+query
+SELECT split_by_non_alpha('Hello, World! 123_abc', case := 'lower') AS t;
+----
+t
+{hello,world,123,abc}
+
+query
+SELECT stem_words(split_text('The runners were running', case := 'lower'), 'en_US.UTF-8') AS t;
+----
+t
+{the,runner,were,run}
+
+query
+SELECT normalize_tokens(['Café', 'ÉCOLE'], 'en_US.UTF-8', case := 'lower', accent := false) AS t;
+----
+t
+{cafe,ecole}
+
+query
+SELECT remove_stopwords(['the', 'cat', 'is', 'a', 'hunter'], ['the', 'is', 'a']) AS t;
+----
+t
+{cat,hunter}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_ngram AS generate_ngrams(2, 3);
+
+query
+SELECT generate_ngrams('abcd', 2, 3) = ts_lexize('fn_ngram', 'abcd') AS same;
+----
+same
+t
+
+query
+SELECT generate_ngrams('search', 2, 4, mode := 'only_prefix') AS t;
+----
+t
+{se,sea,sear}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | remove_stopwords(['the']) | stem_words('en_US.UTF-8');
+
+query
+SELECT stem_words(remove_stopwords(normalize_tokens(split_text('The Runners were Running', case := 'lower'), 'en_US.UTF-8', accent := false), ['the']), 'en_US.UTF-8')
+       = ts_lexize('fn_english', 'The Runners were Running') AS same;
+----
+same
+t
+
+query
+SELECT array_length(generate_shingles(split_text_csv('quick brown fox', ' '), 2, 2), 1) AS n;
+----
+n
+5
+
+query
+SELECT generate_shingles('quick brown fox', 2, 2) AS t;
+----
+t
+{"quick brown fox"}
+
+# An empty token stream has no shingles, as in a dictionary; an empty element is still a token.
+
+query
+SELECT generate_shingles([]::VARCHAR[], 2, 2, store_tokens := false) AS empty_list,
+       generate_shingles(remove_stopwords(['the'], ['the']), 2, 2, store_tokens := false) AS emptied,
+       list_transform(generate_shingles(['', 'b'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS kept;
+----
+empty_list	emptied	kept
+{}	{}	{"",2062,62}
+
+# A NULL list yields NULL, for both wrappers; an empty list yields no terms.
+
+query
+SELECT generate_shingles(NULL::VARCHAR[], 2, 2) IS NULL AS null_shingles,
+       generate_wildcard_ngrams(NULL::VARCHAR[], 3) IS NULL AS null_wildcard,
+       generate_wildcard_ngrams([]::VARCHAR[], 3) AS empty_wildcard;
+----
+null_shingles	null_wildcard	empty_wildcard
+t	t	{}
+
+# token_separator reaches the function form: an explicit '' is not folded away.
+
+query
+SELECT generate_shingles(['a', 'b'], 2, 2, store_tokens := false) AS spaced,
+       generate_shingles(['a', 'b'], 2, 2, store_tokens := false, token_separator := '') AS joined,
+       generate_shingles(['a', 'b'], 2, 2, store_tokens := false, token_separator := ' ') AS explicit_space;
+----
+spaced	joined	explicit_space
+{a,"a b",b}	{a,ab,b}	{a,"a b",b}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_wild AS generate_wildcard_ngrams(keyword(), 3);
+
+query
+SELECT generate_wildcard_ngrams('search', 3) = ts_lexize('fn_wild', 'search') AS same;
+----
+same
+t
+
+query
+SELECT typeof(collate_tokens('abc', 'en_US.UTF-8')) AS t;
+----
+t
+BLOB[]
+
+query
+SELECT typeof(encode_geopoint('{"lat": 1.5, "lng": 2.5}'::JSON, ['lat'], ['lng'])) AS t, array_length(encode_geopoint('{"lat": 1.5, "lng": 2.5}'::JSON, ['lat'], ['lng']), 1) > 0 AS has_terms;
+----
+t	has_terms
+BLOB[]	t
+
+statement ok
+CREATE TABLE fn_docs (id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO fn_docs VALUES (1, 'The Runners'), (2, NULL), (3, 'were Running');
+
+query
+SELECT id, stem_words(split_text(body, case := 'lower'), 'en_US.UTF-8') AS t FROM fn_docs ORDER BY id;
+----
+id	t
+1	{the,runner}
+2	NULL
+3	{were,run}
+
+statement error must be a constant
+SELECT split_text(v, case := c) FROM (VALUES ('A', 'lower')) AS t(v, c);
+
+statement error
+SELECT split_text('a', locale := 'en');
+----
+db error: ERROR: No function matches the given name and argument types 'split_text(STRING_LITERAL, locale := STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split_text("value" VARCHAR, "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
+	split_text("value" VARCHAR[], "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
+
+
+statement error invalid value in "case" parameter
+SELECT split_text('a', case := 'weird');
+
+statement error stem_words: invalid locale
+SELECT stem_words('running');
+
+statement error
+SELECT split_text_csv('a,b');
+----
+db error: ERROR: No function matches the given name and argument types 'split_text_csv(STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split_text_csv("value" VARCHAR, "delimiter" VARCHAR) -> VARCHAR[]
+	split_text_csv("value" VARCHAR[], "delimiter" VARCHAR) -> VARCHAR[]
+
+
+# --- ICU segmentation ---
+
+query
+SELECT split_text_icu('Hello world. Second sentence!', 'en_US.UTF-8', break := 'sentence') AS t;
+----
+t
+{"Hello world.","Second sentence!"}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_icu AS split_text_icu('ja_JP.UTF-8');
+
+query
+SELECT split_text_icu(['日本語のテキスト', 'and english'], 'ja_JP.UTF-8') AS t;
+----
+t
+{日本語,の,テキスト,and,english}
+
+query
+SELECT split_text_icu('日本語のテキスト', 'ja_JP.UTF-8') = ts_lexize('fn_icu', '日本語のテキスト') AS same;
+----
+same
+t
+
+
+# --- Synonym expansion: the synonyms text is the option ---
+
+query
+SELECT expand_solr_synonyms(['quick', 'fox'], 'fox, vixen') AS t;
+----
+t
+{quick,fox,vixen}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_solr AS expand_solr_synonyms('fox, vixen');
+
+query
+SELECT expand_solr_synonyms('fox', 'fox, vixen') = ts_lexize('fn_solr', 'fox') AS same;
+----
+same
+t
+
+query
+SELECT expand_wordnet_synonyms('come', 's(100000002,1,''come'',v,1,0).
+s(100000002,2,''come_up'',v,1,0).') AS t;
+----
+t
+{100000002}
+
+
+# --- fastText models: the model file is the option ---
+
+query
+SELECT classify_text('Which baking dish is best to bake a banana bread?', model_location := '${RESOURCES}/tests/iresearch/model_cooking.bin', top_k := 2) AS t;
+----
+t
+{__label__bananas,__label__baking}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_classify AS
+    classify_text(model_location := '${RESOURCES}/tests/iresearch/model_cooking.bin');
+
+query
+SELECT classify_text('pasta coca-cola', model_location := '${RESOURCES}/tests/iresearch/model_cooking.bin') = ts_lexize('fn_classify', 'pasta coca-cola') AS same;
+----
+same
+t
+
+query
+SELECT find_nearest_words('salt', model_location := '${RESOURCES}/tests/iresearch/model_cooking.bin', top_k := 2) AS t;
+----
+t
+{homogenized,teach}
+
+
+# --- Binary terms: collation keys and S2 cells ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_collate AS collate_tokens('en_US.UTF-8');
+
+query
+SELECT collate_tokens('straße', 'en_US.UTF-8') = ts_lexize('fn_collate', 'straße') AS same,
+       collate_tokens('b', 'en_US.UTF-8') < collate_tokens('c', 'en_US.UTF-8') AS ordered;
+----
+same	ordered
+t	t
+
+query
+SELECT typeof(encode_geojson('{"type":"Point","coordinates":[2.5,1.5]}'::JSON)) AS t,
+       encode_geojson('{"type":"Point","coordinates":[2.5,1.5]}'::JSON) = encode_geopoint('{"lat":1.5,"lng":2.5}'::JSON, 'lat', 'lng') AS same_point;
+----
+t	same_point
+BLOB[]	t
+
+query
+SELECT array_length(encode_geojson('{"type":"Polygon","coordinates":[[[0,0],[0,1],[1,1],[1,0],[0,0]]]}'::JSON, max_cells := 8), 1) > 0 AS has_terms;
+----
+has_terms
+t
+
+# The JSON templates have no list form.
+
+statement error No function matches
+SELECT encode_geopoint(['{"lat": 1, "lng": 2}'], 'lat', 'lng');
+
+
+# --- A list option takes a list or the string spelling of the dictionary form ---
+
+query
+SELECT remove_stopwords(['the', 'fox'], stopwords := ['the']) AS list_form,
+       remove_stopwords(['the', 'fox'], stopwords := '"the"') AS string_form;
+----
+list_form	string_form
+{fox}	{fox}
+
+query
+SELECT split_by_delimiters('a;b|c', [';', '|']) = split_by_delimiters('a;b|c', '";","|"') AS same;
+----
+same
+t
+
+query
+SELECT encode_geopoint('{"loc": {"lat": 1.5, "lng": 2.5}}'::JSON, latitude := 'loc/lat', longitude := 'loc/lng')
+     = encode_geopoint('{"loc": {"lat": 1.5, "lng": 2.5}}'::JSON, latitude := ['loc', 'lat'], longitude := ['loc', 'lng']) AS same;
+----
+same
+t
+
+# Anything else fails to bind, and the candidates spell out both spellings.
+
+statement error
+SELECT remove_stopwords(['a'], stopwords := 42);
+----
+db error: ERROR: No function matches the given name and argument types 'remove_stopwords(VARCHAR[], stopwords := INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	remove_stopwords("value" VARCHAR, stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
+	remove_stopwords("value" VARCHAR[], stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
+
+
+# --- A fixed-size ARRAY is a list, as the value and as a list option ---
+
+query
+SELECT split_text(array_value('a b', 'c d')) = split_text(['a b', 'c d']) AS same_value,
+       remove_stopwords(['the', 'fox'], stopwords := array_value('the')) AS array_option;
+----
+same_value	array_option
+t	{fox}
+
+query
+SELECT generate_shingles(array_value('a', 'b'), 2, 2, store_tokens := false) AS wrapped;
+----
+wrapped
+{a,"a b",b}
+
+statement ok
+CREATE TABLE fn_arr(v VARCHAR[2]);
+
+statement ok
+INSERT INTO fn_arr VALUES (array_value('A b', 'C d'));
+
+query
+SELECT split_text(v, case := 'lower') AS from_column FROM fn_arr;
+----
+from_column
+{a,b,c,d}
+
+query
+SELECT encode_geopoint('{"loc": {"lat": 1.5, "lng": 2.5}}'::JSON, latitude := array_value('loc', 'lat'), longitude := array_value('loc', 'lng'))
+     = encode_geopoint('{"loc": {"lat": 1.5, "lng": 2.5}}'::JSON, latitude := ['loc', 'lat'], longitude := ['loc', 'lng']) AS same_path;
+----
+same_path
+t
+
+
+# --- Every function form is a catalog function, and the four templates that
+# --- have none are not ---
+
+query
+SELECT count(DISTINCT proname) AS listed FROM pg_proc
+WHERE proname IN ('split_text', 'split_text_icu', 'split_text_csv', 'split_by_delimiters',
+      'split_by_non_alpha', 'split_by_pattern', 'expand_path', 'normalize_tokens',
+      'stem_words', 'remove_stopwords', 'generate_ngrams', 'generate_sparse_ngrams',
+      'generate_wildcard_ngrams', 'generate_shingles', 'collate_tokens',
+      'expand_solr_synonyms', 'expand_wordnet_synonyms', 'classify_text',
+      'find_nearest_words', 'encode_geopoint', 'encode_geojson', 'minhash');
+----
+listed
+22
+
+query
+SELECT count(*) AS not_functions FROM pg_proc
+WHERE proname IN ('keyword', 'pipeline', 'union', 'sql');
+----
+not_functions
+0
+
+query
+SELECT count(*) > 0 AS in_routines FROM information_schema.routines
+WHERE routine_name = 'split_text';
+----
+in_routines
+t

@@ -20,10 +20,9 @@ from test_pgwire_raw import WireConn, _cstr, errors, rows, types
 DRIVER_KEY = "python_search_params"
 
 DDL = [
-    """CREATE TEXT SEARCH DICTIONARY {schema}.sp_english(
-        template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-        stemming = false, accent = false, frequency = true,
-        position = true)""",
+    """CREATE TEXT SEARCH DICTIONARY {schema}.sp_english AS
+        split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+        WITH (frequency, position)""",
     "CREATE TABLE {schema}.sp(a INTEGER PRIMARY KEY, b VARCHAR)",
     """CREATE INDEX sp_idx ON {schema}.sp
         USING inverted(a, b {schema}.sp_english)

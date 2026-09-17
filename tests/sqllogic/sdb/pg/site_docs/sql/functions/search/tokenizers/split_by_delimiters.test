@@ -1,0 +1,31 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim AS
+    split_by_delimiters([':', ';', ' ', '.', '|']);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_multi_delim AS
+    split_by_delimiters([':', ';', ' ']);
+
+query
+SELECT ts_lexize('tok_multi_delim', 'key:value; key2:value2');
+----
+ts_lexize
+{key,value,key2,value2}
+
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_by_delimiters('a,b;c d', [',', ';', ' ']) AS tokens;
+----
+tokens
+{a,b,c,d}

@@ -154,18 +154,15 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
   if (!result.GetType().IsJSONType()) {
     return;
   }
-  duckdb::UnifiedVectorFormat fmt;
-  result.ToUnifiedFormat(num_rows, fmt);
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  auto values = result.Values<duckdb::string_t>();
   // ondemand is lazy; DOM rejects malformed input up front.
   simdjson::dom::parser dom_parser;
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    const auto idx = fmt.sel->get_index(i);
-    if (!fmt.validity.RowIsValid(idx)) {
+    auto value = values[i];
+    if (!value.IsValid()) {
       continue;
     }
-    const auto view = AsView(data[idx]);
+    const auto view = AsView(value.GetValue());
     const auto first = view.find_first_not_of(" \t\n\r");
     if (first == std::string_view::npos) {
       continue;

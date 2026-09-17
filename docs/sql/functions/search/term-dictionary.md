@@ -1,7 +1,7 @@
 ---
 title: Faceted Search & Term Dictionary
 sidebar_label: Term Dictionary
-sidebar_position: 2
+sidebar_position: 3
 split: headings
 ---
 

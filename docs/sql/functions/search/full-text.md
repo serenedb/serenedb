@@ -228,7 +228,7 @@ Match by n-gram similarity — fuzzy matching that scores on shared character se
 | `text` | `VARCHAR`/`BLOB` | — | The term to match approximately. |
 | `threshold` | `DOUBLE` | `0.7` | Minimum similarity, in `0.0`–`1.0`. A term matches when the fraction of n-grams it shares with `text` is at least `threshold`. Lower values widen the match (higher recall); higher values tighten it (higher precision). |
 
-**How it works.** This requires a column tokenized with an [n-gram dictionary](../../statements/create_text_search_dictionary/ngram.md) (our `bigram` dictionary splits `hello` into `he`, `el`, `ll`, `lo`). The query string is split the same way and a term matches when enough of its n-grams overlap. Because it compares sub-sequences, n-gram similarity tolerates insertions, deletions and reorderings and is well suited to short strings and approximate matching where edit distance is too rigid. `1.0` demands an exact n-gram set; `0.3` is permissive.
+**How it works.** This requires a column tokenized with an [n-gram dictionary](./tokenizers/generate_ngrams.md) (our `bigram` dictionary splits `hello` into `he`, `el`, `ll`, `lo`). The query string is split the same way and a term matches when enough of its n-grams overlap. Because it compares sub-sequences, n-gram similarity tolerates insertions, deletions and reorderings and is well suited to short strings and approximate matching where edit distance is too rigid. `1.0` demands an exact n-gram set; `0.3` is permissive.
 
 | Query | Matches `id`, `title` | Why |
 | :--- | :--- | :--- |
@@ -768,7 +768,6 @@ Match rows by the nullness of an indexed column.
 | Function | Description |
 | :--- | :--- |
 | [`ts_lexize(dictionary, text)`](#ts_lexize) | Return the tokens a dictionary produces for `text`. |
-| [`ts_split_by_non_alpha(text [, to_lower])`](#ts_split_by_non_alpha) | Split `text` on runs of non-alphanumeric characters. |
 | [`minhash(tokens, num_hashes)`](#minhash) | Reduce a token list to a MinHash signature of at most `num_hashes` components. |
 
 #### `ts_lexize(dictionary, text)` {#ts_lexize}
@@ -780,7 +779,7 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 | `dictionary` | `VARCHAR` | — | Name of an existing [text-search dictionary](../../statements/create_text_search_dictionary/index.md). It must exist in the catalog (`'keyword'` is not a real dictionary here). |
 | `text` | `VARCHAR` or `LIST(VARCHAR)` | — | The text to analyze. A list analyzes each element and concatenates the results. |
 
-**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare.
+**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare.
 
 | Input | Tokens | Why |
 | :--- | :--- | :--- |
@@ -793,34 +792,16 @@ Lexize against an n-gram dictionary to see how a term is split for [`ts_ngram`](
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_lexize_ngram" />
 
-#### `ts_split_by_non_alpha(text [, to_lower])` {#ts_split_by_non_alpha}
-
-Split `text` on runs of non-alphanumeric characters and return the alphanumeric runs as a `LIST(VARCHAR)`. Unlike [`ts_lexize`](#ts_lexize), it needs no dictionary — it is a self-contained scalar function.
-
-| Parameter | Type | Default | Meaning |
-| :--- | :--- | :--- | :--- |
-| `text` | `VARCHAR` | — | The string to split. `NULL` yields `NULL`. |
-| `to_lower` | `BOOLEAN` | `false` | ASCII-lowercase each emitted token. |
-
-A token is a maximal run of `[A-Za-z0-9]`; every other character — punctuation, whitespace, underscores, and any non-ASCII byte — is a separator, and empty tokens are never emitted. This is the fast, dictionary-free equivalent of `regexp_split_to_array(text, '[^A-Za-z0-9]+')` (or `regexp_split_to_array(lower(text), '[^a-z0-9]+')` with `to_lower => true`), without the regex engine.
-
-| Input | `to_lower` | Result |
-| :--- | :--- | :--- |
-| `ts_split_by_non_alpha('Hello, World! 123_abc')` | `false` | `{Hello,World,123,abc}` |
-| `ts_split_by_non_alpha('The Quick-Brown FOX 2024', true)` | `true` | `{the,quick,brown,fox,2024}` |
-
-<SqlLogicTest id="sql/functions/full_text_search/ts_split_by_non_alpha" />
-
 #### `minhash(tokens, num_hashes)` {#minhash}
 
-Reduce a list of tokens to a [MinHash](../../statements/create_text_search_dictionary/minhash/index.md) signature and return it as a `LIST(BLOB)`. Two documents that share most of their tokens share most of their signature, so the number of matching components estimates the Jaccard similarity of their token sets.
+Reduce a list of tokens to a [MinHash](./tokenizers/minhash.md) signature and return it as a `LIST(BLOB)`. Two documents that share most of their tokens share most of their signature, so the number of matching components estimates the Jaccard similarity of their token sets.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `tokens` | `LIST(VARCHAR)` or `LIST(BLOB)` | — | The token set to summarize. A `NULL` list yields `NULL`; `NULL` elements are skipped. |
 | `num_hashes` | `INTEGER` | — | Signature width. Must be a foldable constant and `>= 1`, or the query fails when it is bound. |
 
-Every element is hashed to a 64-bit value and the `num_hashes` smallest distinct hashes are kept, each returned as 8 bytes. The result depends only on which distinct tokens the input holds, not on their order or their frequency, and it is shorter than `num_hashes` when the input holds fewer distinct tokens. The components are opaque hashes, so match whole signatures — index the signature as an expression, or build it in the `expression` of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, and compare with [`ts_any`](#ts_any) where `min_match` is the similarity threshold. The [`minhash` page](../../statements/create_text_search_dictionary/minhash/index.md) works both shapes through.
+Every element is hashed to a 64-bit value and the `num_hashes` smallest distinct hashes are kept, each returned as 8 bytes. The result depends only on which distinct tokens the input holds, not on their order or their frequency, and it is shorter than `num_hashes` when the input holds fewer distinct tokens. The components are opaque hashes, so match whole signatures — index the signature as an expression, or build it in the `expression` of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, and compare with [`ts_any`](#ts_any) where `min_match` is the similarity threshold. The [`minhash` page](./tokenizers/minhash.md) works both shapes through.
 
 ## Coming from Elasticsearch {#mapping}
 

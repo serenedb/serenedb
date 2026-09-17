@@ -272,25 +272,20 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto count = args.size();
-  duckdb::UnifiedVectorFormat name_data, ok_data;
-  args.data[0].ToUnifiedFormat(name_data);
-  args.data[1].ToUnifiedFormat(ok_data);
-  const auto* name_ptr =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(name_data);
-  const auto* ok_ptr = duckdb::UnifiedVectorFormat::GetData<bool>(ok_data);
+  auto names = args.data[0].Values<duckdb::string_t>();
+  auto oks = args.data[1].Values<bool>();
   auto* result_ptr =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   for (duckdb::idx_t row = 0; row < count; row++) {
-    auto n_idx = name_data.sel->get_index(row);
-    auto o_idx = ok_data.sel->get_index(row);
-    if (!name_data.validity.RowIsValid(n_idx) ||
-        !ok_data.validity.RowIsValid(o_idx)) {
+    auto name_value = names[row];
+    auto ok_value = oks[row];
+    if (!name_value.IsValid() || !ok_value.IsValid()) {
       result_validity.SetInvalid(row);
       continue;
     }
-    bool missing_ok = ok_ptr[o_idx];
-    auto key = name_ptr[n_idx].GetString();
+    const bool missing_ok = ok_value.GetValue();
+    const auto key = name_value.GetValue().GetString();
     duckdb::Value value;
     if (context.TryGetCurrentSetting(key, value)) {
       result_ptr[row] =
@@ -349,19 +344,17 @@ void CancelBackendsByPid(duckdb::DataChunk& args,
                          bool terminate) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
   auto* registry = conn_ctx.GetCancelRegistry();
-  duckdb::UnifiedVectorFormat pids;
-  args.data[0].ToUnifiedFormat(pids);
-  const auto* pid = duckdb::UnifiedVectorFormat::GetData<int32_t>(pids);
+  auto pids = args.data[0].Values<int32_t>();
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
   auto& validity = duckdb::FlatVector::ValidityMutable(result);
   using CancelResult = network::CancelRegistry::CancelResult;
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    const auto idx = pids.sel->get_index(i);
-    if (!pids.validity.RowIsValid(idx)) {
+    auto pid = pids[i];
+    if (!pid.IsValid()) {
       validity.SetInvalid(i);
       continue;
     }
-    const auto target = static_cast<uint32_t>(pid[idx]);
+    const auto target = static_cast<uint32_t>(pid.GetValue());
     const auto outcome = registry ? registry->CancelByPid(target, terminate)
                                   : CancelResult::NotFound;
     out[i] = outcome == CancelResult::Cancelled;
@@ -446,20 +439,23 @@ void SearchPathCanonicalFunction(duckdb::DataChunk& args,
 // Ported from PG: counts non-null arguments.
 void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
-  auto count = args.size();
-  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
+  const auto count = args.size();
+  const auto ncols = args.ColumnCount();
+  std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
+  for (duckdb::idx_t col = 0; col < ncols; col++) {
+    args.data[col].ToUnifiedFormat(count, vdata[col]);
+  }
+  auto out = duckdb::FlatVector::Writer<int32_t>(result, count);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     int32_t non_nulls = 0;
-    for (duckdb::idx_t col = 0; col < args.ColumnCount(); col++) {
-      duckdb::UnifiedVectorFormat vdata;
-      args.data[col].ToUnifiedFormat(count, vdata);
-      auto idx = vdata.sel->get_index(row);
-      if (vdata.validity.RowIsValid(idx)) {
+    for (duckdb::idx_t col = 0; col < ncols; col++) {
+      const auto idx = vdata[col].sel->get_index(row);
+      if (vdata[col].validity.RowIsValid(idx)) {
         non_nulls++;
       }
     }
-    result_data[row] = non_nulls;
+    out.WriteValue(non_nulls);
   }
 }
 
@@ -467,20 +463,23 @@ void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // Ported from PG: counts null arguments.
 void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
-  auto count = args.size();
-  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
+  const auto count = args.size();
+  const auto ncols = args.ColumnCount();
+  std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
+  for (duckdb::idx_t col = 0; col < ncols; col++) {
+    args.data[col].ToUnifiedFormat(count, vdata[col]);
+  }
+  auto out = duckdb::FlatVector::Writer<int32_t>(result, count);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     int32_t nulls = 0;
-    for (duckdb::idx_t col = 0; col < args.ColumnCount(); col++) {
-      duckdb::UnifiedVectorFormat vdata;
-      args.data[col].ToUnifiedFormat(count, vdata);
-      auto idx = vdata.sel->get_index(row);
-      if (!vdata.validity.RowIsValid(idx)) {
+    for (duckdb::idx_t col = 0; col < ncols; col++) {
+      const auto idx = vdata[col].sel->get_index(row);
+      if (!vdata[col].validity.RowIsValid(idx)) {
         nulls++;
       }
     }
-    result_data[row] = nulls;
+    out.WriteValue(nulls);
   }
 }
 

@@ -22,6 +22,7 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -330,7 +331,7 @@ void SqlTokenizer::BindExpression(duckdb::ClientContext& ctx) {
   try {
     bound = check_binder.Bind(expr);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
+    THROW_SQL_ERROR(ERR_MSG("sql: ", duckdb::ErrorData{e}.RawMessage()));
   }
   if (bound->IsVolatile()) {
     THROW_SQL_ERROR(ERR_MSG("sql: volatile expressions are not allowed"));

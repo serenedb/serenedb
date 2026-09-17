@@ -1,0 +1,73 @@
+# A stored dictionary is a stage: a bare name copies its analyzer as it
+# stands when the new dictionary is created.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_cased AS
+    split_text() | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('english_dict', 'Running Flies');
+----
+ts_lexize
+{run,fli}
+
+query
+SELECT ts_lexize('english_cased', 'Running Flies');
+----
+ts_lexize
+{Run,Fli}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_dict AS
+    split_text_csv(',') | split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_variant AS
+    split_text_csv(',') | split_text(case := 'upper') | stem_words('en_US.UTF-8');
+
+query
+SELECT ts_lexize('pipe_variant', 'Running,Flies');
+----
+ts_lexize
+{RUNNING,FLIES}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_extended AS
+    pipe_dict | remove_stopwords(['bar', 'foo']);
+
+query
+SELECT ts_lexize('pipe_extended', 'foo,Running,bar');
+----
+ts_lexize
+{run}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_no_run AS english_dict | remove_stopwords(['run']);
+
+query
+SELECT ts_lexize('english_no_run', 'running flies');
+----
+ts_lexize
+{fli}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_same AS english_dict;
+
+query
+SELECT ts_lexize('english_same', 'Running Flies');
+----
+ts_lexize
+{run,fli}
+
+statement ok
+DROP TEXT SEARCH DICTIONARY english_dict;
+
+query
+SELECT ts_lexize('english_same', 'Running Flies');
+----
+ts_lexize
+{run,fli}

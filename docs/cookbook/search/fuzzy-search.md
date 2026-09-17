@@ -90,7 +90,7 @@ The number of dictionary terms the predicate expands to is capped by the [`sdb_l
 
 ## N-gram matching with `ts_ngram`
 
-Finds terms by n-gram similarity. Requires an index built with an `ngram` dictionary.
+Finds terms by n-gram similarity. Requires an index built with a `generate_ngrams` dictionary.
 
 ### Setup
 
@@ -102,14 +102,14 @@ Finds terms by n-gram similarity. Requires an index built with an `ngram` dictio
 
 ### Tuning n-gram size
 
-- **Bigrams** (mingram=2, maxgram=2): More matches, less precision. Good for short terms.
-- **Trigrams** (mingram=3, maxgram=3): Fewer matches, more precision. Better for longer terms.
+- **Bigrams** (min_gram=2, max_gram=2): More matches, less precision. Good for short terms.
+- **Trigrams** (min_gram=3, max_gram=3): Fewer matches, more precision. Better for longer terms.
 
 ### Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| *column* | column | | Indexed text column (must use `ngram` dictionary) |
+| *column* | column | | Indexed text column (must use `generate_ngrams` dictionary) |
 | *term* | string | | Search term |
 | *threshold* | float | `0.7` | Minimum n-gram similarity (0.0–1.0) |
 

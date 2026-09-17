@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2019 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "stopwords_tokenizer.hpp"
@@ -40,7 +37,7 @@ Tokenizer::ptr StopwordsTokenizer::Make(Options opts,
   auto stopwords = duckdb::make_uniq<StopwordSet>(std::move(opts.mask));
   if (!opts.stopwords_path.empty() &&
       !dict::LoadStopwords(*stopwords, {}, opts.stopwords_path)) {
-    THROW_SQL_ERROR(ERR_MSG("stopwords: failed to load stopwords"));
+    THROW_SQL_ERROR(ERR_MSG("remove_stopwords: failed to load stopwords"));
   }
   stopwords->ShrinkToFit();
 

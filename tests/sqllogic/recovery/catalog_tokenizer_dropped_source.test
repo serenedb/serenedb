@@ -1,0 +1,44 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY dropped_source AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY dropped_derived AS dropped_source | remove_stopwords(['run']);
+
+onlyif serenedb
+statement ok
+DROP TEXT SEARCH DICTIONARY dropped_source;
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+onlyif serenedb
+connection after_crash
+query
+SELECT ts_lexize('dropped_derived', 'The Runners were Running');
+----
+ts_lexize
+{the,runner,were}
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY dropped_derived;

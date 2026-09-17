@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2021 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Alex Geenen
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -51,7 +48,7 @@ class ClassificationTokenizer final
   };
 
   static constexpr std::string_view type_name() noexcept {
-    return "classification";
+    return "classify_text";
   }
 
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);

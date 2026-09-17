@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2024 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,9 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Valery Mironov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/analysis/wildcard_tokenizer.hpp"
@@ -46,6 +43,8 @@ Tokenizer::ptr WildcardTokenizer::Make(Options opts,
 
 namespace {
 
+constexpr byte_type kBoundary = WildcardTokenizer::kBoundary;
+
 void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
   const size_t size = term.GetSize();
   if (size > std::numeric_limits<int32_t>::max()) {
@@ -58,9 +57,9 @@ void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
     idx + vlen + 1 + size + 1, [&](byte_type* p, size_t n) {
       auto* data = p + idx;
       WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
-      *data++ = byte_type{0xFF};
+      *data++ = kBoundary;
       std::memcpy(data, term.GetData(), size);
-      data[size] = byte_type{0xFF};
+      data[size] = kBoundary;
       return n;
     });
 }

@@ -92,15 +92,9 @@ WHERE m.id = v.id;
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY english AS
+    split_text(case := 'lower')
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX movies_idx ON movies

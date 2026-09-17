@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2021 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,9 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "collation_tokenizer.hpp"
@@ -41,13 +39,13 @@ constexpr size_t kMaxTokenSize = 1 << 15;
 
 CollationTokenizer::CollationTokenizer(const Options& options) {
   if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("collation: invalid locale"));
+    THROW_SQL_ERROR(ERR_MSG("collate_tokens: invalid locale"));
   }
   auto err = UErrorCode::U_ZERO_ERROR;
   _collator.reset(ucol_open(options.locale.getName(), &err));
   if (!_collator || !U_SUCCESS(err)) {
     THROW_SQL_ERROR(
-      ERR_MSG("collation: failed to create collator for the locale"));
+      ERR_MSG("collate_tokens: failed to create collator for the locale"));
   }
 }
 

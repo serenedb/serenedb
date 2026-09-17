@@ -1757,9 +1757,9 @@ def test_dml_then_ddl_one_implicit_block_inverted_index(conn):
     conn.send("Q", _cstr("DROP TEXT SEARCH DICTIONARY IF EXISTS iidw_en"))
     conn.drain_to_ready()
     for sql in (
-        "CREATE TEXT SEARCH DICTIONARY iidw_en("
-        " template = 'text', locale = 'en_US.UTF-8', case = 'none',"
-        " stemming = false, accent = false, frequency = true, position = true)",
+        "CREATE TEXT SEARCH DICTIONARY iidw_en AS"
+        " split_text() | normalize_tokens('en_US.UTF-8', accent := false)"
+        " WITH (frequency, position)",
         "CREATE TABLE iidw (id INTEGER, body VARCHAR)",
         "CREATE INDEX iidw_idx ON iidw USING inverted(id, body iidw_en)",
     ):

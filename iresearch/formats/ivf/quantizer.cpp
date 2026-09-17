@@ -987,6 +987,23 @@ void RotateBack(const float* signs, const float* in, float* out, uint32_t d,
   }
 }
 
+// faiss keeps TurboQuantRefine a small config struct -- there is a
+// static_assert forbidding projection buffers in it -- so the FWHT sign vector
+// lives in the quantizer and is derived from the seed. Rebuilt here the same
+// way: RandomGenerator(seed), one sign per padded dimension.
+std::vector<float> MakeTurboQuantFwhtSigns(uint64_t seed, uint32_t d) {
+  size_t padded_d = 1;
+  while (padded_d < d) {
+    padded_d <<= 1;
+  }
+  std::vector<float> signs(padded_d);
+  faiss::RandomGenerator rng(static_cast<int64_t>(seed));
+  for (size_t i = 0; i < padded_d; ++i) {
+    signs[i] = (rng.rand_int(2) == 0) ? 1.f : -1.f;
+  }
+  return signs;
+}
+
 void TurboQuantProject(const std::vector<float>& fwht_signs, const float* in,
                        float* out, uint32_t rd) noexcept {
   for (uint32_t j = 0; j < rd; ++j) {
@@ -1008,6 +1025,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
       _sqrt_rd{std::sqrt(static_cast<float>(_lay.rd))} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     TrainTurboQuant(_sq, kIvfRotationSeed);
+    _fwht_signs = MakeTurboQuantFwhtSigns(kIvfRotationSeed, _lay.rd);
     GenerateSigns(_lay.rd, kIvfRotationSeed, _signs);
     _centroids = _sq.trained.data();
     _boundaries = _sq.trained.data() + (size_t{1} << _lay.mse_bits);
@@ -1234,7 +1252,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     _gammas[lane] = std::sqrt(vector::L2Space<float, float, float>::Norm(
       reinterpret_cast<const byte_type*>(_res.data()),
       static_cast<uint16_t>(_lay.rd)));
-    TurboQuantProject(_sq.turboq_refine.fwht_signs, _res.data(), _proj.data(),
+    TurboQuantProject(_fwht_signs, _res.data(), _proj.data(),
                       _lay.rd);
     uint8_t* qjl = _code2.data() + lane * size_t{_lay.code2_bytes};
     for (uint32_t mi = 0; mi < _lay.m2; ++mi) {
@@ -1316,6 +1334,8 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   const float* _boundaries = nullptr;
   size_t _lane = 0;
   std::vector<float> _signs;
+  // Derived from turboq_refine.seed; faiss no longer stores it.
+  std::vector<float> _fwht_signs;
   std::vector<float> _centroid;
   std::vector<float> _rot;
   std::vector<float> _res;
@@ -1350,6 +1370,7 @@ class TurboQuantizerStats final : public QuantizerStats {
                                 row_major);
     _sq = std::make_unique<faiss::ScalarQuantizer>(_lay.rd, *qtype);
     TrainTurboQuant(*_sq, hdr.seed);
+    _fwht_signs = MakeTurboQuantFwhtSigns(hdr.seed, _lay.rd);
     GenerateSigns(_lay.rd, static_cast<int64_t>(hdr.seed), _signs);
     const size_t ec_bytes = size_t{_lay.rd} * sizeof(float);
     if (stats.size() >= sizeof(TurboQuantStatsHeader) + 2 * ec_bytes) {
@@ -1381,7 +1402,7 @@ class TurboQuantizerStats final : public QuantizerStats {
   const float* Centroids() const noexcept { return _sq->trained.data(); }
   const std::vector<float>& Signs() const noexcept { return _signs; }
   const std::vector<float>& FwhtSigns() const noexcept {
-    return _sq->turboq_refine.fwht_signs;
+    return _fwht_signs;
   }
   const std::vector<float>& EcScale() const noexcept { return _ec_scale; }
   const std::vector<float>& EcShift() const noexcept { return _ec_shift; }
@@ -1392,6 +1413,8 @@ class TurboQuantizerStats final : public QuantizerStats {
   bool _valid = false;
   std::unique_ptr<faiss::ScalarQuantizer> _sq;
   std::vector<float> _signs;
+  // Derived from turboq_refine.seed; faiss no longer stores it.
+  std::vector<float> _fwht_signs;
   std::vector<float> _ec_scale;
   std::vector<float> _ec_shift;
 };

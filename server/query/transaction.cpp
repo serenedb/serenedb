@@ -92,6 +92,14 @@ bool Transaction::IsStableSnapshot() const {
   return _had_dml;
 }
 
+bool Transaction::TryDropSearchReader(ObjectId shard_id) {
+  if (IsStableSnapshot() || !_search_txn) {
+    return false;
+  }
+  _search_txn->ResetReader(shard_id);
+  return true;
+}
+
 void Transaction::OnStatementBegin() {
   // Fixed for the statement: duckdb asserts that every read of a catalog's
   // identity inside one statement agrees, and a commit moves it.

@@ -41,6 +41,7 @@ add_executable(
     connector/pg_serialize_array_test.cpp
     connector/search_db_wal_test.cpp
     connector/ts_query_codec_test.cpp
+    connector/writer_generations_test.cpp
 )
 
 target_link_libraries(serenedb-tests PUBLIC sereneserver serene_connector gtest)

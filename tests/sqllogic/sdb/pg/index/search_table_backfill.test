@@ -1,0 +1,354 @@
+# CREATE INDEX on a POPULATED search table. The index shares the table's own
+# iresearch store, so the segments written before the index existed are
+# rewritten to carry its new term field (search_table_backfill.md).
+#
+# Search tables are commit-time-only, and the background refresh loop would
+# otherwise publish committed rows on its own schedule. Both intervals are
+# pinned to 0 so that ONLY the explicit VACUUM (REFRESH_TABLE) calls publish --
+# every visibility assertion below is then a matter of sequence, not timing.
+#
+# Two shapes to keep in mind while reading the queries:
+#   - An index with no text search dictionary terms the WHOLE value, so a
+#     single word out of a multi-word value does not match it. Word-level
+#     matching needs a dictionary. Both are exercised, on the same column.
+#   - No table here has more than two indexed columns (PK columns count).
+#     A third one currently breaks all DML on the table: its virtual column id
+#     is VIRTUAL_COLUMN_START + 2, which is duckdb's COLUMN_IDENTIFIER_FILE_INDEX,
+#     so DELETE/UPDATE fail with "column file_index is only served by
+#     glob-backed inverted indexes". Pre-existing and unrelated to the backfill
+#     (an index-first table fails identically); covered nowhere yet.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bf_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+# --- A populated table, indexed after the fact ---
+
+statement ok
+CREATE TABLE bf (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bf VALUES
+  (1, 'red',   'quick brown fox'),
+  (2, 'blue',  'lazy dog jumps'),
+  (3, 'red',   'fox runs fast'),
+  (4, 'green', 'nothing here');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf;
+
+# Rows published before the index existed.
+query
+SELECT count(*) FROM bf;
+----
+count
+4
+
+# The gate that used to reject this is gone. The build rewrites the existing
+# segments before the statement returns.
+statement ok
+CREATE INDEX bf_tag_idx ON bf USING inverted (tag);
+
+# Pre-existing rows are reachable through the index's own term field. Only rows
+# 1-4 exist at this point, so this can only be the rebuild's work.
+query
+SELECT id FROM bf_tag_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id
+1
+3
+
+# Rows written after the index behave exactly as they always did: the shard
+# config is already published, so an ordinary INSERT emits the new term.
+statement ok
+INSERT INTO bf VALUES (5, 'red', 'late arrival');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf;
+
+query
+SELECT id FROM bf_tag_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id
+1
+3
+5
+
+# The rebuild preserved every row and every value, not just the indexed column.
+query
+SELECT id, tag, body FROM bf ORDER BY id;
+----
+id	tag	body
+1	red	quick brown fox
+2	blue	lazy dog jumps
+3	red	fox runs fast
+4	green	nothing here
+5	red	late arrival
+
+# --- Parity: the same data indexed FIRST answers identically ---
+
+statement ok
+CREATE TABLE bf_first (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX bf_first_tag_idx ON bf_first USING inverted (tag);
+
+statement ok
+INSERT INTO bf_first SELECT id, tag, body FROM bf;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_first;
+
+query
+SELECT id FROM bf_first_tag_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM bf_first_tag_idx WHERE tag @@ 'green' ORDER BY id;
+----
+id
+4
+
+# --- DML against rebuilt rows ---
+# Row identity is the synthetic rowid the rebuild carried over, so a DELETE or
+# UPDATE issued after the swap still finds the row it names. This is the case a
+# value-keyed identity would have broken (design doc 4.2b), on the shape it
+# would have broken on: a declared PRIMARY KEY.
+
+statement ok
+DELETE FROM bf WHERE id = 3;
+
+statement ok
+UPDATE bf SET tag = 'red' WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf;
+
+query
+SELECT id FROM bf_tag_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id
+1
+2
+5
+
+# The deleted row is gone rather than masked-but-present, and the updated row
+# did not resurrect its pre-update version.
+query
+SELECT id, tag, body FROM bf ORDER BY id;
+----
+id	tag	body
+1	red	quick brown fox
+2	red	lazy dog jumps
+4	green	nothing here
+5	red	late arrival
+
+# --- Two indexes over one populated column ---
+# Each (index, column) allocates its own term field, so the second build must
+# carry the first index's postings forward while adding its own. The two use
+# different analyzers, which also proves the rebuild re-tokenizes through the
+# real write path rather than copying terms.
+
+statement ok
+CREATE TABLE bf_two (id BIGINT PRIMARY KEY, txt TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bf_two VALUES (1, 'hello world'), (2, 'quick brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_two;
+
+statement ok
+CREATE INDEX bf_two_kw ON bf_two USING inverted (txt);
+
+statement ok
+CREATE INDEX bf_two_an ON bf_two USING inverted (txt bf_en);
+
+# The analyzer index tokenizes, so a single word out of a rebuilt row matches.
+query
+SELECT id FROM bf_two_an WHERE txt @@ 'hello' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM bf_two_an WHERE txt @@ 'fox' ORDER BY id;
+----
+id
+2
+
+# The keyword index, rebuilt by the FIRST build and carried through the second,
+# still terms the whole value: one word does not match it...
+query
+SELECT id FROM bf_two_kw WHERE txt @@ 'hello' ORDER BY id;
+----
+id
+
+# ...but the whole value does.
+query
+SELECT id FROM bf_two_kw WHERE txt @@ 'hello world' ORDER BY id;
+----
+id
+1
+
+# A delete reaches both of the rebuilt term fields.
+statement ok
+DELETE FROM bf_two WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_two;
+
+query
+SELECT id FROM bf_two_an WHERE txt @@ 'hello' ORDER BY id;
+----
+id
+
+query
+SELECT id FROM bf_two_kw WHERE txt @@ 'hello world' ORDER BY id;
+----
+id
+
+query
+SELECT id FROM bf_two ORDER BY id;
+----
+id
+2
+
+# --- Group budget ---
+# The rebuild swaps segments in groups sized by a byte budget, so peak disk is
+# proportional to a group rather than the table. A budget of 1 byte puts every
+# segment in its own group: several swaps instead of one, same final index.
+
+statement ok
+CREATE TABLE bf_groups (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+# One published segment per row: compaction is off, so these stay separate and
+# the build has several groups to walk.
+statement ok
+INSERT INTO bf_groups VALUES (1, 'v1');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_groups;
+
+statement ok
+INSERT INTO bf_groups VALUES (2, 'v2');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_groups;
+
+statement ok
+INSERT INTO bf_groups VALUES (3, 'v3');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_groups;
+
+statement ok
+INSERT INTO bf_groups VALUES (4, 'v4');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_groups;
+
+statement ok
+SET search_backfill_group_bytes = 1;
+
+statement ok
+CREATE INDEX bf_groups_idx ON bf_groups USING inverted (tag);
+
+statement ok
+RESET search_backfill_group_bytes;
+
+# Every group's rows survived its own swap.
+query
+SELECT id FROM bf_groups_idx WHERE tag @@ 'v1' OR tag @@ 'v4' ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM bf_groups_idx WHERE tag @@ 'v3' ORDER BY id;
+----
+id
+3
+
+query
+SELECT id, tag FROM bf_groups ORDER BY id;
+----
+id	tag
+1	v1
+2	v2
+3	v3
+4	v4
+
+# A budget of 0 is no limit: every stale segment goes into ONE group and one
+# swap. Same final index as the 1-byte run above, from the opposite extreme.
+statement ok
+CREATE TABLE bf_onegroup (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bf_onegroup VALUES (1, 'v1');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_onegroup;
+
+statement ok
+INSERT INTO bf_onegroup VALUES (2, 'v2');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_onegroup;
+
+statement ok
+INSERT INTO bf_onegroup VALUES (3, 'v3');
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_onegroup;
+
+statement ok
+SET search_backfill_group_bytes = 0;
+
+statement ok
+CREATE INDEX bf_onegroup_idx ON bf_onegroup USING inverted (tag);
+
+statement ok
+RESET search_backfill_group_bytes;
+
+query
+SELECT id FROM bf_onegroup_idx WHERE tag @@ 'v1' OR tag @@ 'v3' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id, tag FROM bf_onegroup ORDER BY id;
+----
+id	tag
+1	v1
+2	v2
+3	v3
+
+statement ok
+DROP TABLE bf;
+
+statement ok
+DROP TABLE bf_first;
+
+statement ok
+DROP TABLE bf_two;
+
+statement ok
+DROP TABLE bf_groups;
+
+statement ok
+DROP TABLE bf_onegroup;

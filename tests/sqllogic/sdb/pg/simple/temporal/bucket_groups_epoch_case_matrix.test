@@ -116,7 +116,17 @@ UNION ALL SELECT 'case (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10' AS shape,
 UNION ALL SELECT 'case CASE WHEN price < 100 THEN price ELSE 0 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN price ELSE 0 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
 UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE service END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE service END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
 UNION ALL SELECT 'case CASE WHEN ts < TIMESTAMP ''2025-01-15'' THEN ''early'' WHEN ts < TIMESTAMP ''2025-02-15'' THEN ''mid'' ELSE ''late'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN ts < TIMESTAMP '2025-01-15' THEN 'early' WHEN ts < TIMESTAMP '2025-02-15' THEN 'mid' ELSE 'late' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
-UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
+UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMP_MS) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMP_MS) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_us(ts::TIMESTAMP_NS) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(ts::TIMESTAMP_NS) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts::TIMESTAMP_S) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts::TIMESTAMP_S) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(date_part(''epoch'', ts::TIMESTAMP_MS) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', ts::TIMESTAMP_MS) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::DATE) // 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::DATE) // 86400000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMP_S::TIMESTAMP_MS) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMP_S::TIMESTAMP_MS) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMPTZ) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMPTZ) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(d::TIMESTAMP) // 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(d::TIMESTAMP) // 86400000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d::TIMESTAMP_S) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d::TIMESTAMP_S) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(tstz::TIMESTAMP) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(tstz::TIMESTAMP) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
 
 statement ok
 RESET disabled_optimizers;
@@ -224,7 +234,17 @@ UNION ALL SELECT 'case (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10' AS shape,
 UNION ALL SELECT 'case CASE WHEN price < 100 THEN price ELSE 0 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN price ELSE 0 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
 UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE service END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE service END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
 UNION ALL SELECT 'case CASE WHEN ts < TIMESTAMP ''2025-01-15'' THEN ''early'' WHEN ts < TIMESTAMP ''2025-02-15'' THEN ''mid'' ELSE ''late'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN ts < TIMESTAMP '2025-01-15' THEN 'early' WHEN ts < TIMESTAMP '2025-02-15' THEN 'mid' ELSE 'late' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
-UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
+UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMP_MS) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMP_MS) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_us(ts::TIMESTAMP_NS) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(ts::TIMESTAMP_NS) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts::TIMESTAMP_S) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts::TIMESTAMP_S) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(date_part(''epoch'', ts::TIMESTAMP_MS) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', ts::TIMESTAMP_MS) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::DATE) // 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::DATE) // 86400000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMP_S::TIMESTAMP_MS) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMP_S::TIMESTAMP_MS) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts::TIMESTAMPTZ) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts::TIMESTAMPTZ) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(d::TIMESTAMP) // 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(d::TIMESTAMP) // 86400000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d::TIMESTAMP_S) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d::TIMESTAMP_S) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(tstz::TIMESTAMP) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(tstz::TIMESTAMP) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
 
 query
 SELECT shape, k, c, s FROM (SELECT * FROM got_e EXCEPT ALL SELECT * FROM ref_e) ORDER BY 1, 2;
@@ -240,7 +260,92 @@ query
 SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_e;
 ----
 rows	shapes
-755971	102
+797661	112
+
+query
+EXPLAIN SELECT epoch_ms(ts::TIMESTAMP_MS) // 3600000 AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PERFECT_HASH_GROUP_BY ──╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~25,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~50,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: g                 │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~50,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT floor(epoch(ts::TIMESTAMP_S) / 3600) * 3600 AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────╮
+│ Projections: k, #1                                                                 │
+│ ~25,000 rows                                                                       │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────┴─────────────────────────────────────────╮
+│ Groups: #0                                                                         │
+│ Aggregates: count_star()                                                           │
+│ ~25,000 rows                                                                       │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                       │
+│ CAST(floor((epoch(CAST(CAST(ts AS TIMESTAMP_S) AS TIMESTAMP)) // 3600)) AS BIGINT) │
+│ ~50,001 rows                                                                       │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────┴─────────────────────────────────────────╮
+│ Table: g                                                                           │
+│ Type: Sequential Scan                                                              │
+│ Projections: ts                                                                    │
+│ ~50,001 rows                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT epoch_ms(d::TIMESTAMP) // 86400000 AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PERFECT_HASH_GROUP_BY ──╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~25,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~50,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: g                 │
+│ Type: Sequential Scan    │
+│ Projections: d           │
+│ ~50,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT epoch_ms(ts::TIMESTAMPTZ) // 3600000 AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~25,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~50,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: g                 │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~50,001 rows             │
+╰──────────────────────────╯
 
 query
 EXPLAIN SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c FROM g GROUP BY 1;

@@ -914,7 +914,8 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
         if (fate[i] != kReplaced) {
           continue;
         }
-        auto doc = trx.Replace(KeyFilter(keys[i]));
+        trx.Remove(KeyFilter(keys[i]));
+        auto doc = trx.Insert();
         ASSERT_TRUE(doc);
         std::string error;
         ASSERT_TRUE(

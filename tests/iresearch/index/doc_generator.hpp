@@ -968,34 +968,12 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
   return true;
 }
 
-template<typename Indexed>
-bool Update(irs::IndexWriter& writer, const irs::Filter& filter, Indexed ibegin,
+template<typename Filter, typename Indexed>
+bool Update(irs::IndexWriter& writer, Filter&& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  if (!tests::InsertFields(ctx.Replace(filter), ibegin, iend)) {
-    return false;
-  }
-  ctx.Commit();
-  return true;
-}
-
-template<typename Indexed>
-bool Update(irs::IndexWriter& writer, irs::Filter::ptr&& filter, Indexed ibegin,
-            Indexed iend) {
-  auto ctx = writer.GetBatch();
-  if (!tests::InsertFields(ctx.Replace(std::move(filter)), ibegin, iend)) {
-    return false;
-  }
-  ctx.Commit();
-  return true;
-}
-
-template<typename Indexed>
-bool Update(irs::IndexWriter& writer,
-            const std::shared_ptr<irs::Filter>& filter, Indexed ibegin,
-            Indexed iend) {
-  auto ctx = writer.GetBatch();
-  if (!tests::InsertFields(ctx.Replace(filter), ibegin, iend)) {
+  ctx.Remove(std::forward<Filter>(filter));
+  if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
   }
   ctx.Commit();

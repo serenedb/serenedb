@@ -27,10 +27,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
@@ -199,58 +204,23 @@ class IndexWriter : private util::Noncopyable {
 
     QueryContext() = default;
 
-    static constexpr uintptr_t kDone = 0;
-    static constexpr uintptr_t kReplace = std::numeric_limits<uintptr_t>::max();
-
-    QueryContext(FilterPtr filter, uint64_t tick, uintptr_t data)
-      : filter{std::move(filter)}, tick{tick}, _data{data} {
-      SDB_ASSERT(this->filter != nullptr);
+    QueryContext(FilterPtr filter, uint64_t tick)
+      : filter{std::move(filter)}, tick{tick} {
+      SDB_ASSERT(this->filter);
     }
-    QueryContext(const irs::Filter& filter, uint64_t tick, size_t data)
-      : QueryContext{{FilterPtr{}, &filter}, tick, data} {}
-    QueryContext(irs::Filter::ptr&& filter, uint64_t tick, size_t data)
-      : QueryContext{FilterPtr{std::move(filter)}, tick, data} {}
+    QueryContext(const irs::Filter& filter, uint64_t tick)
+      : QueryContext{{FilterPtr{}, &filter}, tick} {}
+    QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
+      : QueryContext{FilterPtr{std::move(filter)}, tick} {}
 
     FilterPtr filter;
     uint64_t tick;
-
-    bool IsDone() const noexcept { return _data == kDone; }
-    void ForceDone() noexcept { _data = kDone; }
-    void Done() noexcept {
-      SDB_ASSERT(!IsDone());
-      Done(this);
-    }
-    void DependsOn(QueryContext& query) noexcept {
-      SDB_ASSERT(!IsDone());
-      if (query._data == kDone) {
-        Done(this);
-      } else {
-        SDB_ASSERT(query._data == kReplace);
-        query._data = reinterpret_cast<uintptr_t>(this);
-      }
-    }
-
-   private:
-    uintptr_t _data{kDone};
-
-    static void Done(QueryContext* query) noexcept {
-      while (true) {
-        auto next = std::exchange(query->_data, kDone);
-        SDB_ASSERT(next != kDone);
-        if (next == kReplace) {
-          return;
-        }
-        query = reinterpret_cast<QueryContext*>(next);
-        SDB_ASSERT(query != nullptr);
-      }
-    }
   };
   static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
 
   class Document : private util::Noncopyable {
    public:
-    Document(SegmentContext& segment, SegmentWriter::DocContext doc,
-             doc_id_t batch_size = 1, QueryContext* query = nullptr);
+    Document(SegmentContext& segment, uint64_t tick, doc_id_t batch_size = 1);
 
     Document(Document&&) = default;
     Document& operator=(Document&&) = delete;
@@ -290,7 +260,6 @@ class IndexWriter : private util::Noncopyable {
     void Finish() noexcept;
 
     SegmentWriter& _writer;
-    QueryContext* _query;
     doc_id_t _doc_id{irs::doc_limits::eof()};
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);
@@ -310,30 +279,17 @@ class IndexWriter : private util::Noncopyable {
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
                     CommitOnFlush* commit_on_flush = nullptr) {
       UpdateSegment(disable_flush, commit_on_flush);
-      return {*_active.Segment(), SegmentWriter::DocContext{_queries},
-              batch_size};
+      return {*_active.Segment(), _queries, batch_size};
     }
 
     template<bool TickBound = true, typename Filter>
     void Remove(Filter&& filter) {
       UpdateSegment(true, nullptr);
       _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
-                                              _queries, QueryContext::kDone);
+                                              _queries);
       if constexpr (TickBound) {
         ++_queries;
       }
-    }
-
-    template<typename Filter>
-    Document Replace(Filter&& filter, bool disable_flush = false) {
-      UpdateSegment(disable_flush, nullptr);
-      auto& segment = *_active.Segment();
-      auto& query = segment.queries.emplace_back(
-        std::forward<Filter>(filter), _queries, QueryContext::kReplace);
-      segment.has_replace = true;
-      return {segment,
-              SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
-              1, &query};
     }
 
     void Reset() noexcept;
@@ -427,6 +383,10 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
+    // Queues this transaction into `flush` with its `pending_mutex` already
+    // held by the caller
+    bool CommitLocked(uint64_t last_tick, FlushContext& flush) noexcept;
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
@@ -475,6 +435,45 @@ class IndexWriter : private util::Noncopyable {
 
   bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
                     uint64_t tick);
+
+  class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
+   public:
+    CompactionFloorGuard() = default;
+    CompactionFloorGuard(IndexWriter& writer, uint64_t floor) noexcept
+      : _writer{&writer}, _floor{floor} {}
+    CompactionFloorGuard(CompactionFloorGuard&& rhs) noexcept
+      : _writer{std::exchange(rhs._writer, nullptr)}, _floor{rhs._floor} {}
+    CompactionFloorGuard& operator=(CompactionFloorGuard&& rhs) noexcept {
+      if (this != &rhs) {
+        Release();
+        _writer = std::exchange(rhs._writer, nullptr);
+        _floor = rhs._floor;
+      }
+      return *this;
+    }
+    ~CompactionFloorGuard() { Release(); }
+
+    bool Held() const noexcept { return _writer != nullptr; }
+    uint64_t Floor() const noexcept { return _floor; }
+
+   private:
+    void Release() noexcept;
+
+    IndexWriter* _writer = nullptr;
+    uint64_t _floor = 0;
+  };
+
+  CompactionFloorGuard ArmCompactionFloor();
+
+  const Format::ptr& Codec() const noexcept { return _codec; }
+
+  uint64_t CurrentSegmentId() const noexcept;
+
+  bool ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<const std::string_view> adopted_metas,
+                       const Format::ptr& codec,
+                       Transaction* removals = nullptr,
+                       uint64_t removals_tick = writer_limits::kMinTick);
 
   bool Import(const IndexReader& reader, Format::ptr codec = nullptr,
               const MergeWriter::FlushProgress& progress = {});
@@ -576,34 +575,25 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+                            DocsMask&& docs_mask, DocContexts&& docs,
+                            size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        _docs_begin{docs_begin},
-        _docs_end{_docs_begin + meta.docs_count} {}
-
-    size_t GetDocsBegin() const noexcept { return _docs_begin; }
-    size_t GetDocsEnd() const noexcept { return _docs_end; }
-
-    bool SetCommitted(size_t committed) noexcept {
-      SDB_ASSERT(GetDocsBegin() <= committed);
-      SDB_ASSERT(committed < GetDocsEnd());
-      _docs_end = committed;
-      return _docs_begin != committed;
+        docs{std::move(docs)},
+        committed_docs{committed_docs} {
+      SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
     DocMap old2new;
     DocMap new2old;
     DocsMask docs_mask;
     DocumentMask document_mask;
+    DocContexts docs;
+    size_t committed_docs;
     bool was_flush = false;
     bool meta_on_disk = false;
-
-   private:
-    size_t _docs_begin;
-    size_t _docs_end;
   };
 
   struct SegmentContext {
@@ -615,21 +605,18 @@ class IndexWriter : private util::Noncopyable {
 
     ManagedVector<QueryContext> queries;
     ManagedVector<FlushedSegment> flushed;
-    ManagedVector<SegmentWriter::DocContext> flushed_docs;
 
     segment_meta_generator_t meta_generator;
 
     size_t flushed_queries{0};
     size_t committed_queries{0};
     size_t committed_buffered_docs{0};
-    size_t committed_flushed_docs{0};
 
     uint64_t first_tick{writer_limits::kMaxTick};
     uint64_t last_tick{writer_limits::kMinTick};
 
     std::unique_ptr<SegmentWriter> writer;
     IndexSegment writer_meta;
-    bool has_replace{false};
 
     static std::unique_ptr<SegmentContext> make(
       Directory& dir, segment_meta_generator_t&& meta_generator,
@@ -728,12 +715,19 @@ class IndexWriter : private util::Noncopyable {
     absl::Mutex pending_mutex;
 
     CompactingSegments segment_mask;
+    // Backing store for segment_mask entries whose name is not kept alive by a
+    // pinned reader in `imports`. A deque so an append never invalidates the
+    // views already handed to segment_mask.
+    std::deque<std::string> masked_names;
 
     FlushContext() = default;
 
     ~FlushContext() noexcept { Reset(); }
 
     void Emplace(ActiveSegmentContext&& active);
+
+    bool PrepareEmplace(ActiveSegmentContext& active) noexcept;
+    void EmplaceLocked(ActiveSegmentContext&& active);
 
     void AddToPending(ActiveSegmentContext& active);
 
@@ -799,7 +793,6 @@ class IndexWriter : private util::Noncopyable {
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
   uint64_t NextSegmentId() noexcept;
-  uint64_t CurrentSegmentId() const noexcept;
   void InitMeta(IndexMeta& meta, uint64_t tick) const;
 
   bool Start(const CommitInfo& info);
@@ -818,6 +811,7 @@ class IndexWriter : private util::Noncopyable {
   struct {
     std::recursive_mutex lock;
     CompactingSegments segments;
+    uint64_t floor = 0;
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;

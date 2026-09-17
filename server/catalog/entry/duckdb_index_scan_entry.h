@@ -86,7 +86,8 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
                               duckdb::SchemaCatalogEntry& schema,
                               duckdb::CreateTableInfo& info,
                               ObjectId relation_id,
-                              const catalog::Index& inverted_index);
+                              const catalog::Index& inverted_index,
+                              bool search_engine);
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
@@ -98,6 +99,12 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  protected:
   std::vector<IResearchColumnBinding> SegmentInfoBindings() const final;
   duckdb::column_t RowIdentityColumnId() const final;
+
+ private:
+  // The indexed relation is Search-backed, so rows are identified by the
+  // synthetic rowid. Captured at construction: the shape accessors take no
+  // context and so cannot look the relation up themselves.
+  bool _search_engine;
 };
 
 class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {

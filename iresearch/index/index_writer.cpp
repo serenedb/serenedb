@@ -86,11 +86,10 @@ struct FlushedSegmentContext {
     if (flushed.document_mask.size() == flushed.meta.docs_count) {
       return true;
     }
-    const auto begin = flushed.GetDocsBegin();
-    const auto end = flushed.GetDocsEnd();
-    SDB_ASSERT(begin < end);
-    SDB_ASSERT(segment.flushed_docs[begin].tick <= tick);
-    const auto flushed_last_tick = segment.flushed_docs[end - 1].tick;
+    const auto end = flushed.docs.size();
+    SDB_ASSERT(0 < end);
+    SDB_ASSERT(flushed.docs.TickAt(0) <= tick);
+    const auto flushed_last_tick = flushed.docs.TickAt(end - 1);
     if (flushed_last_tick <= tick) {
       document_mask = std::move(flushed.document_mask);
       index = std::move(flushed);
@@ -98,11 +97,14 @@ struct FlushedSegmentContext {
     }
     // intentionally copy
     document_mask = flushed.document_mask;
-    for (auto rbegin = end - 1;
-         rbegin > begin && segment.flushed_docs[rbegin].tick > tick; --rbegin) {
-      const auto old_doc = rbegin - begin + doc_limits::min();
-      const auto new_doc = Old2New(old_doc);
-      document_mask.insert(new_doc);
+    const auto runs = flushed.docs.Runs();
+    for (size_t run = flushed.docs.RunIndex(end - 1) + 1;
+         run-- > 0 && tick < runs[run].tick;) {
+      const auto run_end = std::min(end, flushed.docs.RunEnd(run));
+      for (size_t doc = std::max<size_t>(runs[run].begin, 1); doc < run_end;
+           ++doc) {
+        document_mask.insert(Old2New(doc + doc_limits::min()));
+      }
     }
     if (document_mask.size() == flushed.meta.docs_count) {
       return true;
@@ -111,8 +113,7 @@ struct FlushedSegmentContext {
     return false;
   }
 
-  void Remove(IndexWriter::QueryContext& query);
-  void MaskUnusedReplace(uint64_t first_tick, uint64_t last_tick);
+  void Remove(const IndexWriter::QueryContext& query);
 
  private:
   void Init(const ResourceManagementOptions& rm) {
@@ -126,8 +127,8 @@ struct FlushedSegmentContext {
 
     DocumentMask document_mask{{*rm.readers}};
 
-    SDB_ASSERT(flushed.GetDocsBegin() < flushed.GetDocsEnd());
-    const auto end = flushed.GetDocsEnd() - flushed.GetDocsBegin();
+    const auto end = flushed.docs.size();
+    SDB_ASSERT(0 < end);
     const auto invalid_end = static_cast<size_t>(flushed.meta.docs_count);
 
     // TODO(mbkkt) Is it good?
@@ -186,19 +187,9 @@ struct FlushedSegmentContext {
   }
 };
 
-// Apply any document removals based on filters in the segment.
-// modifications where to get document update_contexts from
-// docs_mask where to apply document removals to
-// readers readers by segment name
-// meta key used to get reader for the segment to evaluate
-// Return if any new records were added (modification_queries_ modified).
 void RemoveFromExistingSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
+                               const IndexWriter::QueryContext& query,
                                const SubReader& reader) {
-  if (query.filter == nullptr) {
-    return;
-  }
-
   // A deletion never scores, so nothing under it collects statistics. The
   // batch's own deletions so far are handed over: a document an earlier query
   // of this batch removed is not alive, and the segment's mask predates it.
@@ -220,21 +211,15 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (docs_mask && docs_mask->contains(doc_id)) {
-      continue;  // the current modification query does not match any records
+      continue;
     }
-    if (deleted_docs.insert(doc_id).second) {
-      query.ForceDone();
-    }
+    deleted_docs.insert(doc_id);
   }
 }
 
 bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
+                               const IndexWriter::QueryContext& query,
                                const SubReader& reader) {
-  if (query.filter == nullptr) {
-    return false;
-  }
-
   // A deletion never scores, so nothing under it collects statistics. The
   // batch's own deletions so far are handed over: a document an earlier query
   // of this batch removed is not alive, and the segment's mask predates it.
@@ -251,25 +236,15 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
 
   bool modified = false;
   for (auto doc = plan->Next(); !doc_limits::eof(doc); doc = plan->Next()) {
-    // if the indexed doc_id was already masked then it should be skipped
-    if (!deleted_docs.insert(doc).second) {
-      continue;  // the current modification query does not match any records
-    }
-
-    query.ForceDone();
-    modified = true;
+    modified |= deleted_docs.insert(doc).second;
   }
 
   return modified;
 }
 
-// Apply any document removals based on filters in the segment.
-// modifications where to get document update_contexts from
-// segment where to apply document removals to
-// min_doc_id staring doc_id that should be considered
-// readers readers by segment name
-void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
-  if (query.filter == nullptr) {
+void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
+  const auto bound = flushed.docs.UpperBound(query.tick);
+  if (bound == 0) {
     return;
   }
 
@@ -291,47 +266,10 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
     return;  // Skip a query kind that has no plan
   }
 
-  auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
   for (auto new_doc = plan->Next(); !doc_limits::eof(new_doc);
        new_doc = plan->Next()) {
-    const auto old_doc = New2Old(new_doc);
-
-    const auto& doc = flushed_docs[old_doc - doc_limits::min()];
-
-    if (query.tick < doc.tick || !document_mask.insert(new_doc).second ||
-        query.IsDone()) {
-      continue;
-    }
-    if (doc.query_id == writer_limits::kInvalidOffset) {
-      query.Done();
-    } else {
-      query.DependsOn(segment.queries[doc.query_id]);
-    }
-  }
-}
-
-// Mask documents created by replace which did not have any matches.
-void FlushedSegmentContext::MaskUnusedReplace(uint64_t first_tick,
-                                              uint64_t last_tick) {
-  const auto begin = flushed.GetDocsBegin();
-  const auto end = flushed.GetDocsEnd();
-  const std::span docs{segment.flushed_docs.data() + begin,
-                       segment.flushed_docs.data() + end};
-  for (const auto& doc : docs) {
-    if (doc.tick <= first_tick) {
-      continue;
-    }
-    if (last_tick < doc.tick) {
-      break;
-    }
-    if (doc.query_id == writer_limits::kInvalidOffset) {
-      continue;
-    }
-    SDB_ASSERT(doc.query_id < segment.queries.size());
-    if (!segment.queries[doc.query_id].IsDone()) {
-      const auto new_doc =
-        Old2New(static_cast<size_t>(&doc - docs.data()) + doc_limits::min());
-      flushed.document_mask.insert(new_doc);
+    if (New2Old(new_doc) - doc_limits::min() < bound) {
+      document_mask.insert(new_doc);
     }
   }
 }
@@ -677,13 +615,12 @@ IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
   return *this;
 }
 
-IndexWriter::Document::Document(SegmentContext& segment,
-                                SegmentWriter::DocContext doc,
-                                doc_id_t batch_size, QueryContext* query)
-  : _writer{*segment.writer}, _query{query} {
+IndexWriter::Document::Document(SegmentContext& segment, uint64_t tick,
+                                doc_id_t batch_size)
+  : _writer{*segment.writer} {
   SDB_ASSERT(segment.writer != nullptr);
   // ensure Reset() will be noexcept
-  _doc_id = _writer.begin(doc, batch_size);
+  _doc_id = _writer.begin(tick, batch_size);
   SDB_ASSERT(irs::doc_limits::valid(_doc_id));
   segment.buffered_docs.store(_writer.buffered_docs(),
                               std::memory_order_relaxed);
@@ -696,10 +633,6 @@ void IndexWriter::Document::Finish() noexcept {
     _writer.commit();
   } catch (...) {
     _writer.rollback();
-  }
-  if (!_writer.valid() && _query != nullptr) {
-    // TODO(mbkkt) segment.queries.pop_back()?
-    _query->filter = nullptr;
   }
 }
 
@@ -770,6 +703,31 @@ bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
   Abort();
   return false;
+}
+
+bool IndexWriter::Transaction::CommitLocked(uint64_t last_tick,
+                                            FlushContext& flush) noexcept {
+  auto* segment = _active.Segment();
+  if (segment == nullptr) {
+    return true;
+  }
+  // An unregistered transaction is queued into whichever context the caller
+  // holds. A registered one belongs to the context current when it registered,
+  // which may not be this one -- PrepareEmplace would then release it, and the
+  // caller would publish an adoption without the removals meant to mask it.
+  SDB_ASSERT(_active.Flush() == nullptr || _active.Flush() == &flush,
+             "CommitLocked on a transaction registered with another context");
+  try {
+    segment->Commit(_queries, last_tick);
+    if (flush.PrepareEmplace(_active)) {
+      flush.EmplaceLocked(std::move(_active));
+    }
+  } catch (...) {
+    // No Abort here: it takes the lock the caller is holding.
+    return false;
+  }
+  _queries = 0;
+  return true;
 }
 
 void IndexWriter::Transaction::Abort() noexcept {
@@ -860,24 +818,27 @@ bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
          _segment_limits.Docs() <= segment.buffered_docs();
 }
 
-void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+bool IndexWriter::FlushContext::PrepareEmplace(
+  ActiveSegmentContext& active) noexcept {
   SDB_ASSERT(active._segment != nullptr);
 
   if (active._segment->first_tick == writer_limits::kMaxTick) {
     // Reset all segment data because there wasn't successful transactions
     active._segment->Reset();
     active = {};  // release
-    return;
+    return false;
   }
 
   auto* flush = active._flush;
-  const bool is_null = flush == nullptr;
-  if (!is_null && flush != this) {
+  if (flush != nullptr && flush != this) {
     active = {};  // release
-    return;
+    return false;
   }
+  return true;
+}
 
-  std::lock_guard lock{pending_mutex};
+void IndexWriter::FlushContext::EmplaceLocked(ActiveSegmentContext&& active) {
+  const bool is_null = active._flush == nullptr;
   auto* node = [&] {
     if (is_null) {
       return &pending_segments.emplace_back(std::move(active._segment),
@@ -890,6 +851,14 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
   }();
   pending_freelist.push(*node);
   active = {};
+}
+
+void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+  if (!PrepareEmplace(active)) {
+    return;
+  }
+  std::lock_guard lock{pending_mutex};
+  EmplaceLocked(std::move(active));
 }
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
@@ -915,6 +884,7 @@ void IndexWriter::FlushContext::Reset() noexcept {
   cached.clear();
   segments.clear();
   segment_mask.clear();
+  masked_names.clear();
 
   for (auto& entry : pending_segments) {
     if (auto& segment = entry.segment; segment != nullptr) {
@@ -1013,7 +983,6 @@ IndexWriter::SegmentContext::SegmentContext(
   : dir{dir},
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
-    flushed_docs{{options.resource_manager}},
     meta_generator{std::move(meta_generator)},
     writer{SegmentWriter::make(this->dir, options)} {
   SDB_ASSERT(this->meta_generator);
@@ -1037,27 +1006,20 @@ void IndexWriter::SegmentContext::Flush() {
     committed_buffered_docs = 0;
   };
 
-  DocsMask docs_mask{.set{flushed_docs.get_allocator()}};
+  DocsMask docs_mask{.set{flushed.get_allocator()}};
   auto old2new = writer->flush(writer_meta, docs_mask);
   if (writer_meta.meta.live_docs_count == 0) {
     return;
   }
   SDB_ASSERT(!writer_meta.meta.files.empty());
-  const auto docs_context = writer->docs_context();
+  auto& docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size());
-  try {
-    flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
-                        docs_context.end());
-  } catch (...) {
-    flushed.pop_back();
-    throw;
-  }
+                       std::move(docs_mask), std::move(docs_context),
+                       committed_buffered_docs);
   flushed_queries = queries.size();
-  committed_flushed_docs += committed_buffered_docs;
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
@@ -1086,14 +1048,11 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
     committed_queries = 0;
 
     flushed.clear();
-    flushed_docs.clear();
-    committed_flushed_docs = 0;
 
     // TODO(mbkkt) What about ticks in case of store_flushed?
     //  Of course it's valid but maybe we can decrease range?
     first_tick = writer_limits::kMaxTick;
     last_tick = writer_limits::kMinTick;
-    has_replace = false;
   }
   committed_buffered_docs = 0;
 
@@ -1115,21 +1074,17 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   // truncate uncommitted flushed tail
   const auto end = flushed.end();
   // TODO(mbkkt) reverse find order
-  auto it = std::find_if(flushed.begin(), end, [&](const auto& flushed) {
-    return committed_flushed_docs < flushed.GetDocsEnd();
+  auto it = std::find_if(flushed.begin(), end, [](const auto& flushed) {
+    return flushed.committed_docs < flushed.docs.size();
   });
   if (it != end) {
     // because committed docs point to flushed
     SDB_ASSERT(committed_buffered_docs == 0);
-    const auto docs_end = it->GetDocsEnd();
-    if (it->SetCommitted(committed_flushed_docs)) {
+    if (it->committed_docs != 0) {
+      it->docs.Truncate(it->committed_docs);
       flushed.erase(it + 1, end);
-      SDB_ASSERT(committed_flushed_docs < docs_end);
-      flushed_docs.resize(docs_end);
-      committed_flushed_docs = docs_end;
     } else {
       flushed.erase(it, end);
-      flushed_docs.resize(committed_flushed_docs);
     }
   }
 
@@ -1152,13 +1107,9 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   // TODO(mbkkt) Maybe we can just move docs_begin/end when FlushedSegment
   //  will be ready? Also what about assign last_committed_tick
   //  only for first and last value in range?
-  const auto docs = writer->docs_context();
-  const auto last_committed_tick = docs[committed_buffered_docs - 1].tick;
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
-                [&](auto& doc) {
-                  doc.tick = last_committed_tick;
-                  doc.query_id = writer_limits::kInvalidOffset;
-                });
+  auto& docs = writer->docs_context();
+  docs.RewriteTail(committed_buffered_docs,
+                   docs.TickAt(committed_buffered_docs - 1));
 
   committed_buffered_docs = buffered_docs;
 }
@@ -1178,13 +1129,13 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
                 update_tick);
   committed_queries = queries.size();
 
-  std::for_each(flushed_docs.begin() + committed_flushed_docs,
-                flushed_docs.end(), update_tick);
-  committed_flushed_docs = flushed_docs.size();
+  for (auto& segment : flushed) {
+    segment.docs.Commit(segment.committed_docs, commit_first_tick);
+    segment.committed_docs = segment.docs.size();
+  }
 
-  const auto docs = writer->docs_context();
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
-                update_tick);
+  auto& docs = writer->docs_context();
+  docs.Commit(committed_buffered_docs, commit_first_tick);
   committed_buffered_docs = docs.size();
 
   if (first_tick == writer_limits::kMaxTick) {
@@ -1430,7 +1381,28 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
     // FIXME TODO remove from 'compacting_segments_' any segments in
     // 'committed_state_' or 'pending_state_' to avoid data duplication
-    policy(candidates, *committed_reader, _compacting.segments);
+    const auto floor = _compacting.floor;
+    if (floor == 0) {
+      policy(candidates, *committed_reader, _compacting.segments);
+    } else {
+      // Hide the backfill-protected segments from the policy
+      // TODO(Dronplane): maybe make it member and not refill every run?
+      CompactingSegments unavailable = _compacting.segments;
+      for (const auto& segment : *committed_reader) {
+        uint64_t id = 0;
+        const auto& name = segment.Meta().name;
+        if (ParseSegmentId(name, id) && id <= floor) {
+          unavailable.insert(name);
+        }
+      }
+      policy(candidates, *committed_reader, unavailable);
+
+      // TODO(Dronplane): should it be an assert?
+      std::erase_if(candidates, [floor](const SubReader* candidate) {
+        uint64_t id = 0;
+        return ParseSegmentId(candidate->Meta().name, id) && id <= floor;
+      });
+    }
 
     switch (candidates.size()) {
       case 0:  // nothing to compact
@@ -1709,6 +1681,158 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
   return true;
 }
 
+void IndexWriter::CompactionFloorGuard::Release() noexcept {
+  if (_writer == nullptr) {
+    return;
+  }
+  std::lock_guard lock{_writer->_compacting.lock};
+  _writer->_compacting.floor = 0;
+  _writer = nullptr;
+}
+
+IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
+  std::lock_guard lock{_compacting.lock};
+  if (!_compacting.segments.empty()) {
+    // A compaction is between selecting candidates and minting its output id,
+    // so it could still stamp a fresh id on segments below the floor we are
+    // about to set. The caller should retry once it finishes.
+    return {};
+  }
+  if (_compacting.floor != 0) {
+    return {};  // already armed; one holder at a time
+  }
+  const auto floor = CurrentSegmentId();
+  _compacting.floor = floor;
+  return {*this, floor};
+}
+
+bool IndexWriter::ReplaceSegments(
+  std::span<const std::string_view> replaced,
+  std::span<const std::string_view> adopted_metas, const Format::ptr& codec,
+  Transaction* removals, uint64_t removals_tick) {
+  if (codec == nullptr) {
+    SDB_WARN(IRESEARCH, "Cannot replace segments: unresolvable codec");
+    return false;
+  }
+  if (replaced.empty() && adopted_metas.empty()) {
+    return true;
+  }
+
+  // Pin the committed state: the candidate names are masked as string_views
+  // into its metas, so it has to outlive the flush context that holds them --
+  // and holding it also keeps the cleaner off the files until the commit
+  // publishes them. Same reason Compact pins it.
+  decltype(_committed_reader) committed_reader;
+  Compaction candidates;
+  {
+    std::lock_guard lock{_compacting.lock};
+    committed_reader = GetSnapshotImpl();
+    candidates.reserve(replaced.size());
+    for (const auto name : replaced) {
+      const SubReader* found = nullptr;
+      for (const auto& segment : *committed_reader) {
+        if (segment.Meta().name == name) {
+          found = &segment;
+          break;
+        }
+      }
+      if (found == nullptr) {
+        // Not a lost race: a removal that takes a segment's last live doc masks
+        // the whole segment out rather than giving it a docs_mask (PrepareFlush
+        // stage 1), so a source whose rows were all deleted while the caller
+        // was rebuilding it is simply gone. Nothing left to mask, and the
+        // caller's replacement is still adopted -- whatever deleted those rows
+        // reaches the replacement too, by tick if the removal is still pending
+        // and through the host's own reissue if it was already applied.
+        continue;
+      }
+      candidates.push_back(found);
+    }
+  }
+
+  // Open every replacement before touching the flush context, so a failure
+  // leaves nothing behind.
+  struct Adopted {
+    IndexSegment segment;
+    FileRefs refs;
+    std::shared_ptr<const SegmentReaderImpl> reader;
+  };
+  std::vector<Adopted> adopted;
+  adopted.reserve(adopted_metas.size());
+  for (const auto meta_file : adopted_metas) {
+    Adopted entry;
+    entry.segment.filename = meta_file;
+    entry.segment.meta.codec = codec;
+    try {
+      codec->get_segment_meta_reader()->read(_dir, entry.segment.meta,
+                                             meta_file);
+    } catch (const std::exception& e) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '", meta_file,
+               "': ", e.what());
+      return false;
+    }
+    if (entry.segment.meta.live_docs_count == 0) {
+      continue;  // nothing to adopt; the sources are still replaced
+    }
+    auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
+    if (!meta_ref) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
+               entry.segment.filename, "': failed to reference it");
+      return false;
+    }
+    entry.reader = SegmentReaderImpl::Open(_dir, entry.segment.meta,
+                                           GetSnapshotImpl()->Options());
+    if (!entry.reader) {
+      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
+               entry.segment.filename, "': failed to open it");
+      return false;
+    }
+    entry.refs.emplace_back(std::move(meta_ref));
+    adopted.push_back(std::move(entry));
+  }
+
+  auto flush = GetFlushContext();
+  std::lock_guard lock{flush->pending_mutex};
+
+  // In the same critical section as the imports below, so removals queued here
+  // mask the adopted segments in the generation that publishes them. As rowids
+  // are not reused - even if this succeeds but allocations below fails -
+  // removes are harmless without adoption passed.
+  if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
+    return false;
+  }
+
+  // Pre-allocation so tail is allocation-free
+  auto& segment_mask = flush->segment_mask;
+  flush->imports.reserve(flush->imports.size() + adopted.size());
+  segment_mask.reserve(segment_mask.size() + candidates.size());
+  std::vector<std::string_view> masked;
+  masked.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    masked.emplace_back(
+      flush->masked_names.emplace_back(candidate->Meta().name));
+  }
+
+  // Mutating tail
+  // No merger: the replacements are already written, so PrepareFlush takes the
+  // plain-import path and applies pending removals by tick rather than
+  // remapping them through a merge. The pinned reader rides along so the files
+  // it names survive until the commit publishes them.
+  for (auto& entry : adopted) {
+    // A copy per import: the ctor takes the pin by rvalue, and every import
+    // needs its own so the files stay referenced until the commit.
+    // MinTick used here as pending removes must reach replaced segments.
+    flush->imports.emplace_back(std::move(entry.segment),
+                                writer_limits::kMinTick, std::move(entry.refs),
+                                Compaction{}, std::move(entry.reader),
+                                decltype(committed_reader){committed_reader});
+  }
+  for (const auto name : masked) {
+    segment_mask.emplace(name);
+  }
+  return true;
+}
+
 bool IndexWriter::Import(const IndexReader& reader,
                          Format::ptr codec /*= nullptr*/,
                          const MergeWriter::FlushProgress& progress /*= {}*/) {
@@ -1961,7 +2085,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
-    apply_all_queries([&](QueryContext& query) {
+    apply_all_queries([&](const QueryContext& query) {
       // FIXME(gnusi): optimize PK queries
       RemoveFromExistingSegment(deleted_docs, query, existing_segment);
     });
@@ -2083,7 +2207,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // merged segment. Pending already imported/compacted segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
-      apply_all_queries([&](QueryContext& query) {
+      apply_all_queries([&](const QueryContext& query) {
         // skip queries which not affect this
         if (import.tick <= query.tick) {
           // FIXME(gnusi): optimize PK queries
@@ -2194,15 +2318,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
       // was updated after flush
       SDB_ASSERT(segment->committed_buffered_docs == 0);
-      SDB_ASSERT(segment->committed_flushed_docs ==
-                 segment->flushed_docs.size());
       // process individually each flushed SegmentMeta from the SegmentContext
       for (auto& flushed : segment->flushed) {
-        SDB_ASSERT(flushed.GetDocsBegin() < flushed.GetDocsEnd());
-        const auto flushed_first_tick =
-          segment->flushed_docs[flushed.GetDocsBegin()].tick;
+        SDB_ASSERT(flushed.committed_docs == flushed.docs.size());
+        SDB_ASSERT(!flushed.docs.empty());
+        const auto flushed_first_tick = flushed.docs.TickAt(0);
         const auto flushed_last_tick =
-          segment->flushed_docs[flushed.GetDocsEnd() - 1].tick;
+          flushed.docs.TickAt(flushed.docs.size() - 1);
         SDB_ASSERT(flushed_first_tick <= flushed_last_tick);
 
         if (flushed_last_tick <= _committed_tick) {
@@ -2241,7 +2363,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
         // mask documents matching filters from all flushed segment_contexts
         // (i.e. from new operations)
-        apply_all_queries([&](QueryContext& query) {
+        apply_all_queries([&](const QueryContext& query) {
           // skip queries which not affect this FlushedSegment
           if (flushed_first_tick <= query.tick) {
             // FIXME(gnusi): optimize PK queries
@@ -2260,9 +2382,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       progress("Stage 4: Applying removals for new segments",
                current_segment_ctxs++, segment_ctxs.size());
 
-      if (segment_ctx.segment.has_replace) {
-        segment_ctx.MaskUnusedReplace(_committed_tick, tick);
-      }
       DocumentMask document_mask{{*dir.ResourceManager().readers}};
       IndexSegment new_segment;
       if (segment_ctx.MakeDocumentMask(tick, document_mask, new_segment)) {

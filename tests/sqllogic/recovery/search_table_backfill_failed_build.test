@@ -1,0 +1,111 @@
+# A search-table CREATE INDEX whose backfill FAILS without crashing.
+# Requires SDB_FAULT_INJECTION.
+#
+# Three things have to hold, and only the third needs a test to prove it.
+#
+# The planner can never serve a half-built index. The direct scan (FROM <idx>)
+# needs the catalog entry, which is uncommitted for the whole build; and
+# base-table pushdown resolves config entries by COLUMN id
+# (iresearch_plan.cpp, `config->find(field_id)` where field_id == col_id),
+# while a declared index's terms live under a separately allocated catalog oid,
+# so that road cannot reach them however far the build got.
+#
+# The shard's merged config is NOT transactional -- MergeIndexConfig applies it
+# immediately under the catalog mutex -- but SereneDBIndexEntry::Rollback calls
+# DropIndexArtifacts with a null context, so the deferred action runs inline
+# during the rollback and RebuildIndexConfig drops the dead term field.
+#
+# The third is what this pins: a failed build must release the build claim, the
+# compaction floor and the delete log, all of which are RAII and all of which
+# would silently break the NEXT attempt if any leaked. A retry that succeeds is
+# the assertion.
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bff (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bff VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bff;
+
+
+# Fails the columnstore scan the rebuild reads its rows through.
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault';
+
+
+statement error
+CREATE INDEX bff_idx ON bff USING inverted (tag);
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+
+# The entry never committed.
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'bff' ORDER BY indexname;
+----
+indexname
+bff_pkey
+
+
+# The table is untouched -- the build only ever adds segments alongside the
+# originals, and swaps atomically or not at all.
+query
+SELECT id, tag FROM bff ORDER BY id;
+----
+id	tag
+1	alpha
+2	beta
+
+
+# Writes still work: no claim, floor or log was left held.
+statement ok
+INSERT INTO bff VALUES (3, 'gamma');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bff;
+
+
+# The retry succeeds. If the failed build had leaked its BuildClaim this would
+# error with "an index build is already running"; a leaked compaction floor
+# would wedge the next arm; a leaked delete log would keep growing.
+statement ok
+CREATE INDEX bff_idx ON bff USING inverted (tag);
+
+
+query
+SELECT id FROM bff_idx WHERE tag @@ 'alpha';
+----
+id
+1
+
+
+query
+SELECT id FROM bff_idx WHERE tag @@ 'gamma';
+----
+id
+3
+
+
+query
+SELECT count(*) FROM bff_idx;
+----
+count
+3
+
+
+statement ok
+DROP TABLE bff;

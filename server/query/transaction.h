@@ -116,6 +116,12 @@ class Transaction : public Config {
     return *_search_txn;
   }
 
+  // Drops the pinned search reader for one shard, so the segments it
+  // references stop being held. Refuses while the transaction's view has to
+  // stay frozen -- REPEATABLE READ, or any uncommitted DML, whose rows are
+  // tied to the view they were written through. Returns whether it dropped.
+  bool TryDropSearchReader(ObjectId shard_id);
+
   void Destroy() noexcept;
 
   // Register the per-index feed the first time it engages this commit

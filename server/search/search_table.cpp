@@ -568,11 +568,21 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
     // collide, and the ANN rebuild inside each one still fans out over the ANN
     // workers. Striping by index keeps the buckets about equal where the
     // segments are, which is the case a bulk load produces.
-    const auto count =
-      static_cast<uint32_t>(_writer->GetSnapshot().size());
-    if (count <= target_segments) {
-      CleanupUnsafe();
-      return;
+    // Decide the buckets once, by segment name. The rounds run concurrently
+    // and each policy is handed its own snapshot, so a bucket defined by
+    // position would shift under the rounds that finish first and leave
+    // segments unmerged -- which is what striping by index did.
+    std::vector<std::vector<std::string>> buckets(target_segments);
+    {
+      const auto snapshot = _writer->GetSnapshot();
+      const auto count = static_cast<uint32_t>(snapshot.size());
+      if (count <= target_segments) {
+        CleanupUnsafe();
+        return;
+      }
+      for (uint32_t i = 0; i < count; ++i) {
+        buckets[i % target_segments].emplace_back(snapshot[i].Meta().name);
+      }
     }
     std::vector<yaclib::Future<ResultWithTime>> rounds;
     // One flag per round: CompactUnsafeAsync writes it, and a vector<bool>
@@ -580,18 +590,20 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
     std::deque<bool> empties(target_segments, false);
     rounds.reserve(target_segments);
     for (uint32_t b = 0; b < target_segments; ++b) {
-      auto stripe = [b, target_segments](
+      auto bucket = [names = std::move(buckets[b])](
                       irs::Compaction& candidates, const irs::IndexReader& r,
                       const irs::CompactingSegments& busy) {
-        for (size_t i = b; i < r.size(); i += target_segments) {
+        for (size_t i = 0; i < r.size(); ++i) {
           auto& segment = r[i];
-          if (busy.contains(segment.Meta().name)) {
+          const auto& name = segment.Meta().name;
+          if (busy.contains(name) ||
+              std::find(names.begin(), names.end(), name) == names.end()) {
             continue;
           }
           candidates.emplace_back(&segment);
         }
       };
-      rounds.push_back(CompactUnsafeAsync(stripe, kProgress, empties[b],
+      rounds.push_back(CompactUnsafeAsync(bucket, kProgress, empties[b],
                                           field_options.get(), env));
     }
     for (auto& r : rounds) {

@@ -436,6 +436,25 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_compact_target_segments",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many segments VACUUM (COMPACT_*) leaves behind. 0 or 1 merges "
+        "everything into a single segment, which is the default and what "
+        "compaction meant before this setting. A larger value merges disjoint "
+        "stripes of the segment list at once and stops there, which is both "
+        "faster -- the merges run concurrently, each still fanning its ANN "
+        "rebuild out over the ANN workers -- and bounded in peak memory, since "
+        "no one merge holds the whole index. It is also what makes a "
+        "benchmark comparable: every engine searches every segment with the "
+        "full beam and unions the results, so a run against one segment and a "
+        "run against eight are measuring different amounts of work, whatever "
+        "the search parameters say.",
+        [] { return duckdb::Value::UINTEGER(1); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_hnsw_ef_search",
       {
         LogicalTypeId::INTEGER,

@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <deque>
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
@@ -602,7 +603,7 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact() {
+void SearchTable::VacuumCompact(uint32_t target_segments) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
@@ -622,6 +623,48 @@ void SearchTable::VacuumCompact() {
     }
   };
   const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
+
+  if (target_segments > 1) {
+    // Compact down to `target_segments` rather than to one, as N independent
+    // merges run at once. A merge owns the segments it took -- that is what
+    // CompactingSegments tracks -- so rounds that pick disjoint stripes do not
+    // collide, and the ANN rebuild inside each one still fans out over the ANN
+    // workers. Striping by index keeps the buckets about equal where the
+    // segments are, which is the case a bulk load produces.
+    const auto count =
+      static_cast<uint32_t>(_writer->GetSnapshot().size());
+    if (count <= target_segments) {
+      CleanupUnsafe();
+      return;
+    }
+    std::vector<yaclib::Future<ResultWithTime>> rounds;
+    // One flag per round: CompactUnsafeAsync writes it, and a vector<bool>
+    // would hand out a proxy rather than a bool&.
+    std::deque<bool> empties(target_segments, false);
+    rounds.reserve(target_segments);
+    for (uint32_t b = 0; b < target_segments; ++b) {
+      auto stripe = [b, target_segments](
+                      irs::Compaction& candidates, const irs::IndexReader& r,
+                      const irs::CompactingSegments& busy) {
+        for (size_t i = b; i < r.size(); i += target_segments) {
+          auto& segment = r[i];
+          if (busy.contains(segment.Meta().name)) {
+            continue;
+          }
+          candidates.emplace_back(&segment);
+        }
+      };
+      rounds.push_back(CompactUnsafeAsync(stripe, kProgress, empties[b],
+                                          field_options.get(), env));
+    }
+    for (auto& r : rounds) {
+      irs::GetBlocking(std::move(r));
+    }
+    RefreshUnsafe(/*wait=*/true, nullptr, code);
+    CleanupUnsafe();
+    return;
+  }
+
   // With workers the merge suspends on them; this VACUUM thread waits.
   irs::GetBlocking(
     CompactUnsafeAsync(kFullMerge, kProgress, empty, field_options.get(), env));

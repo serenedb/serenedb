@@ -260,6 +260,55 @@ SELECT count(*) AS diff FROM (
 diff
 0
 
+# --- every cluster, not just the probed ones ----------------------------------
+# Small postings make many clusters that share a payload group, and each term
+# records the lane its own records start at inside that group. A top-k query
+# probes a handful of clusters, so a cluster addressed wrongly shows up only
+# when that cluster happens to be probed. Comparing the distance the index
+# reports against the table's for EVERY row reaches every cluster instead.
+
+statement ok
+SET sdb_ivf_posting_size = 16
+
+statement ok
+CREATE TABLE pn_lanes (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_lanes_idx ON pn_lanes USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+
+statement count 4000
+INSERT INTO pn_lanes
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) + i * 0.001)::FLOAT)::FLOAT[64]
+FROM range(4000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_lanes
+
+statement ok
+RESET sdb_ivf_posting_size
+
+query
+SELECT count(*) AS mismatched FROM (
+  SELECT i.pk, round(i.d::DOUBLE, 3) AS di, round(t.d::DOUBLE, 3) AS dt FROM
+    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+       FROM pn_lanes_idx
+       WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9) i
+    JOIN
+    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+       FROM pn_lanes) t
+    USING (pk)
+) q WHERE di <> dt;
+----
+mismatched
+0
+
+query
+SELECT count(*) AS n FROM pn_lanes_idx
+WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9;
+----
+n
+4000
+
 # --- a real tree: many clusters, so the threshold carries across postings -----
 
 statement ok

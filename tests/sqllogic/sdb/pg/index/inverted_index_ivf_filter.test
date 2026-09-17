@@ -109,7 +109,7 @@ DROP TABLE ivf_f
 # ===========================================================================
 # Approximate lookup-filter shortfall (documents the contract). A lookup
 # (non-INCLUDE'd) filter is not enforced in-scan: the collector over-fetches
-# the sdb_rerank_factor * k nearest by distance, then the filter drops
+# the sdb_ann_oversample * k nearest by distance, then the filter drops
 # non-matches during materialization. A filter whose matches lie beyond that
 # pool legitimately returns FEWER than k rows -- larger rerank_factor widens
 # the pool and recovers more, and the exact (streaming) path returns full k.
@@ -145,7 +145,7 @@ count
 
 # pool = 2 * 3 = 6 (nearest pk 1..6): only pk 5 matches -> one row, not three.
 statement ok
-SET sdb_rerank_factor = 2
+SET sdb_ann_oversample = 2
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -156,7 +156,7 @@ pk
 # pool = 4 * 3 = 12 (nearest pk 1..12): pk 5 and 12 match -> recall improves to
 # two rows, still short of three.
 statement ok
-SET sdb_rerank_factor = 4
+SET sdb_ann_oversample = 4
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -181,7 +181,7 @@ statement ok
 RESET sdb_disable_top_k_optimization
 
 statement ok
-RESET sdb_rerank_factor
+RESET sdb_ann_oversample
 
 statement ok
 DROP TABLE shortf

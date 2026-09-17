@@ -534,50 +534,26 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_rerank_factor",
+      "sdb_ann_oversample",
       {
         LogicalTypeId::DOUBLE,
-        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
-        "with exact distances for a quantized IVF vector-similarity query "
-        "(pool = ceil(sdb_rerank_factor * k)). Higher values improve recall "
-        "at the cost of latency; 0 disables reranking (top-k picked by the "
-        "approximate quantized distance). Fractional values are allowed, but "
-        "a nonzero factor below 1 is rejected because the pool must cover k. "
-        "Default 4. Unquantized (quant = 'none') indexes never rerank, "
-        "regardless of this setting.",
-        [] { return duckdb::Value::DOUBLE(4); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<double>();
-          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_rerank_factor\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      "sdb_hnsw_oversample",
-      {
-        LogicalTypeId::DOUBLE,
-        "Oversample for a quantized HNSW vector-similarity query: the graph is "
-        "walked on quantized codes and ceil(sdb_hnsw_oversample * k) of each "
-        "segment\'s hits are read back at full precision, re-ordered, and only "
-        "then compared against other segments -- a quantized score is an "
-        "estimate and two segments\' estimates are not comparable, because "
-        "each trains its own quantizer. The beam is widened to hold the pool "
-        "when the pool is the wider of the two, because a search that returns "
-        "a hundred cannot hand four hundred to the rescorer. 0 disables the "
-        "rescore: the query answers from the codes, which is faster and caps "
-        "recall at whatever the codes can tell apart -- well below 1 for a "
-        "4-bit or binary quantizer, and worse still across many segments. -1 "
-        "(the default) lets the engine choose by code width: no rescore at 4 "
-        "bits and wider, 1.0 below that. Elasticsearch spells this "
-        "rescore_vector.oversample, with the same 0, and Qdrant splits it into "
-        "quantization.oversampling and quantization.rescore. Fractional values "
-        "are allowed, but a factor between 0 and 1 is rejected because the "
-        "pool must cover k. Unquantized (quant = \'none\') indexes never "
+        "Oversample for a quantized vector-similarity query, HNSW and IVF "
+        "alike: the search runs on quantized codes and ceil(sdb_ann_oversample "
+        "* k) of each segment\'s candidates are read back at full precision, "
+        "re-ordered, and only then compared against other segments -- a "
+        "quantized score is an estimate and two segments\' estimates are not "
+        "comparable, because each trains its own quantizer. Where the search "
+        "can return fewer candidates than the pool asks for, it is widened to "
+        "hold it: for HNSW that means the beam, since a beam of a hundred "
+        "cannot hand four hundred to the rescorer. 0 disables the rescore: "
+        "the query answers from the codes, which is faster and caps recall at "
+        "whatever the codes can tell apart -- well below 1 for a 4-bit or "
+        "binary quantizer, and worse still across many segments. -1 (the "
+        "default) lets the engine choose by code width. Elasticsearch spells "
+        "this rescore_vector.oversample, with the same 0, and Qdrant splits it "
+        "into quantization.oversampling and quantization.rescore. Fractional "
+        "values are allowed, but a factor between 0 and 1 is rejected because "
+        "the pool must cover k. Unquantized (quant = \'none\') indexes never "
         "rerank, regardless of this setting, and a query whose pool exists to "
         "survive a lookup filter keeps that pool either way.",
         [] { return duckdb::Value::DOUBLE(-1); },
@@ -586,7 +562,7 @@ constexpr std::pair<std::string_view, VariableDescription>
           if (n < -1.0 || (n > 0.0 && n < 1.0) || (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_hnsw_oversample\": \"",
+                                    "\"sdb_ann_oversample\": \"",
                                     value.ToString(), "\""));
           }
         },

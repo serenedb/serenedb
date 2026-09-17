@@ -1130,10 +1130,6 @@ void EnsurePlanned(bool planned) {
     ERR_MSG("this search predicate has no index plan for this scan"));
 }
 
-double ReadRerankFactor(duckdb::ClientContext& context) {
-  return ReadDoubleSetting(context, "sdb_rerank_factor");
-}
-
 // -1 asks the engine to choose, by quantizer. HNSW accepts none, sq8, sq4 and
 // tq; pq and rabitq are IVF's and go through sdb_rerank_factor.
 //
@@ -1165,24 +1161,31 @@ inline constexpr double kAutoMinRescorePool = 16.0;
 // The non-monotonicity in the tq row is real rather than noise -- 3 and 5 bits
 // are full TurboQuant with the QJL refinement stage, 1, 2 and 4 are MSE-only.
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
+  // How coarse the codes are decides whether a query needs re-scoring at all;
+  // that part is the same for both structures. How wide the pool has to be is
+  // not: an HNSW query already has a beam holding ef_search candidates and the
+  // pool only chooses among them, while an IVF probe has no beam, so its pool
+  // *is* its candidate set and has to stand in for one. Four was IVF's
+  // standing default for exactly that reason.
+  const double width = vs.kind == irs::AnnKind::Hnsw ? 1.0 : 4.0;
   switch (vs.quant) {
     case irs::VectorQuantization::TQ:
-      return 2.0;
+      return 2.0 * width;
     case irs::VectorQuantization::SQ8:
     case irs::VectorQuantization::SQ4:
     case irs::VectorQuantization::USQ8:
     case irs::VectorQuantization::USQ4:
     case irs::VectorQuantization::PQ:
     case irs::VectorQuantization::RaBitQ:
-      return 1.0;
+      return width;
     case irs::VectorQuantization::None:
       return 0.0;  // nothing to re-score
   }
   return 0.0;
 }
 
-double ReadHnswOversample(duckdb::ClientContext& context) {
-  return ReadDoubleSetting(context, "sdb_hnsw_oversample");
+double ReadAnnOversample(duckdb::ClientContext& context) {
+  return ReadDoubleSetting(context, "sdb_ann_oversample");
 }
 
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
@@ -1593,7 +1596,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (vs.query_expr) {
       vs.query_vector = EvaluateQueryVector(context, vs);
     }
-    if (vs.kind == irs::AnnKind::Hnsw && state->score_top_k) {
+    if (state->score_top_k) {
       // The beam is the result ceiling, so it is at least k -- and at least
       // the rescore pool, which is the same thing said of the pool: a search
       // that returns a hundred cannot hand four hundred to the rescorer. This
@@ -1602,7 +1605,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
       // reason; docs/hnsw-parity.md in vectorbench has the mapping.
       const auto k = static_cast<double>(*state->score_top_k);
-      auto factor = ReadHnswOversample(context);
+      auto factor = ReadAnnOversample(context);
       const bool chosen_here = factor < 0.0;
       if (chosen_here) {
         factor = AutoOversample(vs);
@@ -1614,8 +1617,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
           pool = std::max(pool, kAutoMinRescorePool);
         }
       }
-      vs.min_ef = static_cast<uint32_t>(pool > 0.0 ? pool : k);
       state->rerank_pool_k = pool;
+      // HNSW is the one kind whose search can return fewer candidates than
+      // asked for: the beam caps it. Raising the floor to the pool is not a
+      // different meaning of the knob, it is what makes the meaning hold here.
+      // An IVF probe returns whatever the collector keeps, so the pool is the
+      // candidate count outright and nothing needs widening.
+      if (vs.kind == irs::AnnKind::Hnsw) {
+        vs.min_ef = static_cast<uint32_t>(pool > 0.0 ? pool : k);
+      }
     }
     state->vector_scorer = &vs;
   }
@@ -1830,23 +1840,22 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         (state->vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
       const auto k = static_cast<double>(*state->score_top_k);
-      double pool;
-      if (state->vector_scorer->kind == irs::AnnKind::Hnsw) {
-        // The beam decides how much of the graph is walked on quantized codes;
-        // the pool decides how many of its hits are read back at full
-        // precision. Decided above, where the beam had to be widened to hold
-        // it; zero there means the query answers from the codes.
-        pool = state->rerank_pool_k;
-        SDB_ASSERT(pool == 0.0 || state->vector_scorer->min_ef >= pool);
-        if (state->has_lookup_filter) {
-          // This pool is not about precision: a lookup filter drops rows after
-          // the collector, so the over-fetch has to be the whole beam or the
-          // query returns fewer than k. It stands whatever the rescore says.
-          pool = std::max(pool, std::max(k, static_cast<double>(
-                                              state->vector_scorer->ef_search)));
-        }
-      } else {
-        pool = std::ceil(ReadRerankFactor(context) * k);
+      // Decided once above, for whichever index kind this is: the search walks
+      // on quantized codes and this many of its candidates are read back at
+      // full precision. Zero means the query answers from the codes.
+      double pool = state->rerank_pool_k;
+      if (state->has_lookup_filter) {
+        // This pool is not about precision: a lookup filter drops rows after
+        // the collector, so the over-fetch has to cover everything the search
+        // can return or the query yields fewer than k. It stands whatever the
+        // rescore says. For HNSW that ceiling is the beam; an IVF probe has no
+        // beam, and ef_search is populated from the HNSW knob for every kind,
+        // so reading it here would inflate an IVF pool to 64 by default.
+        const double reachable =
+          state->vector_scorer->kind == irs::AnnKind::Hnsw
+            ? static_cast<double>(state->vector_scorer->ef_search)
+            : 0.0;
+        pool = std::max(pool, std::max(k, reachable));
       }
       state->topk.rerank_pool =
         pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));

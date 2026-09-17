@@ -58,8 +58,8 @@ class Posting : public Root {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
-               bool bounds) {
-    _block.Prepare(meta, doc_in, segment, field, args, layout, bounds);
+               bool bounds, DocRange range) {
+    _block.Prepare(meta, doc_in, segment, field, args, layout, bounds, range);
   }
 
   void Run(LoserScoreCollector& collector) final {

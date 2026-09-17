@@ -62,7 +62,8 @@ offsets::Root::ptr MakeFixedPhraseOffsets(const FixedPhraseQuery& query) {
           using Impl = offsets::Impl<offsets::Phrase<Slots>>;
           return memory::make_managed<Impl>(
             metas, std::span<const TermInterval>{query.positions}, *h.doc,
-            h.Layout(), *h.pos, h.pay, std::forward<decltype(args)>(args)...);
+            h.Layout(), *h.pos, h.pay, DocRange{},
+            std::forward<decltype(args)>(args)...);
         });
     });
   });
@@ -92,7 +93,8 @@ offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
           return memory::make_managed<Impl>(
             metas.size(),
             [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay,
+                           DocRange{});
             },
             offsets, std::span<const score_t>{}, intervals,
             std::forward<decltype(args)>(args)...);
@@ -116,14 +118,16 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
         using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
         return memory::make_managed<Impl>(metas, *h.doc, h.Layout(), *h.pos,
-                                          h.pay, query.TotalTerms());
+                                          h.pay, DocRange{},
+                                          query.TotalTerms());
       } else {
         using Slots = detail::NGramSlots<Leaf, false, true>;
         using Impl = offsets::Impl<offsets::NGram<Slots>>;
         return memory::make_managed<Impl>(
           metas.size(),
           [&](Leaf& leaf, size_t i) {
-            leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+            leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay,
+                         DocRange{});
           },
           static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
       }

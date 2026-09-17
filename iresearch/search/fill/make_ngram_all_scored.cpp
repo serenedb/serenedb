@@ -43,7 +43,7 @@ Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};
   return detail::BuildAll<true>(
-    query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
+    query, ctx.range, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return memory::make_managed<ByWalkScored<Node>>(
         merge, *ctx.fetcher, query.Segment(), *query.State().reader, args,

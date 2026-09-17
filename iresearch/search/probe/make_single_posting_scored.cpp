@@ -32,7 +32,8 @@ namespace irs::probe {
 
 Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
-                                  const detail::ScoreRecipe& recipe) {
+                                  const detail::ScoreRecipe& recipe,
+                                  DocRange range) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count == 1);
   SDB_ASSERT(posting.state.reader != nullptr);
@@ -43,7 +44,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                recipe.Args(posting.stats, posting.boost))
       : score_t{0};
   using Node = ConstantScored<SinglePostingDocs>;
-  return memory::make_managed<Impl<Node>>(value, meta);
+  return memory::make_managed<Impl<Node>>(value, meta, range);
 }
 
 }  // namespace irs::probe

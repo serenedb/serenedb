@@ -89,9 +89,9 @@ struct ScoredApi {
       std::forward<ExcludesArgs>(excludes), score);
   }
 
-  static Result MakeAll(const SubReader& segment, const Context&,
+  static Result MakeAll(const SubReader& segment, const Context& ctx,
                         ScoreMergeType merge, score_t absorbed) {
-    return MakeAllScored(segment, merge, absorbed);
+    return MakeAllScored(segment, merge, absorbed, ctx.range);
   }
 
   static Result MakeRequiredWith(
@@ -117,7 +117,8 @@ struct ScoredApi {
 template<typename Term>
 Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
                                            const TermReader* field,
-                                           const IndexInput& doc) {
+                                           const IndexInput& doc,
+                                           DocRange range) {
   SDB_ASSERT(terms.size() > 1);
   return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
     using Leaf = detail::PostingFill<Input>;
@@ -133,8 +134,9 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
           const auto& own = detail::FieldOf(terms[i], field);
           const auto& meta = detail::CookieOf(terms[i]);
           SDB_ASSERT(meta.docs_count != 0);
-          leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
-                       meta.docs_count != 1 && detail::FreqOf(own));
+          leaf.Prepare(meta, doc, detail::LayoutOf(own),
+                       meta.docs_count != 1 && detail::BoundsOf(own),
+                       meta.docs_count != 1 && detail::FreqOf(own), range);
         }),
       std::forward_as_tuple());
   });
@@ -143,24 +145,25 @@ Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
 template<typename Term>
 Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
                                      const TermReader* field,
-                                     const IndexInput& doc,
-                                     doc_id_t docs_count) {
+                                     const IndexInput& doc, doc_id_t docs_count,
+                                     DocRange range) {
   SDB_ASSERT(terms.size() > 1);
-  if (detail::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
-    return detail::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
+  if (detail::TakeBitset<Node::ptr>(terms, doc, docs_count, range)) {
+    return detail::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count, range,
                                            nullptr);
   }
-  return MakeWindowDisjunctionOfTermsDocs(terms, field, doc);
+  return MakeWindowDisjunctionOfTermsDocs(terms, field, doc, range);
 }
 
 template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
-  detail::Terms uniformity, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, score_t absorbed = 0) {
+  score_t boost, const IndexInput* doc, DocRange range,
+  std::vector<Node::ptr>& rest, detail::Terms uniformity,
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  score_t absorbed = 0) {
   return detail::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+    terms, field, scorer, boost, doc, range, rest, uniformity, recipe, merge,
     absorbed);
 }
 

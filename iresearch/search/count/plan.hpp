@@ -54,10 +54,10 @@ template<detail::PhraseMatch M>
 Root::ptr MakeFixedPhraseWalk(const FixedPhraseQuery& query,
                               const Context& ctx) {
   if (ctx.table != nullptr) {
-    return detail::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                 ctx.table);
+    return detail::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(
+      query, ctx.range, ctx.table);
   }
-  return detail::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query,
+  return detail::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query, ctx.range,
                                                             utils::Empty{});
 }
 
@@ -65,10 +65,10 @@ template<detail::PhraseMatch M>
 Root::ptr MakeVariadicPhraseWalk(const VariadicPhraseQuery& query,
                                  const Context& ctx) {
   if (ctx.table != nullptr) {
-    return detail::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                    ctx.table);
+    return detail::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(
+      query, ctx.range, ctx.table);
   }
-  return detail::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
+  return detail::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query, ctx.range,
                                                                utils::Empty{});
 }
 

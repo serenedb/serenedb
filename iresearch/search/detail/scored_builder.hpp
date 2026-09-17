@@ -61,12 +61,13 @@ Result<Api> MakeScoredNegation(
   ScoreMergeType merge, score_t absorbed, const Context<Api>& ctx) {
   SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
   std::vector<FillNode::ptr> nodes;
-  if (!CollectFills(excludes, exclude_filters, nullptr, segment, nodes)) {
+  if (!CollectFills(excludes, exclude_filters, nullptr, segment, ctx.range,
+                    nodes)) {
     return {};
   }
   using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
   return Api::template MakeWindow<fill::AllDocs, utils::Empty, Excludes>(
-    ctx, merge, absorbed, std::forward_as_tuple(segment),
+    ctx, merge, absorbed, std::forward_as_tuple(segment, ctx.range),
     std::forward_as_tuple(),
     std::forward_as_tuple(
       std::piecewise_construct,
@@ -113,7 +114,7 @@ Result<Api> MakeScoredThreshold(std::span<const PostingClause> terms,
       *doc, uniformity >= Terms::Scored, merge,
       [&]<typename Leaf, typename Plain> -> Result<Api> {
         return BuildScoredTerms<Result<Api>, Leaf, Plain>(
-          terms, nullptr, nullptr, kNoBoost, doc, recipe,
+          terms, nullptr, nullptr, kNoBoost, doc, ctx.range, recipe,
           [&]<typename Set>(auto&&... args) -> Result<Api> {
             return MakeScoredThresholdWindow<Api, TallyGroup, Set>(
               ctx, merge, min_match, absorbed,
@@ -125,8 +126,8 @@ Result<Api> MakeScoredThreshold(std::span<const PostingClause> terms,
     }
   }
   return BuildScoredWindow<Result<Api>>(
-    terms, nullptr, nullptr, kNoBoost, doc, rest, uniformity, recipe, merge,
-    [&]<typename Set>(auto&&... args) -> Result<Api> {
+    terms, nullptr, nullptr, kNoBoost, doc, ctx.range, rest, uniformity, recipe,
+    merge, [&]<typename Set>(auto&&... args) -> Result<Api> {
       return MakeScoredThresholdWindow<Api, ThresholdGroup, Set>(
         ctx, merge, min_match, absorbed, std::forward<decltype(args)>(args)...);
     });
@@ -179,7 +180,7 @@ Result<Api> MakeScoredExclusionWindow(const BooleanQuery& query,
   const auto recipe = Api::Recipe(segment, ctx);
   const auto uniformity = query.Uniformity(Occur::Should);
   return BuildWindowExcludes<Result<Api>>(
-    excludes, exclude_filters, nullptr, segment, candidates,
+    excludes, exclude_filters, nullptr, segment, candidates, ctx.range,
     [&]<typename Excludes>(auto&& negated) -> Result<Api> {
       const auto make = [&]<typename Set>(auto&&... args) -> Result<Api> {
         return Api::template MakeWindow<utils::Empty, OrGroup<Set>, Excludes>(
@@ -188,8 +189,8 @@ Result<Api> MakeScoredExclusionWindow(const BooleanQuery& query,
           std::forward<decltype(negated)>(negated));
       };
       return BuildScoredWindow<Result<Api>>(terms, nullptr, nullptr, kNoBoost,
-                                            doc, rest, uniformity, recipe,
-                                            merge, make);
+                                            doc, ctx.range, rest, uniformity,
+                                            recipe, merge, make);
     });
 }
 
@@ -218,8 +219,9 @@ Result<Api> MakeScoredDisjunction(std::span<const Term> terms,
       std::forward_as_tuple());
   };
   const auto recipe = Api::Recipe(segment, ctx);
-  return BuildScoredWindow<Result<Api>>(terms, field, scorer, boost, doc, rest,
-                                        uniformity, recipe, merge, make);
+  return BuildScoredWindow<Result<Api>>(terms, field, scorer, boost, doc,
+                                        ctx.range, rest, uniformity, recipe,
+                                        merge, make);
 }
 
 template<typename Api, typename F>
@@ -252,7 +254,8 @@ Result<Api> MakeScoredConjunction(const BooleanQuery& query,
   const Scored score{merge, absorbed};
   const auto conjunction = [&]<typename Make>(Make&& make) -> Result<Api> {
     return BuildScoredConjunction<Result<Api>>(
-      must, must_filters, nullptr, nullptr, kNoBoost, segment, recipe, clause,
+      must, must_filters, nullptr, nullptr, kNoBoost, segment, recipe,
+      ctx.range, clause,
       [&](const QueryBuilder& filter) -> lead::Node::ptr {
         return filter.PlanLead(child);
       },
@@ -264,7 +267,7 @@ Result<Api> MakeScoredConjunction(const BooleanQuery& query,
     }
     return BuildOptionalLeaves<Result<Api>>(
       should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
-      segment, recipe, candidates, clause,
+      segment, recipe, candidates, ctx.range, clause,
       [&]<typename Leaf>(size_t size, auto&& init) -> Result<Api> {
         return ResolveBoostArity<Api>(size, [&]<size_t N> -> Result<Api> {
           using Boost = probe::BoostLeaves<Leaf, N>;
@@ -272,9 +275,11 @@ Result<Api> MakeScoredConjunction(const BooleanQuery& query,
             std::forward_as_tuple(size, std::forward<decltype(init)>(init));
           if (no_must) {
             auto all = lead::MakeAllScored(
-              segment, AllDocsScore(segment, ScoreArgs{.scorer = child.scorer,
-                                                       .fetcher = child.fetcher,
-                                                       .boost = kNoBoost}));
+              segment,
+              AllDocsScore(segment, ScoreArgs{.scorer = child.scorer,
+                                              .fetcher = child.fetcher,
+                                              .boost = kNoBoost}),
+              ctx.range);
             if (!all) {
               return {};
             }
@@ -361,7 +366,7 @@ Result<Api> MakeScoredExclusion(const BooleanQuery& query,
     return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
       return BuildBlockExcludesOf<Result<Api>, Input>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
-        [&]<typename Exclude>(auto&& negated) -> Result<Api> {
+        ctx.range, [&]<typename Exclude>(auto&& negated) -> Result<Api> {
           return Api::template MakeExcludedPosting<Input, Exclude>(
             ctx, std::forward<decltype(negated)>(negated), posting, doc,
             segment, own, recipe);
@@ -375,7 +380,7 @@ Result<Api> MakeScoredExclusion(const BooleanQuery& query,
     return {};
   }
   return BuildExcludeSide<Result<Api>>(
-    excludes, exclude_filters, nullptr, segment, candidates,
+    excludes, exclude_filters, nullptr, segment, candidates, ctx.range,
     [&]<typename Exclude>(auto&& negated) -> Result<Api> {
       return Api::template MakeSparse<lead::Erased, utils::Empty, utils::Empty,
                                       Exclude>(

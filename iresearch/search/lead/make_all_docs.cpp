@@ -25,8 +25,8 @@
 
 namespace irs::lead {
 
-Node::ptr MakeAllDocs(const SubReader& segment) {
-  return memory::make_managed<Impl<AllDocs>>(segment);
+Node::ptr MakeAllDocs(const SubReader& segment, DocRange range) {
+  return memory::make_managed<Impl<AllDocs>>(segment, range);
 }
 
 }  // namespace irs::lead

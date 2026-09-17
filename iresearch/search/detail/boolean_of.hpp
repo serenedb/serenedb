@@ -46,14 +46,14 @@ template<typename Result, typename Term>
 Result BuildConjunctionOf(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
-                          uint64_t interrogations) {
+                          uint64_t interrogations, DocRange range) {
   constexpr bool kFilled = std::is_same_v<Result, FillNode::ptr>;
   if (auto folded = MakeConjunctionBitset<Result>(terms, filters, field,
-                                                  segment, nullptr)) {
+                                                  segment, range, nullptr)) {
     return folded;
   }
   return BuildConjunction<Result, Term>(
-    terms, filters, field, segment, interrogations,
+    terms, filters, field, segment, interrogations, range,
     []<typename Lead, typename Others>(auto&& lead, auto&& others) -> Result {
       using Node =
         lead::BooleanSparse<Lead, Others, utils::Empty, utils::Empty>;
@@ -75,11 +75,11 @@ template<typename Result, typename Term, typename Make>
 Result BuildRequiredLeadOf(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const TermReader* field, const SubReader& segment,
-                           Make&& make) {
+                           DocRange range, Make&& make) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() > 1) {
-    auto node =
-      BuildConjunctionOf<LeadNode::ptr>(terms, filters, field, segment, 0);
+    auto node = BuildConjunctionOf<LeadNode::ptr>(terms, filters, field,
+                                                  segment, 0, range);
     if (!node) {
       return {};
     }
@@ -90,11 +90,12 @@ Result BuildRequiredLeadOf(std::span<const Term> terms,
     const auto& own = FieldOf(terms.front(), field);
     return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
       using Lead = PostingLead<Input>;
-      return make.template operator()<Lead>(std::forward_as_tuple(
-        CookieOf(terms.front()), *DocOf(own), LayoutOf(own), BoundsOf(own)));
+      return make.template operator()<Lead>(
+        std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
+                              LayoutOf(own), BoundsOf(own), range));
     });
   }
-  auto node = filters.front()->PlanLead({});
+  auto node = filters.front()->PlanLead({.range = range});
   if (!node) {
     return {};
   }

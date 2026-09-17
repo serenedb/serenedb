@@ -28,14 +28,15 @@
 
 namespace irs::lead {
 
-Node::ptr MakeAllScored(const SubReader& segment, score_t score) {
+Node::ptr MakeAllScored(const SubReader& segment, score_t score,
+                        DocRange range) {
   using Node = ConstantScored<AllDocs>;
-  return memory::make_managed<Impl<Node>>(score, segment);
+  return memory::make_managed<Impl<Node>>(score, segment, range);
 }
 
-Node::ptr MakeAllScored(const SubReader& segment,
-                        const detail::ScoreArgs& args) {
-  return MakeAllScored(segment, detail::AllDocsScore(segment, args));
+Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoreArgs& args,
+                        DocRange range) {
+  return MakeAllScored(segment, detail::AllDocsScore(segment, args), range);
 }
 
 }  // namespace irs::lead

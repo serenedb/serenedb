@@ -42,10 +42,10 @@ Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
                                             .boost = query.Boost()});
   if (ctx.table != nullptr) {
     return irs::detail::MakeGeo<FilteredConstantWalk, Root::ptr>(
-      query, 0, ctx.table, value);
+      query, 0, ctx.range, ctx.table, value);
   }
   return irs::detail::MakeGeo<PlainConstantWalk, Root::ptr>(
-    query, 0, utils::Empty{}, value);
+    query, 0, ctx.range, utils::Empty{}, value);
 }
 
 }  // namespace irs::top

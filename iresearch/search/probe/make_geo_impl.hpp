@@ -34,9 +34,9 @@
 namespace irs::probe {
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               uint64_t interrogations) {
-  return detail::MakeGeo<Impl, Node::ptr>(query, interrogations);
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
+               DocRange range) {
+  return detail::MakeGeo<Impl, Node::ptr>(query, interrogations, range);
 }
 
 template<typename Parser, typename Acceptor>
@@ -49,7 +49,7 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
   return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(query, interrogations,
-                                                        score);
+                                                        ctx.range, score);
 }
 
 }  // namespace irs::probe

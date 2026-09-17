@@ -33,8 +33,11 @@ class All : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
 
-  All(Table table, doc_id_t count) noexcept
-    : _end{doc_limits::min() + count}, _table{table} {}
+  All(Table table, doc_id_t count, DocRange range) noexcept
+    : _doc{range.begin},
+      _end{std::clamp<doc_id_t>(doc_limits::min() + count, range.begin,
+                                range.end)},
+      _table{table} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
@@ -50,7 +53,7 @@ class All : public Root {
   }
 
  private:
-  doc_id_t _doc = doc_limits::min();
+  doc_id_t _doc;
   doc_id_t _end;
   [[no_unique_address]] detail::Narrowing<Table> _table;
 };

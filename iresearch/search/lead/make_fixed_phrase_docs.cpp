@@ -24,9 +24,9 @@
 
 namespace irs::lead {
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query) {
+Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query, DocRange range) {
   return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, Impl, Node::ptr>(
-    query);
+    query, range);
 }
 
 }  // namespace irs::lead

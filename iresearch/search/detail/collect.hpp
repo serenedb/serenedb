@@ -44,32 +44,33 @@
 namespace irs::detail {
 
 inline LeadNode::ptr LeadOf(const PostingClause& posting,
-                            const QueryBuilder* child,
-                            const SubReader& segment) {
-  return child == nullptr ? lead::MakePostingDocs(posting, segment)
-                          : child->PlanLead({});
+                            const QueryBuilder* child, const SubReader& segment,
+                            DocRange range) {
+  return child == nullptr ? lead::MakePostingDocs(posting, segment, range)
+                          : child->PlanLead({.range = range});
 }
 
 inline ProbeNode::ptr ProbeOf(const PostingClause& posting,
                               const QueryBuilder* child,
-                              const SubReader& segment,
-                              uint64_t interrogations) {
-  return child == nullptr ? probe::MakePostingDocs(posting, segment)
-                          : child->PlanProbe({}, interrogations);
+                              const SubReader& segment, uint64_t interrogations,
+                              DocRange range) {
+  return child == nullptr ? probe::MakePostingDocs(posting, segment, range)
+                          : child->PlanProbe({.range = range}, interrogations);
 }
 
 inline FillNode::ptr FillOf(const PostingClause& posting,
-                            const QueryBuilder* child,
-                            const SubReader& segment) {
-  return child == nullptr ? fill::MakePostingDocs(posting, segment)
-                          : child->PlanFill({}, ScoreMergeType::Noop);
+                            const QueryBuilder* child, const SubReader& segment,
+                            DocRange range) {
+  return child == nullptr
+           ? fill::MakePostingDocs(posting, segment, range)
+           : child->PlanFill({.range = range}, ScoreMergeType::Noop);
 }
 
 template<typename Term>
 bool CollectFills(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
                   const TermReader* field, const SubReader& segment,
-                  std::vector<FillNode::ptr>& nodes) {
+                  DocRange range, std::vector<FillNode::ptr>& nodes) {
   nodes.reserve(nodes.size() + terms.size() + filters.size());
   const auto take = [&](FillNode::ptr node) {
     if (!node) {
@@ -81,10 +82,10 @@ bool CollectFills(std::span<const Term> terms,
   return VisitOrderedOf(
     terms, filters, false, 0, std::numeric_limits<size_t>::max(),
     [&](const Term& term) {
-      return take(FillOf(ClauseOf(term, field), nullptr, segment));
+      return take(FillOf(ClauseOf(term, field), nullptr, segment, range));
     },
     [&](const QueryBuilder& child) {
-      return take(child.PlanFill({}, ScoreMergeType::Noop));
+      return take(child.PlanFill({.range = range}, ScoreMergeType::Noop));
     });
 }
 
@@ -141,8 +142,8 @@ bool WindowTerms(std::span<const Term> terms,
 template<typename Term>
 bool CollectDense(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
-                  const TermReader* field, const IndexInput*& doc,
-                  std::vector<FillNode::ptr>& rest) {
+                  const TermReader* field, DocRange range,
+                  const IndexInput*& doc, std::vector<FillNode::ptr>& rest) {
   if (!terms.empty()) {
     doc = DocOf(FieldOf(terms.front(), field));
     if (doc == nullptr) {
@@ -154,7 +155,7 @@ bool CollectDense(std::span<const Term> terms,
     SDB_ASSERT(child);
     SDB_ASSERT(child->Kind() != QueryKind::Empty);
     SDB_ASSERT(child->Kind() != QueryKind::All);
-    auto node = child->PlanFill({}, ScoreMergeType::Noop);
+    auto node = child->PlanFill({.range = range}, ScoreMergeType::Noop);
     if (!node) {
       return false;
     }
@@ -165,8 +166,8 @@ bool CollectDense(std::span<const Term> terms,
 
 template<typename Result, typename Term, typename Make>
 Result BuildDense(std::span<const Term> terms, const TermReader* field,
-                  const IndexInput* input, std::vector<FillNode::ptr>& rest,
-                  Make&& make) {
+                  const IndexInput* input, DocRange range,
+                  std::vector<FillNode::ptr>& rest, Make&& make) {
   SDB_ASSERT(!terms.empty() || !rest.empty());
   if (terms.empty()) {
     return make.template operator()<fill::SetLeaves<fill::Erased>>(
@@ -182,8 +183,9 @@ Result BuildDense(std::span<const Term> terms, const TermReader* field,
         terms.size(), [&](Leaf& leaf, size_t i) {
           const auto& own = FieldOf(terms[i], field);
           const auto& meta = CookieOf(terms[i]);
-          leaf.Prepare(meta, doc, meta.docs_count != 1 && BoundsOf(own),
-                       meta.docs_count != 1 && FreqOf(own));
+          leaf.Prepare(meta, doc, LayoutOf(own),
+                       meta.docs_count != 1 && BoundsOf(own),
+                       meta.docs_count != 1 && FreqOf(own), range);
         });
     }
     const auto count = terms.size();
@@ -193,8 +195,8 @@ Result BuildDense(std::span<const Term> terms, const TermReader* field,
           const auto& own = FieldOf(terms[i], field);
           const auto& meta = CookieOf(terms[i]);
           leaf = fill::Erased{memory::make_managed<fill::Impl<Leaf>>(
-            meta, doc, meta.docs_count != 1 && BoundsOf(own),
-            meta.docs_count != 1 && FreqOf(own))};
+            meta, doc, LayoutOf(own), meta.docs_count != 1 && BoundsOf(own),
+            meta.docs_count != 1 && FreqOf(own), range)};
           return;
         }
         leaf = fill::Erased{std::move(rest[i - count])};
@@ -206,7 +208,7 @@ template<typename Result, typename Term, bool Probed = false, typename Make>
 Result BuildConjunction(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
-                        uint64_t interrogations, Make&& make) {
+                        uint64_t interrogations, DocRange range, Make&& make) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const bool head_term = HeadIsTerm(terms, filters);
   const auto rest = head_term ? terms.subspan(1) : terms;
@@ -230,7 +232,7 @@ Result BuildConjunction(std::span<const Term> terms,
           return make.template operator()<Head, Probe>(
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(CookieOf(one), *DocOf(own), LayoutOf(own),
-                                  BoundsOf(own)));
+                                  BoundsOf(own), range));
         } else if constexpr (N != 0) {
           using Tail = probe::AndLeaves<Probe, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
@@ -238,10 +240,10 @@ Result BuildConjunction(std::span<const Term> terms,
               std::forward<decltype(head)>(head),
               std::forward_as_tuple(
                 std::piecewise_construct,
-                std::forward_as_tuple(CookieOf(rest[I]),
-                                      *DocOf(FieldOf(rest[I], field)),
-                                      LayoutOf(FieldOf(rest[I], field)),
-                                      BoundsOf(FieldOf(rest[I], field)))...));
+                std::forward_as_tuple(
+                  CookieOf(rest[I]), *DocOf(FieldOf(rest[I], field)),
+                  LayoutOf(FieldOf(rest[I], field)),
+                  BoundsOf(FieldOf(rest[I], field)), range)...));
           }(std::make_index_sequence<N>{});
         } else {
           return make.template operator()<Head, probe::AndLeaves<Probe>>(
@@ -249,7 +251,7 @@ Result BuildConjunction(std::span<const Term> terms,
             std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
               const auto& own = FieldOf(rest[i], field);
               probe.Prepare(CookieOf(rest[i]), *DocOf(own), LayoutOf(own),
-                            BoundsOf(own));
+                            BoundsOf(own), range);
             }));
         }
       });
@@ -269,10 +271,10 @@ Result BuildConjunction(std::span<const Term> terms,
           rest, rest_filters, true, 0, std::numeric_limits<size_t>::max(),
           [&](const Term& term) {
             return take(
-              ProbeOf(ClauseOf(term, field), nullptr, segment, reach));
+              ProbeOf(ClauseOf(term, field), nullptr, segment, reach, range));
           },
           [&](const QueryBuilder& child) {
-            return take(child.PlanProbe({}, reach));
+            return take(child.PlanProbe({.range = range}, reach));
           })) {
       return {};
     }
@@ -325,9 +327,10 @@ Result BuildConjunction(std::span<const Term> terms,
   };
 
   if constexpr (Probed) {
-    auto node = head_term ? ProbeOf(ClauseOf(terms.front(), field), nullptr,
-                                    segment, interrogations)
-                          : filters.front()->PlanProbe({}, interrogations);
+    auto node =
+      head_term ? ProbeOf(ClauseOf(terms.front(), field), nullptr, segment,
+                          interrogations, range)
+                : filters.front()->PlanProbe({.range = range}, interrogations);
     if (!node) {
       return {};
     }
@@ -337,11 +340,12 @@ Result BuildConjunction(std::span<const Term> terms,
     const auto& own = FieldOf(terms.front(), field);
     return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
       using Head = PostingLead<Input>;
-      return build.template operator()<Input, Head>(std::forward_as_tuple(
-        CookieOf(terms.front()), *DocOf(own), LayoutOf(own), BoundsOf(own)));
+      return build.template operator()<Input, Head>(
+        std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
+                              LayoutOf(own), BoundsOf(own), range));
     });
   } else {
-    auto node = filters.front()->PlanLead({});
+    auto node = filters.front()->PlanLead({.range = range});
     if (!node) {
       return {};
     }

@@ -29,6 +29,9 @@ Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx) {
   SDB_ASSERT(posting.state.cookie.docs_count == 1);
   SDB_ASSERT(posting.state.reader != nullptr);
+  if (!ctx.range.Contains(doc_limits::min() + posting.state.cookie.doc_delta)) {
+    return MakeEmpty();
+  }
   auto root = memory::make_managed<SinglePosting>();
   root->Prepare(posting.state.cookie, segment, *posting.state.reader,
                 irs::detail::ScoreArgs{.scorer = posting.stats.scorer,

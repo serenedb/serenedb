@@ -37,8 +37,10 @@ namespace irs::probe {
 
 class SinglePostingDocs {
  public:
-  explicit SinglePostingDocs(const PostingMeta& meta) noexcept
-    : _doc{doc_limits::min() + meta.doc_delta} {
+  SinglePostingDocs(const PostingMeta& meta, DocRange range) noexcept
+    : _doc{range.Contains(doc_limits::min() + meta.doc_delta)
+             ? doc_limits::min() + meta.doc_delta
+             : doc_limits::eof()} {
     SDB_ASSERT(meta.docs_count == 1);
   }
 
@@ -59,8 +61,8 @@ class SinglePostingScored {
  public:
   SinglePostingScored(const PostingMeta& meta, const SubReader& segment,
                       const TermReader& field, bool has_freq,
-                      const detail::ScoreArgs& args) noexcept
-    : _leaf{meta},
+                      const detail::ScoreArgs& args, DocRange range) noexcept
+    : _leaf{meta, range},
       _freq{meta.freq},
       _segment{&segment},
       _field{&field},
@@ -121,8 +123,8 @@ class SinglePostingScored {
 
 class PlainSinglePostingScored {
  public:
-  explicit PlainSinglePostingScored(const PostingMeta& meta) noexcept
-    : _leaf{meta} {}
+  PlainSinglePostingScored(const PostingMeta& meta, DocRange range) noexcept
+    : _leaf{meta, range} {}
 
   PlainSinglePostingScored(const PlainSinglePostingScored&) = delete;
   PlainSinglePostingScored& operator=(const PlainSinglePostingScored&) = delete;

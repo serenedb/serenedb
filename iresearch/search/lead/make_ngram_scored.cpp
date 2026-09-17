@@ -32,11 +32,11 @@
 namespace irs::lead {
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const detail::ScoreArgs& args) {
+                          const detail::ScoreArgs& args, DocRange range) {
   if (args.stats == nullptr) {
     return {};
   }
-  return detail::Build<true>(query,
+  return detail::Build<true>(query, range,
                              [&]<typename Slots>(auto&&... rest) -> Node::ptr {
                                using Node = TwoPhaseScored<Slots>;
                                return memory::make_managed<Impl<Node>>(

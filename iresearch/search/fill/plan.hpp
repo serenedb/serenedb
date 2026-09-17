@@ -35,12 +35,17 @@
 
 namespace irs::fill {
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query);
-Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
+Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query, DocRange range);
+Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query,
+                                       DocRange range);
+Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query,
+                                  DocRange range);
+Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query,
+                                 DocRange range);
+Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query,
+                                          DocRange range);
+Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query,
+                                     DocRange range);
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
                                 const detail::ScoredCtx& ctx,
@@ -61,8 +66,8 @@ Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
                                        const detail::ScoredCtx& ctx,
                                        ScoreMergeType merge);
 
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
-Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
+Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query, DocRange range);
+Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query, DocRange range);
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
                           const detail::ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,

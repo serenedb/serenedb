@@ -45,14 +45,14 @@ class PhraseFixedSlots {
                    std::span<const TermInterval> intervals,
                    const IndexInput& doc_in, IndexFeatures layout,
                    const IndexInput& pos_in, const IndexInput* pay_in,
-                   Args&&... args)
+                   DocRange range, Args&&... args)
     : _leaves(metas.size()),
       _matcher{metas.size(), std::forward<Args>(args)...} {
     SDB_ASSERT(metas.size() == intervals.size());
     _leaves.Open(
       metas,
       [&](Leaf& leaf, const PostingMeta& meta) {
-        leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
+        leaf.Prepare(meta, doc_in, layout, pos_in, pay_in, range);
       },
       [&](uint32_t j, typename Leaves::Slot& slot) {
         _matcher.Position(j) = {&slot.leaf.Positions(), intervals[j]};

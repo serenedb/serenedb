@@ -213,7 +213,7 @@ Root::ptr MakeNestedPrunedConjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, args(posting));
+                   segment, own, args(posting), ctx.range);
     };
     const auto each = [&](const NestedClause& clause) {
       return [&clause, &prepare](auto& one, size_t j) {
@@ -236,7 +236,7 @@ Root::ptr MakeNestedPrunedConjunction(
         const auto& own = *posting.state.reader;
         return memory::make_managed<PrunedClauseImpl<Leaf>>(
           posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
-          args(posting));
+          args(posting), ctx.range);
       }
       return memory::make_managed<PrunedClauseImpl<Group>>(clause.terms.size(),
                                                            each(clause));
@@ -252,7 +252,7 @@ Root::ptr MakeNestedPrunedConjunction(
       const uint64_t lead_docs = clauses.front().docs;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+        ctx.range, [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
             ctx, ctx.fetcher, size, std::piecewise_construct,
             std::forward<decltype(lead)>(lead), others_args,
@@ -281,7 +281,7 @@ Root::ptr MakeNestedPrunedConjunction(
       return make.template operator()<PostingPrunedLead<Input>>(
         std::forward_as_tuple(posting.state.cookie, *doc,
                               irs::detail::LayoutOf(own), segment, own,
-                              args(posting)));
+                              args(posting), ctx.range));
     }
     return make.template operator()<DisjunctionLead<Input>>(
       std::forward_as_tuple(first.terms.size(), each(first)));

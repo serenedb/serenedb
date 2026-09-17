@@ -24,9 +24,10 @@
 
 namespace irs::fill {
 
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query) {
+Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query,
+                                     DocRange range) {
   return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Slop, ByWalkDocs,
-                                      Node::ptr>(query);
+                                      Node::ptr>(query, range);
 }
 
 }  // namespace irs::fill

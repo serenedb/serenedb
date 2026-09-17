@@ -40,18 +40,19 @@
 namespace irs::probe {
 
 template<typename Result, typename Make>
-Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
+Result ResolvePostingDocs(const detail::PostingClause& posting, DocRange range,
+                          Make&& make) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
-    return make.template operator()<SinglePostingDocs>(meta);
+    return make.template operator()<SinglePostingDocs>(meta, range);
   }
   const auto& own = *posting.state.reader;
   return detail::ResolveInput(
     *detail::DocOf(own), [&]<typename Input> -> Result {
       return make.template operator()<detail::PostingProbe<Input>>(
-        meta, *detail::DocOf(own), detail::LayoutOf(own),
-        detail::BoundsOf(own));
+        meta, *detail::DocOf(own), detail::LayoutOf(own), detail::BoundsOf(own),
+        range);
     });
 }
 
@@ -60,10 +61,11 @@ Node::ptr MakeSparseDisjunctionDocs(std::span<const Term> terms,
                                     std::span<const QueryBuilder::ptr> filters,
                                     const TermReader* field,
                                     const SubReader& segment,
-                                    uint64_t interrogations) {
+                                    uint64_t interrogations, DocRange range) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
+    terms, filters, field, segment, interrogations, range,
+    detail::ProbeOrder::Densest,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
@@ -81,20 +83,21 @@ template<typename Term>
 Node::ptr MakeDisjunctionDocs(std::span<const Term> terms,
                               std::span<const QueryBuilder::ptr> filters,
                               const TermReader* field, const SubReader& segment,
-                              uint64_t interrogations) {
+                              uint64_t interrogations, DocRange range) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   if (filters.empty() && !terms.empty()) {
     const auto* const doc =
       detail::DocOf(detail::FieldOf(terms.front(), field));
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    if (doc != nullptr &&
-        detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
+    if (doc != nullptr && detail::TakeProbeBitset(terms, *doc, docs_count,
+                                                  interrogations, range)) {
       return detail::MakeBitsetNode<Node::ptr>(
-        detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
+        detail::DisjunctionBuckets(terms, field), *doc, docs_count, range,
+        nullptr);
     }
   }
   return MakeSparseDisjunctionDocs(terms, filters, field, segment,
-                                   interrogations);
+                                   interrogations, range);
 }
 
 template<typename Term, typename ClauseFn>
@@ -102,12 +105,12 @@ Node::ptr MakeSparseDisjunctionScored(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
   score_t boost, const SubReader& segment, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
-  score_t absorbed = 0) {
+  ScoreMergeType merge, uint64_t interrogations, DocRange range,
+  ClauseFn clause, score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   return detail::BuildOptionalLeaves<Node::ptr>(
     terms, filters, uniformity, field, scorer, boost, segment, recipe,
-    interrogations, clause,
+    interrogations, range, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
@@ -137,8 +140,8 @@ Node::ptr MakeWindowDisjunctionScored(
     return {};
   }
   return detail::BuildScoredWindow<Node::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
-    [&]<typename Set>(auto&&... args) -> Node::ptr {
+    terms, field, scorer, boost, doc, ctx.range, rest, uniformity, recipe,
+    merge, [&]<typename Set>(auto&&... args) -> Node::ptr {
       using Node = BooleanWindow<detail::OrGroup<Set>, detail::Scored>;
       return memory::make_managed<Impl<Node>>(
         std::piecewise_construct,
@@ -159,8 +162,8 @@ Node::ptr MakeDisjunctionScored(
     const auto* const doc =
       detail::DocOf(detail::FieldOf(terms.front(), field));
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    if (doc != nullptr &&
-        detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
+    if (doc != nullptr && detail::TakeProbeBitset(terms, *doc, docs_count,
+                                                  interrogations, ctx.range)) {
       if (auto windowed = MakeWindowDisjunctionScored(
             terms, filters, uniformity, field, scorer, boost, segment, recipe,
             merge, ctx, absorbed)) {
@@ -168,21 +171,21 @@ Node::ptr MakeDisjunctionScored(
       }
     }
   }
-  return MakeSparseDisjunctionScored(terms, filters, uniformity, field, scorer,
-                                     boost, segment, recipe, merge,
-                                     interrogations, clause, absorbed);
+  return MakeSparseDisjunctionScored(
+    terms, filters, uniformity, field, scorer, boost, segment, recipe, merge,
+    interrogations, ctx.range, clause, absorbed);
 }
 
 inline Node::ptr BuildOptionalProbe(
   std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  const SubReader& segment, uint64_t interrogations) {
+  const SubReader& segment, uint64_t interrogations, DocRange range) {
   SDB_ASSERT(min_should_match != 0);
   return min_should_match == 1
            ? MakeDisjunctionDocs(should, should_filters, nullptr, segment,
-                                 interrogations)
+                                 interrogations, range)
            : MakeSparseThresholdDocs(should, should_filters, segment,
-                                     min_should_match, interrogations);
+                                     min_should_match, interrogations, range);
 }
 
 inline Node::ptr BuildOptionalProbeScored(

@@ -53,12 +53,14 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   PostingFill() = default;
 
   PostingFill(const PostingMeta& meta, const IndexInput& doc_in,
-              bool has_score_bounds, bool has_freq) {
-    Prepare(meta, doc_in, has_score_bounds, has_freq);
+              IndexFeatures layout, bool has_score_bounds, bool has_freq,
+              DocRange range) {
+    Prepare(meta, doc_in, layout, has_score_bounds, has_freq, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
+               IndexFeatures layout, bool has_score_bounds, bool has_freq,
+               DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
 
@@ -73,7 +75,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return;
     }
 
-    this->OpenInput(meta, doc_in, has_score_bounds);
+    this->OpenInput(meta, doc_in, layout, has_score_bounds, range);
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {

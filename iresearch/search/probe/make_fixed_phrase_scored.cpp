@@ -26,13 +26,13 @@
 namespace irs::probe {
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoreArgs& args) {
+                                const detail::ScoreArgs& args, DocRange range) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
   return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, Impl, Node::ptr,
                                    true, probe::TwoPhaseScored>(
-    query, query.Segment(), *query.state.reader, args);
+    query, range, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::probe

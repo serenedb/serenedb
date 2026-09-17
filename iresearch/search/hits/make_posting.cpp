@@ -43,7 +43,7 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting,
 
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
-      posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
+      posting, ctx.range, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
         return MakeShape<ConstantWalk, Leaf>(
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
@@ -55,7 +55,7 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting,
         table, std::piecewise_construct, std::forward_as_tuple(),
         std::forward_as_tuple());
       root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
-                    irs::detail::BoundsOf(own));
+                    irs::detail::BoundsOf(own), ctx.range);
       return root;
     });
   });

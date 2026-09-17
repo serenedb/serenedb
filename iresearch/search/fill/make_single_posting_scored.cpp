@@ -38,7 +38,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
   const auto& meta = posting.state.cookie;
   const auto doc = doc_limits::min() + meta.doc_delta;
   if (posting.stats.stats == nullptr) {
-    return memory::make_managed<Impl<SingleDocs>>(doc);
+    return memory::make_managed<Impl<SingleDocs>>(doc, ctx.range);
   }
   const auto value =
     detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
@@ -47,7 +47,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                              .fetcher = ctx.fetcher,
                                              .boost = posting.boost});
   return memory::make_managed<Impl<ConstantScored<SingleDocs>>>(merge, value,
-                                                                doc);
+                                                                doc, ctx.range);
 }
 
 }  // namespace irs::fill

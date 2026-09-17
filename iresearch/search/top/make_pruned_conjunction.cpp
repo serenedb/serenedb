@@ -82,10 +82,13 @@ Root::ptr MakePrunedConjunction(
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   irs::detail::ScoreArgs{
+                     .scorer = posting.stats.scorer,
+                     .stats = posting.stats.stats,
+                     .fetcher = &ctx.fetcher,
+                     .boost = posting.boost,
+                   },
+                   ctx.range);
     };
     using Others = PruneLeaves<Clause>;
     if (excludes.empty() && exclude_filters.empty()) {
@@ -94,7 +97,7 @@ Root::ptr MakePrunedConjunction(
     }
     const uint64_t lead = terms.front().state.cookie.docs_count;
     return irs::detail::BuildBlockExcludes<Root::ptr>(
-      excludes, exclude_filters, nullptr, segment, lead, lead,
+      excludes, exclude_filters, nullptr, segment, lead, lead, ctx.range,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
           ctx, ctx.fetcher, size, init,

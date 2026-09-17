@@ -27,7 +27,8 @@ namespace irs::lead {
 
 class SinglePostingDocs {
  public:
-  explicit SinglePostingDocs(doc_id_t only) noexcept : _only{only} {
+  SinglePostingDocs(doc_id_t only, DocRange range) noexcept
+    : _only{range.Contains(only) ? only : doc_limits::eof()} {
     SDB_ASSERT(doc_limits::valid(only));
   }
 

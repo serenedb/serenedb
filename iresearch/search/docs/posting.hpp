@@ -48,9 +48,10 @@ class Posting : public Root,
   explicit Posting(Table table) noexcept : _table{table} {}
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+               IndexFeatures layout, bool has_score_bounds, bool has_freq,
+               DocRange range) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
-    this->OpenInput(meta, doc_in, has_score_bounds);
+    this->OpenInput(meta, doc_in, layout, has_score_bounds, range);
     this->SetFreqLen(has_freq);
     this->ArmWalk(meta, layout, has_score_bounds);
   }

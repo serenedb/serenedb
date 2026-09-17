@@ -30,22 +30,23 @@
 namespace irs::probe {
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
-                                uint64_t interrogations) {
+                                uint64_t interrogations, DocRange range) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto& ngrams = query.NGrams();
   SDB_ASSERT(ngrams.Kind() != QueryKind::Empty);
   if (!query.HasMatcher()) {
-    return ngrams.PlanProbe({}, interrogations);
+    return ngrams.PlanProbe({.range = range}, interrogations);
   }
   const auto recipe = query.MakeRecipe();
 
   if (ngrams.Kind() == QueryKind::All) {
     using Slots = WildcardNGramSlotsDocs<AllDocs>;
     return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
-      std::piecewise_construct, std::forward_as_tuple(query.Segment()), recipe);
+      std::piecewise_construct, std::forward_as_tuple(query.Segment(), range),
+      recipe);
   }
 
-  auto node = ngrams.PlanProbe({}, interrogations);
+  auto node = ngrams.PlanProbe({.range = range}, interrogations);
   if (!node) {
     return {};
   }

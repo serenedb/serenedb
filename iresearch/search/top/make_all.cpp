@@ -32,13 +32,14 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = boost};
-  return MakeShape<All>(ctx, ctx.fetcher, count,
+  return MakeShape<All>(ctx, ctx.fetcher, count, ctx.range,
                         irs::detail::AllDocsScore(segment, args));
 }
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score) {
   return MakeShape<All>(ctx, ctx.fetcher,
-                        static_cast<doc_id_t>(segment.docs_count()), score);
+                        static_cast<doc_id_t>(segment.docs_count()), ctx.range,
+                        score);
 }
 
 }  // namespace irs::top

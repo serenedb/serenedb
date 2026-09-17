@@ -225,9 +225,15 @@ uint64_t FoldReadClause(std::span<const Term> terms, doc_id_t docs_count,
   return cost;
 }
 
+inline doc_id_t FoldSpan(DocRange range, doc_id_t docs_count) noexcept {
+  const auto end =
+    std::min<doc_id_t>(range.end, doc_limits::min() + docs_count);
+  return end > range.begin ? end - range.begin : doc_id_t{0};
+}
+
 inline bool FoldIsFaster(uint64_t per_window, size_t terms, uint64_t docs,
-                         doc_id_t docs_count) noexcept {
-  const uint64_t windows = docs_count / kWindowDocs + 1;
+                         doc_id_t span) noexcept {
+  const uint64_t windows = span / kWindowDocs + 1;
   return terms * docs >= per_window * windows;
 }
 
@@ -236,52 +242,55 @@ inline constexpr size_t kWindowLeafBytes =
   sizeof(Leaf) + sizeof(Leaf*) + sizeof(doc_id_t);
 
 inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
-                          doc_id_t docs_count) noexcept {
+                          doc_id_t span) noexcept {
   const uint64_t leaf = ResolveInput(doc, []<typename Input> -> uint64_t {
     return kWindowLeafBytes<PostingFill<Input>>;
   });
-  return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;
+  return terms * leaf >= (uint64_t{span} + doc_limits::min()) / 8;
 }
 
 inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
-                     doc_id_t docs_count) noexcept {
+                     doc_id_t span) noexcept {
   if (!faster) {
     return false;
   }
   if constexpr (kFoldOnlyWhenSmaller) {
-    return FoldIsSmaller(terms, doc, docs_count);
+    return FoldIsSmaller(terms, doc, span);
   }
   return true;
 }
 
 template<typename Result, typename Terms>
-bool TakeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count) {
+bool TakeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
+                DocRange range) {
   static_assert(kFoldPostings<Result> != 0,
                 "this position has not said what a window costs it; a probed "
                 "one is decided by TakeProbeBitset");
   if (terms.size() < 2) {
     return false;
   }
+  const auto span = FoldSpan(range, docs_count);
   const auto docs = SumDocs(terms);
   const auto faster =
-    FoldIsFaster(kFoldPostings<Result>, terms.size(), docs, docs_count);
-  return TakeFold(faster, terms.size(), doc, docs_count);
+    FoldIsFaster(kFoldPostings<Result>, terms.size(), docs, span);
+  return TakeFold(faster, terms.size(), doc, span);
 }
 
 inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,
-                              uint64_t docs, doc_id_t docs_count) noexcept {
-  return interrogations * terms >= docs + SegmentWords(docs_count);
+                              uint64_t docs, doc_id_t span) noexcept {
+  return interrogations * terms >= docs + SegmentWords(span);
 }
 
 template<typename Terms>
 bool TakeProbeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
-                     uint64_t interrogations) noexcept {
+                     uint64_t interrogations, DocRange range) noexcept {
   if (terms.size() < 2) {
     return false;
   }
+  const auto span = FoldSpan(range, docs_count);
   const auto faster =
-    FoldProbeIsFaster(interrogations, terms.size(), SumDocs(terms), docs_count);
-  return TakeFold(faster, terms.size(), doc, docs_count);
+    FoldProbeIsFaster(interrogations, terms.size(), SumDocs(terms), span);
+  return TakeFold(faster, terms.size(), doc, span);
 }
 
 inline uint64_t FoldConjunctionCost(
@@ -315,51 +324,55 @@ inline uint64_t WalkConjunctionCost(
 
 inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
                                 const IndexInput& doc, doc_id_t docs_count,
-                                uint64_t candidates) noexcept {
+                                uint64_t candidates, DocRange range) noexcept {
   if (!buckets.NeedsSet()) {
     return false;
   }
   const std::span clauses{buckets.must};
   SDB_ASSERT(clauses.size() > 1);
+  const auto span = FoldSpan(range, docs_count);
   const auto cost =
-    FoldConjunctionCost(clauses, 0, buckets.Seed(docs_count), docs_count);
+    FoldConjunctionCost(clauses, 0, buckets.Seed(docs_count), span);
   size_t terms = 0;
   for (const auto& clause : clauses) {
     terms += clause.size();
   }
   return TakeFold(WalkConjunctionCost(clauses, 0, candidates) >= cost, terms,
-                  doc, docs_count);
+                  doc, span);
 }
 
 template<typename Result>
 Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                      doc_id_t docs_count, TableFilter* table);
+                      doc_id_t docs_count, DocRange range, TableFilter* table);
 
 template<>
 inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
+                                                   DocRange range,
                                                    TableFilter*) {
   return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+    BuildBitset(buckets, doc, docs_count, range));
 }
 
 template<>
 inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
                                                      const IndexInput& doc,
                                                      doc_id_t docs_count,
+                                                     DocRange range,
                                                      TableFilter*) {
   return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+    BuildBitset(buckets, doc, docs_count, range));
 }
 
 template<>
 inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
+                                                   DocRange range,
                                                    TableFilter*) {
   return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+    BuildBitset(buckets, doc, docs_count, range));
 }
 
 template<typename Term>
@@ -376,13 +389,13 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 
 template<typename Result, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
-                    const IndexInput& doc, doc_id_t docs_count,
+                    const IndexInput& doc, doc_id_t docs_count, DocRange range,
                     TableFilter* table) {
-  if (!TakeBitset<Result>(terms, doc, docs_count)) {
+  if (!TakeBitset<Result>(terms, doc, docs_count, range)) {
     return {};
   }
   return MakeBitsetNode<Result>(DisjunctionBuckets(terms, field), doc,
-                                docs_count, table);
+                                docs_count, range, table);
 }
 
 }  // namespace irs::detail

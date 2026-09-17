@@ -25,8 +25,8 @@
 
 namespace irs::docs {
 
-Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
-                      const Context& ctx) {
+Root::ptr MakePosting(const detail::PostingClause& posting,
+                      const SubReader& segment, const Context& ctx) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
@@ -38,7 +38,7 @@ Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
     const auto make = [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<Posting<Input, decltype(table)>>(table);
       root->Prepare(meta, in, detail::LayoutOf(own), detail::BoundsOf(own),
-                    detail::FreqOf(own));
+                    detail::FreqOf(own), ctx.range);
       return root;
     };
     if (ctx.table != nullptr) {

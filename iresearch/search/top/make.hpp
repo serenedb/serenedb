@@ -193,10 +193,13 @@ Root::ptr MakePrunedDisjunction(
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   irs::detail::ScoreArgs{
+                     .scorer = posting.stats.scorer,
+                     .stats = posting.stats.stats,
+                     .fetcher = &ctx.fetcher,
+                     .boost = posting.boost,
+                   },
+                   ctx.range);
       return posting.state.cookie.docs_count;
     };
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -209,7 +212,7 @@ Root::ptr MakePrunedDisjunction(
         std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+        ctx.range, [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedDisjunction, Leaf,
                            fill::ProbedAndNot<Exclude>>(
             ctx, terms.size(), docs_count, init,

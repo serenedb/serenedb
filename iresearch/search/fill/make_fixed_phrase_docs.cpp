@@ -24,9 +24,9 @@
 
 namespace irs::fill {
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query) {
+Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query, DocRange range) {
   return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, ByWalkDocs,
-                                   Node::ptr>(query);
+                                   Node::ptr>(query, range);
 }
 
 }  // namespace irs::fill

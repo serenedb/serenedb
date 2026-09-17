@@ -34,8 +34,8 @@
 namespace irs::lead {
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
-  return detail::MakeGeo<Impl, Node::ptr>(query, 0);
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, DocRange range) {
+  return detail::MakeGeo<Impl, Node::ptr>(query, 0, range);
 }
 
 template<typename Parser, typename Acceptor>
@@ -47,7 +47,8 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                                        .stats = record.stats,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
-  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(query, 0, value);
+  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(query, 0, ctx.range,
+                                                        value);
 }
 
 }  // namespace irs::lead

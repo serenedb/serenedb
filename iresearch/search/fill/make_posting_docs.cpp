@@ -27,14 +27,15 @@
 namespace irs::fill {
 
 Node::ptr MakePostingDocs(const detail::PostingClause& posting,
-                          const SubReader&) {
+                          const SubReader&, DocRange range) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
   return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
     return memory::make_managed<Impl<detail::PostingFill<Input>>>(
-      posting.state.cookie, doc, detail::BoundsOf(own), detail::FreqOf(own));
+      posting.state.cookie, doc, detail::LayoutOf(own), detail::BoundsOf(own),
+      detail::FreqOf(own), range);
   });
 }
 

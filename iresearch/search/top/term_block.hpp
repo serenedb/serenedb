@@ -47,9 +47,9 @@ class TermBlock : public irs::detail::PostingBatch<InputType, Table, true> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
-               bool bounds) {
+               bool bounds, DocRange range) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
-    this->OpenInput(meta, doc_in, bounds);
+    this->OpenInput(meta, doc_in, layout, bounds, range);
     this->ArmWalk(meta, layout, bounds);
     this->MakeScore(segment, field, args);
   }

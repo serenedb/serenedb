@@ -62,8 +62,10 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
-               const TermReader& field, const irs::detail::ScoreArgs& args) {
-    if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
+               const TermReader& field, const irs::detail::ScoreArgs& args,
+               DocRange range) {
+    if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args,
+                            range)) {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
     }

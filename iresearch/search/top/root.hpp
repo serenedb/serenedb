@@ -35,12 +35,14 @@ struct Context {
   detail::TableFilter* table = nullptr;
   bool prune = false;
   uint32_t k = 0;
+  DocRange range;
 };
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {
     .scorer = &ctx.scorer,
     .fetcher = &ctx.fetcher,
+    .range = ctx.range,
   };
 }
 

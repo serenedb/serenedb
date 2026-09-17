@@ -39,7 +39,7 @@
 namespace irs::detail {
 
 template<bool Scored = false, typename F>
-auto Build(const NGramSimilarityQuery& query, F&& f) {
+auto Build(const NGramSimilarityQuery& query, DocRange range, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
@@ -52,7 +52,7 @@ auto Build(const NGramSimilarityQuery& query, F&& f) {
           .template operator()<detail::NGramSlots<Leaf, Scored, false, N>>(
             metas.size(),
             [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay, range);
             },
             min_match, query.TotalTerms());
       });
@@ -61,7 +61,7 @@ auto Build(const NGramSimilarityQuery& query, F&& f) {
 }
 
 template<bool Scored = false, typename F>
-auto BuildAll(const NGramSimilarityQuery& query, F&& f) {
+auto BuildAll(const NGramSimilarityQuery& query, DocRange range, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
@@ -70,7 +70,7 @@ auto BuildAll(const NGramSimilarityQuery& query, F&& f) {
       using Leaf = detail::PostingPos<Input, Bounds>;
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
         return f.template operator()<detail::NGramAllSlots<Leaf, N, Scored>>(
-          metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
+          metas, *h.doc, h.Layout(), *h.pos, h.pay, range, query.TotalTerms());
       });
     });
   });

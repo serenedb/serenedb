@@ -45,24 +45,24 @@ Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
     if (ctx.table != nullptr) {
       return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                             FilteredConstantWalk, Root::ptr>(
-        query, ctx.table, *value);
+        query, ctx.range, ctx.table, *value);
     }
     return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                           PlainConstantWalk, Root::ptr>(
-      query, utils::Empty{}, *value);
+      query, ctx.range, utils::Empty{}, *value);
   }
   if (ctx.table != nullptr) {
     return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                           FilteredWalk, Root::ptr, true,
                                           lead::TwoPhaseScored>(
-      query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
-      args);
+      query, ctx.range, ctx.table, ctx.fetcher, query.Segment(),
+      *query.state.reader, args);
   }
   return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Slop,
                                         PlainWalk, Root::ptr, true,
                                         lead::TwoPhaseScored>(
-    query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
-    args);
+    query, ctx.range, utils::Empty{}, ctx.fetcher, query.Segment(),
+    *query.state.reader, args);
 }
 
 }  // namespace irs::top

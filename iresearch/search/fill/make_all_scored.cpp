@@ -35,14 +35,14 @@ Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoredCtx& ctx,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = boost});
-  return memory::make_managed<Impl<ConstantScored<AllDocs>>>(merge, value,
-                                                             segment);
+  return memory::make_managed<Impl<ConstantScored<AllDocs>>>(
+    merge, value, segment, ctx.range);
 }
 
 Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
-                        score_t score) {
+                        score_t score, DocRange range) {
   return memory::make_managed<Impl<ConstantScored<AllDocs>>>(merge, score,
-                                                             segment);
+                                                             segment, range);
 }
 
 }  // namespace irs::fill

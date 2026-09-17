@@ -57,6 +57,21 @@ inline constexpr uint32_t kMinCapacity = kBlockSize;
 
 }  // namespace doc_limits
 
+struct DocRange {
+  doc_id_t begin = doc_limits::min();
+  doc_id_t end = doc_limits::eof();
+
+  constexpr bool Bounded() const noexcept {
+    return begin != doc_limits::min() || end != doc_limits::eof();
+  }
+
+  constexpr bool Contains(doc_id_t doc) const noexcept {
+    return begin <= doc && doc < end;
+  }
+
+  constexpr bool operator==(const DocRange&) const noexcept = default;
+};
+
 template<typename T, size_t Size, size_t Slack>
 class ABSL_CACHELINE_ALIGNED SlackBuf {
  public:

@@ -28,9 +28,9 @@
 namespace irs::lead {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  score_t score) {
+                                  score_t score, DocRange range) {
   return detail::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(query, 0,
-                                                                  score);
+                                                                  range, score);
 }
 
 }  // namespace irs::lead

@@ -77,8 +77,8 @@ template<typename Result, typename Term, typename Make>
 Result BuildProbeLeaves(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
-                        uint64_t interrogations, ProbeOrder order,
-                        Make&& make) {
+                        uint64_t interrogations, DocRange range,
+                        ProbeOrder order, Make&& make) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
   const IndexInput* doc = nullptr;
   if (ConcreteClauses(terms, filters, field, doc)) {
@@ -88,7 +88,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
         terms.size(), [&](Leaf& leaf, size_t i) {
           const auto& own = FieldOf(terms[i], field);
           leaf.Prepare(CookieOf(terms[i]), *DocOf(own), LayoutOf(own),
-                       BoundsOf(own));
+                       BoundsOf(own), range);
         });
     });
   }
@@ -96,7 +96,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
   leaves.reserve(terms.size() + filters.size());
   const auto ask = [&](const PostingClause& posting,
                        const QueryBuilder* child) noexcept {
-    auto node = ProbeOf(posting, child, segment, interrogations);
+    auto node = ProbeOf(posting, child, segment, interrogations, range);
     if (!node) {
       return false;
     }
@@ -135,8 +135,8 @@ Result BuildOptionalLeaves(std::span<const Term> terms,
                            Terms uniformity, const TermReader* field,
                            const Scorer* scorer, score_t boost,
                            const SubReader& segment, const ScoreRecipe& recipe,
-                           uint64_t interrogations, ProbeClause&& clause,
-                           Make&& make,
+                           uint64_t interrogations, DocRange range,
+                           ProbeClause&& clause, Make&& make,
                            ProbeOrder order = ProbeOrder::Densest) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
   const IndexInput* doc = nullptr;
@@ -147,7 +147,7 @@ Result BuildOptionalLeaves(std::span<const Term> terms,
                                                               size_t i) {
         const auto posting = ClauseOf(terms[i], field, scorer, boost);
         leaf.Prepare(posting.state.cookie, *doc, segment, *posting.state.reader,
-                     recipe.Args(posting.stats, posting.boost));
+                     recipe.Args(posting.stats, posting.boost), range);
       });
     });
   }

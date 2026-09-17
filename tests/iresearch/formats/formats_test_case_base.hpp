@@ -99,7 +99,7 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
       if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
         return irs::memory::make_managed<
           SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
-          meta, *handles.doc, layout, has_score_bounds);
+          meta, *handles.doc, layout, has_score_bounds, irs::DocRange{});
       }
       return irs::detail::ResolveBounds(
         has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
@@ -107,11 +107,13 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
               (required & irs::IndexFeatures::Offs)) {
             return irs::memory::make_managed<
               SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, true>>>(
-              meta, *handles.doc, layout, *handles.pos, handles.pay);
+              meta, *handles.doc, layout, *handles.pos, handles.pay,
+              irs::DocRange{});
           }
           return irs::memory::make_managed<
             SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, false>>>(
-            meta, *handles.doc, layout, *handles.pos, handles.pay);
+            meta, *handles.doc, layout, *handles.pos, handles.pay,
+            irs::DocRange{});
         });
     });
 }

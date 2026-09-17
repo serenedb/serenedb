@@ -35,6 +35,7 @@ namespace detail {
 struct ScoredCtx {
   const Scorer* scorer = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
+  DocRange range;
 };
 
 }  // namespace detail
@@ -44,12 +45,14 @@ struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
   detail::DeadRuns* table = nullptr;
+  DocRange range;
 };
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {
     .scorer = &ctx.scorer,
     .fetcher = &ctx.fetcher,
+    .range = ctx.range,
   };
 }
 

@@ -101,8 +101,8 @@ template<typename Result, typename Leaf, typename Plain, typename Term,
          typename Make>
 Result BuildScoredTerms(std::span<const Term> terms, const TermReader* field,
                         const Scorer* scorer, score_t boost,
-                        const IndexInput* input, const ScoreRecipe& recipe,
-                        Make&& make) {
+                        const IndexInput* input, DocRange range,
+                        const ScoreRecipe& recipe, Make&& make) {
   SDB_ASSERT(!terms.empty());
   const auto& doc = *input;
   const auto scored_count = ScoredCount(terms, scorer);
@@ -114,13 +114,14 @@ Result BuildScoredTerms(std::span<const Term> terms, const TermReader* field,
     leaf.Prepare(meta, doc,
                  meta.docs_count != 1 && BoundsOf(*clause.state.reader),
                  *recipe.segment, *clause.state.reader,
-                 recipe.Args(clause.stats, clause.boost));
+                 recipe.Args(clause.stats, clause.boost), range);
   };
   const auto plain = [&](Plain& leaf, const Term& term) {
     const auto& own = FieldOf(term, field);
     const auto& meta = CookieOf(term);
-    leaf.Prepare(meta, doc, meta.docs_count != 1 && BoundsOf(own),
-                 meta.docs_count != 1 && FreqOf(own));
+    leaf.Prepare(meta, doc, LayoutOf(own),
+                 meta.docs_count != 1 && BoundsOf(own),
+                 meta.docs_count != 1 && FreqOf(own), range);
   };
 
   if (scored_count == terms.size()) {
@@ -153,13 +154,13 @@ template<typename Result, typename Leaf, typename Plain, typename Term,
          typename Make>
 Result BuildScoredSet(std::span<const Term> terms, const TermReader* field,
                       const Scorer* scorer, score_t boost,
-                      const IndexInput* input,
+                      const IndexInput* input, DocRange range,
                       std::vector<fill::Node::ptr>& rest,
                       const ScoreRecipe& recipe, Make&& make) {
   SDB_ASSERT(!terms.empty());
   if (rest.empty()) {
     return BuildScoredTerms<Result, Leaf, Plain, Term>(
-      terms, field, scorer, boost, input, recipe, make);
+      terms, field, scorer, boost, input, range, recipe, make);
   }
   const auto& doc = *input;
   const auto count = terms.size();
@@ -176,15 +177,16 @@ Result BuildScoredSet(std::span<const Term> terms, const TermReader* field,
       if (clause.stats.stats != nullptr) {
         leaf = fill::Erased{memory::make_managed<fill::Impl<Leaf>>(
           meta, doc, bounds, *recipe.segment, own,
-          recipe.Args(clause.stats, clause.boost))};
+          recipe.Args(clause.stats, clause.boost), range)};
         return;
       }
       leaf = fill::Erased{memory::make_managed<fill::Impl<Plain>>(
-        meta, doc, bounds, meta.docs_count != 1 && FreqOf(own))};
+        meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own),
+        range)};
     });
 }
 
-inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
+inline fill::Node::ptr ScoredTermOf(const PostingClause& term, DocRange range,
                                     const ScoreRecipe& recipe,
                                     ScoreMergeType merge) {
   SDB_ASSERT(term.state.reader != nullptr);
@@ -196,7 +198,8 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
   if (term.stats.stats == nullptr) {
     return ResolveInput(doc, [&]<typename Input> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<PlainFillScored<Input>>>(
-        meta, doc, bounds, meta.docs_count != 1 && FreqOf(own));
+        meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own),
+        range);
     });
   }
   return ResolveFillScored<fill::Node::ptr>(
@@ -204,14 +207,14 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
     [&]<typename Leaf, typename Plain> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<Leaf>>(
         meta, doc, bounds, *recipe.segment, own,
-        recipe.Args(term.stats, term.boost));
+        recipe.Args(term.stats, term.boost), range);
     });
 }
 
 template<typename Result, typename Term, typename Make>
 Result BuildScoredWindow(std::span<const Term> terms, const TermReader* field,
                          const Scorer* scorer, score_t boost,
-                         const IndexInput* doc,
+                         const IndexInput* doc, DocRange range,
                          std::vector<fill::Node::ptr>& rest, Terms uniformity,
                          const ScoreRecipe& recipe, ScoreMergeType merge,
                          Make&& make) {
@@ -223,14 +226,14 @@ Result BuildScoredWindow(std::span<const Term> terms, const TermReader* field,
       *doc, uniformity >= Terms::Scored, merge,
       [&]<typename Leaf, typename Plain> -> Result {
         return BuildScoredSet<Result, Leaf, Plain, Term>(
-          terms, field, scorer, boost, doc, rest, recipe, make);
+          terms, field, scorer, boost, doc, range, rest, recipe, make);
       });
   }
   std::vector<fill::Node::ptr> leaves;
   leaves.reserve(terms.size() + rest.size());
   for (size_t i = 0; i != terms.size(); ++i) {
-    auto node =
-      ScoredTermOf(ClauseOf(terms[i], field, scorer, boost), recipe, merge);
+    auto node = ScoredTermOf(ClauseOf(terms[i], field, scorer, boost), range,
+                             recipe, merge);
     if (!node) {
       return {};
     }

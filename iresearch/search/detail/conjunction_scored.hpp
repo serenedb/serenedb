@@ -46,7 +46,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
                               std::span<const QueryBuilder::ptr> filters,
                               const TermReader* field, const Scorer* scorer,
                               score_t boost, const SubReader& segment,
-                              const ScoreRecipe& recipe,
+                              const ScoreRecipe& recipe, DocRange range,
                               MakeProbeClause&& probe_clause,
                               MakeLeadClause&& lead_clause, Make&& make) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
@@ -81,7 +81,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(posting.state.cookie,
                                   *DocOf(*posting.state.reader), segment,
-                                  *posting.state.reader, args(posting)));
+                                  *posting.state.reader, args(posting), range));
         } else if constexpr (N != 0) {
           using Tail = probe::AndLeaves<Probe, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
@@ -92,7 +92,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
                 std::forward_as_tuple(clause(rest[I]).state.cookie,
                                       *DocOf(*clause(rest[I]).state.reader),
                                       segment, *clause(rest[I]).state.reader,
-                                      args(clause(rest[I])))...));
+                                      args(clause(rest[I])), range)...));
           }(std::make_index_sequence<N>{});
         } else {
           return make.template operator()<Head, probe::AndLeaves<Probe>>(
@@ -100,7 +100,8 @@ Result BuildScoredConjunction(std::span<const Term> terms,
             std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
               const auto posting = clause(rest[i]);
               probe.Prepare(posting.state.cookie, *DocOf(*posting.state.reader),
-                            segment, *posting.state.reader, args(posting));
+                            segment, *posting.state.reader, args(posting),
+                            range);
             }));
         }
       });
@@ -176,7 +177,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
     SDB_ASSERT(posting.state.reader != nullptr);
     const auto& own = *posting.state.reader;
     if (!FreqOf(own) || !ScoresPerDoc(posting.stats.scorer)) {
-      auto node = lead::MakePostingScored(posting, segment, recipe);
+      auto node = lead::MakePostingScored(posting, segment, recipe, range);
       if (!node) {
         return {};
       }
@@ -186,7 +187,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
     return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
       using Head = PostingLeadScored<Input>;
       return build.template operator()<Input, Head>(std::forward_as_tuple(
-        posting.state.cookie, *DocOf(own), segment, own, args(posting)));
+        posting.state.cookie, *DocOf(own), segment, own, args(posting), range));
     });
   }
   auto node = lead_clause(*filters.front());

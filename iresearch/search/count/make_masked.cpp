@@ -33,7 +33,7 @@ namespace irs::count {
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx) {
   const auto* docs_mask = query.Segment().docs_mask();
   SDB_ASSERT(docs_mask != nullptr);
-  auto node = query.PlanLead({});
+  auto node = query.PlanLead({.range = ctx.range});
   if (!node) {
     return {};
   }

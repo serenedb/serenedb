@@ -31,7 +31,8 @@ namespace irs::fill {
 
 class SingleDocs {
  public:
-  explicit SingleDocs(doc_id_t doc) noexcept : _doc{doc} {}
+  SingleDocs(doc_id_t doc, DocRange range) noexcept
+    : _doc{range.Contains(doc) ? doc : doc_limits::eof()} {}
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     return FillOrImpl(min, max, mask, [](size_t) noexcept {});

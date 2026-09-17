@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -67,64 +68,85 @@ bool AppliedInPlace(std::span<const Term> clause,
          DensePosting(CookieOf(clause.front()).docs_count, docs_count);
 }
 
-struct OrBits {
+template<bool Based>
+struct FoldBase {
+  constexpr explicit FoldBase(doc_id_t) noexcept {}
+
+  static constexpr doc_id_t Min() noexcept { return BitsetStorage::kMin; }
+};
+
+template<>
+struct FoldBase<true> {
+  constexpr explicit FoldBase(doc_id_t min) noexcept : min{min} {}
+
+  constexpr doc_id_t Min() const noexcept { return min; }
+
+  doc_id_t min;
+};
+
+template<bool Based>
+struct OrBits : FoldBase<Based> {
   static constexpr auto kBits = BitsetStorage::kBits;
-  static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = false;
 
-  uint64_t* IRS_RESTRICT words;
+  OrBits(uint64_t* IRS_RESTRICT words, doc_id_t min) noexcept
+    : FoldBase<Based>{min}, words{words} {}
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const auto first = prev + 1 - kMin;
+    const auto first = prev + 1 - this->Min();
     SetBitRange(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    OrBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    OrBlock(words, static_cast<int64_t>(prev) - this->Min(), src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    const auto offset = doc - kMin;
+    const auto offset = doc - this->Min();
     SetBit(words[offset / kBits], offset % kBits);
   }
 
   IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
-};
-
-struct ClearBits {
-  static constexpr auto kBits = BitsetStorage::kBits;
-  static constexpr auto kMin = BitsetStorage::kMin;
-  static constexpr bool kOrdered = false;
 
   uint64_t* IRS_RESTRICT words;
+};
+
+template<bool Based>
+struct ClearBits : FoldBase<Based> {
+  static constexpr auto kBits = BitsetStorage::kBits;
+  static constexpr bool kOrdered = false;
+
+  ClearBits(uint64_t* IRS_RESTRICT words, doc_id_t min) noexcept
+    : FoldBase<Based>{min}, words{words} {}
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const auto first = prev + 1 - kMin;
+    const auto first = prev + 1 - this->Min();
     ClearBitRange(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    ClearBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    ClearBlock(words, static_cast<int64_t>(prev) - this->Min(), src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    const auto offset = doc - kMin;
+    const auto offset = doc - this->Min();
     UnsetBit(words[offset / kBits], offset % kBits);
   }
 
   IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
-};
-
-struct RetainBits {
-  static constexpr auto kBits = BitsetStorage::kBits;
-  static constexpr auto kMin = BitsetStorage::kMin;
-  static constexpr bool kOrdered = true;
 
   uint64_t* IRS_RESTRICT words;
-  uint32_t at = 0;
-  uint64_t keep = 0;
+};
+
+template<bool Based>
+struct RetainBits : FoldBase<Based> {
+  static constexpr auto kBits = BitsetStorage::kBits;
+  static constexpr bool kOrdered = true;
+
+  RetainBits(uint64_t* IRS_RESTRICT words, doc_id_t min) noexcept
+    : FoldBase<Based>{min}, words{words} {}
 
   static IRS_FORCE_INLINE uint64_t Between(uint64_t first,
                                            uint64_t last) noexcept {
@@ -152,8 +174,8 @@ struct RetainBits {
   }
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const uint64_t first = prev + 1 - kMin;
-    const uint64_t last = prev + len - kMin;
+    const uint64_t first = prev + 1 - this->Min();
+    const uint64_t last = prev + len - this->Min();
     Reach(first);
     const auto word = static_cast<uint32_t>(last / kBits);
     if (word == at) {
@@ -167,17 +189,17 @@ struct RetainBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) noexcept {
-    const auto first = prev + 1 - kMin;
-    const auto last = max - kMin;
+    const auto first = prev + 1 - this->Min();
+    const auto last = max - this->Min();
     Reach(first);
     words[at] &= keep | (~uint64_t{0} << (first % kBits));
-    RetainBlock(words, static_cast<int64_t>(prev) - kMin, src, n, last);
+    RetainBlock(words, static_cast<int64_t>(prev) - this->Min(), src, n, last);
     at = static_cast<uint32_t>(last / kBits);
     keep = (uint64_t{2} << (last % kBits)) - 1;
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    const auto offset = doc - kMin;
+    const auto offset = doc - this->Min();
     Reach(offset);
     keep |= uint64_t{1} << (offset % kBits);
   }
@@ -191,38 +213,118 @@ struct RetainBits {
     at = word_count;
     keep = 0;
   }
+
+  uint64_t* IRS_RESTRICT words;
+  uint32_t at = 0;
+  uint64_t keep = 0;
 };
 
-template<typename Input, typename Sink>
-void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
-                 doc_id_t* IRS_RESTRICT docs, bool has_score_bounds,
-                 bool has_freq, Sink& sink) {
-  SDB_ASSERT(meta.docs_count > 1);
+template<size_t N, typename Sink>
+IRS_FORCE_INLINE void EmitLeaf(const FormatTraits128::FillLeaf& leaf,
+                               uint32_t len, doc_id_t prev,
+                               const doc_id_t* IRS_RESTRICT docs, Sink& sink) {
+  if (leaf.IsRun()) {
+    sink.Run(prev, len);
+  } else if (leaf.IsBitset()) {
+    sink.Bitset(prev, leaf.bitset, leaf.words, leaf.max);
+  } else {
+    const auto* const data = docs + doc_limits::kBlockSize - len;
+    if constexpr (Sink::kOrdered) {
+      for (uint32_t i = 0; i != len; ++i) {
+        sink.Doc(data[i]);
+      }
+    } else {
+      VisitDocs<N>(len,
+                   [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
+    }
+  }
+}
 
-  in.Seek(meta.doc_start);
-  if (meta.docs_count < doc_limits::kBlockSize) {
-    SkipScoreBounds(has_score_bounds, in);
+template<typename Sink>
+IRS_NO_INLINE void EmitClipped(const FormatTraits128::FillLeaf& leaf,
+                               uint32_t len, doc_id_t prev,
+                               doc_id_t* IRS_RESTRICT docs, DocRange range,
+                               Sink& sink) {
+  auto* const data = docs + doc_limits::kBlockSize - len;
+  if (leaf.IsRun()) {
+    FormatTraits128::FillSameDelta(data, len, prev, 1);
+  } else if (leaf.IsBitset()) {
+    FormatTraits128::MaterializeBitsetFrom(prev, leaf.bitset, 0, leaf.bitset[0],
+                                           leaf.words, data);
+  }
+  const doc_id_t* const begin = data;
+  const doc_id_t* const end = data + len;
+  const auto* const first = std::lower_bound(begin, end, range.begin);
+  const auto* const last = std::lower_bound(first, end, range.end);
+  for (const auto* it = first; it != last; ++it) {
+    sink.Doc(*it);
+  }
+}
+
+template<typename Input, typename Sink>
+IRS_NO_INLINE void ReadPostingWindow(const PostingMeta& meta, Input& in,
+                                     uint32_t* IRS_RESTRICT enc,
+                                     doc_id_t* IRS_RESTRICT docs,
+                                     SkipShape shape, bool has_freq,
+                                     DocRange range, Sink& sink) {
+  const auto cut = CutWindow<Input>(meta, in, shape, range);
+  const auto left = cut.left - cut.after;
+  if (left == 0) {
+    return;
+  }
+  auto prev = doc_limits::invalid();
+  if (cut.landed) {
+    in.Seek(cut.landing.doc_ptr);
+    prev = cut.landing.doc;
   }
 
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf =
       FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
-    if (leaf.IsRun()) {
-      sink.Run(prev, len);
-    } else if (leaf.IsBitset()) {
-      sink.Bitset(prev, leaf.bitset, leaf.words, leaf.max);
+    if (prev + 1 >= range.begin && leaf.max < range.end) [[likely]] {
+      EmitLeaf<N>(leaf, len, prev, docs, sink);
     } else {
-      const auto* const data = docs + doc_limits::kBlockSize - len;
-      if constexpr (Sink::kOrdered) {
-        for (uint32_t i = 0; i != len; ++i) {
-          sink.Doc(data[i]);
-        }
-      } else {
-        VisitDocs<N>(len,
-                     [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
-      }
+      EmitClipped(leaf, len, prev, docs, range, sink);
     }
+    if (has_freq && len == doc_limits::kBlockSize) {
+      FormatTraits128::SkipBlock(in);
+    }
+    return leaf.max;
+  };
+
+  for (auto blocks = left / doc_limits::kBlockSize; blocks--;) {
+    prev = read_leaf.template operator()<doc_limits::kBlockSize>(
+      doc_limits::kBlockSize, prev);
+  }
+  if (const auto tail = left % doc_limits::kBlockSize; tail != 0) {
+    read_leaf.template operator()<std::dynamic_extent>(tail, prev);
+  }
+}
+
+template<typename Input, typename Sink>
+void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
+                 doc_id_t* IRS_RESTRICT docs, IndexFeatures layout,
+                 bool has_score_bounds, bool has_freq, DocRange range,
+                 Sink& sink) {
+  SDB_ASSERT(meta.docs_count > 1);
+
+  in.Seek(meta.doc_start);
+  if (meta.docs_count < doc_limits::kBlockSize) {
+    SkipScoreBounds(has_score_bounds, in);
+  }
+  if (range.Bounded()) [[unlikely]] {
+    ReadPostingWindow(meta, in, enc, docs,
+                      SkipShapeOf(layout, has_score_bounds), has_freq, range,
+                      sink);
+    return;
+  }
+
+  const auto read_leaf = [&]<size_t N>(uint32_t len,
+                                       doc_id_t prev) IRS_FORCE_INLINE {
+    const auto leaf =
+      FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
+    EmitLeaf<N>(leaf, len, prev, docs, sink);
     if (has_freq && len == doc_limits::kBlockSize) {
       FormatTraits128::SkipBlock(in);
     }
@@ -269,31 +371,33 @@ class PostingReader {
 
 template<typename Term, typename Sink, typename Input>
 void ReadTerms(std::span<const Term> terms, const TermReader* field,
-               PostingReader<Input>& r, Sink& sink) {
+               PostingReader<Input>& r, DocRange range, Sink& sink) {
   for (size_t i = 0; i != terms.size(); ++i) {
     const auto& meta = CookieOf(terms[i]);
     SDB_ASSERT(meta.docs_count != 0);
     if (meta.docs_count == 1) {
-      sink.Doc(doc_limits::min() + meta.doc_delta);
+      if (const auto doc = doc_limits::min() + meta.doc_delta;
+          range.Contains(doc)) {
+        sink.Doc(doc);
+      }
       continue;
     }
     const auto& own = FieldOf(terms[i], field);
-    ReadPosting(meta, r.In(), r.Enc(), r.Docs(), BoundsOf(own), FreqOf(own),
-                sink);
+    ReadPosting(meta, r.In(), r.Enc(), r.Docs(), LayoutOf(own), BoundsOf(own),
+                FreqOf(own), range, sink);
   }
 }
 
-inline void ReadFill(FillNode& node, doc_id_t end,
+inline void ReadFill(FillNode& node, doc_id_t base, doc_id_t end,
                      uint64_t* IRS_RESTRICT words) {
   constexpr auto kBits = BitsetStorage::kBits;
-  constexpr auto kMin = BitsetStorage::kMin;
-  for (auto min = kMin; min < end;) {
+  for (auto min = base; min < end;) {
     const auto next =
-      node.FillOr(min, min + kWindowDocs, words + (min - kMin) / kBits);
+      node.FillOr(min, min + kWindowDocs, words + (min - base) / kBits);
     if (next >= end) {
       break;
     }
-    min = std::max(min + kWindowDocs, BitsetStorage::WindowMin(next));
+    min = std::max(min + kWindowDocs, next - (next - base) % kWindowDocs);
   }
 }
 
@@ -338,30 +442,33 @@ struct BitsetBuckets {
   }
 };
 
-inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
-                                 doc_id_t docs_count) {
+template<bool Based>
+BitsetStorage BuildBitsetImpl(BitsetBuckets& buckets, const IndexInput& doc,
+                              doc_id_t docs_count, DocRange range) {
   SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
   SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);
-  BitsetStorage bits{docs_count};
+  SDB_ASSERT((range.begin - BitsetStorage::kMin) % BitsetStorage::kBits == 0);
+  BitsetStorage bits{range, docs_count};
   auto* const words = bits.Words();
+  const auto base = bits.Min();
   const auto seed = buckets.Seed(docs_count);
 
   ResolveInput(doc, [&]<typename Input> {
     PostingReader<Input> reader{doc};
     if (!buckets.must.empty()) {
-      OrBits or_seed{words};
+      OrBits<Based> or_seed{words, base};
       ReadTerms(std::span<const PostingClause>{buckets.must[seed]}, nullptr,
-                reader, or_seed);
+                reader, range, or_seed);
     }
     for (auto& node : buckets.fills) {
       SDB_ASSERT(node);
-      ReadFill(*node, bits.End(), words);
+      ReadFill(*node, base, bits.End(), words);
     }
 
     std::optional<BitsetStorage> scratch;
     const auto open_scratch = [&]() -> uint64_t* {
       if (!scratch) {
-        scratch.emplace(docs_count);
+        scratch.emplace(range, docs_count);
       } else {
         std::fill_n(scratch->Words(), scratch->Alloc(), uint64_t{0});
       }
@@ -375,29 +482,29 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
       const std::span<const PostingClause> clause{buckets.must[i]};
       SDB_ASSERT(!clause.empty());
       if (AppliedInPlace(clause, docs_count)) {
-        RetainBits retain{words};
-        ReadTerms(clause, nullptr, reader, retain);
+        RetainBits<Based> retain{words, base};
+        ReadTerms(clause, nullptr, reader, range, retain);
         retain.Finish(bits.WordCount());
         continue;
       }
       auto* const other = open_scratch();
-      OrBits or_clause{other};
-      ReadTerms(clause, nullptr, reader, or_clause);
+      OrBits<Based> or_clause{other, base};
+      ReadTerms(clause, nullptr, reader, range, or_clause);
       for (uint32_t w = 0, count = bits.WordCount(); w != count; ++w) {
         words[w] &= other[w];
       }
     }
 
     if (!buckets.must_not.empty()) {
-      ClearBits clear{words};
+      ClearBits<Based> clear{words, base};
       ReadTerms(std::span<const PostingClause>{buckets.must_not}, nullptr,
-                reader, clear);
+                reader, range, clear);
     }
     if (!buckets.exclude_fills.empty()) {
       auto* const other = open_scratch();
       for (auto& node : buckets.exclude_fills) {
         SDB_ASSERT(node);
-        ReadFill(*node, bits.End(), other);
+        ReadFill(*node, base, bits.End(), other);
       }
       for (uint32_t w = 0, count = bits.WordCount(); w != count; ++w) {
         words[w] &= ~other[w];
@@ -407,6 +514,14 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
 
   bits.Trim();
   return bits;
+}
+
+inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
+                                 doc_id_t docs_count, DocRange range) {
+  if (range.Bounded()) {
+    return BuildBitsetImpl<true>(buckets, doc, docs_count, range);
+  }
+  return BuildBitsetImpl<false>(buckets, doc, docs_count, range);
 }
 
 }  // namespace irs::detail

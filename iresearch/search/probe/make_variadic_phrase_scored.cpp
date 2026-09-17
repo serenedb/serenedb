@@ -26,13 +26,14 @@
 namespace irs::probe {
 
 Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const detail::ScoreArgs& args) {
+                                   const detail::ScoreArgs& args,
+                                   DocRange range) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
   return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Plain, Impl,
                                       Node::ptr, true, probe::TwoPhaseScored>(
-    query, query.Segment(), *query.state.reader, args);
+    query, range, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::probe

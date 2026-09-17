@@ -40,9 +40,11 @@ class All : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
 
-  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
+  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count, DocRange range,
       score_t score = 0) noexcept
-    : _end{doc_limits::min() + count},
+    : _doc{range.begin},
+      _end{std::clamp<doc_id_t>(doc_limits::min() + count, range.begin,
+                                range.end)},
       _score{ScoreFunction::Constant(score)},
       _fetcher{fetcher},
       _table{table} {}
@@ -80,7 +82,7 @@ class All : public Root {
   }
 
  private:
-  doc_id_t _doc = doc_limits::min();
+  doc_id_t _doc;
   doc_id_t _end;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;

@@ -37,19 +37,20 @@
 namespace irs::lead {
 
 template<typename Result, typename Make>
-Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
+Result ResolvePostingDocs(const detail::PostingClause& posting, DocRange range,
+                          Make&& make) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
-    return make.template operator()<SinglePostingDocs>(doc_limits::min() +
-                                                       meta.doc_delta);
+    return make.template operator()<SinglePostingDocs>(
+      doc_limits::min() + meta.doc_delta, range);
   }
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
   return detail::ResolveInput(doc, [&]<typename Input> -> Result {
     return make.template operator()<detail::PostingLead<Input>>(
-      meta, doc, detail::LayoutOf(own), detail::BoundsOf(own));
+      meta, doc, detail::LayoutOf(own), detail::BoundsOf(own), range);
   });
 }
 

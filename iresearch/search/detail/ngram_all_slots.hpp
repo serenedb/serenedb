@@ -40,13 +40,13 @@ class NGramAllSlots {
 
   NGramAllSlots(std::span<const PostingMeta> metas, const IndexInput& doc_in,
                 IndexFeatures layout, const IndexInput& pos_in,
-                const IndexInput* pay_in, size_t total_terms)
+                const IndexInput* pay_in, DocRange range, size_t total_terms)
     : _leaves(metas.size()),
       _matcher{metas.size(), total_terms, static_cast<uint32_t>(metas.size())} {
     _leaves.Open(
       metas,
       [&](Leaf& leaf, const PostingMeta& meta) {
-        leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
+        leaf.Prepare(meta, doc_in, layout, pos_in, pay_in, range);
       },
       [&](uint32_t j, typename Leaves::Slot& slot) {
         _matcher.Slot(j) = {slot.leaf.ValueRef(), slot.leaf.Positions()};

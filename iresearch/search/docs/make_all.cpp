@@ -26,7 +26,7 @@
 namespace irs::docs {
 
 Root::ptr MakeAll(doc_id_t docs_count, const Context& ctx) {
-  return MakeShape<All>(ctx, docs_count);
+  return MakeShape<All>(ctx, docs_count, ctx.range);
 }
 
 Root::ptr Make(const AllQuery& query, const Context& ctx) {

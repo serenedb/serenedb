@@ -1,0 +1,484 @@
+# Every scan shape answers the same under every unit-claiming mode: whole
+# segments only (`never`), row-group units from the first claim (`always`) and
+# the tail protocol (`tail`), single-threaded and with several workers. One
+# 300000-row INSERT makes a three-row-group segment; a second INSERT makes a
+# small one; compaction is off so they stay apart. Hosted under recovery/
+# because `threads` is instance-wide.
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE sp (id INT PRIMARY KEY, body TEXT, g INT)
+
+
+onlyif serenedb
+statement ok
+CREATE INDEX sp_idx ON sp USING inverted (id, body sp_en) INCLUDE (g)
+  WITH (compaction_interval = 0)
+
+
+onlyif serenedb
+statement ok
+CREATE INDEX sp_wand ON sp USING inverted (id, body sp_en)
+  WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
+
+
+onlyif serenedb
+statement ok
+INSERT INTO sp
+SELECT i,
+       CASE WHEN i = 100000 THEN repeat('fox ', 40)
+            WHEN i = 200000 THEN repeat('fox ', 30)
+            WHEN i = 300000 THEN repeat('fox ', 20)
+            WHEN i % 3 = 0 THEN 'fox dog'
+            ELSE 'fox' END,
+       i % 10000
+FROM generate_series(1, 300000) s(i)
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) sp
+
+
+onlyif serenedb
+statement ok
+INSERT INTO sp
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
+FROM generate_series(300001, 305000) s(i)
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) sp
+
+
+onlyif serenedb
+statement ok
+SET threads = 1
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'never'
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+101665
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog' AND g < 1000;
+----
+count
+10332
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(g) FROM sp_idx;
+----
+count	sum
+305000	1512352500
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_wand WHERE body @@ 'fox'
+ORDER BY bm25(sp_wand.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id, length(body) AS len FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id	len
+100000	160
+200000	120
+300000	80
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+id
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT count(*), min(id), max(id), min(length(body)) AS len
+FROM sp_idx WHERE body @@ 'dog';
+----
+count	min	max	len
+101665	3	304998	7
+
+
+onlyif serenedb
+query
+SELECT g FROM sp_idx ORDER BY g DESC LIMIT 3;
+----
+g
+9999
+9999
+9999
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'always'
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+101665
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog' AND g < 1000;
+----
+count
+10332
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(g) FROM sp_idx;
+----
+count	sum
+305000	1512352500
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_wand WHERE body @@ 'fox'
+ORDER BY bm25(sp_wand.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id, length(body) AS len FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id	len
+100000	160
+200000	120
+300000	80
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+id
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT count(*), min(id), max(id), min(length(body)) AS len
+FROM sp_idx WHERE body @@ 'dog';
+----
+count	min	max	len
+101665	3	304998	7
+
+
+onlyif serenedb
+query
+SELECT g FROM sp_idx ORDER BY g DESC LIMIT 3;
+----
+g
+9999
+9999
+9999
+
+
+onlyif serenedb
+statement ok
+SET threads = 4
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+101665
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog' AND g < 1000;
+----
+count
+10332
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(g) FROM sp_idx;
+----
+count	sum
+305000	1512352500
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_wand WHERE body @@ 'fox'
+ORDER BY bm25(sp_wand.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id, length(body) AS len FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id	len
+100000	160
+200000	120
+300000	80
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+id
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT count(*), min(id), max(id), min(length(body)) AS len
+FROM sp_idx WHERE body @@ 'dog';
+----
+count	min	max	len
+101665	3	304998	7
+
+
+onlyif serenedb
+query
+SELECT g FROM sp_idx ORDER BY g DESC LIMIT 3;
+----
+g
+9999
+9999
+9999
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'always'
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+101665
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(g) FROM sp_idx;
+----
+count	sum
+305000	1512352500
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id FROM sp_wand WHERE body @@ 'fox'
+ORDER BY bm25(sp_wand.tableoid) DESC LIMIT 3;
+----
+id
+100000
+200000
+300000
+
+
+onlyif serenedb
+query
+SELECT id, length(body) AS len FROM sp_idx WHERE body @@ 'fox'
+ORDER BY bm25(sp_idx.tableoid) DESC LIMIT 3;
+----
+id	len
+100000	160
+200000	120
+300000	80
+
+
+onlyif serenedb
+query
+SELECT count(*), min(id), max(id), min(length(body)) AS len
+FROM sp_idx WHERE body @@ 'dog';
+----
+count	min	max	len
+101665	3	304998	7
+
+
+# Deletes: the bulk column scan takes the live rows of each vector from the
+# mask instead of falling back to a single whole-segment walk.
+onlyif serenedb
+statement ok
+DELETE FROM sp WHERE id % 7 = 0
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) sp
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'never'
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(CASE WHEN id % 7 = 0 THEN 1 ELSE 0 END), min(id)
+FROM sp_idx;
+----
+count	sum	min
+261429	0	1
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+87142
+
+
+onlyif serenedb
+statement ok
+SET sdb_scan_split = 'always'
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(CASE WHEN id % 7 = 0 THEN 1 ELSE 0 END), min(id)
+FROM sp_idx;
+----
+count	sum	min
+261429	0	1
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
+----
+count
+87142
+
+
+onlyif serenedb
+statement ok
+SET threads = 1
+
+
+onlyif serenedb
+query
+SELECT count(*), sum(CASE WHEN id % 7 = 0 THEN 1 ELSE 0 END), min(id)
+FROM sp_idx;
+----
+count	sum	min
+261429	0	1
+
+
+onlyif serenedb
+statement ok
+RESET sdb_scan_split
+
+
+onlyif serenedb
+statement ok
+RESET threads

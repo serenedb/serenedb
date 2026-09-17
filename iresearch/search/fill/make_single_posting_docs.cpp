@@ -25,10 +25,11 @@
 
 namespace irs::fill {
 
-Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting) {
+Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting,
+                                DocRange range) {
   SDB_ASSERT(posting.state.cookie.docs_count == 1);
-  return memory::make_managed<Impl<SingleDocs>>(doc_limits::min() +
-                                                posting.state.cookie.doc_delta);
+  return memory::make_managed<Impl<SingleDocs>>(
+    doc_limits::min() + posting.state.cookie.doc_delta, range);
 }
 
 }  // namespace irs::fill

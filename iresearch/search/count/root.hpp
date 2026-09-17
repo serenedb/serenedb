@@ -24,11 +24,13 @@
 
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::count {
 
 struct Context {
   detail::TableFilter* table = nullptr;
+  DocRange range;
 };
 
 struct Root : memory::Managed {

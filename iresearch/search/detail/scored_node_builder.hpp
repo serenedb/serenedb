@@ -54,13 +54,13 @@ namespace irs::detail::builder {
 template<typename Api, typename Term>
 Result<Api> MakeNodeDisjunctionWindow(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput* doc, std::vector<FillNode::ptr>& rest,
-  Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
-  score_t absorbed) {
+  score_t boost, const IndexInput* doc, DocRange range,
+  std::vector<FillNode::ptr>& rest, Terms uniformity, const ScoreRecipe& recipe,
+  ScoreMergeType merge, score_t absorbed) {
   SDB_ASSERT(!terms.empty() || !rest.empty());
   const Scored score{merge, absorbed};
   return BuildScoredWindow<Result<Api>>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+    terms, field, scorer, boost, doc, range, rest, uniformity, recipe, merge,
     [&]<typename Set>(auto&&... args) -> Result<Api> {
       return Api::template MakeWindow<OrGroup<Set>>(
         score, std::forward_as_tuple(std::forward<decltype(args)>(args)...));
@@ -84,8 +84,8 @@ Result<Api> MakeNodeDisjunction(std::span<const PostingClause> terms,
   }
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   return MakeNodeDisjunctionWindow<Api>(terms, nullptr, nullptr, kNoBoost, doc,
-                                        rest, uniformity, recipe, merge,
-                                        absorbed);
+                                        ctx.range, rest, uniformity, recipe,
+                                        merge, absorbed);
 }
 
 template<typename Api, template<typename, bool> class Group, typename Set,
@@ -123,7 +123,7 @@ Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
       *doc, uniformity >= Terms::Scored, merge,
       [&]<typename Leaf, typename Plain> -> Result<Api> {
         return BuildScoredTerms<Result<Api>, Leaf, Plain>(
-          terms, nullptr, nullptr, kNoBoost, doc, recipe,
+          terms, nullptr, nullptr, kNoBoost, doc, ctx.range, recipe,
           [&]<typename Set>(auto&&... args) -> Result<Api> {
             return MakeNodeThresholdWindow<Api, TallyGroup, Set>(
               score, min_match, std::forward<decltype(args)>(args)...);
@@ -134,8 +134,8 @@ Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
     }
   }
   return BuildScoredWindow<Result<Api>>(
-    terms, nullptr, nullptr, kNoBoost, doc, rest, uniformity, recipe, merge,
-    [&]<typename Set>(auto&&... args) -> Result<Api> {
+    terms, nullptr, nullptr, kNoBoost, doc, ctx.range, rest, uniformity, recipe,
+    merge, [&]<typename Set>(auto&&... args) -> Result<Api> {
       return MakeNodeThresholdWindow<Api, ThresholdGroup, Set>(
         score, min_match, std::forward<decltype(args)>(args)...);
     });
@@ -153,15 +153,15 @@ Result<Api> MakeNodeConjunction(std::span<const PostingClause> terms,
       return {};
     }
     if (absorbed == 0 && terms.size() + filters.size() == 1) {
-      return terms.empty()
-               ? filters.front()->PlanLead(ctx)
-               : lead::MakePostingScored(terms.front(), segment, recipe);
+      return terms.empty() ? filters.front()->PlanLead(ctx)
+                           : lead::MakePostingScored(terms.front(), segment,
+                                                     recipe, ctx.range);
     }
   } else {
     SDB_ASSERT(!terms.empty() || !filters.empty());
   }
   return BuildScoredConjunction<Result<Api>>(
-    terms, filters, nullptr, nullptr, kNoBoost, segment, recipe,
+    terms, filters, nullptr, nullptr, kNoBoost, segment, recipe, ctx.range,
     probe::ScoredClauseOf(segment, ctx, recipe),
     [&](const QueryBuilder& child) -> lead::Node::ptr {
       return child.PlanLead(ctx);
@@ -226,13 +226,14 @@ Result<Api> MakeNodeExclusion(
     return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
       using Include = PostingLeadScored<Input>;
       return BuildExcludeSideOf<Result<Api>, Input>(
-        excludes, exclude_filters, nullptr, segment, candidates,
+        excludes, exclude_filters, nullptr, segment, candidates, ctx.range,
         [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
           return Api::template MakeSparse<Include, utils::Empty, utils::Empty,
                                           Exclude>(
             ctx, merge,
             std::forward_as_tuple(meta, doc, segment, reader,
-                                  recipe.Args(posting.stats, posting.boost)),
+                                  recipe.Args(posting.stats, posting.boost),
+                                  ctx.range),
             std::forward_as_tuple(), std::forward_as_tuple(),
             std::forward<decltype(exclude)>(exclude), Inherited{});
         });
@@ -245,7 +246,7 @@ Result<Api> MakeNodeExclusion(
     return {};
   }
   return BuildExcludeSide<Result<Api>>(
-    excludes, exclude_filters, nullptr, segment, candidates,
+    excludes, exclude_filters, nullptr, segment, candidates, ctx.range,
     [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
       return Api::template MakeSparse<lead::Erased, utils::Empty, utils::Empty,
                                       Exclude>(
@@ -271,7 +272,7 @@ Result<Api> MakeNodeBoost(std::span<const PostingClause> must,
   const auto build = [&]<typename Head>(auto&& head) -> Result<Api> {
     return BuildOptionalLeaves<Result<Api>>(
       should, should_filters, uniformity, nullptr, nullptr, kNoBoost, segment,
-      recipe, candidates, clause,
+      recipe, candidates, ctx.range, clause,
       [&]<typename Optional>(size_t size, auto&& init) -> Result<Api> {
         return ResolveArity<kTailArity, kTailFloor>(
           size, [&]<size_t N> -> Result<Api> {
@@ -294,12 +295,13 @@ Result<Api> MakeNodeBoost(std::span<const PostingClause> must,
     return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
       using Head = PostingLeadScored<Input>;
       return build.template operator()<Head>(std::forward_as_tuple(
-        meta, doc, segment, reader, recipe.Args(posting.stats, posting.boost)));
+        meta, doc, segment, reader, recipe.Args(posting.stats, posting.boost),
+        ctx.range));
     });
   }
   lead::Node::ptr head =
     must.empty() && must_filters.empty()
-      ? lead::MakeAllScored(segment, absorbed)
+      ? lead::MakeAllScored(segment, absorbed, ctx.range)
       : lead::MakeSparseConjunctionScored(must, must_filters, segment, ctx,
                                           inner, absorbed);
   if (!head) {

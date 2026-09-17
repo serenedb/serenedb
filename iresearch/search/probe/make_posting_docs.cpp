@@ -28,9 +28,9 @@
 namespace irs::probe {
 
 Node::ptr MakePostingDocs(const detail::PostingClause& posting,
-                          const SubReader&) {
+                          const SubReader&, DocRange range) {
   return ResolvePostingDocs<Node::ptr>(
-    posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
+    posting, range, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
       return memory::make_managed<Impl<Leaf>>(
         std::forward<decltype(args)>(args)...);
     });

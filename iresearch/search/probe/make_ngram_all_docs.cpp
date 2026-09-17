@@ -28,10 +28,10 @@
 
 namespace irs::probe {
 
-Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query) {
+Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query, DocRange range) {
   SDB_ASSERT(query.Present() == query.MinMatchCount());
   return detail::BuildAll(
-    query, [&]<typename Slots>(auto&&... args) -> Node::ptr {
+    query, range, [&]<typename Slots>(auto&&... args) -> Node::ptr {
       return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
         std::forward<decltype(args)>(args)...);
     });

@@ -24,9 +24,10 @@
 
 namespace irs::probe {
 
-Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query) {
+Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query,
+                                 DocRange range) {
   return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Plain, Impl,
-                                      Node::ptr>(query);
+                                      Node::ptr>(query, range);
 }
 
 }  // namespace irs::probe

@@ -37,52 +37,58 @@ Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const detail::PostingClause> should,
                            std::span<const QueryBuilder::ptr> should_filters,
                            uint32_t min_should_match, const SubReader& segment,
-                           uint64_t interrogations) {
+                           uint64_t interrogations, DocRange range) {
   if (min_should_match == 0) {
     return MakeSparseConjunctionDocs(must, must_filters, segment,
-                                     interrogations);
+                                     interrogations, range);
   }
   if (must.empty() && must_filters.empty()) {
     return BuildOptionalProbe(should, should_filters, min_should_match, segment,
-                              interrogations);
+                              interrogations, range);
   }
   auto other = BuildOptionalProbe(
     should, should_filters, min_should_match, segment,
     std::min(interrogations,
-             detail::IncludeCandidates(must, must_filters, segment)));
+             detail::IncludeCandidates(must, must_filters, segment)),
+    range);
   if (!other) {
     return {};
   }
   return MakeSparseConjunctionWithDocs(must, must_filters, segment,
-                                       interrogations, std::move(other));
+                                       interrogations, range, std::move(other));
 }
 
 struct DocsApi {
   using Result = Node::ptr;
-  using Context = utils::Empty;
+
+  struct Context {
+    DocRange range;
+  };
 
   static constexpr bool kScored = false;
 
-  static Result MakeRequired(const BooleanQuery& query, Context,
+  static Result MakeRequired(const BooleanQuery& query, Context ctx,
                              uint64_t interrogations,
                              const BooleanGroups& groups) {
     return MakeRequiredDocs(groups.must, groups.must_filters, groups.should,
                             groups.should_filters, groups.min_should_match,
-                            query.Segment(), interrogations);
+                            query.Segment(), interrogations, ctx.range);
   }
 
-  static Result MakeExclusion(const BooleanQuery& query, Context,
+  static Result MakeExclusion(const BooleanQuery& query, Context ctx,
                               uint64_t interrogations,
                               const BooleanGroups& groups) {
     return MakeSparseExclusionDocs(
       groups.must, groups.must_filters, groups.should, groups.should_filters,
       groups.min_should_match, groups.exclude, groups.exclude_filters,
-      query.Segment(), interrogations);
+      query.Segment(), interrogations, ctx.range);
   }
 };
 
-Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
-  return MakeBoolean<DocsApi>(query, utils::Empty{}, interrogations);
+Node::ptr Make(const BooleanQuery& query, uint64_t interrogations,
+               DocRange range) {
+  return MakeBoolean<DocsApi>(query, DocsApi::Context{.range = range},
+                              interrogations);
 }
 
 }  // namespace irs::probe

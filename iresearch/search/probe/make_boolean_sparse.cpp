@@ -50,17 +50,17 @@ template<typename Make>
 Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
                      std::span<const QueryBuilder::ptr> filters,
                      const SubReader& segment, uint64_t interrogations,
-                     Make&& make) {
+                     DocRange range, Make&& make) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() == 1) {
     if (filters.empty()) {
       return ResolvePostingDocs<Node::ptr>(
-        terms.front(), [&]<typename Leaf>(auto&&... args) -> Node::ptr {
+        terms.front(), range, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
           return make.template operator()<Leaf>(
             std::forward_as_tuple(std::forward<decltype(args)>(args)...));
         });
     }
-    auto node = filters.front()->PlanProbe({}, interrogations);
+    auto node = filters.front()->PlanProbe({.range = range}, interrogations);
     if (!node) {
       return {};
     }
@@ -68,7 +68,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
       std::forward_as_tuple(std::move(node)));
   }
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, nullptr, segment, interrogations,
+    terms, filters, nullptr, segment, interrogations, range,
     detail::ProbeOrder::Narrowest,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
@@ -84,16 +84,17 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
 Node::ptr MakeSparseConjunctionDocs(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  uint64_t interrogations) {
+  uint64_t interrogations, DocRange range) {
   const auto size = terms.size() + filters.size();
   if (size == 0) {
-    return MakeAllDocs(segment);
+    return MakeAllDocs(segment, range);
   }
   if (size == 1) {
-    return filters.empty() ? MakePostingDocs(terms.front(), segment)
-                           : filters.front()->PlanProbe({}, interrogations);
+    return filters.empty()
+             ? MakePostingDocs(terms.front(), segment, range)
+             : filters.front()->PlanProbe({.range = range}, interrogations);
   }
-  return BuildMusts(terms, filters, segment, interrogations,
+  return BuildMusts(terms, filters, segment, interrogations, range,
                     [&]<typename Musts>(auto&& musts) -> Node::ptr {
                       return MakeSparse<Musts, utils::Empty, utils::Empty>(
                         std::forward<decltype(musts)>(musts),
@@ -104,10 +105,10 @@ Node::ptr MakeSparseConjunctionDocs(
 Node::ptr MakeSparseConjunctionWithDocs(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  uint64_t interrogations, Node::ptr other) {
+  uint64_t interrogations, DocRange range, Node::ptr other) {
   SDB_ASSERT(other);
   SDB_ASSERT(!terms.empty() || !filters.empty());
-  return BuildMusts(terms, filters, segment, interrogations,
+  return BuildMusts(terms, filters, segment, interrogations, range,
                     [&]<typename Musts>(auto&& musts) -> Node::ptr {
                       return MakeSparse<Musts, Erased, utils::Empty>(
                         std::forward<decltype(musts)>(musts),
@@ -119,11 +120,11 @@ Node::ptr MakeSparseConjunctionWithDocs(
 Node::ptr MakeSparseThresholdDocs(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment, uint32_t min_match,
-                                  uint64_t interrogations) {
+                                  uint64_t interrogations, DocRange range) {
   SDB_ASSERT(min_match > 1);
   SDB_ASSERT(terms.size() + filters.size() >= min_match);
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, nullptr, segment, interrogations,
+    terms, filters, nullptr, segment, interrogations, range,
     detail::ProbeOrder::Densest,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
@@ -145,7 +146,7 @@ Node::ptr MakeSparseExclusionDocs(
   std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
   std::span<const detail::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t interrogations) {
+  uint64_t interrogations, DocRange range) {
   SDB_ASSERT(!exclude.empty() || !exclude_filters.empty());
   const bool no_must = must.empty() && must_filters.empty();
   const uint64_t docs_count = segment.docs_count();
@@ -159,8 +160,9 @@ Node::ptr MakeSparseExclusionDocs(
     1, docs_count == 0 ? 0 : interrogations * lead / docs_count);
   Node::ptr optional;
   if (min_should_match != 0) {
-    optional = BuildOptionalProbe(should, should_filters, min_should_match,
-                                  segment, no_must ? interrogations : reach);
+    optional =
+      BuildOptionalProbe(should, should_filters, min_should_match, segment,
+                         no_must ? interrogations : reach, range);
     if (!optional) {
       return {};
     }
@@ -168,7 +170,7 @@ Node::ptr MakeSparseExclusionDocs(
   const auto excluded = [&]<typename Musts, typename Optional>(
                           auto&& musts, auto&& optional_args) -> Node::ptr {
     return detail::BuildExcludeSide<Node::ptr>(
-      exclude, exclude_filters, nullptr, segment, reach, lead,
+      exclude, exclude_filters, nullptr, segment, reach, lead, range,
       [&]<typename Exclude>(auto&& excludes) -> Node::ptr {
         return MakeSparse<Musts, Optional, Exclude>(
           std::forward<decltype(musts)>(musts),
@@ -179,13 +181,13 @@ Node::ptr MakeSparseExclusionDocs(
   if (no_must) {
     if (!optional) {
       return excluded.template operator()<AllDocs, utils::Empty>(
-        std::forward_as_tuple(segment), std::forward_as_tuple());
+        std::forward_as_tuple(segment, range), std::forward_as_tuple());
     }
     return excluded.template operator()<utils::Empty, Erased>(
       std::forward_as_tuple(), std::forward_as_tuple(std::move(optional)));
   }
   return BuildMusts(
-    must, must_filters, segment, interrogations,
+    must, must_filters, segment, interrogations, range,
     [&]<typename Musts>(auto&& musts) -> Node::ptr {
       if (!optional) {
         return excluded.template operator()<Musts, utils::Empty>(

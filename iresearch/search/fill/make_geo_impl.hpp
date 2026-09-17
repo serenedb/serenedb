@@ -32,9 +32,9 @@
 namespace irs::fill {
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, DocRange range) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return detail::MakeGeo<ByWalkDocs, Node::ptr>(query, 0);
+  return detail::MakeGeo<ByWalkDocs, Node::ptr>(query, 0, range);
 }
 
 template<typename Parser, typename Acceptor>
@@ -46,8 +46,8 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                                        .stats = record.stats,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
-  return detail::MakeGeo<WalkConstantScored, Node::ptr>(query, 0, merge,
-                                                        *ctx.fetcher, value);
+  return detail::MakeGeo<WalkConstantScored, Node::ptr>(
+    query, 0, ctx.range, merge, *ctx.fetcher, value);
 }
 
 }  // namespace irs::fill

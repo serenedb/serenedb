@@ -44,7 +44,7 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx) {
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return irs::detail::Build<true>(
-    query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
+    query, ctx.range, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return MakeShape<Walk, Node>(ctx, ctx.fetcher, query.Segment(),
                                    *query.State().reader, args,

@@ -44,13 +44,15 @@ class PlainFillScored {
   PlainFillScored() = default;
 
   PlainFillScored(const PostingMeta& meta, const IndexInput& doc_in,
-                  bool has_score_bounds, bool has_freq) {
-    Prepare(meta, doc_in, has_score_bounds, has_freq);
+                  IndexFeatures layout, bool has_score_bounds, bool has_freq,
+                  DocRange range) {
+    Prepare(meta, doc_in, layout, has_score_bounds, has_freq, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
-    _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
+               IndexFeatures layout, bool has_score_bounds, bool has_freq,
+               DocRange range) {
+    _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq, range);
   }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -73,16 +75,17 @@ class ConstFillScored {
 
   ConstFillScored(const PostingMeta& meta, const IndexInput& doc_in,
                   bool has_score_bounds, const SubReader& segment,
-                  const TermReader& field, const ScoreArgs& args) {
-    Prepare(meta, doc_in, has_score_bounds, segment, field, args);
+                  const TermReader& field, const ScoreArgs& args,
+                  DocRange range) {
+    Prepare(meta, doc_in, has_score_bounds, segment, field, args, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                bool has_score_bounds, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const ScoreArgs& args, DocRange range) {
     _value = ConstantTermOf(segment, field, args);
-    _leaf.Prepare(meta, doc_in, has_score_bounds,
-                  FeaturesHaveFreq(field.meta().index_features));
+    _leaf.Prepare(meta, doc_in, field.meta().index_features, has_score_bounds,
+                  FeaturesHaveFreq(field.meta().index_features), range);
   }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -105,8 +108,9 @@ class PlainCountScored {
   PlainCountScored() = default;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
-    _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
+               IndexFeatures layout, bool has_score_bounds, bool has_freq,
+               DocRange range) {
+    _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq, range);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
@@ -145,10 +149,10 @@ class ConstCountScored {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                bool has_score_bounds, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const ScoreArgs& args, DocRange range) {
     _value = ConstantTermOf(segment, field, args);
-    _leaf.Prepare(meta, doc_in, has_score_bounds,
-                  FeaturesHaveFreq(field.meta().index_features));
+    _leaf.Prepare(meta, doc_in, field.meta().index_features, has_score_bounds,
+                  FeaturesHaveFreq(field.meta().index_features), range);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
@@ -186,14 +190,14 @@ class PlainProbeScored {
   PlainProbeScored() = default;
 
   PlainProbeScored(const PostingMeta& meta, const IndexInput& doc_in,
-                   IndexFeatures layout, bool bounds) {
-    Prepare(meta, doc_in, layout, bounds);
+                   IndexFeatures layout, bool bounds, DocRange range) {
+    Prepare(meta, doc_in, layout, bounds, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, bool bounds) {
+               IndexFeatures layout, bool bounds, DocRange range) {
     _docs_count = meta.docs_count;
-    _leaf.Prepare(meta, doc_in, layout, bounds);
+    _leaf.Prepare(meta, doc_in, layout, bounds, range);
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {

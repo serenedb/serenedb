@@ -38,15 +38,16 @@ class BitsetStorage {
   static constexpr auto kWordShift = std::countr_zero(kBits);
   static constexpr doc_id_t kMin = doc_limits::min();
 
-  static constexpr doc_id_t WindowMin(doc_id_t doc) noexcept {
-    return doc - (doc - kMin) % kWindowDocs;
-  }
-
   BitsetStorage() = default;
 
   explicit BitsetStorage(doc_id_t docs_count)
-    : _end{kMin + docs_count},
-      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
+    : BitsetStorage{DocRange{}, docs_count} {}
+
+  BitsetStorage(DocRange range, doc_id_t docs_count)
+    : _min{range.begin},
+      _end{std::max<doc_id_t>(
+        range.begin, std::min<doc_id_t>(range.end, kMin + docs_count))},
+      _words{static_cast<uint32_t>((_end - _min + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
       _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
 
@@ -56,11 +57,16 @@ class BitsetStorage {
   uint32_t WordCount() const noexcept { return _words; }
   uint32_t Alloc() const noexcept { return _alloc; }
 
+  doc_id_t Min() const noexcept { return _min; }
   doc_id_t End() const noexcept { return _end; }
+
+  doc_id_t WindowMin(doc_id_t doc) const noexcept {
+    return doc - (doc - _min) % kWindowDocs;
+  }
 
   void Trim() noexcept {
     auto* const words = Words();
-    const auto used = _end - kMin;
+    const auto used = _end - _min;
     if (const auto tail = used % kBits; tail != 0) {
       words[used / kBits] &= ~uint64_t{0} >> (kBits - tail);
     }
@@ -68,6 +74,7 @@ class BitsetStorage {
   }
 
  private:
+  doc_id_t _min = kMin;
   doc_id_t _end = 0;
   uint32_t _words = 0;
   uint32_t _alloc = 0;
@@ -91,7 +98,7 @@ inline doc_id_t NextBit(const BitsetStorage& set, doc_id_t from) noexcept {
   }
   const auto* const bits = set.Words();
   const auto count = set.WordCount();
-  const auto offset = from - BitsetStorage::kMin;
+  const auto offset = std::max(from, set.Min()) - set.Min();
   auto word = static_cast<uint32_t>(offset / kBits);
   auto rest = bits[word] & (~uint64_t{0} << (offset % kBits));
   while (rest == 0) {
@@ -100,20 +107,29 @@ inline doc_id_t NextBit(const BitsetStorage& set, doc_id_t from) noexcept {
     }
     rest = bits[word];
   }
-  return BitsetStorage::kMin +
+  return set.Min() +
          static_cast<doc_id_t>(size_t{word} * kBits +
                                static_cast<size_t>(std::countr_zero(rest)));
+}
+
+inline uint32_t SkippedWords(const BitsetStorage& set, doc_id_t min) noexcept {
+  SDB_ASSERT(min >= set.Min() || (set.Min() - min) % BitsetStorage::kBits == 0);
+  return min >= set.Min()
+           ? uint32_t{0}
+           : static_cast<uint32_t>((set.Min() - min) / BitsetStorage::kBits);
 }
 
 inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
                      uint64_t* IRS_RESTRICT mask) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   const auto stop = std::min(max, set.End());
-  if (min >= stop) {
+  const auto from = std::max(min, set.Min());
+  if (from >= stop) {
     return;
   }
+  mask += SkippedWords(set, min);
   const auto* const bits = set.Words();
-  const auto base = min - BitsetStorage::kMin;
+  const auto base = from - set.Min();
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -123,7 +139,7 @@ inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     }
     return value | (bits[word + 1] << (kBits - shift));
   };
-  const uint32_t len = stop - min;
+  const uint32_t len = stop - from;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
     mask[w] |= at(base + size_t{w} * kBits);
@@ -139,12 +155,16 @@ inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   constexpr auto kBits = BitsetStorage::kBits;
   const auto words = WindowWords(min, max);
   const auto stop = std::min(max, set.End());
-  if (min >= stop) {
+  const auto from = std::max(min, set.Min());
+  if (from >= stop) {
     Clear(mask, words);
     return;
   }
+  const auto skipped = SkippedWords(set, min);
+  Clear(mask, skipped);
+  mask += skipped;
   const auto* const bits = set.Words();
-  const auto base = min - BitsetStorage::kMin;
+  const auto base = from - set.Min();
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -154,7 +174,7 @@ inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     }
     return value | (bits[word + 1] << (kBits - shift));
   };
-  const uint32_t len = stop - min;
+  const uint32_t len = stop - from;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
     mask[w] &= at(base + size_t{w} * kBits);
@@ -165,7 +185,7 @@ inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
       at(base + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest));
     ++tail;
   }
-  for (auto w = tail; w != words; ++w) {
+  for (auto w = tail; w != words - skipped; ++w) {
     mask[w] = 0;
   }
 }
@@ -174,11 +194,13 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
                          uint64_t* IRS_RESTRICT mask) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   const auto stop = std::min(max, set.End());
-  if (min >= stop) {
+  const auto from = std::max(min, set.Min());
+  if (from >= stop) {
     return;
   }
+  mask += SkippedWords(set, min);
   const auto* const bits = set.Words();
-  const auto base = min - BitsetStorage::kMin;
+  const auto base = from - set.Min();
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -188,7 +210,7 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     }
     return value | (bits[word + 1] << (kBits - shift));
   };
-  const uint32_t len = stop - min;
+  const uint32_t len = stop - from;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
     mask[w] &= ~at(base + size_t{w} * kBits);

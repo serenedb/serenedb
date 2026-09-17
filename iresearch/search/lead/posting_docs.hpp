@@ -36,12 +36,12 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
   PostingLead() = default;
 
   PostingLead(const PostingMeta& meta, const IndexInput& doc_in,
-              IndexFeatures layout, bool bounds) {
-    Prepare(meta, doc_in, layout, bounds);
+              IndexFeatures layout, bool bounds, DocRange range) {
+    Prepare(meta, doc_in, layout, bounds, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, bool bounds) {
+               IndexFeatures layout, bool bounds, DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
 
@@ -50,7 +50,7 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
       return;
     }
 
-    this->OpenInput(meta, doc_in, bounds);
+    this->OpenInput(meta, doc_in, layout, bounds, range);
     this->ArmWalk(meta, layout, bounds);
   }
 };

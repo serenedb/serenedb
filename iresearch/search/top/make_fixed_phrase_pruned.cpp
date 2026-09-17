@@ -44,7 +44,7 @@ Root::ptr MakeSlots(const FixedPhraseQuery& query,
   using SlotsType = irs::detail::PhraseFixedSlots<Matcher, Leaf, Slots>;
   return MakeShape<PrunedPhrase, SlotsType>(
     ctx, std::forward<Prefix>(prefix)..., metas, query.positions, *h.doc,
-    h.Layout(), *h.pos, h.pay);
+    h.Layout(), *h.pos, h.pay, ctx.range);
 }
 
 }  // namespace

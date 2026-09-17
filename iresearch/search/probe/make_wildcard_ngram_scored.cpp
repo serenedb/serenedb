@@ -28,9 +28,10 @@
 namespace irs::probe {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  score_t score, uint64_t interrogations) {
+                                  score_t score, uint64_t interrogations,
+                                  DocRange range) {
   return detail::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(
-    query, interrogations, score);
+    query, interrogations, range, score);
 }
 
 }  // namespace irs::probe

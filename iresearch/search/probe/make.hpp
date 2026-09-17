@@ -33,22 +33,32 @@
 
 namespace irs::probe {
 
-Node::ptr Make(const TermQuery& query, uint64_t interrogations);
-Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations);
-Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations);
-Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations);
-Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations);
-Node::ptr Make(const AllQuery& query, uint64_t interrogations);
-Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations);
-Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations);
-inline Node::ptr Make(const HnswQuery&, uint64_t) { return {}; }
-inline Node::ptr Make(const KnnVectorQuery&, uint64_t) { return {}; }
-Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations);
-inline Node::ptr Make(const EmptyQueryBuilder&, uint64_t) { return {}; }
-Node::ptr Make(const BooleanQuery& query, uint64_t interrogations);
+Node::ptr Make(const TermQuery& query, uint64_t interrogations, DocRange range);
+Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations,
+               DocRange range);
+Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations,
+               DocRange range);
+Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations,
+               DocRange range);
+Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations,
+               DocRange range);
+Node::ptr Make(const AllQuery& query, uint64_t interrogations, DocRange range);
+Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations,
+               DocRange range);
+Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations,
+               DocRange range);
+inline Node::ptr Make(const HnswQuery&, uint64_t, DocRange) { return {}; }
+inline Node::ptr Make(const KnnVectorQuery&, uint64_t, DocRange) { return {}; }
+Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations,
+               DocRange range);
+inline Node::ptr Make(const EmptyQueryBuilder&, uint64_t, DocRange) {
+  return {};
+}
+Node::ptr Make(const BooleanQuery& query, uint64_t interrogations,
+               DocRange range);
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               uint64_t interrogations);
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
+               DocRange range);
 
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
@@ -87,24 +97,24 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                const detail::ScoredCtx& ctx, uint64_t interrogations);
 
 Node::ptr MakePostingDocs(const detail::PostingClause& posting,
-                          const SubReader& segment);
+                          const SubReader& segment, DocRange range);
 
-Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeAllDocs(const SubReader& segment, DocRange range);
 
 Node::ptr MakeSparseConjunctionDocs(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  uint64_t interrogations);
+  uint64_t interrogations, DocRange range);
 
 Node::ptr MakeSparseConjunctionWithDocs(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  uint64_t interrogations, Node::ptr other);
+  uint64_t interrogations, DocRange range, Node::ptr other);
 
 Node::ptr MakeSparseThresholdDocs(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment, uint32_t min_match,
-                                  uint64_t interrogations);
+                                  uint64_t interrogations, DocRange range);
 
 Node::ptr MakeSparseExclusionDocs(
   std::span<const detail::PostingClause> must,
@@ -113,38 +123,45 @@ Node::ptr MakeSparseExclusionDocs(
   std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
   std::span<const detail::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t interrogations);
+  uint64_t interrogations, DocRange range);
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query);
+Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query, DocRange range);
+Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query,
+                                       DocRange range);
+Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query,
+                                  DocRange range);
 
-Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
+Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query,
+                                 DocRange range);
+Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query,
+                                          DocRange range);
+Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query,
+                                     DocRange range);
 
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
-Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
+Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query, DocRange range);
+Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query, DocRange range);
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
-                                uint64_t interrogations);
+                                uint64_t interrogations, DocRange range);
 
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
                            std::span<const detail::PostingClause> should,
                            std::span<const QueryBuilder::ptr> should_filters,
                            uint32_t min_should_match, const SubReader& segment,
-                           uint64_t interrogations);
+                           uint64_t interrogations, DocRange range);
 
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
-                            const detail::ScoreRecipe& recipe);
+                            const detail::ScoreRecipe& recipe, DocRange range);
 
 Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
-                                  const detail::ScoreRecipe& recipe);
+                                  const detail::ScoreRecipe& recipe,
+                                  DocRange range);
 
-Node::ptr MakeAllScored(const SubReader& segment, score_t score);
+Node::ptr MakeAllScored(const SubReader& segment, score_t score,
+                        DocRange range);
 
 inline auto ScoredClauseOf(const SubReader& segment,
                            const detail::ScoredCtx& ctx,
@@ -152,7 +169,7 @@ inline auto ScoredClauseOf(const SubReader& segment,
   return [&](const detail::PostingClause& posting, const QueryBuilder* child,
              uint64_t interrogations) -> Node::ptr {
     if (child == nullptr) {
-      return MakePostingScored(posting, segment, recipe);
+      return MakePostingScored(posting, segment, recipe, ctx.range);
     }
     return child->PlanProbe(ctx, interrogations);
   };
@@ -203,25 +220,31 @@ Node::ptr MakeSparseBoostScored(
   uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoreArgs& args);
+                                const detail::ScoreArgs& args, DocRange range);
 Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const detail::ScoreArgs& args);
+                                         const detail::ScoreArgs& args,
+                                         DocRange range);
 Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const detail::ScoreArgs& args);
+                                    const detail::ScoreArgs& args,
+                                    DocRange range);
 
 Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const detail::ScoreArgs& args);
+                                   const detail::ScoreArgs& args,
+                                   DocRange range);
 Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const detail::ScoreArgs& args);
+                                            const detail::ScoreArgs& args,
+                                            DocRange range);
 Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const detail::ScoreArgs& args);
+                                       const detail::ScoreArgs& args,
+                                       DocRange range);
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const detail::ScoreArgs& args);
+                          const detail::ScoreArgs& args, DocRange range);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const detail::ScoreArgs& args);
+                             const detail::ScoreArgs& args, DocRange range);
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  score_t score, uint64_t interrogations);
+                                  score_t score, uint64_t interrogations,
+                                  DocRange range);
 
 }  // namespace irs::probe

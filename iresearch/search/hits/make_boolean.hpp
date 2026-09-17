@@ -84,7 +84,8 @@ struct Api {
         std::forward<ExcludeArgs>(negated));
       root->Prepare(posting.state.cookie, doc, segment, own,
                     recipe.Args(posting.stats, posting.boost),
-                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
+                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own),
+                    ctx.range);
       return root;
     });
   }

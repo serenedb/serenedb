@@ -24,9 +24,10 @@
 
 namespace irs::fill {
 
-Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query) {
+Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
+                                DocRange range) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return detail::MakeWildcardNGram<ByWalkDocs, Node::ptr>(query, 0);
+  return detail::MakeWildcardNGram<ByWalkDocs, Node::ptr>(query, 0, range);
 }
 
 }  // namespace irs::fill

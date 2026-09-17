@@ -54,7 +54,8 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
 
 template<template<typename> class Impl, typename Result, typename... Prefix>
 Result MakeWildcardNGram(const WildcardNGramQuery& query,
-                         uint64_t interrogations, Prefix&&... prefix) {
+                         uint64_t interrogations, DocRange range,
+                         Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto recipe = query.MakeRecipe();
@@ -68,18 +69,18 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
       using Slots = probe::WildcardNGramSlotsDocs<probe::AllDocs>;
       return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(segment), recipe);
+        std::forward_as_tuple(segment, range), recipe);
     } else {
       using Slots = lead::WildcardNGramSlotsDocs<lead::AllDocs>;
       return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(segment), recipe);
+        std::forward_as_tuple(segment, range), recipe);
     }
   }
 
   const auto erased = [&]() -> Result {
     if constexpr (kProbed) {
-      auto node = ngrams.PlanProbe({}, interrogations);
+      auto node = ngrams.PlanProbe({.range = range}, interrogations);
       if (!node) {
         return {};
       }
@@ -88,7 +89,7 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
         std::forward_as_tuple(std::move(node)), recipe);
     } else {
-      auto node = ngrams.PlanLead({});
+      auto node = ngrams.PlanLead({.range = range});
       if (!node) {
         return {};
       }
@@ -130,11 +131,11 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
       if constexpr (kProbed) {
         using Leaf = PostingProbe<Input>;
         return make.template operator()<Leaf>(
-          *single, *DocOf(*field), LayoutOf(*field), BoundsOf(*field));
+          *single, *DocOf(*field), LayoutOf(*field), BoundsOf(*field), range);
       } else {
         using Leaf = PostingLead<Input>;
         return make.template operator()<Leaf>(
-          *single, *DocOf(*field), LayoutOf(*field), BoundsOf(*field));
+          *single, *DocOf(*field), LayoutOf(*field), BoundsOf(*field), range);
       }
     });
   }
@@ -147,7 +148,7 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
       return make.template operator()<probe::OrLeaves<Leaf>>(
         terms.size(), [&](Leaf& leaf, size_t i) {
           leaf.Prepare(terms[i].cookie, *DocOf(*field), LayoutOf(*field),
-                       BoundsOf(*field));
+                       BoundsOf(*field), range);
         });
     });
   } else {
@@ -162,7 +163,8 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
         std::forward_as_tuple(terms.size(),
                               [&](Leaf& leaf, size_t i) {
                                 leaf.Prepare(terms[i].cookie, *DocOf(*field),
-                                             BoundsOf(*field), FreqOf(*field));
+                                             LayoutOf(*field), BoundsOf(*field),
+                                             FreqOf(*field), range);
                               }),
         std::forward_as_tuple());
     });

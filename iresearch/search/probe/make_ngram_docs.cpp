@@ -28,12 +28,13 @@
 
 namespace irs::probe {
 
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query) {
+Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query, DocRange range) {
   SDB_ASSERT(query.Present() > query.MinMatchCount());
-  return detail::Build(query, [&]<typename Slots>(auto&&... args) -> Node::ptr {
-    return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
-      std::forward<decltype(args)>(args)...);
-  });
+  return detail::Build(query, range,
+                       [&]<typename Slots>(auto&&... args) -> Node::ptr {
+                         return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
+                           std::forward<decltype(args)>(args)...);
+                       });
 }
 
 }  // namespace irs::probe

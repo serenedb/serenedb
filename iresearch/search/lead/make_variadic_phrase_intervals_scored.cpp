@@ -28,13 +28,14 @@
 namespace irs::lead {
 
 Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const detail::ScoreArgs& args) {
+                                            const detail::ScoreArgs& args,
+                                            DocRange range) {
   if (args.stats == nullptr || query.state.reader == nullptr) {
     return {};
   }
   return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Intervals, Impl,
                                       Node::ptr, true, TwoPhaseScored>(
-    query, query.Segment(), *query.state.reader, args);
+    query, range, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::lead

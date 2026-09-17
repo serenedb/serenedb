@@ -62,7 +62,8 @@ Node::ptr MakeSparseConjunctionScored(
   score_t absorbed) {
   const auto size = terms.size() + filters.size();
   if (size == 0) {
-    return absorbed != 0 ? MakeAllScored(segment, absorbed) : Node::ptr{};
+    return absorbed != 0 ? MakeAllScored(segment, absorbed, ctx.range)
+                         : Node::ptr{};
   }
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
   if (size == 1) {
@@ -80,7 +81,7 @@ Node::ptr MakeSparseConjunctionScored(
   }
   return detail::BuildOptionalLeaves<Node::ptr>(
     terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
-    interrogations, clause,
+    interrogations, ctx.range, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
@@ -107,7 +108,7 @@ Node::ptr MakeSparseThresholdScored(
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
   return detail::BuildOptionalLeaves<Node::ptr>(
     terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
-    interrogations, clause,
+    interrogations, ctx.range, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
@@ -150,11 +151,12 @@ Node::ptr MakeSparseExclusionScored(
     return detail::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
       using Include = detail::PostingProbeScored<Input>;
       return detail::BuildExcludeSideOf<Node::ptr, Input>(
-        exclude, exclude_filters, nullptr, segment, candidates, lead,
+        exclude, exclude_filters, nullptr, segment, candidates, lead, ctx.range,
         [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
           return MakeSparseScored<Include, utils::Empty, Exclude>(
             std::forward_as_tuple(posting.state.cookie, *doc, segment, own,
-                                  recipe.Args(posting.stats, posting.boost)),
+                                  recipe.Args(posting.stats, posting.boost),
+                                  ctx.range),
             std::forward_as_tuple(), std::forward<decltype(excluded)>(excluded),
             detail::Inherited{});
         });
@@ -168,7 +170,7 @@ Node::ptr MakeSparseExclusionScored(
     return {};
   }
   return detail::BuildExcludeSide<Node::ptr>(
-    exclude, exclude_filters, nullptr, segment, candidates, lead,
+    exclude, exclude_filters, nullptr, segment, candidates, lead, ctx.range,
     [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
       return MakeSparseScored<Erased, utils::Empty, Exclude>(
         std::forward_as_tuple(std::move(include)), std::forward_as_tuple(),
@@ -194,7 +196,7 @@ Node::ptr MakeSparseBoostScored(
   const auto build = [&]<typename Head>(auto&& head) -> Node::ptr {
     return detail::BuildOptionalLeaves<Node::ptr>(
       should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
-      segment, recipe, reach, clause,
+      segment, recipe, reach, ctx.range, clause,
       [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
         return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
           size, [&]<size_t N> -> Node::ptr {
@@ -215,9 +217,9 @@ Node::ptr MakeSparseBoostScored(
     const auto* const doc = detail::DocOf(own);
     return detail::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
       using Head = detail::PostingProbeScored<Input>;
-      return build.template operator()<Head>(
-        std::forward_as_tuple(posting.state.cookie, *doc, segment, own,
-                              recipe.Args(posting.stats, posting.boost)));
+      return build.template operator()<Head>(std::forward_as_tuple(
+        posting.state.cookie, *doc, segment, own,
+        recipe.Args(posting.stats, posting.boost), ctx.range));
     });
   }
   auto head =

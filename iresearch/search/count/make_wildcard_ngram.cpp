@@ -27,10 +27,10 @@ namespace irs::count {
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   if (ctx.table != nullptr) {
-    return detail::MakeWildcardNGram<FilteredWalk, Root::ptr>(query, 0,
-                                                              ctx.table);
+    return detail::MakeWildcardNGram<FilteredWalk, Root::ptr>(
+      query, 0, ctx.range, ctx.table);
   }
-  return detail::MakeWildcardNGram<PlainWalk, Root::ptr>(query, 0,
+  return detail::MakeWildcardNGram<PlainWalk, Root::ptr>(query, 0, ctx.range,
                                                          utils::Empty{});
 }
 

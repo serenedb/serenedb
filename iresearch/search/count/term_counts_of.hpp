@@ -43,8 +43,8 @@ class TermCountsOf : public TermCounts {
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
-      ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Docs(), _bounds,
-                  FeaturesHaveFreq(_layout), sink);
+      ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Docs(), _layout,
+                  _bounds, FeaturesHaveFreq(_layout), _set.Range(), sink);
     }
     return sink.Total();
   }
@@ -54,7 +54,8 @@ class TermCountsOf : public TermCounts {
     if (term.docs_count == 1) {
       return _set.Contains(doc_limits::min() + term.doc_delta);
     }
-    detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+    detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds,
+                                        _set.Range()};
     auto doc = doc_limits::min();
     for (;;) {
       doc = posting.Probe(doc);

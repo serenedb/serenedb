@@ -43,6 +43,7 @@ class BooleanBitset : public Root {
     constexpr auto kBits = detail::BitsetStorage::kBits;
     const auto* const words = _set.Words();
     const auto count = _set.WordCount();
+    const auto min = _set.Min();
     uint32_t n = 0;
     for (; _word != count; ++_word) {
       const auto word = words[_word];
@@ -54,9 +55,7 @@ class BooleanBitset : public Root {
         return n;
       }
       n = static_cast<uint32_t>(
-        MaterializeWord(detail::BitsetStorage::kMin + _word * kBits, word,
-                        out + n) -
-        out);
+        MaterializeWord(min + _word * kBits, word, out + n) - out);
     }
     return n;
   }
@@ -78,9 +77,10 @@ template<>
 inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,
                                                        const IndexInput& doc,
                                                        doc_id_t docs_count,
+                                                       DocRange range,
                                                        TableFilter*) {
   return memory::make_managed<docs::BooleanBitset>(
-    BuildBitset(buckets, doc, docs_count));
+    BuildBitset(buckets, doc, docs_count, range));
 }
 
 }  // namespace irs::detail

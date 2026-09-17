@@ -18,12 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/single_posting.hpp"
 
 namespace irs::docs {
 
 Root::ptr MakeSinglePosting(doc_id_t doc, const Context& ctx) {
+  if (!ctx.range.Contains(doc)) {
+    return memory::make_managed<Empty>();
+  }
   return memory::make_managed<SinglePosting>(doc);
 }
 

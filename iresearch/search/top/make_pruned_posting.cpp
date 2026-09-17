@@ -66,15 +66,15 @@ Root::ptr MakePrunedPosting(
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(
         ctx, std::forward_as_tuple(), meta, doc, irs::detail::LayoutOf(own),
-        segment, own, args);
+        segment, own, args, ctx.range);
     }
     return irs::detail::BuildBlockExcludesOf<Root::ptr, Input>(
       excludes, exclude_filters, nullptr, segment,
-      PrunedCandidates(meta.docs_count, ctx), meta.docs_count,
+      PrunedCandidates(meta.docs_count, ctx), meta.docs_count, ctx.range,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<PrunedPosting, Input, Exclude>(
           ctx, std::forward<decltype(negated)>(negated), meta, doc,
-          irs::detail::LayoutOf(own), segment, own, args);
+          irs::detail::LayoutOf(own), segment, own, args, ctx.range);
       });
   });
 }

@@ -24,9 +24,10 @@
 
 namespace irs::probe {
 
-Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query) {
+Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query,
+                                  DocRange range) {
   return detail::MakeFixedPhraseOf<detail::PhraseMatch::Slop, Impl, Node::ptr>(
-    query);
+    query, range);
 }
 
 }  // namespace irs::probe

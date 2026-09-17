@@ -37,7 +37,10 @@ namespace {
 
 struct Api {
   using Result = Node::ptr;
-  using Context = utils::Empty;
+
+  struct Context {
+    DocRange range;
+  };
 
   static constexpr bool kWindowNodes = false;
   static constexpr bool kWindowLeadDrains = false;
@@ -63,17 +66,17 @@ struct Api {
       std::forward<ExcludesArgs>(excludes));
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context&) {
-    return child.PlanFill({}, ScoreMergeType::Noop);
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+    return child.PlanFill({.range = ctx.range}, ScoreMergeType::Noop);
   }
 
   static Result MakeTerm(const detail::PostingClause& term,
-                         const SubReader& segment, const Context&) {
-    return FillOf(term, nullptr, segment);
+                         const SubReader& segment, const Context& ctx) {
+    return FillOf(term, nullptr, segment, ctx.range);
   }
 
-  static Result MakeAll(const SubReader& segment, const Context&) {
-    return MakeAllDocs(segment);
+  static Result MakeAll(const SubReader& segment, const Context& ctx) {
+    return MakeAllDocs(segment, ctx.range);
   }
 
   static detail::TableFilter* BitsetTable(const Context&) noexcept {
@@ -91,8 +94,8 @@ struct Api {
 
 }  // namespace
 
-Node::ptr Make(const BooleanQuery& query) {
-  return detail::builder::Make<Api>(query, {});
+Node::ptr Make(const BooleanQuery& query, DocRange range) {
+  return detail::builder::Make<Api>(query, {.range = range});
 }
 
 }  // namespace irs::fill

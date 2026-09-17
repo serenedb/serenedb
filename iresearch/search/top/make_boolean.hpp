@@ -86,7 +86,8 @@ struct Api {
           table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));
       root->Prepare(posting.state.cookie, doc, segment, own,
                     recipe.Args(posting.stats, posting.boost),
-                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
+                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own),
+                    ctx.range);
       return root;
     });
   }
@@ -103,11 +104,14 @@ struct Api {
   }
 
   static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
-    return child.PlanTop({.scorer = ctx.scorer,
-                          .fetcher = ctx.fetcher,
-                          .table = ctx.table,
-                          .prune = ctx.prune,
-                          .k = ctx.k});
+    return child.PlanTop({
+      .scorer = ctx.scorer,
+      .fetcher = ctx.fetcher,
+      .table = ctx.table,
+      .prune = ctx.prune,
+      .k = ctx.k,
+      .range = ctx.range,
+    });
   }
 
   static Result MakePosting(const irs::detail::PostingClause& posting,

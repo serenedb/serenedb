@@ -54,7 +54,7 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                bool has_score_bounds, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const ScoreArgs& args, DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     this->MakeScore(segment, field, args);
 
@@ -64,7 +64,8 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
       return;
     }
 
-    this->OpenInput(meta, doc_in, has_score_bounds);
+    this->OpenInput(meta, doc_in, field.meta().index_features, has_score_bounds,
+                    range);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,

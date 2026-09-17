@@ -28,12 +28,13 @@
 
 namespace irs::fill {
 
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query) {
-  return detail::Build(query, [&]<typename Slots>(auto&&... args) -> Node::ptr {
-    using Node = lead::TwoPhaseDocs<Slots>;
-    return memory::make_managed<ByWalkDocs<Node>>(
-      std::forward<decltype(args)>(args)...);
-  });
+Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query, DocRange range) {
+  return detail::Build(query, range,
+                       [&]<typename Slots>(auto&&... args) -> Node::ptr {
+                         using Node = lead::TwoPhaseDocs<Slots>;
+                         return memory::make_managed<ByWalkDocs<Node>>(
+                           std::forward<decltype(args)>(args)...);
+                       });
 }
 
 }  // namespace irs::fill

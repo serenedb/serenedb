@@ -54,13 +54,13 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
 
   PostingProbeScored(const PostingMeta& meta, const IndexInput& doc_in,
                      const SubReader& segment, const TermReader& field,
-                     const ScoreArgs& args) {
-    Prepare(meta, doc_in, segment, field, args);
+                     const ScoreArgs& args, DocRange range) {
+    Prepare(meta, doc_in, segment, field, args, range);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
-               const ScoreArgs& args) {
+               const ScoreArgs& args, DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(FeaturesHaveFreq(field.meta().index_features));
     this->SetRecipe(segment, field, args);
@@ -75,7 +75,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
     }
 
     const auto bounds = field.HasScoreBounds();
-    this->OpenInput(meta, doc_in, bounds);
+    this->OpenInput(meta, doc_in, field.meta().index_features, bounds, range);
     this->ArmWalk(meta, field.meta().index_features, bounds);
   }
 

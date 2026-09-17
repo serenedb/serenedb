@@ -37,10 +37,10 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                                             .boost = query.Boost()});
   if (ctx.table != nullptr) {
     return irs::detail::MakeWildcardNGram<FilteredConstantWalk, Root::ptr>(
-      query, 0, ctx.table, value);
+      query, 0, ctx.range, ctx.table, value);
   }
   return irs::detail::MakeWildcardNGram<PlainConstantWalk, Root::ptr>(
-    query, 0, utils::Empty{}, value);
+    query, 0, ctx.range, utils::Empty{}, value);
 }
 
 }  // namespace irs::top

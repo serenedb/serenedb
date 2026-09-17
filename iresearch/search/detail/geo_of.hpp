@@ -36,7 +36,7 @@ namespace irs::detail {
 template<template<typename> class Impl, typename Result, typename Parser,
          typename Acceptor, typename... Prefix>
 Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
-               Prefix&&... prefix) {
+               DocRange range, Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto check = query.MakeCheck();
@@ -46,7 +46,7 @@ Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
   SDB_ASSERT(cells.Kind() != QueryKind::Empty);
 
   if constexpr (kProbed) {
-    auto approx = cells.PlanProbe({}, interrogations);
+    auto approx = cells.PlanProbe({.range = range}, interrogations);
     if (!approx) {
       return {};
     }
@@ -55,7 +55,7 @@ Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
       std::forward<Prefix>(prefix)..., std::piecewise_construct,
       std::forward_as_tuple(std::move(approx)), recipe);
   } else {
-    auto approx = cells.PlanLead({});
+    auto approx = cells.PlanLead({.range = range});
     if (!approx) {
       return {};
     }

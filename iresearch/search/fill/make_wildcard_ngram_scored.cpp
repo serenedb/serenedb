@@ -40,7 +40,7 @@ Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
   return detail::MakeWildcardNGram<WalkConstantScored, Node::ptr>(
-    query, 0, merge, *ctx.fetcher, value);
+    query, 0, ctx.range, merge, *ctx.fetcher, value);
 }
 
 }  // namespace irs::fill

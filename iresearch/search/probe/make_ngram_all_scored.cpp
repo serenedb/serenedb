@@ -28,13 +28,13 @@
 namespace irs::probe {
 
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const detail::ScoreArgs& args) {
+                             const detail::ScoreArgs& args, DocRange range) {
   if (args.stats == nullptr) {
     return {};
   }
   SDB_ASSERT(query.Present() == query.MinMatchCount());
   return detail::BuildAll<true>(
-    query, [&]<typename Slots>(auto&&... slots) -> Node::ptr {
+    query, range, [&]<typename Slots>(auto&&... slots) -> Node::ptr {
       using Node = probe::TwoPhaseScored<Slots>;
       return memory::make_managed<Impl<Node>>(
         query.Segment(), *query.State().reader, args,

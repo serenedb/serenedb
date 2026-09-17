@@ -28,6 +28,7 @@ namespace irs::docs {
 
 struct Context {
   detail::DeadRuns* table = nullptr;
+  DocRange range;
 };
 
 struct Root : memory::Managed {

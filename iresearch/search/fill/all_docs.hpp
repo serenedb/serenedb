@@ -33,8 +33,10 @@ namespace irs::fill {
 
 class AllDocs {
  public:
-  explicit AllDocs(const SubReader& segment) noexcept
-    : _last{static_cast<doc_id_t>(segment.docs_count())} {}
+  AllDocs(const SubReader& segment, DocRange range) noexcept
+    : _first{range.begin},
+      _last{std::min<doc_id_t>(range.end - 1,
+                               static_cast<doc_id_t>(segment.docs_count()))} {}
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     return FillOrImpl(min, max, mask, [](doc_id_t, doc_id_t) noexcept {});
@@ -102,11 +104,12 @@ class AllDocs {
 
   bool Span(doc_id_t min, doc_id_t max, doc_id_t& begin,
             doc_id_t& end) const noexcept {
-    begin = min;
+    begin = std::max(min, _first);
     end = std::min(max, _last + 1);
     return begin < end;
   }
 
+  doc_id_t _first;
   doc_id_t _last;
 };
 

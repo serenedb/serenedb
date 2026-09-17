@@ -37,7 +37,7 @@ class Posting {
   Posting(const PostingMeta& meta, const IndexInput& doc_in,
           IndexFeatures layout, const IndexInput& pos_in,
           const IndexInput* pay_in) {
-    _leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
+    _leaf.Prepare(meta, doc_in, layout, pos_in, pay_in, DocRange{});
   }
 
   uint32_t Run(doc_id_t doc, std::span<Range> out) {

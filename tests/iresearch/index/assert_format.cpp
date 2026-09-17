@@ -619,7 +619,7 @@ irs::lead::Node::ptr MakeLeadDocs(const irs::SubReader& segment,
   if (irs::detail::DocOf(actual_terms) == nullptr) {
     return {};
   }
-  return irs::lead::MakePostingDocs(posting, segment);
+  return irs::lead::MakePostingDocs(posting, segment, irs::DocRange{});
 }
 
 // A `lead::Node` answers documents and nothing else, so the frequencies and

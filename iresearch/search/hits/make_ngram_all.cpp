@@ -46,14 +46,14 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx) {
   if (const auto value =
         irs::detail::ConstantOf(query.Segment(), *query.State().reader, args)) {
     return irs::detail::BuildAll(
-      query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
+      query, ctx.range, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
         using Node = lead::TwoPhaseDocs<Slots>;
         return MakeShape<ConstantWalk, Node>(
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
   }
   return irs::detail::BuildAll<true>(
-    query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
+    query, ctx.range, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return MakeShape<Walk, Node>(ctx, ctx.fetcher, query.Segment(),
                                    *query.State().reader, args,

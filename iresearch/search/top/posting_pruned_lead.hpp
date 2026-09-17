@@ -47,16 +47,19 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
-               const TermReader& field, const detail::ScoreArgs& args) {
-    if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
+               const TermReader& field, const detail::ScoreArgs& args,
+               DocRange range) {
+    if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args,
+                            range)) {
       _left_in_leaf = 1;
     }
   }
 
   PostingPrunedLead(const PostingMeta& meta, const IndexInput& doc_in,
                     IndexFeatures layout, const SubReader& segment,
-                    const TermReader& field, const detail::ScoreArgs& args) {
-    Prepare(meta, doc_in, layout, segment, field, args);
+                    const TermReader& field, const detail::ScoreArgs& args,
+                    DocRange range) {
+    Prepare(meta, doc_in, layout, segment, field, args, range);
   }
 
   doc_id_t BlockLast() const noexcept { return *(std::end(_docs) - 1); }

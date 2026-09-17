@@ -214,7 +214,15 @@ class VectorCluster {
       _lane{lane} {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
-    SDB_ASSERT(_setting.group_size <= _cache.size());
+    SDB_ASSERT(_setting.group_size != 0);
+    // ServeGroup decodes a whole group at once, so the cache is sized by the
+    // format's group, not by the run. They are unrelated numbers: a run is at
+    // most kRun docs, while a group is whatever the quantizer packs together
+    // -- 32 lanes for fast scan, but 1024 for Panorama, which is eight times
+    // kRun. Sizing this by kRun overflowed it by 896 floats, straight over the
+    // members below, and the SDB_ASSERT that would have caught it is compiled
+    // out of the build that ships.
+    _cache.resize(_setting.group_size);
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
@@ -355,7 +363,8 @@ class VectorCluster {
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
-  std::array<score_t, kRun> _cache;
+  /// One decoded group; sized from the quantizer's group_size, not kRun.
+  std::vector<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   uint32_t _total;

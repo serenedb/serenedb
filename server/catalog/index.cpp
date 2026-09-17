@@ -555,10 +555,8 @@ void ValidateQuantBits(std::string_view kind, std::string_view column_name,
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
-                  "' is only valid with quant ",
-                  kind == kHNSWKind ? absl::StrCat("'", kTQQuant, "'")
-                                    : absl::StrCat("'", kRaBitQQuant, "' or '",
-                                                   kTQQuant, "'")));
+                  "' is only valid with quant '", kRaBitQQuant, "' or '",
+                  kTQQuant, "'"));
       }
       break;
   }
@@ -873,13 +871,13 @@ void ApplyHNSWOptions(std::string_view column_name,
                      cfg.metric == irs::VectorMetric::Cosine)) {
     cfg.quant = irs::VectorQuantization::SQ8;
   }
-  if (cfg.quant == irs::VectorQuantization::PQ ||
-      cfg.quant == irs::VectorQuantization::RaBitQ) {
+  if (cfg.quant == irs::VectorQuantization::PQ) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("Column '", column_name,
                             "': hnsw supports only quant = ", kNoneQuant, ", ",
-                            kSQ8Quant, ", ", kSQ4Quant, ", ", kUSQ8Quant,
-                            ", ", kUSQ4Quant, " or ", kTQQuant));
+                            kSQ8Quant, ", ", kSQ4Quant, ", ", kUSQ8Quant, ", ",
+                            kUSQ4Quant, ", ", kRaBitQQuant, " or ",
+                            kTQQuant));
   }
   if (cfg.quant != irs::VectorQuantization::None &&
       cfg.metric == irs::VectorMetric::L1) {

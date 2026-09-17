@@ -151,7 +151,7 @@ statement error
 CREATE INDEX bad_c ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'tq'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'rabitq' or 'tq'
 
 
 statement error

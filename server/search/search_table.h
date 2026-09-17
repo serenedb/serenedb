@@ -246,7 +246,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
-  void VacuumCompact();
+  // Merge segments. `target_segments` <= 1 merges everything into one; a
+  // larger value leaves about that many, merging disjoint stripes at once.
+  void VacuumCompact(uint32_t target_segments = 1);
 
  private:
   void OpenWriter();

@@ -2099,6 +2099,178 @@ count
 5
 
 statement ok
+CREATE TABLE deg_hnsw_rabitq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_rabitq_idx ON deg_hnsw_rabitq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_hnsw_rabitq
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_rabitq VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_rabitq
+
+# -- hnsw rabitq: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw rabitq: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw rabitq: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_rabitq_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_rabitq_same_idx ON deg_hnsw_rabitq_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_hnsw_rabitq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_rabitq_same_idx;
+----
+count
+40
+
+# -- hnsw rabitq: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_rabitq_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_rabitq_zero_idx ON deg_hnsw_rabitq_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_hnsw_rabitq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_rabitq_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
 CREATE TABLE deg_hnsw_tq3 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 
 statement ok

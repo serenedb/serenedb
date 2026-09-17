@@ -24,14 +24,14 @@ statement error
 CREATE INDEX hnsw_ddl_pq ON hnsw_ddl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'pq'));
 ----
-db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8, sq4, usq8, usq4 or tq
+db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8, sq4, usq8, usq4, rabitq or tq
 
 
-statement error
+# rabitq builds on hnsw now: the writer emits row-major records rather than
+# fast-scan groups, which is what a graph walk can read a single node out of.
+statement ok
 CREATE INDEX hnsw_ddl_rabitq ON hnsw_ddl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'));
-----
-db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8, sq4, usq8, usq4 or tq
 
 
 statement error

@@ -1,0 +1,2449 @@
+hash-threshold 100
+
+# Degenerate inputs, every quantizer, both index kinds.
+#
+# A quantizer's scoring pass builds a lookup table from the query and quantizes
+# it against its own range. When the table has no range -- an all-zero query, a
+# constant query, a corpus whose vectors are all the same -- the scale comes out
+# zero, and a reader that divides by it produces an infinity and then a NaN.
+# A NaN score loses every comparison in the top-k collector, so the symptom is
+# not a wrong order but an empty answer: the query returns no rows at all.
+#
+# That is what these assert. Battery A runs the degenerate queries through the
+# quantized pass alone (sdb_ann_oversample = 0) and checks only that a full
+# top-k comes back, because at one bit per dimension nothing stronger is true.
+# Battery B runs the same queries with a rescore pool wider than the table, so
+# the exact distance decides the order and every quantizer must agree on it --
+# and a code that scored NaN never reaches that pool, so B fails too when the
+# quantized pass is broken. Batteries C and D make the corpus degenerate rather
+# than the query: all vectors identical, and all vectors zero.
+#
+# Fixtures are shared in shape across quantizers: 64 filler rows bounded in
+# [20, 30]^8, one row at the origin and two landmarks at 500 on opposite axes.
+# PQ needs at least 16 points to train, which the filler supplies; pq_m = 4
+# divides the dimension. nprobe is exhaustive so IVF cannot miss a cluster.
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+# ===========================================================================
+# IVF
+# ===========================================================================
+
+statement ok
+CREATE TABLE deg_ivf_sq8 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq8_idx ON deg_ivf_sq8
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_ivf_sq8
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_sq8 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq8
+
+# -- ivf sq8: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf sq8: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf sq8: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_sq8_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq8_same_idx ON deg_ivf_sq8_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_ivf_sq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq8_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_sq8_same_idx;
+----
+count
+40
+
+# -- ivf sq8: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_sq8_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq8_zero_idx ON deg_ivf_sq8_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_ivf_sq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq8_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq8_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_sq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq4_idx ON deg_ivf_sq4
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_ivf_sq4
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_sq4 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq4
+
+# -- ivf sq4: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf sq4: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf sq4: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_sq4_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq4_same_idx ON deg_ivf_sq4_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_ivf_sq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq4_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_sq4_same_idx;
+----
+count
+40
+
+# -- ivf sq4: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_sq4_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_sq4_zero_idx ON deg_ivf_sq4_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_ivf_sq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_sq4_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_sq4_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_usq8 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq8_idx ON deg_ivf_usq8
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_ivf_usq8
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_usq8 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq8
+
+# -- ivf usq8: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf usq8: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf usq8: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_usq8_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq8_same_idx ON deg_ivf_usq8_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_ivf_usq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq8_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_usq8_same_idx;
+----
+count
+40
+
+# -- ivf usq8: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_usq8_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq8_zero_idx ON deg_ivf_usq8_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_ivf_usq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq8_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq8_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_usq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq4_idx ON deg_ivf_usq4
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_ivf_usq4
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_usq4 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq4
+
+# -- ivf usq4: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf usq4: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf usq4: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_usq4_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq4_same_idx ON deg_ivf_usq4_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_ivf_usq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq4_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_usq4_same_idx;
+----
+count
+40
+
+# -- ivf usq4: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_usq4_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_usq4_zero_idx ON deg_ivf_usq4_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_ivf_usq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_usq4_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_usq4_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_pq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_pq_idx ON deg_ivf_pq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4))
+
+statement ok
+INSERT INTO deg_ivf_pq
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_pq VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_pq
+
+# -- ivf pq: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf pq: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf pq: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_pq_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_pq_same_idx ON deg_ivf_pq_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4))
+
+statement ok
+INSERT INTO deg_ivf_pq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_pq_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_pq_same_idx;
+----
+count
+40
+
+# -- ivf pq: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_pq_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_pq_zero_idx ON deg_ivf_pq_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4))
+
+statement ok
+INSERT INTO deg_ivf_pq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_pq_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_pq_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_rabitq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_rabitq_idx ON deg_ivf_rabitq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_ivf_rabitq
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_rabitq VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_rabitq
+
+# -- ivf rabitq: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf rabitq: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf rabitq: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_rabitq_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_rabitq_same_idx ON deg_ivf_rabitq_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_ivf_rabitq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_rabitq_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_rabitq_same_idx;
+----
+count
+40
+
+# -- ivf rabitq: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_rabitq_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_rabitq_zero_idx ON deg_ivf_rabitq_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq'))
+
+statement ok
+INSERT INTO deg_ivf_rabitq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_rabitq_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_rabitq_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_tq3 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq3_idx ON deg_ivf_tq3
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_ivf_tq3
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_tq3 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq3
+
+# -- ivf tq3: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf tq3: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf tq3: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_tq3_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq3_same_idx ON deg_ivf_tq3_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_ivf_tq3_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq3_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_tq3_same_idx;
+----
+count
+40
+
+# -- ivf tq3: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_tq3_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq3_zero_idx ON deg_ivf_tq3_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_ivf_tq3_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq3_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq3_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_ivf_tq2 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq2_idx ON deg_ivf_tq2
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_ivf_tq2
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_ivf_tq2 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq2
+
+# -- ivf tq2: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- ivf tq2: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- ivf tq2: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_tq2_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq2_same_idx ON deg_ivf_tq2_same
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_ivf_tq2_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq2_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_ivf_tq2_same_idx;
+----
+count
+40
+
+# -- ivf tq2: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_ivf_tq2_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_ivf_tq2_zero_idx ON deg_ivf_tq2_zero
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_ivf_tq2_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_ivf_tq2_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_ivf_tq2_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# ===========================================================================
+# HNSW
+# ===========================================================================
+
+statement ok
+CREATE TABLE deg_hnsw_sq8 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq8_idx ON deg_hnsw_sq8
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_hnsw_sq8
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_sq8 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq8
+
+# -- hnsw sq8: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw sq8: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw sq8: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_sq8_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq8_same_idx ON deg_hnsw_sq8_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_hnsw_sq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq8_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_sq8_same_idx;
+----
+count
+40
+
+# -- hnsw sq8: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_sq8_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq8_zero_idx ON deg_hnsw_sq8_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO deg_hnsw_sq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq8_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq8_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_hnsw_sq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq4_idx ON deg_hnsw_sq4
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_hnsw_sq4
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_sq4 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq4
+
+# -- hnsw sq4: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw sq4: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw sq4: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_sq4_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq4_same_idx ON deg_hnsw_sq4_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_hnsw_sq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq4_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_sq4_same_idx;
+----
+count
+40
+
+# -- hnsw sq4: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_sq4_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_sq4_zero_idx ON deg_hnsw_sq4_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq4'))
+
+statement ok
+INSERT INTO deg_hnsw_sq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_sq4_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_sq4_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_hnsw_usq8 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq8_idx ON deg_hnsw_usq8
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_hnsw_usq8
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_usq8 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq8
+
+# -- hnsw usq8: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw usq8: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw usq8: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_usq8_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq8_same_idx ON deg_hnsw_usq8_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_hnsw_usq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq8_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_usq8_same_idx;
+----
+count
+40
+
+# -- hnsw usq8: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_usq8_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq8_zero_idx ON deg_hnsw_usq8_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
+
+statement ok
+INSERT INTO deg_hnsw_usq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq8_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq8_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_hnsw_usq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq4_idx ON deg_hnsw_usq4
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_hnsw_usq4
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_usq4 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq4
+
+# -- hnsw usq4: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw usq4: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw usq4: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_usq4_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq4_same_idx ON deg_hnsw_usq4_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_hnsw_usq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq4_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_usq4_same_idx;
+----
+count
+40
+
+# -- hnsw usq4: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_usq4_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_usq4_zero_idx ON deg_hnsw_usq4_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq4'))
+
+statement ok
+INSERT INTO deg_hnsw_usq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_usq4_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_usq4_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_hnsw_tq3 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq3_idx ON deg_hnsw_tq3
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_hnsw_tq3
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_tq3 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq3
+
+# -- hnsw tq3: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw tq3: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw tq3: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_tq3_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq3_same_idx ON deg_hnsw_tq3_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_hnsw_tq3_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq3_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_tq3_same_idx;
+----
+count
+40
+
+# -- hnsw tq3: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_tq3_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq3_zero_idx ON deg_hnsw_tq3_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 3))
+
+statement ok
+INSERT INTO deg_hnsw_tq3_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq3_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq3_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+CREATE TABLE deg_hnsw_tq2 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq2_idx ON deg_hnsw_tq2
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_hnsw_tq2
+SELECT g, ARRAY[ ((g % 11) + 20)::float,  (((g * 3) % 11) + 20)::float,
+                 (((g * 5) % 11) + 20)::float,  (((g * 7) % 11) + 20)::float,
+                 (((g * 13) % 11) + 20)::float, (((g * 17) % 11) + 20)::float,
+                 (((g * 19) % 11) + 20)::float, (((g * 23) % 11) + 20)::float
+               ]::FLOAT[8]
+FROM generate_series(1, 64) g
+
+statement count 3
+INSERT INTO deg_hnsw_tq2 VALUES
+  (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq2
+
+# -- hnsw tq2: quantized path alone (oversample 0) ------------------------------
+
+statement ok
+SET sdb_ann_oversample = 0
+
+# all-zero query: the inner-product table is all zeros, so the LUT has no range
+# to quantize against. Must still answer with a full top-k.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# constant non-zero query: another table with no range, reached by a different
+# route (every entry equal rather than every entry zero).
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [25, 25, 25, 25, 25, 25, 25, 25]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+# k above the row count is capped by the row count, not by anything the
+# quantizer decides.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 500
+) t;
+----
+count
+67
+
+# -- hnsw tq2: full pipeline, pool wider than the table -------------------------
+
+statement ok
+SET sdb_ann_oversample = 100
+
+# nearest to the origin is the row at the origin.
+query
+SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+# nearest to a far landmark is that landmark.
+query
+SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# the origin query's top-3 are the origin row and the two nearest filler rows;
+# the far landmarks are never among them.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3
+) t WHERE pk IN (1002, 1003);
+----
+count
+0
+
+# -- hnsw tq2: every stored vector identical ------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_tq2_same (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq2_same_idx ON deg_hnsw_tq2_same
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_hnsw_tq2_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq2_same
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_same_idx ORDER BY emb <-> [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_same_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+query
+SELECT count(*) FROM deg_hnsw_tq2_same_idx;
+----
+count
+40
+
+# -- hnsw tq2: every stored vector all-zero -------------------------------------
+
+statement ok
+CREATE TABLE deg_hnsw_tq2_zero (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX deg_hnsw_tq2_zero_idx ON deg_hnsw_tq2_zero
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 2))
+
+statement ok
+INSERT INTO deg_hnsw_tq2_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
+
+statement ok
+VACUUM (REFRESH_TABLE) deg_hnsw_tq2_zero
+
+statement ok
+SET sdb_ann_oversample = 0
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_zero_idx ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+SET sdb_ann_oversample = 100
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM deg_hnsw_tq2_zero_idx ORDER BY emb <-> [1, 2, 3, 4, 5, 6, 7, 8]::FLOAT[8] LIMIT 5
+) t;
+----
+count
+5
+
+statement ok
+RESET sdb_ann_oversample
+
+statement ok
+RESET sdb_ivf_search_nprobe

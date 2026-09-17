@@ -943,19 +943,19 @@ TurboQuantLayout MakeTurboQuantLayout(uint32_t d, bool full, uint32_t nb_bits,
   return l;
 }
 
-struct TurboQuantChunk {
+struct FastScanChunk {
   uint32_t m;
   uint32_t nsq;
   uint32_t code_off;
   uint32_t lut_off;
 };
 
-std::vector<TurboQuantChunk> MakeTurboQuantChunks(uint32_t m) {
-  std::vector<TurboQuantChunk> out;
+std::vector<FastScanChunk> MakeFastScanChunks(uint32_t m) {
+  std::vector<FastScanChunk> out;
   uint32_t code_off = 0;
   uint32_t lut_off = 0;
   for (uint32_t off = 0; off < m; off += kTurboQuantLutChunk) {
-    TurboQuantChunk c;
+    FastScanChunk c;
     c.m = std::min<uint32_t>(kTurboQuantLutChunk, m - off);
     c.nsq = static_cast<uint32_t>(FastScanNsq(c.m));
     c.code_off = code_off;
@@ -966,6 +966,80 @@ std::vector<TurboQuantChunk> MakeTurboQuantChunks(uint32_t m) {
   }
   return out;
 }
+
+/// A distance table quantized and packed for faiss fast scan, together with
+/// the affine transform that reads an accumulator back as a float.
+///
+/// PQ, RaBitQ and TurboQuant differ only in how they fill the float table.
+/// From there the steps are the same for all three -- quantize it against its
+/// own range, pack it into fast-scan lane order, and undo the scale on
+/// whatever the accumulator returns -- so this holds the only copy of them,
+/// and so the only copy of the degenerate case below. TurboQuant splits its
+/// table into chunks it accumulates in turn, which is why the transform is
+/// per chunk; the other two have a single chunk.
+class FastScanLut {
+ public:
+  /// Quantize and pack `table`, laid out as `ksub` entries per sub-quantizer.
+  ///
+  /// faiss reports a scale `a` with the true value at `code / a + b`. A table
+  /// with no range -- every entry equal, which is exactly what an all-zero
+  /// query produces, since every inner product with it really is zero -- comes
+  /// back as a = 0 with the whole answer already in `b`. Reciprocating that
+  /// gives inf, and `0 * inf` is NaN, which loses every `score > threshold`
+  /// comparison: the query then returns nothing at all rather than something
+  /// merely imprecise. A step of zero is the correct reading of a = 0, and it
+  /// leaves `b` as the constant faiss put there.
+  void Build(const float* table, std::span<const FastScanChunk> chunks,
+             size_t ksub) {
+    size_t total = 0;
+    for (const auto& c : chunks) {
+      total += size_t{c.nsq} * ksub;
+    }
+    _packed.resize(total);
+    _step.resize(chunks.size());
+    _bias.resize(chunks.size());
+    std::vector<uint8_t> codes;
+    size_t moff = 0;
+    for (size_t i = 0; i != chunks.size(); ++i) {
+      const FastScanChunk& c = chunks[i];
+      codes.assign(size_t{c.nsq} * ksub, 0);
+      float a = 0.f;
+      faiss::quantize_lut::quantize_LUT_and_bias(
+        1, c.m, ksub, false, table + moff * ksub, nullptr, codes.data(), c.nsq,
+        nullptr, &a, &_bias[i]);
+      _step[i] = (std::isfinite(a) && a > 0.f) ? 1.f / a : 0.f;
+      faiss::pq4_pack_LUT(1, static_cast<int>(c.nsq), codes.data(),
+                          _packed.data() + c.lut_off);
+      moff += c.m;
+    }
+  }
+
+  /// Single-chunk form, for the quantizers that do not split their table.
+  void Build(const float* table, size_t m, size_t ksub) {
+    const FastScanChunk c{.m = static_cast<uint32_t>(m),
+                          .nsq = static_cast<uint32_t>(FastScanNsq(m)),
+                          .code_off = 0,
+                          .lut_off = 0};
+    Build(table, {&c, 1}, ksub);
+  }
+
+  const uint8_t* Packed() const noexcept { return _packed.data(); }
+
+  /// Read chunk `c`'s accumulated code back as the float it stood for.
+  float Decode(size_t c, uint16_t accu) const noexcept {
+    return static_cast<float>(accu) * _step[c] + _bias[c];
+  }
+  float Decode(uint16_t accu) const noexcept { return Decode(0, accu); }
+
+  /// The distance one code step stands for, zero when the table had no range.
+  /// Half a step is the worst rounding error the quantization can introduce.
+  float Step(size_t c) const noexcept { return _step[c]; }
+
+ private:
+  faiss::AlignedTable<uint8_t> _packed;
+  std::vector<float> _step;
+  std::vector<float> _bias;
+};
 
 void SetNibble(uint8_t* code, uint32_t sq, uint8_t nib) noexcept {
   uint8_t& dst = code[sq >> 1];
@@ -1472,54 +1546,20 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     return _stats;
   }
   std::span<const float> Query() const noexcept { return _query; }
-  const std::vector<TurboQuantChunk>& Chunks1() const noexcept {
+  const std::vector<FastScanChunk>& Chunks1() const noexcept {
     return _chunks1;
   }
-  const std::vector<TurboQuantChunk>& Chunks2() const noexcept {
+  const std::vector<FastScanChunk>& Chunks2() const noexcept {
     return _chunks2;
   }
-  const uint8_t* Lut1() const noexcept { return _lut1.data(); }
-  const uint8_t* Lut2() const noexcept { return _lut2.data(); }
-  const std::vector<float>& A1() const noexcept { return _a1; }
-  const std::vector<float>& B1() const noexcept { return _b1; }
-  const std::vector<float>& A2() const noexcept { return _a2; }
-  const std::vector<float>& B2() const noexcept { return _b2; }
+  const FastScanLut& Lut1() const noexcept { return _lut1; }
+  const FastScanLut& Lut2() const noexcept { return _lut2; }
   float QjlErrorCoeff() const noexcept { return _qjl_error_coeff; }
   float QjlSum() const noexcept { return _qjl_sum; }
   float MseSlack() const noexcept { return _mse_slack; }
   float QueryNorm2() const noexcept { return _query_norm2; }
 
  private:
-  void QuantizeChunks(const std::vector<float>& lut,
-                      const std::vector<TurboQuantChunk>& chunks,
-                      faiss::AlignedTable<uint8_t>& packed,
-                      std::vector<float>& a, std::vector<float>& b) {
-    size_t total = 0;
-    for (const auto& c : chunks) {
-      total += size_t{c.nsq} * kFastScanKsub;
-    }
-    packed.resize(total);
-    a.resize(chunks.size());
-    b.resize(chunks.size());
-    std::vector<uint8_t> lutq;
-    size_t moff = 0;
-    for (size_t i = 0; i < chunks.size(); ++i) {
-      const TurboQuantChunk& c = chunks[i];
-      lutq.assign(size_t{c.nsq} * kFastScanKsub, 0);
-      faiss::quantize_lut::quantize_LUT_and_bias(
-        1, c.m, kFastScanKsub, false, lut.data() + moff * kFastScanKsub,
-        nullptr, lutq.data(), c.nsq, nullptr, &a[i], &b[i]);
-      if (!std::isfinite(a[i]) || a[i] <= 0.f) {
-        a[i] = 1.f;
-        b[i] = 0.f;
-        std::fill(lutq.begin(), lutq.end(), 0);
-      }
-      faiss::pq4_pack_LUT(1, static_cast<int>(c.nsq), lutq.data(),
-                          packed.data() + c.lut_off);
-      moff += c.m;
-    }
-  }
-
   void BuildMseLut() {
     const TurboQuantLayout& lay = _stats->Layout();
     const float* cent = _stats->Centroids();
@@ -1537,11 +1577,11 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
           _qm_block.empty() ? s : s + _qm_block[mi];
       }
     }
-    _chunks1 = MakeTurboQuantChunks(lay.m1);
-    QuantizeChunks(lut, _chunks1, _lut1, _a1, _b1);
+    _chunks1 = MakeFastScanChunks(lay.m1);
+    _lut1.Build(lut.data(), _chunks1, kFastScanKsub);
     float slack = 0.f;
     for (size_t i = 0; i < _chunks1.size(); ++i) {
-      slack += static_cast<float>(_chunks1[i].m) * 0.5f / _a1[i];
+      slack += static_cast<float>(_chunks1[i].m) * 0.5f * _lut1.Step(i);
     }
     _mse_slack = slack / std::sqrt(static_cast<float>(lay.rd));
   }
@@ -1574,22 +1614,18 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
         lut[size_t{mi} * kFastScanKsub + code] = s;
       }
     }
-    _chunks2 = MakeTurboQuantChunks(lay.m2);
-    QuantizeChunks(lut, _chunks2, _lut2, _a2, _b2);
+    _chunks2 = MakeFastScanChunks(lay.m2);
+    _lut2.Build(lut.data(), _chunks2, kFastScanKsub);
   }
 
   std::shared_ptr<const TurboQuantizerStats<M>> _stats;
   std::vector<float> _query;
   std::vector<float> _rot_query;
   std::vector<float> _qm_block;
-  std::vector<TurboQuantChunk> _chunks1;
-  std::vector<TurboQuantChunk> _chunks2;
-  faiss::AlignedTable<uint8_t> _lut1;
-  faiss::AlignedTable<uint8_t> _lut2;
-  std::vector<float> _a1;
-  std::vector<float> _b1;
-  std::vector<float> _a2;
-  std::vector<float> _b2;
+  std::vector<FastScanChunk> _chunks1;
+  std::vector<FastScanChunk> _chunks2;
+  FastScanLut _lut1;
+  FastScanLut _lut2;
   float _qjl_error_coeff = 0.f;
   float _qjl_sum = 0.f;
   float _mse_slack = 0.f;
@@ -1729,7 +1765,7 @@ class TurboQuantizerReader final : public QuantizerReader {
       PackRows([base, record_size, off](
                  size_t k) { return base + (off + k) * size_t{record_size}; },
                take, 0, _lay.nsq1, _packed1.data());
-      Accumulate(_packed1.data(), cb.Lut1(), cb.Chunks1(), cb.A1(), cb.B1());
+      Accumulate(_packed1.data(), cb.Lut1(), cb.Chunks1());
       for (size_t k = 0; k < take; ++k) {
         terms[off + k] = _sum[k];
       }
@@ -1838,19 +1874,16 @@ class TurboQuantizerReader final : public QuantizerReader {
                _lay.d, _lay.rd);
   }
 
-  void Accumulate(const byte_type* codes, const uint8_t* lut,
-                  const std::vector<TurboQuantChunk>& chunks,
-                  const std::vector<float>& a, const std::vector<float>& b) {
+  void Accumulate(const byte_type* codes, const FastScanLut& lut,
+                  const std::vector<FastScanChunk>& chunks) {
     _sum.fill(0.f);
     for (size_t k = 0; k < chunks.size(); ++k) {
-      const TurboQuantChunk& c = chunks[k];
+      const FastScanChunk& c = chunks[k];
       faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(c.nsq),
-                               codes + c.code_off, lut + c.lut_off,
+                               codes + c.code_off, lut.Packed() + c.lut_off,
                                _accu.data());
-      const float inv_a = 1.f / a[k];
-      const float bias = b[k];
       for (size_t i = 0; i < kFastScanBbs; ++i) {
-        _sum[i] += static_cast<float>(_accu[i]) * inv_a + bias;
+        _sum[i] += lut.Decode(k, _accu[i]);
       }
     }
   }
@@ -1866,7 +1899,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
                   const float* gammas, const float* xnorm2, size_t count,
                   score_t threshold, score_t* out) {
-    Accumulate(c1, _cur->Lut1(), _cur->Chunks1(), _cur->A1(), _cur->B1());
+    Accumulate(c1, _cur->Lut1(), _cur->Chunks1());
     for (size_t i = 0; i < count; ++i) {
       _ip[i] = norms[i] * _sum[i] * _inv_sqrt_rd;
     }
@@ -1894,7 +1927,7 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
 
-    Accumulate(c2, _cur->Lut2(), _cur->Chunks2(), _cur->A2(), _cur->B2());
+    Accumulate(c2, _cur->Lut2(), _cur->Chunks2());
     const float qjl_sum = _cur->QjlSum();
     for (size_t i = 0; i < count; ++i) {
       const float ip =
@@ -2209,16 +2242,9 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     // query-only and precomputed once per query here.
     const faiss::ProductQuantizer& pq = _stats->Pq();
     const size_t ksub = pq.ksub;
-    const size_t nsq = FastScanNsq(pq.M);
     std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
     pq.compute_inner_prod_table(_query.data(), ip_table.data());
-    std::vector<byte_type> lutq(nsq * ksub);
-    faiss::quantize_lut::quantize_LUT_and_bias(
-      1, pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq, nullptr,
-      &_ip_a, &_ip_b);
-    _packed_ip_lut.resize(nsq * ksub);
-    faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
-                        _packed_ip_lut.data());
+    _lut.Build(ip_table.data(), pq.M, ksub);
     if constexpr (M == VectorMetric::L2Sqr) {
       _query_norm2 = vector::L2Space<float, float, float>::Norm(
         reinterpret_cast<const byte_type*>(_query.data()),
@@ -2230,9 +2256,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   std::span<const float> Query() const noexcept { return _query; }
-  const uint8_t* PackedIpLut() const noexcept { return _packed_ip_lut.data(); }
-  float IpA() const noexcept { return _ip_a; }
-  float IpB() const noexcept { return _ip_b; }
+  const FastScanLut& Lut() const noexcept { return _lut; }
   float QueryNorm() const noexcept
     requires(M == VectorMetric::L2Sqr)
   {
@@ -2242,9 +2266,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
  private:
   std::shared_ptr<const ProductQuantizerStats<M>> _stats;
   std::vector<float> _query;
-  faiss::AlignedTable<uint8_t> _packed_ip_lut;
-  float _ip_a = 1.f;
-  float _ip_b = 0.f;
+  FastScanLut _lut;
   [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr, float>
     _query_norm2;
 };
@@ -2278,24 +2300,23 @@ class ProductQuantizerReader final : public QuantizerReader {
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
                     score_t* out) final {
     SDB_ASSERT(block.size() % _group_bytes == 0);
-    const float inv_a = 1.f / _cb->IpA();
-    const float b = _cb->IpB();
+    const FastScanLut& lut = _cb->Lut();
     for (size_t off = 0; off < block.size();
          off += _group_bytes, out += kFastScanBbs) {
       const byte_type* codes = block.data() + off;
       faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_nsq), codes,
-                               _cb->PackedIpLut(), _accu.data());
+                               lut.Packed(), _accu.data());
       if constexpr (M == VectorMetric::L2Sqr) {
         const float* norms =
           reinterpret_cast<const float*>(codes + _code_bytes);
         const float q2 = _cb->QueryNorm();
         for (size_t i = 0; i < kFastScanBbs; ++i) {
-          const float ip = static_cast<float>(_accu[i]) * inv_a + b;
+          const float ip = lut.Decode(_accu[i]);
           out[i] = -(q2 - 2.f * _qc - 2.f * ip + norms[i]);
         }
       } else {
         for (size_t i = 0; i < kFastScanBbs; ++i) {
-          out[i] = static_cast<float>(_accu[i]) * inv_a + b + _qc;
+          out[i] = lut.Decode(_accu[i]) + _qc;
         }
       }
     }
@@ -2526,7 +2547,6 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
       tmp_q, qq);
 
     const size_t m = rd / kFastScanBits;
-    const size_t nsq = FastScanNsq(m);
     std::vector<float> lut(m * kFastScanKsub);
     for (size_t mi = 0; mi < m; ++mi) {
       const size_t dim_start = mi * kFastScanBits;
@@ -2543,13 +2563,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
           _qf.c1 * ip + _qf.c2 * static_cast<float>(pc);
       }
     }
-    std::vector<uint8_t> lutq(nsq * kFastScanKsub);
-    faiss::quantize_lut::quantize_LUT_and_bias(1, m, kFastScanKsub, false,
-                                               lut.data(), nullptr, lutq.data(),
-                                               nsq, nullptr, &_a, &_b);
-    _packed_lut.resize(nsq * kFastScanKsub);
-    faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
-                        _packed_lut.data());
+    _lut.Build(lut.data(), m, kFastScanKsub);
   }
 
   std::unique_ptr<QuantizerReader> MakeReader() const final;
@@ -2565,18 +2579,14 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   const faiss::rabitq_utils::QueryFactorsData& QueryFactors() const noexcept {
     return _qf;
   }
-  const uint8_t* PackedLut() const noexcept { return _packed_lut.data(); }
-  float A() const noexcept { return _a; }
-  float B() const noexcept { return _b; }
+  const FastScanLut& Lut() const noexcept { return _lut; }
 
  private:
   std::shared_ptr<const RaBitQuantizerStats<M>> _stats;
   std::vector<float> _query;
   std::vector<float> _rotated_query;
   faiss::rabitq_utils::QueryFactorsData _qf;
-  faiss::AlignedTable<uint8_t> _packed_lut;
-  float _a = 1.f;
-  float _b = 0.f;
+  FastScanLut _lut;
 };
 
 template<VectorMetric M>
@@ -2654,12 +2664,11 @@ class RaBitQuantizerReader final : public QuantizerReader {
   void ScoreSignBits(const byte_type* codes, score_t* out) {
     const byte_type* aux = codes + _code_bytes;
     const auto* cs = reinterpret_cast<const float*>(aux + _aux_bytes);
+    const FastScanLut& lut = _cb->Lut();
     faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_nsq), codes,
-                             _cb->PackedLut(), _accu.data());
-    const float inv_a = 1.f / _cb->A();
-    const float b = _cb->B();
+                             lut.Packed(), _accu.data());
     for (size_t i = 0; i < kFastScanBbs; ++i) {
-      const float normalized = static_cast<float>(_accu[i]) * inv_a + b - cs[i];
+      const float normalized = lut.Decode(_accu[i]) - cs[i];
       const auto* fac =
         reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(
           aux + i * _storage);

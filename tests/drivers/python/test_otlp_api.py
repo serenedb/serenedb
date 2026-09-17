@@ -37,6 +37,9 @@ SIGNALS = [
     ("metrics", "metrics/mixed_batch.otlp.json"),
     ("metrics", "metrics/exponential_histogram.otlp.json"),
     ("metrics", "metrics/int_and_multi_datapoint.otlp.json"),
+    ("logs", "logs/upstream.otlp.json"),
+    ("traces", "traces/upstream.otlp.json"),
+    ("metrics", "metrics/upstream.otlp.json"),
 ]
 
 

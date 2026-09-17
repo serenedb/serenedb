@@ -38,6 +38,7 @@ SIGNALS = {
 # OTLP/JSON deviates from standard ProtoJSON: trace and span ids are written
 # as hex, not base64. json_format.Parse only knows the ProtoJSON rule, so the
 # ids are rewritten before it sees them.
+# https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
 ID_KEYS = ("traceId", "spanId", "parentSpanId")
 
 

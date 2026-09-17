@@ -155,8 +155,7 @@ std::string ReadBodyArgument(const duckdb::Value& argument) {
   return argument.GetValue<std::string>();
 }
 
-// The second argument selects the wire encoding. `protobuf` payloads are
-// base64 so that the binary body survives the SQL literal the handlers build.
+// `protobuf` payloads are base64 so the binary body survives the SQL literal.
 bool ReadProtobufArgument(const duckdb::vector<duckdb::Value>& inputs) {
   if (inputs.size() < 2 || inputs[1].IsNull()) {
     return false;
@@ -489,7 +488,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OtlpBind(
   auto data = duckdb::make_uniq<OtlpBindData>();
   BindTarget(context, Table, *data, return_types, names);
   data->body = ReadBodyArgument(input.inputs[0]);
-  Build(data->body, ReadProtobufArgument(input.inputs), data->rows);
+  Build(context, data->body, ReadProtobufArgument(input.inputs), data->rows);
   return data;
 }
 
@@ -499,7 +498,8 @@ void OtlpExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
        input.global_state->Cast<OtlpState>());
 }
 
-void BuildLogs(const std::string& body, bool protobuf, std::vector<Row>& rows) {
+void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
+               std::vector<Row>& rows) {
   otel::ExportLogsRequest request;
   if (protobuf) {
     otel::DecodeLogsRequest(DecodeBase64Payload(body), request);
@@ -509,7 +509,7 @@ void BuildLogs(const std::string& body, bool protobuf, std::vector<Row>& rows) {
   BuildLogRows(request, rows);
 }
 
-void BuildTraces(const std::string& body, bool protobuf,
+void BuildTraces(duckdb::ClientContext&, const std::string& body, bool protobuf,
                  std::vector<Row>& rows) {
   otel::ExportTracesRequest request;
   if (protobuf) {
@@ -521,8 +521,14 @@ void BuildTraces(const std::string& body, bool protobuf,
 }
 
 template<MetricTable Table>
-void BuildMetrics(const std::string& body, bool protobuf,
-                  std::vector<Row>& rows) {
+void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
+                  bool protobuf, std::vector<Row>& rows) {
+  // One request feeds five tables, so the handler decodes the payload once and
+  // leaves it on the connection; only a standalone SQL call decodes here.
+  if (const auto* decoded = GetSereneDBContext(context).GetOtlpMetrics()) {
+    BuildMetricRows(decoded->request, Table, rows);
+    return;
+  }
   otel::ExportMetricsRequest request;
   if (protobuf) {
     otel::DecodeMetricsRequest(DecodeBase64Payload(body), request);
@@ -544,13 +550,20 @@ constexpr std::string_view kSummaryTable = kOtelMetricTables[4];
 
 void RegisterOtlpFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  const auto kVarchar = duckdb::LogicalType::VARCHAR;
 
   const auto add = [&](const char* name, auto bind) {
+    loader.RegisterFunction(
+      duckdb::TableFunction{name,
+                            {duckdb::LogicalType::VARCHAR},
+                            OtlpExecute,
+                            bind,
+                            OtlpState::Init});
     loader.RegisterFunction(duckdb::TableFunction{
-      name, {kVarchar}, OtlpExecute, bind, OtlpState::Init});
-    loader.RegisterFunction(duckdb::TableFunction{
-      name, {kVarchar, kVarchar}, OtlpExecute, bind, OtlpState::Init});
+      name,
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      OtlpExecute,
+      bind,
+      OtlpState::Init});
   };
 
   add("otlp_logs", OtlpBind<kLogsTable, BuildLogs>);

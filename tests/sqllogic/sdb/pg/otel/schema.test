@@ -803,6 +803,46 @@ SELECT count(*) AS shapes_from_both_decoders FROM (
 shapes_from_both_decoders
 2
 
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otlp_logs('{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeLogs":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"logRecords":[{"timeUnixNano":"1544712660300000000","observedTimeUnixNano":"1544712660300000000","severityNumber":10,"severityText":"Information","traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","body":{"stringValue":"Example log record"},"attributes":[{"key":"string.attribute","value":{"stringValue":"some string"}},{"key":"boolean.attribute","value":{"boolValue":true}},{"key":"int.attribute","value":{"intValue":"10"}},{"key":"double.attribute","value":{"doubleValue":637.704}},{"key":"array.attribute","value":{"arrayValue":{"values":[{"stringValue":"many"},{"stringValue":"values"}]}}},{"key":"map.attribute","value":{"kvlistValue":{"values":[{"key":"some.map.key","value":{"stringValue":"some value"}}]}}}]}]}]}]}');
+
+statement count 1
+INSERT INTO otel_traces SELECT * FROM otlp_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeSpans":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"spans":[{"traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","parentSpanId":"EEE19B7EC3C1B173","name":"I''m a server span","startTimeUnixNano":"1544712660000000000","endTimeUnixNano":"1544712661000000000","kind":2,"attributes":[{"key":"my.span.attr","value":{"stringValue":"some value"}}]}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otlp_metrics_exponential_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeMetrics":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"metrics":[{"name":"my.counter","unit":"1","description":"I am a Counter","sum":{"aggregationTemporality":1,"isMonotonic":true,"dataPoints":[{"asDouble":5,"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","attributes":[{"key":"my.counter.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.gauge","unit":"1","description":"I am a Gauge","gauge":{"dataPoints":[{"asDouble":10,"timeUnixNano":"1544712660300000000","attributes":[{"key":"my.gauge.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.histogram","unit":"1","description":"I am a Histogram","histogram":{"aggregationTemporality":1,"dataPoints":[{"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","count":"2","sum":2,"bucketCounts":["1","1"],"explicitBounds":[1],"min":0,"max":2,"attributes":[{"key":"my.histogram.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.exponential.histogram","unit":"1","description":"I am an Exponential Histogram","exponentialHistogram":{"aggregationTemporality":1,"dataPoints":[{"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","count":"3","sum":10,"scale":0,"zeroCount":"1","positive":{"offset":1,"bucketCounts":["0","2"]},"min":0,"max":5,"zeroThreshold":0,"attributes":[{"key":"my.exponential.histogram.attr","value":{"stringValue":"some value"}}]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otlp_logs('CogDCh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2US5QIKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEp8CCQDrOvX6628VEAoaC0luZm9ybWF0aW9uKhQKEkV4YW1wbGUgbG9nIHJlY29yZDIhChBzdHJpbmcuYXR0cmlidXRlEg0KC3NvbWUgc3RyaW5nMhcKEWJvb2xlYW4uYXR0cmlidXRlEgIQATITCg1pbnQuYXR0cmlidXRlEgIYCjIdChBkb3VibGUuYXR0cmlidXRlEgkhEoPAyqHtg0AyJwoPYXJyYXkuYXR0cmlidXRlEhQqEgoGCgRtYW55CggKBnZhbHVlczIxCg1tYXAuYXR0cmlidXRlEiAyHgocCgxzb21lLm1hcC5rZXkSDAoKc29tZSB2YWx1ZUoQW47/95gDgQPSabYzgT/GDFII7uGbfsPBsXRZAOs69frrbxU=', 'protobuf');
+
+statement count 1
+INSERT INTO otel_traces SELECT * FROM otlp_traces('CtMBCh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2USsAEKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEmsKEFuO//eYA4ED0mm2M4E/xgwSCO7hm37DwbF0Igju4Zt+w8GxcyoRSSdtIGEgc2VydmVyIHNwYW4wAjkASFnj+utvFUEAEvQe++tvFUocCgxteS5zcGFuLmF0dHISDAoKc29tZSB2YWx1ZQ==', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otlp_metrics_exponential_histogram('CvkECh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2US1gQKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEmMKCm15LmNvdW50ZXISDkkgYW0gYSBDb3VudGVyGgExOkIKPBEA6zr1+utvFRkA6zr1+utvFSEAAAAAAAAUQDofCg9teS5jb3VudGVyLmF0dHISDAoKc29tZSB2YWx1ZRABGAESUAoIbXkuZ2F1Z2USDEkgYW0gYSBHYXVnZRoBMSozCjEZAOs69frrbxUhAAAAAAAAJEA6HQoNbXkuZ2F1Z2UuYXR0chIMCgpzb21lIHZhbHVlEp4BCgxteS5oaXN0b2dyYW0SEEkgYW0gYSBIaXN0b2dyYW0aATFKeQp1EQDrOvX6628VGQDrOvX6628VIQIAAAAAAAAAKQAAAAAAAABAMhABAAAAAAAAAAEAAAAAAAAAOggAAAAAAADwP0ohChFteS5oaXN0b2dyYW0uYXR0chIMCgpzb21lIHZhbHVlWQAAAAAAAAAAYQAAAAAAAABAEAESuAEKGG15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbRIdSSBhbSBhbiBFeHBvbmVudGlhbCBIaXN0b2dyYW0aATFSegp2Ci0KHW15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbS5hdHRyEgwKCnNvbWUgdmFsdWURAOs69frrbxUZAOs69frrbxUhAwAAAAAAAAApAAAAAAAAJEA5AQAAAAAAAABCBggCEgIAAmEAAAAAAAAAAGkAAAAAAAAUQBAB', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+query
+SELECT trace_id, span_id, severity_text, severity_number, body, log_attributes
+FROM otel_logs WHERE body = 'Example log record' LIMIT 1;
+----
+trace_id	span_id	severity_text	severity_number	body	log_attributes
+5b8efff798038103d269b633813fc60c	eee19b7ec3c1b174	Information	10	Example log record	{"array.attribute":["many","values"],"boolean.attribute":true,"double.attribute":637.704,"int.attribute":10,"map.attribute":{"some.map.key":"some value"},"string.attribute":"some string"}
+
+query
+SELECT span_name, trace_id, span_id, parent_span_id, span_kind, duration_ns
+FROM otel_traces WHERE service_name = 'my.service' LIMIT 1;
+----
+span_name	trace_id	span_id	parent_span_id	span_kind	duration_ns
+I'm a server span	5b8efff798038103d269b633813fc60c	eee19b7ec3c1b174	eee19b7ec3c1b173	Server	1000000000
+
 statement ok
 INSERT INTO otel_logs ("timestamp", body) VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'x');
 

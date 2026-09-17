@@ -30,6 +30,12 @@
 #include <string>
 #include <vector>
 
+// Field numbers are those of opentelemetry-proto; they are part of the wire
+// contract and never change. Unknown fields are skipped, so a newer sender
+// keeps working.
+//
+// Wire format:      https://protobuf.dev/programming-guides/encoding/
+// Message schemas:  https://github.com/open-telemetry/opentelemetry-proto
 namespace sdb::otel {
 namespace {
 

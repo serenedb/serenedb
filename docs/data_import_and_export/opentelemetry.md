@@ -47,8 +47,17 @@ service:
 ```
 
 A successful export answers `200` with an empty `Export<Signal>ServiceResponse`
-(`{}`). The tables are created from the shipped schema on the first write that
-finds them missing, so a fresh database needs no setup step.
+(`{}`).
+
+The tables are created **at startup**, when a listener serves `?api=otlp` and
+the schema is not there yet — so a fresh database needs no setup step, and the
+first export lands in a schema that already exists. A server started without
+the `otlp` API creates nothing, and an export against a missing schema answers
+`500` naming the absent relation rather than creating it behind your back.
+
+To run a schema of your own — extra promoted columns, expression indexes over
+hot attribute paths — apply it before the first start; startup leaves an
+existing schema alone.
 
 ### Encodings
 
@@ -278,5 +287,5 @@ while the table is still empty. To change the schema, create a new table with
 Re-running the DDL is safe on an empty database — every statement is
 `IF NOT EXISTS`. Once a table holds rows, re-running its `CREATE INDEX IF NOT
 EXISTS` raises `CREATE INDEX on a non-empty search-backed table is not yet
-supported`; skip the index statements when the index already exists. The OTLP endpoint only
-runs the schema when a target table is missing, so it is unaffected.
+supported`; skip the index statements when the index already exists. Startup
+checks for the schema before running any of it, so restarts are unaffected.

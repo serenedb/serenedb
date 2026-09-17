@@ -41,6 +41,7 @@
 #include "network/http/es/handlers.h"
 #include "network/http/mcp/handlers.h"
 #include "network/http/otlp/handlers.h"
+#include "network/http/otlp/schema.h"
 #include "network/http/test/handlers.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
@@ -419,6 +420,12 @@ void Server::StartIoPool() {
 void Server::StartListeners() {
   const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
+  const bool serves_otlp = absl::c_any_of(specs, [](const auto& spec) {
+    return absl::c_linear_search(spec.apis, network::HttpApi::Otlp);
+  });
+  if (serves_otlp) {
+    network::http::otlp::EnsureSchema();
+  }
   for (const auto& spec : specs) {
     AddListener(spec);
   }

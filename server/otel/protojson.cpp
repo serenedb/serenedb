@@ -33,6 +33,12 @@
 #include <utility>
 #include <vector>
 
+// ProtoJSON, plus the one place OTLP departs from it: trace and span ids are
+// hex here, where the generic rule for a bytes field would be base64.
+//
+// ProtoJSON:  https://protobuf.dev/programming-guides/json/
+// OTLP/JSON:  https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
+// Enum names: https://github.com/open-telemetry/opentelemetry-proto
 namespace sdb::otel {
 namespace {
 

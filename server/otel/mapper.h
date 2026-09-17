@@ -29,12 +29,11 @@
 
 namespace sdb::otel {
 
+// https://opentelemetry.io/docs/specs/semconv/resource/#service
 inline constexpr std::string_view kServiceNameKey = "service.name";
 inline constexpr std::string_view kEventNameKey = "event.name";
 
 std::string AttributesToJson(const KeyValueList& attributes);
-
-std::string AnyValueToJson(const AnyValue* value);
 
 std::string BodyToText(const AnyValue* body);
 
@@ -46,8 +45,6 @@ std::string_view SpanKindName(SpanKind kind);
 std::string_view StatusCodeName(StatusCode code);
 
 std::string_view TemporalityName(AggregationTemporality temporality);
-
-std::string FormatTimestampNs(uint64_t unix_nano);
 
 std::string EventsToJson(const std::vector<SpanEvent>& events);
 

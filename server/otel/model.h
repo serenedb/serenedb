@@ -27,6 +27,17 @@
 #include <variant>
 #include <vector>
 
+// The OTLP data model, transcribed from opentelemetry-proto. One in-memory
+// form, filled by either decoder (protojson.cpp, protobuf.cpp) and consumed by
+// mapper.cpp, so every ingestion route produces the same rows.
+//
+// https://github.com/open-telemetry/opentelemetry-proto
+//   common/v1/common.proto      AnyValue, KeyValue, InstrumentationScope
+//   resource/v1/resource.proto  Resource
+//   logs/v1/logs.proto          LogRecord
+//   trace/v1/trace.proto        Span, Event, Link, Status
+//   metrics/v1/metrics.proto    Gauge, Sum, Histogram, ExponentialHistogram,
+//                               Summary, Exemplar
 namespace sdb::otel {
 
 struct AnyValue;
@@ -76,16 +87,6 @@ struct InstrumentationScope {
   std::string version;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
-};
-
-enum class SeverityNumber : int32_t {
-  Unspecified = 0,
-  Trace = 1,
-  Debug = 5,
-  Info = 9,
-  Warn = 13,
-  Error = 17,
-  Fatal = 21,
 };
 
 struct LogRecord {
@@ -288,8 +289,16 @@ struct ExportRequest {
   ValueArena arena;
 };
 
+// One decoded metrics payload, shared by the five otlp_metrics_* binds it
+// fans out into.
+struct DecodedMetrics;
+
 using ExportLogsRequest = ExportRequest<LogRecord>;
 using ExportTracesRequest = ExportRequest<Span>;
 using ExportMetricsRequest = ExportRequest<Metric>;
+
+struct DecodedMetrics {
+  ExportMetricsRequest request;
+};
 
 }  // namespace sdb::otel

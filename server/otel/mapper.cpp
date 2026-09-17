@@ -28,6 +28,13 @@
 
 #include <variant>
 
+// Canonical value rules shared by every ingestion route: attribute JSON with
+// sorted keys, body stringification, and the string forms stored for the
+// SpanKind / StatusCode / AggregationTemporality enums.
+//
+// Enum members:  https://github.com/open-telemetry/opentelemetry-proto
+// Attribute keys (service.name, event.name) are semantic conventions:
+// https://opentelemetry.io/docs/specs/semconv/
 namespace sdb::otel {
 namespace {
 
@@ -104,17 +111,26 @@ std::string Finish(StringBuilder& sb) {
   return std::string{view.value()};
 }
 
-}  // namespace
-
-std::string AttributesToJson(const KeyValueList& attributes) {
-  StringBuilder sb;
-  AppendAttributes(sb, attributes);
-  return Finish(sb);
+std::string FormatTimestampNs(uint64_t unix_nano) {
+  const auto seconds = static_cast<int64_t>(unix_nano / 1000000000ULL);
+  const auto nanos = static_cast<uint32_t>(unix_nano % 1000000000ULL);
+  const absl::Time time = absl::FromUnixSeconds(seconds);
+  return absl::StrFormat(
+    "%sT%s.%09uZ", absl::FormatTime("%Y-%m-%d", time, absl::UTCTimeZone()),
+    absl::FormatTime("%H:%M:%S", time, absl::UTCTimeZone()), nanos);
 }
 
 std::string AnyValueToJson(const AnyValue* value) {
   StringBuilder sb;
   AppendAnyValue(sb, value);
+  return Finish(sb);
+}
+
+}  // namespace
+
+std::string AttributesToJson(const KeyValueList& attributes) {
+  StringBuilder sb;
+  AppendAttributes(sb, attributes);
   return Finish(sb);
 }
 
@@ -184,15 +200,6 @@ std::string_view TemporalityName(AggregationTemporality temporality) {
       break;
   }
   return "Unspecified";
-}
-
-std::string FormatTimestampNs(uint64_t unix_nano) {
-  const auto seconds = static_cast<int64_t>(unix_nano / 1000000000ULL);
-  const auto nanos = static_cast<uint32_t>(unix_nano % 1000000000ULL);
-  const absl::Time time = absl::FromUnixSeconds(seconds);
-  return absl::StrFormat(
-    "%sT%s.%09uZ", absl::FormatTime("%Y-%m-%d", time, absl::UTCTimeZone()),
-    absl::FormatTime("%H:%M:%S", time, absl::UTCTimeZone()), nanos);
 }
 
 std::string EventsToJson(const std::vector<SpanEvent>& events) {

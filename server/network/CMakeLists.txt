@@ -16,6 +16,7 @@ target_sources(
         http/es/handlers.cpp
         http/mcp/handlers.cpp
         http/otlp/handlers.cpp
+        http/otlp/schema.cpp
         http/mcp/tools.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp

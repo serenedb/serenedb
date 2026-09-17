@@ -224,6 +224,17 @@ Click **Run and Debug** on the left sidebar (Shift+Ctrl+D / Shift+Cmd+D). This a
   <img src="https://github.com/user-attachments/assets/fa246b5d-ebea-4598-8705-c252fbff5a0d" width="800" style="border-radius: 8px;">
 </p>
 
+### Sqllogic test highlighting
+
+`tools/vscode-sqllogic/` is a small declarative extension that colors `.test` files under `tests/sqllogic/`: SQL bodies as SQL, sqllogictest-rs directives as keywords, `#` comments as comments. Build it and install it, then reload the window:
+
+```bash
+tools/vscode-sqllogic/package.sh
+code --install-extension tools/vscode-sqllogic/sqllogic-0.1.0.vsix
+```
+
+Dropping the folder into `~/.vscode-server/extensions/` does **not** work -- VSCode only loads extensions recorded in the `extensions.json` beside them, which the CLI install writes. Over SSH, `code` is on `$PATH` only inside VSCode's terminal; the extension's `README.md` has the invocation for other shells, plus file associations outside `tests/sqllogic/` and how to swap in a different SQL grammar.
+
 ## C++ Code Style
 
 Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code.

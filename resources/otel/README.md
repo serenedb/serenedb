@@ -18,6 +18,14 @@ scripts/otel_schema.py generate   # rewrite the include from otel_schema.sql
 scripts/otel_schema.py check      # fail if the include has drifted
 ```
 
+## References
+
+- OTLP data model and wire formats — https://github.com/open-telemetry/opentelemetry-proto
+- OTLP/HTTP spec (endpoints, responses, encodings) — https://opentelemetry.io/docs/specs/otlp/
+- Attribute keys promoted to columns are semantic conventions — https://opentelemetry.io/docs/specs/semconv/
+- Column naming follows the ClickHouse exporter's schema, the de-facto standard
+  for SQL-backed OTel storage — https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/clickhouseexporter
+
 ## Why the schema is shaped this way
 
 - **Search tables.** `WITH (storage = 'search')` makes the table its own

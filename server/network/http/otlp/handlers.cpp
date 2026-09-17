@@ -20,6 +20,7 @@
 
 #include "network/http/otlp/handlers.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -33,11 +34,20 @@
 #include <string>
 #include <string_view>
 
+#include "connector/duckdb_client_state.h"
 #include "connector/functions/otlp.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
-#include "otel/schema_sql.h"
+#include "otel/model.h"
+#include "otel/protobuf.h"
+#include "otel/protojson.h"
+#include "pg/connection_context.h"
 
+// Endpoint paths, response shapes and status codes follow the OTLP/HTTP spec:
+// https://opentelemetry.io/docs/specs/otlp/#otlphttp
+//
+// The failure body is google.rpc.Status:
+// https://github.com/googleapis/googleapis/blob/master/google/rpc/status.proto
 namespace sdb::network::http::otlp {
 namespace {
 
@@ -131,17 +141,6 @@ bool IsProtobufRequest(const HttpRequest& request) {
                                     "application/x-protobuf");
 }
 
-yaclib::Task<bool> CreateSchema(RequestContext& ctx) {
-  for (const auto statement : otel::kSchemaStatements) {
-    auto result =
-      co_await ctx.RunQuery(std::string{statement}, /*writes=*/true);
-    if (result->HasError()) {
-      co_return false;
-    }
-  }
-  co_return true;
-}
-
 struct InsertOutcome {
   bool ok = false;
   bool missing_table = false;
@@ -184,6 +183,7 @@ class ExportHandler final : public HttpHandler {
                   /*protobuf=*/false);
       co_return {};
     }
+    // TODO(mkornaukhov) content encoding
     if (!request.Header(HttpHeader::ContentEncoding).empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, 3,
                   absl::StrCat("unsupported Content-Encoding: ",
@@ -198,29 +198,46 @@ class ExportHandler final : public HttpHandler {
                   protobuf);
       co_return {};
     }
-    const auto body = protobuf ? absl::Base64Escape(raw) : raw;
 
-    bool created = false;
-    for (const auto& [table, function] : _targets) {
-      auto outcome =
-        co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
-      if (!outcome.ok && outcome.missing_table && !created) {
-        if (!co_await CreateSchema(ctx)) {
-          WriteStatus(writer, HttpStatus::InternalError, 13,
-                      "the OpenTelemetry schema is missing and could not be "
-                      "created",
-                      protobuf);
-          co_return {};
+    // Metrics fan out into five tables; decoding per table would walk the
+    // payload five times, so it is decoded once and left on the connection.
+    otel::DecodedMetrics decoded;
+    auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
+    const absl::Cleanup clear_metrics = [&] {
+      sdb_ctx.SetOtlpMetrics(nullptr);
+    };
+    std::string body = protobuf ? absl::Base64Escape(raw) : raw;
+    if (_targets.size() > 1) {
+      try {
+        if (protobuf) {
+          otel::DecodeMetricsRequest(raw, decoded.request);
+        } else {
+          otel::ParseMetricsRequest(raw, decoded.request);
         }
-        created = true;
-        outcome =
-          co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
+      } catch (const std::exception& error) {
+        WriteStatus(writer, HttpStatus::BadRequest, 3, error.what(), protobuf);
+        co_return {};
+      }
+      sdb_ctx.SetOtlpMetrics(&decoded);
+      body.clear();
+    }
+
+    for (const auto& [table, function] : _targets) {
+      const auto outcome =
+        co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
+      if (outcome.missing_table) {
+        WriteStatus(
+          writer, HttpStatus::InternalError, 12,
+          absl::StrCat("the OpenTelemetry schema is missing: ", outcome.error),
+          protobuf);
+        co_return {};
       }
       if (!outcome.ok) {
         WriteStatus(writer, HttpStatus::BadRequest, 3, outcome.error, protobuf);
         co_return {};
       }
     }
+    // TODO(mkornaukhov) implement rejected field
     WriteExportResponse(writer, _rejected_field, 0, {}, protobuf);
     co_return {};
   }

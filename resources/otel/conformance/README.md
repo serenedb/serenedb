@@ -5,6 +5,23 @@ otel-document translator, and the Go `serenedbexporter`. They must produce
 **identical rows for identical input**, or a user switching routes sees their
 saved queries change behaviour. These fixtures are the shared ground truth.
 
+## Where the payloads come from
+
+`<signal>/upstream.otlp.json` are the official example payloads, vendored from
+https://github.com/open-telemetry/opentelemetry-proto/tree/main/examples —
+the only OTLP payloads published upstream. They are genuinely external input:
+uppercase hex ids, an apostrophe in a span name, every AnyValue type, and all
+four metric shapes in one request.
+
+The rest are written here, each for a case the examples do not reach (zero
+timestamps, all-zero ids, span kinds and statuses, negative exponential
+histogram scale and offsets, multi-resource ordering).
+
+Every `.otlp.pb` is generated from its `.otlp.json` by
+`scripts/otel_fixtures.py`, using the official `opentelemetry-proto` Python
+bindings — so the binary side is encoded by upstream code rather than by the
+decoder it tests.
+
 ## Layout
 
 ```

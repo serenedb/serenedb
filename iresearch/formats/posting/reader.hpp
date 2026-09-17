@@ -167,10 +167,10 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       posting_meta.pay_start += vread<uint64_t>(p);
     }
-    posting_meta.pos_offset = *p++;
+    posting_meta.pos_offset = vread<uint32_t>(p);
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
-    posting_meta.pos_offset = *p++;
+    posting_meta.pos_offset = vread<uint32_t>(p);
   }
 
   if (1 == posting_meta.docs_count || _block_size < posting_meta.docs_count) {

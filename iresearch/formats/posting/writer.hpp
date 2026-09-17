@@ -347,12 +347,10 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
     if (_features.HasOffset()) {
       out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
-    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(meta.pos_offset);
+    out.WriteV32(meta.pos_offset);
   } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
-    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(meta.pos_offset);
+    out.WriteV32(meta.pos_offset);
   }
 
   if (meta.docs_count == 1 || meta.docs_count > _skip.Skip0()) {

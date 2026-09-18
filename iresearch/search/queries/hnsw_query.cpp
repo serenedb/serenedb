@@ -591,15 +591,21 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     return;
   }
   // Which plan answers this decides how the set is built, so the count comes first and costs
-  // nothing: an inner query knows its own upper bound, and without one a bounded sample of the set
-  // stands in. Folding to decide costs more than either plan does.
+  // nothing: a bounded sample of the set stands in, and folding to decide costs more than either
+  // plan does.
+  //
+  // An inner query alone knows its own upper bound, so it answers for itself. A columnstore
+  // conjunct does not: `WHERE cat10 = 3 AND num BETWEEN ...` is as selective as both together,
+  // and taking the term's bound for the pair reads a hundredth of the segment as a tenth. The
+  // walk then runs against a set ten times sparser than it was planned for, which is ten times
+  // the candidates before the beam fills. Sample the set that will actually be walked.
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
-  if (_inner != nullptr) {
-    matches = _inner->EstimateMax();
-  } else {
-    probe.emplace(docs_count, nullptr, table);
+  if (table != nullptr) {
+    probe.emplace(MakeSet(_inner.get(), table, docs_count));
     matches = probe->EstimateCount(kCountSampleWindows);
+  } else {
+    matches = _inner->EstimateMax();
   }
   auto mode = _filter_mode;
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
@@ -615,9 +621,14 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk &&
     HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * kProbeFoldRatio <=
       static_cast<long double>(graph.Size());
-  auto set = probe && !ask_per_hop
-               ? std::move(*probe)
-               : MakeSet(_inner.get(), ask_per_hop ? nullptr : table, docs_count);
+  if (ask_per_hop) {
+    // The walk asks the columnstore itself, so the sampled set -- which has the
+    // predicate folded into it -- is not the set it walks against.
+    probe.reset();
+  }
+  auto set = probe ? std::move(*probe)
+                   : MakeSet(_inner.get(), ask_per_hop ? nullptr : table,
+                             docs_count);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };

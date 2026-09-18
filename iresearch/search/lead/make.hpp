@@ -31,6 +31,7 @@
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::lead {
 
@@ -43,6 +44,10 @@ Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 Node::ptr Make(const RangeVectorQuery& query);
+inline Node::ptr Make(const DocsMaskQuery&) {
+  SDB_ASSERT(false);
+  return {};
+}
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
@@ -50,6 +55,10 @@ Node::ptr Make(const BooleanQuery& query);
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query);
 
+inline Node::ptr Make(const DocsMaskQuery&, const detail::ScoredCtx&) {
+  SDB_ASSERT(false);
+  return {};
+}
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx);

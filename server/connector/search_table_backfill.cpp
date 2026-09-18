@@ -109,10 +109,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
              "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
-  const auto* mask = sub.docs_mask();
-  if (mask != nullptr && mask->empty()) {
-    mask = nullptr;
-  }
+  auto it_mask = sub.MaskedDocs();
+  const bool has_mask = !it_mask.Empty();
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
@@ -123,12 +121,12 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     const auto produced = scanner.Scan(row, take, chunk);
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetCardinality(produced);
-    if (mask != nullptr) {
+    if (has_mask) {
       duckdb::idx_t keep = 0;
       for (duckdb::idx_t i = 0; i < produced; ++i) {
         const auto doc =
           static_cast<irs::doc_id_t>(row + i + irs::doc_limits::min());
-        if (!mask->contains(doc)) {
+        if (!it_mask.Probe(doc)) {
           source.live.set_index(keep++, i);
         }
       }

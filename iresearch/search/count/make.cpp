@@ -71,14 +71,10 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
-  const auto& segment = query.Segment();
   if (query.Kind() == QueryKind::Empty) {
     return MakeConstant(0);
   }
-  if (segment.docs_mask() == nullptr) [[likely]] {
-    return query.PlanCount(ctx);
-  }
-  return MakeMasked(query, ctx);
+  return query.PlanCount(ctx);
 }
 
 }  // namespace irs::count

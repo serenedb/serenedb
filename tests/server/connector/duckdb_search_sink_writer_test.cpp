@@ -75,7 +75,7 @@ class MaskedPostings : public irs::TermPostings {
   irs::doc_id_t Next() final {
     for (;;) {
       _doc = _postings->Next();
-      if (irs::doc_limits::eof(_doc) || !_mask.contains(_doc)) {
+      if (irs::doc_limits::eof(_doc) || !_mask.Contains(_doc)) {
         return _doc;
       }
     }
@@ -95,7 +95,7 @@ class MaskedPostings : public irs::TermPostings {
 irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
                                     irs::TermPostings::ptr postings) {
   const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->empty()) {
+  if (mask == nullptr || mask->Empty()) {
     return postings;
   }
   return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);

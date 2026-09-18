@@ -20,41 +20,26 @@
 
 #pragma once
 
-#include <utility>
+#include <cstdint>
 
-#include "iresearch/index/index_meta.hpp"
-#include "iresearch/search/docs/root.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/types.hpp"
 
-namespace irs::docs {
+namespace irs {
 
-class Masked : public Root {
+class DocsMaskQuery : public QueryBuilderImpl<DocsMaskQuery> {
  public:
-  Masked(Root::ptr&& plan, const DocumentMask& mask) noexcept
-    : _plan{std::move(plan)}, _mask{&mask} {}
+  DocsMaskQuery(const SubReader& segment, uint32_t masked) noexcept
+    : QueryBuilderImpl{segment, masked, QueryKind::Other} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    for (;;) {
-      const auto n = _plan->Run(out, capacity);
-      if (n == 0) {
-        return 0;
-      }
-      uint32_t kept = 0;
-      for (uint32_t i = 0; i != n; ++i) {
-        const auto doc = out[i];
-        out[kept] = doc;
-        kept += static_cast<uint32_t>(!_mask->contains(doc));
-      }
-      if (kept != 0) {
-        return kept;
-      }
-    }
-  }
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
- private:
-  Root::ptr _plan;
-  const DocumentMask* _mask;
+  score_t Boost() const noexcept final { return kNoBoost; }
 };
 
-}  // namespace irs::docs
+QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
+                               const SubReader& segment,
+                               IResourceManager& memory,
+                               PrepareCollector* collector, bool needs_terms);
+
+}  // namespace irs

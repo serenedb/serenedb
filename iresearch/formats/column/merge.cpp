@@ -38,6 +38,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/index_reader.hpp"
 
 namespace irs {
 namespace {
@@ -111,7 +112,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
   std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
     kept_cache(sources.size());
-  auto kept_for = [&](size_t si, const DocumentMask& mask,
+  DocumentMask::Iterator it_mask;
+  auto kept_for = [&](size_t si,
                       uint64_t pos) -> const std::vector<duckdb::sel_t>& {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
@@ -124,7 +126,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       slot->reserve(STANDARD_VECTOR_SIZE);
       for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
         const auto src_doc = static_cast<doc_id_t>(pos + i + doc_limits::min());
-        if (!mask.contains(src_doc)) {
+        if (!it_mask.Probe(src_doc)) {
           slot->push_back(static_cast<duckdb::sel_t>(i));
         }
       }
@@ -169,8 +171,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
       SDB_ASSERT(col->Type() == first_col->Type(),
                  "schema evolution between merge sources not supported");
-      const auto* mask = s.mask;
-      const bool has_mask = mask && !mask->empty();
+      const bool has_mask = HasRemovals(s.reader->Meta());
+      if (has_mask) {
+        it_mask = s.reader->MaskedDocs();
+      }
 
       const bool stored_hll =
         opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
@@ -195,7 +199,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
           }
           out_doc += take;
         } else {
-          const auto& kept_idx = kept_for(si, *mask, pos);
+          const auto& kept_idx = kept_for(si, pos);
           duckdb::idx_t kept = 0;
           for (const auto i : kept_idx) {
             if (i >= take) {

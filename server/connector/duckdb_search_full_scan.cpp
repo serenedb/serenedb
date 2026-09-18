@@ -65,6 +65,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/make.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -1602,10 +1603,14 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    q = g.filter->PrepareSegment(
-      seg, {.collector = collector,
-            .thread = collector != nullptr ? l.thread_slot : 0,
-            .needs_terms = g.needs_terms});
+    irs::PrepareContext ctx{.collector = collector,
+                            .thread = collector != nullptr ? l.thread_slot : 0,
+                            .needs_terms = g.needs_terms};
+    q = g.filter->PrepareSegment(seg, ctx);
+    if (!g.vector_scorer) {
+      q = irs::WithDocsMask(std::move(q), seg, ctx.memory, collector,
+                            g.needs_terms);
+    }
   }
   return *q;
 }
@@ -2850,14 +2855,13 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
     auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
     EnsurePlanned(node != nullptr);
-    const auto* removals = _seg->docs_mask();
     if (auto* folded = node->Folded(); folded != nullptr) {
-      _live =
-        std::make_unique<irs::detail::LazyBitset>(std::move(*folded), removals);
+      _live = std::make_unique<irs::detail::LazyBitset>(std::move(*folded),
+                                                        _seg->MaskedDocs());
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
-        removals);
+        _seg->MaskedDocs());
     }
   }
   return *_live;

@@ -23,15 +23,18 @@
 
 #include <algorithm>
 #include <bit>
+#include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/docs/boolean_bitset.hpp>
 #include <iresearch/search/docs/boolean_window.hpp>
 #include <iresearch/search/fill/bitset_docs.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
+#include <iresearch/search/probe/docs_mask.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <vector>
@@ -707,7 +710,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, {}};
 
   ASSERT_EQ(0, fill->windows());
   ASSERT_EQ(kMin, set.Filled());
@@ -737,6 +740,32 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   ASSERT_TRUE(irs::doc_limits::eof(set.Probe(9001)));
 }
 
+TEST(lazy_bitset_test, drops_a_masked_tail) {
+  constexpr irs::doc_id_t kDocs = 10000;
+  constexpr irs::doc_id_t kTail = 5000;
+  const std::vector<irs::doc_id_t> docs{3, 64, 4999, kTail, 5001, 9000};
+
+  const auto removals = [] {
+    irs::DocumentMaskBuilder mask;
+    mask.Add(64);
+    return std::move(mask).Build();
+  }();
+
+  auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::DocumentMask::Iterator{&removals, kTail}};
+
+  ASSERT_TRUE(set.Contains(3));
+  ASSERT_FALSE(set.Contains(64));
+  ASSERT_TRUE(set.Contains(4999));
+  ASSERT_FALSE(set.Contains(kTail));
+  ASSERT_FALSE(set.Contains(5001));
+  ASSERT_FALSE(set.Contains(9000));
+
+  ASSERT_EQ(4999, set.Probe(4));
+  ASSERT_TRUE(irs::doc_limits::eof(set.Probe(kTail)));
+}
+
 // A window the clause holds nothing in is never opened: the fill says where
 // it stands next, and the fold starts again there.
 TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
@@ -745,7 +774,7 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs, nullptr};
+  irs::detail::LazyBitset set{std::move(node), kDocs, {}};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.
@@ -757,4 +786,114 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   ASSERT_TRUE(set.Contains(9000));
   ASSERT_FALSE(set.Contains(5000));
   ASSERT_EQ(2, fill->windows());
+}
+
+namespace {
+
+irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
+  irs::DocumentMaskBuilder mask;
+  for (auto doc : docs) {
+    mask.Add(doc);
+  }
+  return std::move(mask).Build();
+}
+
+irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
+                               irs::doc_id_t uncommitted) {
+  return irs::probe::DocsMask{mask, uncommitted};
+}
+
+}  // namespace
+
+TEST(docs_mask_test, probe_reports_the_next_deleted_doc) {
+  const auto removals = MakeMask({3, 64, 4999});
+  auto probe = ProbeOver(&removals, irs::doc_limits::eof());
+
+  ASSERT_EQ(3, probe.Probe(1));
+  ASSERT_EQ(3, probe.Probe(3));
+  ASSERT_EQ(64, probe.Probe(4));
+  ASSERT_EQ(64, probe.Probe(64));
+  ASSERT_EQ(4999, probe.Probe(65));
+  ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(5000)));
+}
+
+TEST(docs_mask_test, probe_without_removals_excludes_nothing) {
+  auto probe = ProbeOver(nullptr, irs::doc_limits::eof());
+
+  ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(1)));
+  ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(10000)));
+}
+
+TEST(docs_mask_test, probe_treats_the_uncommitted_tail_as_deleted) {
+  const auto removals = MakeMask({3});
+  auto probe = ProbeOver(&removals, 5000);
+
+  ASSERT_EQ(3, probe.Probe(1));
+  ASSERT_EQ(5000, probe.Probe(4));
+  ASSERT_EQ(6000, probe.Probe(6000));
+}
+
+TEST(docs_mask_test, tail_only_probe_starts_at_the_bound) {
+  auto probe = ProbeOver(nullptr, 70);
+
+  ASSERT_EQ(70, probe.Probe(1));
+  ASSERT_EQ(99, probe.Probe(99));
+}
+
+TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
+  const auto removals = MakeMask({1, 3, 64, 127, 128});
+  irs::fill::DocsMask fill{&removals, irs::doc_limits::eof()};
+
+  uint64_t words[3]{};
+  const auto next = fill.FillOr(1, 1 + 3 * kBits, words);
+
+  ASSERT_TRUE(irs::CheckBit(words[0], 0));
+  ASSERT_FALSE(irs::CheckBit(words[0], 1));
+  ASSERT_TRUE(irs::CheckBit(words[0], 2));
+  ASSERT_TRUE(irs::CheckBit(words[0], 63));
+  ASSERT_TRUE(irs::CheckBit(words[1], 62));
+  ASSERT_TRUE(irs::CheckBit(words[1], 63));
+  ASSERT_EQ(0, words[2]);
+  ASSERT_TRUE(irs::doc_limits::eof(next));
+}
+
+TEST(docs_mask_test, fill_covers_the_uncommitted_tail) {
+  irs::fill::DocsMask fill{nullptr, 70};
+
+  uint64_t words[2]{};
+  const auto next = fill.FillOr(1, 1 + 2 * kBits, words);
+
+  ASSERT_FALSE(irs::CheckBit(words[0], 63));
+  ASSERT_FALSE(irs::CheckBit(words[1], 4));
+  ASSERT_TRUE(irs::CheckBit(words[1], 5));
+  ASSERT_TRUE(irs::CheckBit(words[1], 63));
+  ASSERT_EQ(1 + 2 * kBits, next);
+}
+
+TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
+  std::vector<irs::doc_id_t> docs;
+  for (irs::doc_id_t doc = 1; doc < 20000; ++doc) {
+    if (doc % 7 == 0 || doc % 13 == 0 || (doc >= 8000 && doc < 9000)) {
+      docs.push_back(doc);
+    }
+  }
+  const auto removals = MakeMask(docs);
+
+  irs::fill::DocsMask fill{&removals, 15000};
+  auto probe = ProbeOver(&removals, 15000);
+
+  constexpr uint32_t kWords = 64;
+  constexpr irs::doc_id_t kSpan = kWords * kBits;
+  for (irs::doc_id_t base = 1; base < 1 + 4 * kSpan; base += kSpan) {
+    std::vector<uint64_t> words(kWords, 0);
+    fill.FillOr(base, base + kSpan, words.data());
+
+    for (uint32_t w = 0; w != kWords; ++w) {
+      for (uint32_t bit = 0; bit != kBits; ++bit) {
+        const auto doc = static_cast<irs::doc_id_t>(base + w * kBits + bit);
+        const bool excluded = probe.Probe(doc) == doc;
+        ASSERT_EQ(excluded, irs::CheckBit(words[w], bit)) << "doc " << doc;
+      }
+    }
+  }
 }

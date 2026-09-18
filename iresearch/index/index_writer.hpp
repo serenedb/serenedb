@@ -62,7 +62,6 @@ class DatabaseInstance;
 
 namespace irs {
 
-class Comparer;
 struct Directory;
 
 enum OpenMode {
@@ -117,8 +116,6 @@ struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
 
   PayloadProvider meta_payload_provider;
-
-  const Comparer* comparator = nullptr;
 
   size_t segment_pool_size = 128;
 
@@ -483,8 +480,6 @@ class IndexWriter : private util::Noncopyable {
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
-  const Comparer* Comparator() const noexcept { return _comparator; }
-
   bool RefreshBegin(const CommitInfo& info = {}) {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
@@ -510,7 +505,7 @@ class IndexWriter : private util::Noncopyable {
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
               Format::ptr codec, size_t segment_pool_size,
-              const SegmentOptions& segment_limits, const Comparer* comparator,
+              const SegmentOptions& segment_limits,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -574,22 +569,17 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, DocContexts&& docs,
+    explicit FlushedSegment(IndexSegment&& segment,
+                            DocumentMaskBuilder&& docs_mask, DocContexts&& docs,
                             size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
-        old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
-        document_mask{{this->docs_mask.set.get_allocator()}},
         docs{std::move(docs)},
         committed_docs{committed_docs} {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
-    DocMap old2new;
-    DocMap new2old;
-    DocsMask docs_mask;
-    DocumentMask document_mask;
+    DocumentMaskBuilder docs_mask;
     DocContexts docs;
     size_t committed_docs;
     bool was_flush = false;
@@ -736,17 +726,17 @@ class IndexWriter : private util::Noncopyable {
     void Reset() noexcept;
   };
 
-  void Cleanup(FlushContext& curr, FlushContext* next = nullptr) noexcept;
+  void Cleanup(FlushContext& curr) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     uint64_t tick{writer_limits::kMinTick};
 
-    void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
+    void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
         std::lock_guard lock{writer._compacting.lock};
-        writer.Cleanup(*curr, keep_next ? nullptr : curr->next);
+        writer.Cleanup(*curr);
       }
     }
   };
@@ -805,7 +795,6 @@ class IndexWriter : private util::Noncopyable {
   const AnnBuildEnv* _ann_env = nullptr;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   PayloadProvider _meta_payload_provider;
-  const Comparer* _comparator;
   Format::ptr _codec;
   absl::Mutex _commit_lock;
   struct {

@@ -18,28 +18,29 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utility>
+#pragma once
 
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/boolean_sparse.hpp"
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/probe/mask_docs.hpp"
-#include "iresearch/utils/empty.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 
-namespace irs::count {
+namespace irs::probe {
 
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx) {
-  const auto* docs_mask = query.Segment().docs_mask();
-  SDB_ASSERT(docs_mask != nullptr);
-  auto node = query.PlanLead({});
-  if (!node) {
-    return {};
+class DocsMask {
+ public:
+  DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
+    : _it{mask, uncommitted} {}
+
+  explicit DocsMask(const SubReader& segment) noexcept
+    : _it{segment.MaskedDocs()} {}
+
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) noexcept {
+    return _it.Seek(target);
   }
-  return MakeShape<BooleanSparse, lead::Erased, utils::Empty, probe::MaskDocs>(
-    ctx, std::piecewise_construct, std::forward_as_tuple(std::move(node)),
-    std::forward_as_tuple(), std::forward_as_tuple(*docs_mask));
-}
 
-}  // namespace irs::count
+ private:
+  DocumentMask::Iterator _it;
+};
+
+}  // namespace irs::probe

@@ -27,6 +27,8 @@
 #include <faiss/utils/distances.h>
 
 #include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
@@ -356,10 +358,6 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
     }
     ctx.Commit();
   }
-
-  if (writer.Comparator()) {
-    segment.sort(*writer.Comparator());
-  }
 }
 
 void IndexTestBase::write_segment_batched(irs::IndexWriter& writer,
@@ -367,10 +365,6 @@ void IndexTestBase::write_segment_batched(irs::IndexWriter& writer,
                                           tests::DocGeneratorBase& gen,
                                           size_t batch_size) {
   ASSERT_TRUE(InsertBatch(writer, gen, segment, batch_size));
-
-  if (writer.Comparator()) {
-    segment.sort(*writer.Comparator());
-  }
 }
 
 void IndexTestBase::add_segment(irs::IndexWriter& writer,
@@ -7121,8 +7115,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
     // files from segments 1 and 2, segment_3
-    // segment_2 + stale segment 1 meta
-    ASSERT_EQ(count + 2 + 1, irs::DirectoryCleaner::clean(dir));
+    // segment_2 + stale segment 1 meta, +1 for the removal's mask sidecar
+    ASSERT_EQ(count + 2 + 1 + 1, irs::DirectoryCleaner::clean(dir));
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -7268,8 +7262,9 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     // files from segments 1 and 2,
     // segment_3
-    // segment_2 + stale segment 1 meta + stale segment 2 meta
-    ASSERT_EQ(count + 3 + 1, irs::DirectoryCleaner::clean(dir));
+    // segment_2 + stale segment 1 meta + stale segment 2 meta,
+    // +2 for a mask sidecar per segment the removal touched
+    ASSERT_EQ(count + 3 + 1 + 2, irs::DirectoryCleaner::clean(dir));
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -8526,8 +8521,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
-    ASSERT_EQ(count + 2 + 1,  // +2 for  segments_2 + stale segment 1 meta
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments
+    ASSERT_EQ(count + 2 + 1 + 1,  // +2 for  segments_2 + stale segment 1 meta
+                                  // +1 for segments
+              irs::DirectoryCleaner::clean(dir()));  // +1 for the removal's
+                                                     // mask sidecar
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8666,7 +8663,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    // +2 for a mask sidecar per segment the removal touched
+    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8801,7 +8799,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    // +1 for the mask sidecar of the segment the first removal touched
+    ASSERT_EQ(count + 4 + 1, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8977,8 +8976,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     const auto one_segment_count = count;
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
-    // files count should be the same as with one segment
-    ASSERT_EQ(one_segment_count, count);
+    // files count should be the same as with one segment, +1 for the mask
+    // sidecar the compaction carried the removal into
+    ASSERT_EQ(one_segment_count + 1, count);
   }
 
   // repeatable compaction of already compacted segment during two
@@ -9063,8 +9063,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     const auto one_segment_count = count;
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
-    // files count should be the same as with one segment
-    ASSERT_EQ(one_segment_count, count);
+    // files count should be the same as with one segment, +2 for the mask
+    // sidecar each of the two removals landed in
+    ASSERT_EQ(one_segment_count + 2, count);
   }
 
   // check commit rollback and compaction
@@ -9101,8 +9102,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshAbort();
 
-    // leftovers cleanup (aborted compaction segment no longer emits a `.col`)
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
+    // leftovers cleanup (aborted compaction segment no longer emits a `.col`),
+    // +1 for the mask sidecar it wrote alongside its meta
+    ASSERT_EQ(1 + 1, irs::DirectoryCleaner::clean(dir()));
 
     // still pending
     expected_compacting_segments = {0, 1};
@@ -9213,7 +9215,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    // +2 for a mask sidecar per segment the removal touched
+    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -9381,8 +9384,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // +1 for segments,
     // +1 for segment 1 meta,
     // +1 for segment 2 meta,
-    // +1 for segments_2
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    // +1 for segments_2,
+    // +2 for a mask sidecar per segment the removal touched
+    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -12457,6 +12461,321 @@ TEST_P(IndexTestCase11, commit_payload) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   ASSERT_EQ(reader, reader.Reopen());
+}
+
+TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc0));
+    ASSERT_TRUE(insert(trx, *doc1));
+    trx.Commit(kVisibleTick);
+  }
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    trx.Commit(kPendingTick);
+  }
+
+  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+
+  auto& segment = reader[0];
+  ASSERT_EQ(3, segment.Meta().docs_count);
+  ASSERT_EQ(2, segment.live_docs_count());
+
+  // The suffix is a bound on the segment, so it costs no mask file at all.
+  ASSERT_EQ(nullptr, segment.docs_mask());
+  ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().uncommitted_begin);
+  ASSERT_EQ(1, irs::UncommittedCount(segment.Meta()));
+
+  auto it_mask = segment.MaskedDocs();
+  ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
+  ASSERT_LT(irs::doc_limits::min() + 1,
+            it_mask.Seek(irs::doc_limits::min() + 1));
+  ASSERT_EQ(irs::doc_limits::min() + 2,
+            it_mask.Seek(irs::doc_limits::min() + 2));
+
+  auto docs = segment.docs_iterator();
+  ASSERT_NE(nullptr, docs);
+  ASSERT_EQ(irs::doc_limits::min(), docs->Next());
+  ASSERT_EQ(irs::doc_limits::min() + 1, docs->Next());
+  ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
+}
+
+TEST_P(IndexTestCase11, docs_mask_small_stays_inline) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  std::vector<const tests::Document*> docs;
+  for (size_t i = 0; i < 4; ++i) {
+    docs.push_back(gen.next());
+    ASSERT_NE(nullptr, docs.back());
+  }
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  for (const auto* doc : docs) {
+    ASSERT_TRUE(InsertWithName(*writer, *doc));
+  }
+  writer->RefreshCommit();
+
+  auto mask_files = [&] {
+    auto snapshot = writer->GetSnapshot();
+    EXPECT_EQ(1, snapshot.size());
+    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_files;
+  };
+  ASSERT_EQ(0, mask_files());
+
+  auto current_mask = [&] {
+    auto snapshot = writer->GetSnapshot();
+    return snapshot.Meta().index_meta.segments[0].meta.docs_mask;
+  };
+
+  // A mask this small costs less to carry inside the `.sm` than a file of its
+  // own would cost in header and footer, so it never gets one -- and with no
+  // chain there is nothing to patch either.
+  const std::array<std::string_view, 3> removed{"A", "B", "C"};
+  for (size_t i = 0; i < removed.size(); ++i) {
+    {
+      auto trx = writer->GetBatch();
+      trx.Remove(MakeByTerm(kNameFieldId, removed[i]));
+      trx.Commit();
+    }
+    writer->RefreshCommit();
+    ASSERT_EQ(0, mask_files()) << "after removing " << removed[i];
+    const auto mask = current_mask();
+    ASSERT_NE(nullptr, mask);
+    ASSERT_LE(mask->ByteSize(), irs::SegmentMetaWriterImpl::kMaxInlineBytes);
+    ASSERT_EQ(i + 1, mask->Count()) << "after removing " << removed[i];
+  }
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(4, reader[0].Meta().docs_count);
+  ASSERT_EQ(1, reader[0].live_docs_count());
+
+  const auto* mask = reader[0].docs_mask();
+  ASSERT_NE(nullptr, mask);
+  ASSERT_EQ(3, mask->Count());
+
+  auto live = reader[0].docs_iterator();
+  ASSERT_NE(nullptr, live);
+  size_t count = 0;
+  for (auto doc = live->Next(); !irs::doc_limits::eof(doc);
+       doc = live->Next()) {
+    ++count;
+  }
+  ASSERT_EQ(1, count);
+}
+
+// Which bucket document `i` lands in. Deliberately scrambled: consecutive doc
+// ids in one bucket would collapse to a single roaring run, and the mask would
+// never reach the sizes the thresholds key on however many documents it holds.
+size_t BucketOf(size_t i, size_t buckets) noexcept {
+  auto h = static_cast<uint64_t>(i) * 0x9E3779B97F4A7C15ULL;
+  h ^= h >> 29;
+  return static_cast<size_t>(h % buckets);
+}
+
+// Documents carrying a unique "name" and a "grp" that buckets them, so one term
+// filter removes a scattered share of the segment.
+void InsertBucketDocs(irs::IndexWriter& writer, size_t count, size_t buckets) {
+  auto name = std::make_shared<tests::StringField>("name");
+  name->id = tests::FieldIdFor("name");
+  auto grp = std::make_shared<tests::StringField>("grp");
+  grp->id = tests::FieldIdForRuntime("grp");
+  tests::Document doc;
+  doc.insert(name);
+  doc.insert(grp);
+
+  auto trx = writer.GetBatch();
+  for (size_t i = 0; i < count; ++i) {
+    name->value(absl::StrCat("d", i));
+    grp->value(absl::StrCat("g", BucketOf(i, buckets)));
+    auto d = trx.Insert();
+    EXPECT_TRUE(tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end()));
+  }
+  trx.Commit();
+}
+
+TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
+  constexpr uint32_t kCap = irs::SegmentMetaWriterImpl::kMaxMaskFiles;
+  constexpr size_t kDocs = 10000;
+  constexpr size_t kBuckets = 20;
+  // Enough buckets in the first round to clear kMinChainBytes in one step --
+  // below it the writer rewrites the mask instead of chaining, so the chain
+  // would never start growing.
+  constexpr size_t kFirstRound = 6;
+  const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
+  auto& directory = dir();
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  InsertBucketDocs(*writer, kDocs, kBuckets);
+  writer->RefreshCommit();
+
+  auto mask_files = [&] {
+    auto snapshot = writer->GetSnapshot();
+    EXPECT_EQ(1, snapshot.size());
+    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_files;
+  };
+
+  for (uint32_t round = 0; round <= kCap; ++round) {
+    {
+      auto trx = writer->GetBatch();
+      const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
+      const size_t last = round == 0 ? kFirstRound : first + 1;
+      for (size_t b = first; b < last; ++b) {
+        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
+      }
+      trx.Commit();
+    }
+    writer->RefreshCommit();
+
+    // The chain grows to the cap, then the next write collapses it to a base.
+    const auto expected = round + 1 <= kCap ? round + 1 : 1;
+    ASSERT_EQ(expected, mask_files()) << "after round " << round;
+  }
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(kDocs, reader[0].Meta().docs_count);
+  ASSERT_NE(nullptr, reader[0].docs_mask());
+  ASSERT_EQ(kDocs - reader[0].live_docs_count(),
+            reader[0].docs_mask()->Count());
+  ASSERT_LT(reader[0].live_docs_count(), kDocs);
+}
+
+TEST_P(IndexTestCase11, docs_mask_file_survives_cleanup) {
+  // Enough scattered removals to put the mask over kMaxInlineBytes, which is
+  // what gives it a file of its own to be collected.
+  constexpr size_t kDocs = 4000;
+  constexpr size_t kBuckets = 4;
+  const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
+
+  auto& directory = dir();
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  InsertBucketDocs(*writer, kDocs, kBuckets);
+  writer->RefreshCommit();
+
+  {
+    auto trx = writer->GetBatch();
+    trx.Remove(MakeByTerm(kGrpFieldId, "g0"));
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto snapshot = writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  const auto& meta = snapshot.Meta().index_meta.segments[0].meta;
+  ASSERT_EQ(1, meta.docs_mask_files);
+  const auto mask_file = meta.files.back();
+  ASSERT_TRUE(mask_file.ends_with(".dm"));
+
+  bool exists = false;
+  ASSERT_TRUE(directory.exists(exists, mask_file));
+  ASSERT_TRUE(exists);
+
+  irs::directory_utils::RemoveAllUnreferenced(directory);
+
+  exists = false;
+  ASSERT_TRUE(directory.exists(exists, mask_file));
+  ASSERT_TRUE(exists) << "mask file " << mask_file << " was collected";
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_NE(nullptr, reader[0].docs_mask());
+  ASSERT_EQ(kDocs - reader[0].live_docs_count(),
+            reader[0].docs_mask()->Count());
+}
+
+TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc0));
+    ASSERT_TRUE(insert(trx, *doc1));
+    trx.Commit(kVisibleTick);
+  }
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    trx.Commit(kPendingTick);
+  }
+
+  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+
+  {
+    auto reader = irs::DirectoryReader(directory, nullptr,
+                                       irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().uncommitted_begin);
+  }
+
+  size_t seen = 0;
+  size_t fenced = 0;
+  auto policy = [&](irs::Compaction& candidates, const irs::IndexReader& index,
+                    const irs::CompactingSegments& compacting) {
+    for (size_t i = 0, size = index.size(); i != size; ++i) {
+      const auto& segment = index[i];
+      ++seen;
+      if (compacting.contains(segment.Meta().name)) {
+        ++fenced;
+        continue;
+      }
+      candidates.emplace_back(&segment);
+    }
+  };
+
+  writer->Compact(policy);
+  ASSERT_EQ(1, seen);
+  ASSERT_EQ(1, fenced);
 }
 
 TEST_P(IndexTestCase11, testExternalGeneration) {

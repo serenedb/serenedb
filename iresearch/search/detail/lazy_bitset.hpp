@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "iresearch/index/index_meta.hpp"
@@ -58,14 +59,20 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, const DocumentMask* removals) noexcept
-    : _set{std::move(set)}, _filled{_set.End()} {
-    Drop(removals, 0, _set.WordCount());
+  LazyBitset(BitsetStorage&& set, DocumentMask::Iterator&& it_mask) noexcept
+    : _set{std::move(set)},
+      _it_mask{std::move(it_mask)},
+      _has_removals{!_it_mask.Empty()},
+      _filled{_set.End()} {
+    Drop(0, _set.WordCount());
   }
 
   LazyBitset(FillNode::ptr&& node, doc_id_t docs_count,
-             const DocumentMask* removals)
-    : _set{docs_count}, _node{std::move(node)}, _removals{removals} {
+             DocumentMask::Iterator&& it_mask)
+    : _set{docs_count},
+      _node{std::move(node)},
+      _it_mask{std::move(it_mask)},
+      _has_removals{!_it_mask.Empty()} {
     SDB_ASSERT(_node);
   }
 
@@ -88,7 +95,7 @@ class LazyBitset {
       const auto min = _filled;
       const auto first = (min - kMin) / kBits;
       const auto next = _node->FillOr(min, min + kWindowDocs, words + first);
-      Drop(_removals, first, first + kWindowWords);
+      Drop(first, first + kWindowWords);
       if (next >= end) {
         _filled = end;
         break;
@@ -148,8 +155,8 @@ class LazyBitset {
     return doc < stop ? doc : doc_limits::invalid();
   }
 
-  void Drop(const DocumentMask* removals, size_t first, size_t last) noexcept {
-    if (removals == nullptr) {
+  void Drop(size_t first, size_t last) noexcept {
+    if (!_has_removals) {
       return;
     }
     auto* const words = _set.Words();
@@ -160,7 +167,7 @@ class LazyBitset {
         const auto bit = static_cast<size_t>(std::countr_zero(rest));
         rest &= rest - 1;
         const auto doc = static_cast<doc_id_t>(kMin + w * kBits + bit);
-        if (removals->contains(doc)) {
+        if (_it_mask.Probe(doc)) {
           UnsetBit(words[w], bit);
         }
       }
@@ -176,7 +183,8 @@ class LazyBitset {
 
   BitsetStorage _set;
   FillNode::ptr _node;
-  const DocumentMask* _removals = nullptr;
+  DocumentMask::Iterator _it_mask;
+  bool _has_removals = false;
   doc_id_t _filled = kMin;
 };
 

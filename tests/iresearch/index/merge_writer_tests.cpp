@@ -23,7 +23,6 @@
 
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/index/comparer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/merge_writer.hpp>
 #include <iresearch/index/norm.hpp>
@@ -84,15 +83,6 @@ irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
 
 }  // namespace
 namespace tests {
-
-class BinaryComparer final : public irs::Comparer {
-  int CompareImpl(irs::bytes_view lhs, irs::bytes_view rhs) const final {
-    EXPECT_FALSE(irs::IsNull(lhs));
-    EXPECT_FALSE(irs::IsNull(rhs));
-
-    return lhs.compare(rhs);
-  }
-};
 
 template<typename T, typename H>
 void ValidateTerms(
@@ -155,8 +145,6 @@ struct MergeWriterTestCase : public tests::DirectoryTestCaseBase<std::string> {
     return codec;
   }
 
-  bool SupportsSort() const noexcept { return true; }
-
   static std::string to_string(
     const testing::TestParamInfo<std::tuple<tests::dir_param_f, std::string>>&
       info) {
@@ -165,10 +153,10 @@ struct MergeWriterTestCase : public tests::DirectoryTestCaseBase<std::string> {
     return (*factory)(nullptr).second + "___" + codec;
   }
 
-  void EnsureDocBlocksNotMixed(bool primary_sort);
+  void EnsureDocBlocksNotMixed();
 };
 
-void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
+void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
   auto insert_documents = [](irs::IndexWriter::Transaction& ctx,
                              irs::doc_id_t seed, irs::doc_id_t count) {
     for (; seed < count; ++seed) {
@@ -185,12 +173,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
   auto codec_ptr = Codec();
   ASSERT_NE(nullptr, codec_ptr);
   irs::MemoryDirectory dir;
-  BinaryComparer test_comparer;
 
   auto opts = irs::tests::DefaultWriterOptions();
-  if (primary_sort) {
-    opts.comparator = &test_comparer;
-  }
 
   auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -229,52 +213,45 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
   // 1: 11..20
   // 2: 21..30
   const irs::index_utils::CompactionCount compact_all;
-  ASSERT_EQ(!primary_sort || SupportsSort(),
-            writer->Compact(irs::index_utils::MakePolicy(compact_all)));
-  ASSERT_EQ(!primary_sort || SupportsSort(), writer->RefreshCommit());
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(writer->RefreshCommit());
   AssertSnapshotEquality(
     writer->GetSnapshot(),
     irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
 
-  if (!primary_sort || SupportsSort()) {
-    reader = reader.Reopen();
-    ASSERT_NE(nullptr, reader);
+  reader = reader.Reopen();
+  ASSERT_NE(nullptr, reader);
 
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];
-    ASSERT_EQ(30, segment.docs_count());
-    ASSERT_EQ(30, segment.live_docs_count());
+  ASSERT_EQ(1, reader.size());
+  auto& segment = reader[0];
+  ASSERT_EQ(30, segment.docs_count());
+  ASSERT_EQ(30, segment.live_docs_count());
 
-    const auto docs_count = segment.docs_count();
-    const auto* col = segment.Column(kSeqId);
-    ASSERT_NE(nullptr, col);
-    irs::tests::BlobPointReader values{segment, *col};
+  const auto docs_count = segment.docs_count();
+  const auto* col = segment.Column(kSeqId);
+  ASSERT_NE(nullptr, col);
+  irs::tests::BlobPointReader values{segment, *col};
 
-    ptrdiff_t prev = -1;
-    for (irs::doc_id_t i = 0; i < docs_count; ++i) {
-      SCOPED_TRACE(testing::Message("Doc id ") << i);
-      const auto doc = i + irs::doc_limits::min();
+  ptrdiff_t prev = -1;
+  for (irs::doc_id_t i = 0; i < docs_count; ++i) {
+    SCOPED_TRACE(testing::Message("Doc id ") << i);
+    const auto doc = i + irs::doc_limits::min();
 
-      const auto bytes = values.Get(doc);
-      auto* p = bytes.data();
-      const auto len = irs::vread<uint32_t>(p);
-      const auto str_seq =
-        static_cast<std::string>(irs::ViewCast<char>(irs::bytes_view{p, len}));
-      const auto seq = atoi(str_seq.data());
+    const auto bytes = values.Get(doc);
+    auto* p = bytes.data();
+    const auto len = irs::vread<uint32_t>(p);
+    const auto str_seq =
+      static_cast<std::string>(irs::ViewCast<char>(irs::bytes_view{p, len}));
+    const auto seq = atoi(str_seq.data());
 
-      if (0 == (i % 10)) {
-        ASSERT_EQ(0, seq % 10);
-      } else {
-        ASSERT_LT(prev, seq);
-        ASSERT_NE(0, seq % 10);
-      }
-
-      prev = seq;
+    if (0 == (i % 10)) {
+      ASSERT_EQ(0, seq % 10);
+    } else {
+      ASSERT_LT(prev, seq);
+      ASSERT_NE(0, seq % 10);
     }
-  } else {
-    AssertSnapshotEquality(
-      reader,
-      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
+
+    prev = seq;
   }
 }
 
@@ -572,12 +549,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
   }
 }
 
-TEST_P(MergeWriterTestCase, EnsureDocBlocksNotMixedPrimarySort) {
-  EnsureDocBlocksNotMixed(true);
-}
-
 TEST_P(MergeWriterTestCase, EnsureDocBlocksNotMixed) {
-  EnsureDocBlocksNotMixed(false);
+  EnsureDocBlocksNotMixed();
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer) {

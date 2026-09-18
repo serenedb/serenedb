@@ -423,23 +423,34 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
   };
 }
 
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
-                       bool increment_version) {
+SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
+                                    bool increment_version) {
   auto& meta = segment.meta;
   SDB_ASSERT(meta.codec);
   SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
   SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
 
+  SDB_ASSERT(!meta.docs_mask || !meta.docs_mask->Empty());
   meta.live_docs_count = meta.docs_count;
-  if (const auto& docs_mask = meta.docs_mask; docs_mask) {
-    SDB_ASSERT(!docs_mask->empty());
-    SDB_ASSERT(docs_mask->size() < meta.docs_count);
-    meta.live_docs_count -= static_cast<doc_id_t>(meta.docs_mask->size());
+  if (const auto removals = RemovalCount(meta); removals != 0) {
+    SDB_ASSERT(removals < meta.docs_count);
+    meta.live_docs_count -= removals;
     meta.version += uint64_t{increment_version};
   }
 
-  auto writer = segment.meta.codec->get_segment_meta_writer();
+  return meta.codec->get_segment_meta_writer();
+}
+
+void FlushIndexSegment(Directory& dir, IndexSegment& segment,
+                       bool increment_version) {
+  auto writer = PrepareFlush(segment, increment_version);
   writer->write(dir, segment.filename, segment.meta);
+}
+
+void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
+                            const DocumentMask& patch) {
+  auto writer = PrepareFlush(segment, true);
+  writer->WritePatch(dir, segment.filename, segment.meta, patch);
 }
 
 }  // namespace irs::index_utils

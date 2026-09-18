@@ -473,10 +473,9 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.live_docs_count = 42;
     expected.version = 0;
     expected.docs_mask = [&] {
-      auto docs_mask =
-        std::make_shared<irs::DocumentMask>(irs::IResourceManager::gNoop);
-      docs_mask->insert(4);
-      return docs_mask;
+      irs::DocumentMaskBuilder docs_mask;
+      docs_mask.Add(4);
+      return std::make_shared<irs::DocumentMask>(std::move(docs_mask).Build());
     }();
     writer->write(dir, filename, expected);
 
@@ -499,10 +498,9 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.live_docs_count = 42;
     expected.version = 1;
     expected.docs_mask = [&] {
-      auto docs_mask =
-        std::make_shared<irs::DocumentMask>(irs::IResourceManager::gNoop);
-      docs_mask->insert(4);
-      return docs_mask;
+      irs::DocumentMaskBuilder docs_mask;
+      docs_mask.Add(4);
+      return std::make_shared<irs::DocumentMask>(std::move(docs_mask).Build());
     }();
     writer->write(dir, filename, expected);
 

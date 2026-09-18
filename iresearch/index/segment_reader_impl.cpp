@@ -22,6 +22,7 @@
 
 #include "segment_reader_impl.hpp"
 
+#include <algorithm>
 #include <duckdb/common/types.hpp>
 #include <vector>
 
@@ -65,7 +66,7 @@ class SegmentLiveDocs : public lead::Node {
  public:
   SegmentLiveDocs(doc_id_t begin, doc_id_t end,
                   const DocumentMask& docs_mask) noexcept
-    : _docs_mask{docs_mask}, _end{end}, _next{begin} {
+    : _it_mask{&docs_mask}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
     SDB_ASSERT(!doc_limits::eof(end));
@@ -73,9 +74,9 @@ class SegmentLiveDocs : public lead::Node {
 
   doc_id_t Next() noexcept final {
     while (_next < _end) {
-      _doc = _next++;
-      if (!_docs_mask.contains(_doc)) {
-        return _doc;
+      const auto doc = _next++;
+      if (doc < _it_mask.Seek(doc)) {
+        return _doc = doc;
       }
     }
     return _doc = doc_limits::eof();
@@ -90,7 +91,7 @@ class SegmentLiveDocs : public lead::Node {
   }
 
  private:
-  const DocumentMask& _docs_mask;
+  DocumentMask::Iterator _it_mask;
   const doc_id_t _end;
   doc_id_t _next;
   doc_id_t _doc = doc_limits::invalid();
@@ -145,8 +146,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  SDB_ASSERT(_refs == GetRefs(dir, meta));
-  reader->_refs = _refs;
+  reader->_refs = GetRefs(dir, meta);
   reader->_field_reader = _field_reader;
   reader->_data = _data;
   return reader;
@@ -190,13 +190,15 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
+  const auto end =
+    std::min(doc_limits::min() + _info.docs_count, _info.uncommitted_begin);
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
+    return memory::make_managed<SegmentAllDocs>(end - doc_limits::min());
   }
-  SDB_ASSERT(!_docs_mask->empty());
+  SDB_ASSERT(!_docs_mask->Empty());
 
-  return memory::make_managed<SegmentLiveDocs>(
-    doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
+  return memory::make_managed<SegmentLiveDocs>(doc_limits::min(), end,
+                                               *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

@@ -18,30 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/count/make.hpp"
+#include "iresearch/search/queries/docs_mask_query.hpp"
 
-#include <cstdint>
-#include <functional>
-#include <span>
+namespace irs::count {
 
-#include "iresearch/index/column_info.hpp"
-#include "iresearch/index/index_meta.hpp"
+Root::ptr Make(const DocsMaskQuery& query, const Context&) {
+  return MakeConstant(query.EstimateMax());
+}
 
-namespace irs {
-
-struct SubReader;
-
-class ColReader;
-class ColWriter;
-
-struct MergeSource {
-  const SubReader* reader;
-  const ColReader* col_reader;
-  uint64_t alive_count;
-};
-
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress = {});
-
-}  // namespace irs
+}  // namespace irs::count

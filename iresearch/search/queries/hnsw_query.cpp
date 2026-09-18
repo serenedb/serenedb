@@ -110,12 +110,14 @@ HnswSearchScratch& ThreadScratch() {
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const DocumentMask* mask) {
+                                  const SubReader& segment) {
+  const auto* mask = segment.docs_mask();
+  const auto uncommitted = segment.Meta().uncommitted_begin;
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    if (mask != nullptr && mask->contains(doc)) {
+    if (doc >= uncommitted || (mask != nullptr && mask->Contains(doc))) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});
@@ -151,7 +153,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch() const {
                                                _max_results, scratch);
                  });
                });
-  return CollectHits(scratch.nearest, _segment.docs_mask());
+  return CollectHits(scratch.nearest, _segment);
 }
 
 }  // namespace irs

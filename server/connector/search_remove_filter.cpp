@@ -29,8 +29,10 @@
 namespace sdb::connector {
 namespace {
 
-bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc) noexcept {
-  return segment_mask != nullptr && segment_mask->contains(doc);
+bool Masked(const irs::DocumentMask* segment_mask,
+            irs::doc_id_t uncommitted_begin, irs::doc_id_t doc) noexcept {
+  return doc >= uncommitted_begin ||
+         (segment_mask != nullptr && segment_mask->Contains(doc));
 }
 
 // A removal is asked for a document stream and for nothing else -- the index
@@ -93,6 +95,7 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
+  _uncommitted_begin = segment.Meta().uncommitted_begin;
   _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
@@ -136,8 +139,8 @@ irs::doc_id_t SearchRemoveFilter::Next() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (Masked(_segment_mask, found_doc) ||
-          Masked(_pending_mask, found_doc)) {
+      if (Masked(_segment_mask, _uncommitted_begin, found_doc) ||
+          Masked(_pending_mask, irs::doc_limits::eof(), found_doc)) {
         return true;  // skip deleted, including by this batch's earlier queries
       }
       // found alive document with this PK
@@ -191,6 +194,7 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
+  _uncommitted_begin = segment.Meta().uncommitted_begin;
   _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
@@ -211,7 +215,8 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
         if (irs::doc_limits::eof(doc)) {
           break;
         }
-        if (Masked(_segment_mask, doc) || Masked(_pending_mask, doc)) {
+        if (Masked(_segment_mask, _uncommitted_begin, doc) ||
+            Masked(_pending_mask, irs::doc_limits::eof(), doc)) {
           continue;
         }
         return _doc = doc;

@@ -686,7 +686,16 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (!gstate.created) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
+    // CREATE INDEX IF NOT EXISTS on an index that already exists: there is
+    // nothing to build, so stop the pipeline instead of asking for the rest of
+    // the table. NEED_MORE_INPUT here made the statement scan the ENTIRE base
+    // table and discard every chunk -- GetGlobalSinkState had already decided
+    // there was no work, and then the source fed it anyway.
+    // Measured on a 1.2M-document RAGFlow corpus: the redundant statement read
+    // at ~4 GB/s for minutes while doing no work, starving concurrent ingest.
+    // Finalize() already returns READY on !created, so terminating early skips
+    // nothing it would otherwise have done.
+    return duckdb::SinkResultType::FINISHED;
   }
   auto num_rows = chunk.size();
   if (num_rows == 0) {

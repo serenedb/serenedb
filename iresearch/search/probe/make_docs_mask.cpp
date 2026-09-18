@@ -18,28 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utility>
+#include "iresearch/search/probe/docs_mask.hpp"
+#include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/make.hpp"
+#include "iresearch/search/queries/docs_mask_query.hpp"
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/boolean_sparse.hpp"
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/probe/mask_docs.hpp"
-#include "iresearch/utils/empty.hpp"
+namespace irs::probe {
 
-namespace irs::count {
-
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx) {
-  auto it_mask = query.Segment().MaskedDocs();
-  SDB_ASSERT(!it_mask.Empty());
-  auto node = query.PlanLead({});
-  if (!node) {
-    return {};
-  }
-  return MakeShape<BooleanSparse, lead::Erased, utils::Empty, probe::MaskDocs>(
-    ctx, std::piecewise_construct, std::forward_as_tuple(std::move(node)),
-    std::forward_as_tuple(), std::forward_as_tuple(std::move(it_mask)));
+Node::ptr Make(const DocsMaskQuery& query, uint64_t) {
+  return memory::make_managed<Impl<DocsMask>>(query.Segment());
 }
 
-}  // namespace irs::count
+}  // namespace irs::probe

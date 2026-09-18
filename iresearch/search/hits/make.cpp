@@ -34,7 +34,6 @@
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/hits/empty.hpp"
 #include "iresearch/search/hits/make_boolean.hpp"
-#include "iresearch/search/hits/masked.hpp"
 #include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
@@ -149,12 +148,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
-  auto plan = query.PlanScored(ctx);
-  auto it_mask = query.Segment().MaskedDocs();
-  if (it_mask.Empty() || !plan) [[likely]] {
-    return plan;
-  }
-  return memory::make_managed<Masked>(std::move(plan), std::move(it_mask));
+  return query.PlanScored(ctx);
 }
 
 }  // namespace irs::hits

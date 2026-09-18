@@ -59,6 +59,7 @@
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
+#include <iresearch/search/filters/docs_mask_filter.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
@@ -1096,6 +1097,12 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
 
 namespace {
 
+bool AnySegmentMasked(const irs::DirectoryReader& reader) {
+  return absl::c_any_of(reader, [](const irs::SubReader& segment) {
+    return segment.live_docs_count() != segment.docs_count();
+  });
+}
+
 const irs::Filter& MatchAllFilter() {
   static const irs::All kInstance;
   return kInstance;
@@ -1423,12 +1430,18 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       vs.min_ef =
         ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
     }
+    std::shared_ptr<const irs::Filter> inner = ss.stored_filter;
+    if (!inner && AnySegmentMasked(ss.snapshot->reader)) {
+      inner = irs::WithDocsMask(std::make_unique<irs::All>());
+    }
     state->owned_filter =
-      MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
+      MakeVectorFilter(vs, std::move(inner), vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
+  } else if (ss.stored_filter) {
+    state->filter = ss.stored_filter.get();
   } else {
-    state->filter =
-      ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+    state->owned_filter = irs::WithDocsMask(std::make_unique<irs::All>());
+    state->filter = state->owned_filter.get();
   }
   state->queries.resize(ss.snapshot->reader.size());
 

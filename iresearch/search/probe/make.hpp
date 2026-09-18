@@ -30,9 +30,11 @@
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::probe {
 
+Node::ptr Make(const DocsMaskQuery& query, uint64_t interrogations);
 Node::ptr Make(const TermQuery& query, uint64_t interrogations);
 Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations);
 Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations);
@@ -50,6 +52,11 @@ template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                uint64_t interrogations);
 
+inline Node::ptr Make(const DocsMaskQuery&, const detail::ScoredCtx&,
+                      uint64_t) {
+  SDB_ASSERT(false);
+  return {};
+}
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,

@@ -18,22 +18,29 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utility>
+#pragma once
 
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/masked.hpp"
+#include "iresearch/index/document_mask.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/shared.hpp"
 
-namespace irs::top {
+namespace irs::probe {
 
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
-                     MaskedDocsIterator&& it_mask) {
-  auto node = query.PlanLead(ScoredOf(ctx));
-  if (!node) {
-    return {};
+class DocsMask {
+ public:
+  DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
+    : _it{mask, uncommitted} {}
+
+  explicit DocsMask(const SubReader& segment) noexcept
+    : _it{segment.MaskedDocs()} {}
+
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) noexcept {
+    return _it.Seek(target);
   }
-  return MakeShape<Masked, lead::Erased>(ctx, ctx.fetcher, std::move(it_mask),
-                                         lead::Erased{std::move(node)});
-}
 
-}  // namespace irs::top
+ private:
+  MaskedDocsIterator _it;
+};
+
+}  // namespace irs::probe

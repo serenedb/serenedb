@@ -38,6 +38,7 @@ Root::ptr MakeTerm(const detail::PostingClause& posting,
                    const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx);
 
+Root::ptr Make(const DocsMaskQuery& query, const Context& ctx);
 Root::ptr Make(const TermQuery& query, const Context& ctx);
 Root::ptr Make(const MultiTermQuery& query, const Context& ctx);
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx);
@@ -57,7 +58,5 @@ inline Root::ptr Make(const KnnVectorQuery&, const Context& ctx) { return {}; }
 Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
-
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx);
 
 }  // namespace irs::count

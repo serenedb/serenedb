@@ -71,11 +71,7 @@ inline std::pair<std::shared_ptr<DocumentMask>, uint64_t> ReadDocumentMask(
       throw IoError{absl::StrCat("Failed to open file, path: ", name)};
     }
 
-    const auto checksum = format_utils::Checksum(*in);
-    format_utils::CheckHeader(*in, DocsMaskWriter::kFormatName,
-                              DocsMaskWriter::kFormatVersion);
     const auto blob = ReadString<std::string>(*in);
-    format_utils::CheckFooter(*in, checksum);
 
     bytes += in->Length();
     builder.Merge(DocumentMask::Read(blob.data(), blob.size()));

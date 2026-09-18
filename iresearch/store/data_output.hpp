@@ -84,6 +84,15 @@ class BufferedOutput : public DataOutput {
   void WriteV32(uint32_t n) final { WriteNumV(n); }
   void WriteV64(uint64_t n) final { WriteNumV(n); }
 
+  byte_type* Reserve(size_t len) noexcept {
+    if (Remain() < len) {
+      return nullptr;
+    }
+    auto* buf = _pos;
+    _pos += len;
+    return buf;
+  }
+
  protected:
   explicit BufferedOutput(byte_type* pos, byte_type* end) noexcept
     : _buf{pos}, _pos{pos}, _end{end} {}

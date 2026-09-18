@@ -18,25 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/fill/docs_mask.hpp"
+#include "iresearch/search/fill/impl.hpp"
+#include "iresearch/search/fill/make.hpp"
+#include "iresearch/search/queries/docs_mask_query.hpp"
 
-#include "iresearch/index/index_meta.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/type_limits.hpp"
+namespace irs::fill {
 
-namespace irs::probe {
+Node::ptr Make(const DocsMaskQuery& query) {
+  return memory::make_managed<Impl<DocsMask>>(query.Segment());
+}
 
-class MaskDocs {
- public:
-  explicit MaskDocs(MaskedDocsIterator&& it_mask) noexcept
-    : _it_mask{std::move(it_mask)} {}
-
-  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t doc) noexcept {
-    return doc == _it_mask.Seek(doc) ? doc : doc + 1;
-  }
-
- private:
-  MaskedDocsIterator _it_mask;
-};
-
-}  // namespace irs::probe
+}  // namespace irs::fill

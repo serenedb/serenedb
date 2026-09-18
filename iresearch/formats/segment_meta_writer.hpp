@@ -65,9 +65,20 @@ inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
 
 struct DocsMaskWriter {
   static constexpr std::string_view kFormatExt = "dm";
-  static constexpr std::string_view kFormatName = "iresearch_10_docs_mask";
-  static constexpr int32_t kFormatVersion = 0;
 };
+
+inline void WriteDocumentMask(IndexOutput& out, const DocumentMask& mask) {
+  const auto size = mask.ByteSize();
+  SDB_ASSERT(size < std::numeric_limits<uint32_t>::max());
+  out.WriteV32(static_cast<uint32_t>(size));
+  if (auto* buf = out.Reserve(size); buf != nullptr) {
+    mask.Write(reinterpret_cast<char*>(buf));
+    return;
+  }
+  bstring blob(size, 0);
+  mask.Write(reinterpret_cast<char*>(blob.data()));
+  out.WriteData(blob.data(), size);
+}
 
 inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
                                   const DocumentMask* patch) {
@@ -106,12 +117,7 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
     throw IoError{absl::StrCat("failed to create file, path: ", name)};
   }
 
-  const auto& written = append ? *patch : *docs_mask;
-  format_utils::WriteHeader(*out, DocsMaskWriter::kFormatName,
-                            DocsMaskWriter::kFormatVersion);
-  std::string blob(written.ByteSize(), '\0');
-  WriteStr(*out, blob.data(), written.Write(blob.data()));
-  format_utils::WriteFooter(*out);
+  WriteDocumentMask(*out, append ? *patch : *docs_mask);
 
   return chain_size + out->Position();
 }
@@ -159,8 +165,7 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     out->WriteV32(uncommitted_count);
     out->WriteV32(meta.docs_mask_files);
     if (meta.docs_mask_files == 0 && removal_count != uncommitted_count) {
-      std::string blob(meta.docs_mask->ByteSize(), '\0');
-      WriteStr(*out, blob.data(), meta.docs_mask->Write(blob.data()));
+      WriteDocumentMask(*out, *meta.docs_mask);
     }
   }
   out->WriteV64(size_without_mask);

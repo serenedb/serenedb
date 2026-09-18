@@ -104,6 +104,7 @@ set(IResearch_core_sources
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
     ./search/filters/filter.cpp
+    ./search/filters/docs_mask_filter.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
     ./search/filters/prefix_filter.cpp
@@ -118,6 +119,7 @@ set(IResearch_core_sources
     ./search/count/make_hnsw.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
+    ./search/count/make_docs_mask.cpp
     ./search/count/make_boolean.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
@@ -134,7 +136,6 @@ set(IResearch_core_sources
     ./search/count/make_geo_contains.cpp
     ./search/count/make_geo_is_contained.cpp
     ./search/count/make_geo_distance.cpp
-    ./search/count/make_masked.cpp
     ./search/count/make_term_counts.cpp
     ./search/lead/make.cpp
     ./search/lead/make_hnsw.cpp
@@ -187,6 +188,7 @@ set(IResearch_core_sources
     ./search/probe/make_posting_scored.cpp
     ./search/probe/make_single_posting_scored.cpp
     ./search/probe/make_all_docs.cpp
+    ./search/probe/make_docs_mask.cpp
     ./search/probe/make_all_scored.cpp
     ./search/probe/make_boolean.cpp
     ./search/probe/make_boolean_sparse.cpp
@@ -225,6 +227,7 @@ set(IResearch_core_sources
     ./search/fill/make_single_posting_docs.cpp
     ./search/fill/make_single_posting_scored.cpp
     ./search/fill/make_all_docs.cpp
+    ./search/fill/make_docs_mask.cpp
     ./search/fill/make_all_scored.cpp
     ./search/fill/make_boolean.cpp
     ./search/fill/make_boolean_scored.cpp
@@ -315,7 +318,6 @@ set(IResearch_core_sources
     ./search/top/make_geo_contains.cpp
     ./search/top/make_geo_is_contained.cpp
     ./search/top/make_geo_distance.cpp
-    ./search/top/make_masked.cpp
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp

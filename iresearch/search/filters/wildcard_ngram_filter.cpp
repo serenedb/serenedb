@@ -138,9 +138,6 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
     if (opts.matcher) {
       const auto* col_reader = segment.GetColReader();
       if (!col_reader || !col_reader->Column(opts.store_field_id)) {
-        if (ctx.collector != nullptr) {
-          ctx.collector->Retain(std::move(approx));
-        }
         return QueryBuilder::Empty();
       }
     }

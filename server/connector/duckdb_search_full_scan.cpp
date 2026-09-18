@@ -1824,13 +1824,28 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         // This pool is not about precision: a lookup filter drops rows after
         // the collector, so the over-fetch has to cover everything the search
         // can return or the query yields fewer than k. It stands whatever the
-        // rescore says. For HNSW that ceiling is the beam; an IVF probe has no
-        // beam, and ef_search is populated from the HNSW knob for every kind,
-        // so reading it here would inflate an IVF pool to 64 by default.
+        // rescore says.
+        //
+        // For HNSW the ceiling is the beam, which is a real bound on what the
+        // search can hand back. An IVF probe has no such ceiling -- what it can
+        // return is every document in the clusters it probed -- so there is no
+        // honest number to read, and `ef_search` is the wrong one to borrow
+        // because it is populated from the HNSW knob whatever the index kind.
+        //
+        // What it had instead was `k`, which absorbs no drops at all: a lookup
+        // filter that rejects the k nearest returns nothing. That was masked
+        // while `auto` gave IVF an oversample of four and became visible the
+        // moment it did not.
+        //
+        // So IVF over-fetches by a factor. It is a guess at selectivity, and a
+        // selective enough filter still empties it -- the real answer is to
+        // widen the probe set until k survive, which is why that is filed
+        // separately. This only has to stop the common case being wrong.
+        constexpr double kLookupFilterOverfetch = 4.0;
         const double reachable =
           state->vector_scorer->kind == irs::AnnKind::Hnsw
             ? static_cast<double>(state->vector_scorer->ef_search)
-            : 0.0;
+            : k * kLookupFilterOverfetch;
         pool = std::max(pool, std::max(k, reachable));
       }
       state->topk.rerank_pool =

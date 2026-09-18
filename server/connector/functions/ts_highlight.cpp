@@ -492,10 +492,8 @@ duckdb::string_t RenderPassages(duckdb::Vector& result, std::string_view doc,
 void RenderChunk(HighlightState& state, duckdb::DataChunk& args,
                  const highlight::HighlightOptions& opts,
                  duckdb::Vector& result) {
-  auto& list_child = duckdb::ListVector::GetEntry(args.data[1]);
-  const auto child_size = duckdb::ListVector::GetListSize(args.data[1]);
   duckdb::UnifiedVectorFormat child_format;
-  list_child.ToUnifiedFormat(child_size, child_format);
+  duckdb::ListVector::GetChild(args.data[1]).ToUnifiedFormat(child_format);
   const auto* child_data =
     duckdb::UnifiedVectorFormat::GetData<int32_t>(child_format);
 

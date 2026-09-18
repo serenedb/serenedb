@@ -824,10 +824,10 @@ std::string RenderMarkdown(std::string_view markdown, int32_t width, bool color,
 namespace {
 
 template<typename T>
-duckdb::Vector Defaulted(duckdb::Vector& input, duckdb::idx_t count,
+duckdb::Vector Defaulted(const duckdb::Vector& input, duckdb::idx_t count,
                          T fallback) {
   duckdb::UnifiedVectorFormat source;
-  input.ToUnifiedFormat(count, source);
+  input.ToUnifiedFormat(source);
   const auto* values = duckdb::UnifiedVectorFormat::GetData<T>(source);
   duckdb::Vector out{input.GetType()};
   auto* target = duckdb::FlatVector::GetDataMutable<T>(out);

@@ -128,9 +128,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
 // The elements of a LIST argument, read once so a per-row lambda can walk them.
 class ListElements {
  public:
-  explicit ListElements(duckdb::Vector& list) {
-    auto& child = duckdb::ListVector::GetEntry(list);
-    child.ToUnifiedFormat(duckdb::ListVector::GetListSize(list), _format);
+  explicit ListElements(const duckdb::Vector& list) {
+    duckdb::ListVector::GetChild(list).ToUnifiedFormat(_format);
     _data = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format);
   }
 

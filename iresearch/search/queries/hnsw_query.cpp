@@ -375,28 +375,37 @@ inline constexpr uint32_t kCountSampleWindows = 8;
 inline constexpr long double kScanPrefixPool = 8;
 
 // What one scanned row costs against one walked candidate. They are not the
-// same work: the scan reads the codes in order, in batches, and the distance
-// kernel runs over a contiguous stream it can prefetch, while every walked
-// candidate arrives through a random read, loads its links, and pays the
-// visited set and two heaps. Counting the two as one -- which is what this
-// was before -- makes the plan walk where scanning is both faster and exact.
+// same work, and the difference is not a constant. Both read one row's codes,
+// so both carry `record_size` bytes; on top of that a walked candidate arrives
+// through a random read, loads its links, and pays the visited set and two
+// heaps, while a scanned row arrives in a batch off a stream the distance
+// kernel prefetches. That fixed extra is what this measures, in bytes of code
+// read, so the ratio is `record / (record + kWalkCandidateOverhead)`: near
+// zero for short codes, where the overhead is everything, and approaching one
+// for long ones, where both plans are just reading vectors.
 //
-// Calibrated by forcing both plans over a million clustered rows in three
-// segments, sq8, d=128, one thread, across seven predicates (term and
-// columnstore, 1% to 20%) and four beams (k=ef in 10, 10/64, 100, 1000).
-// Writing the decision in terms of `walk / matches`, the two plans are:
+// Calibrated by forcing both plans and reading off where they cross, over
+// clustered corpora, sq8, one thread, six predicates (term index and
+// columnstore, 1% to 20% selectivity) and four beams. Writing the decision as
+// `walk / matches`, the crossover bracket came out:
 //
-//   ratio <= 0.24   walk wins, by up to 3x at 20% selectivity
-//   ratio >= 0.60   scan wins, by 10% to 100%
+//   d=128,  1M rows, 3 segments   walk wins <= 0.24    scan wins >= 0.60
+//   d=1024, 300k rows, 2 segments walk wins <= 0.53    scan wins >= 1.33
 //
-// with nothing measured in between. This constant is that crossover, and it
-// puts all twenty-eight cells on the right side. The scan is exact, so every
-// cell it takes over also comes back at recall 1.000 where the walk was at
-// 0.996 to 0.999.
-inline constexpr long double kScanCandidateCost = 0.4L;
+// One overhead fits both: 0.40 lands inside the first bracket and 0.84 inside
+// the second. Getting this wrong is worth 10% to 31% -- the flat 1.0 this
+// replaces gave that up on seven of twenty-eight cells at d=128, and a flat
+// 0.4 would give up 10% on two of twenty-four at d=1024.
+inline constexpr long double kWalkCandidateOverhead = 192;
+
+long double ScanCandidateCost(uint32_t record_size) noexcept {
+  const auto r = static_cast<long double>(record_size);
+  return r / (r + kWalkCandidateOverhead);
+}
 
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
-                    uint32_t parallel = 1, bool prefix = false) noexcept {
+                    uint32_t record_size, uint32_t parallel = 1,
+                    bool prefix = false) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
@@ -405,7 +414,8 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   // through the graph, so only the scan's side of the comparison shrinks. A
   // scan that ranks on a prefix of each code reads a quarter of the rows it
   // scores, and scores a pool of them in full on top.
-  long double scan = static_cast<long double>(matches) * kScanCandidateCost;
+  long double scan =
+    static_cast<long double>(matches) * ScanCandidateCost(record_size);
   if (prefix) {
     scan = scan / 4 + kScanPrefixPool * ef;
   }
@@ -630,7 +640,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   }
   auto mode = _filter_mode;
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
-    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size())
+    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size)
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
@@ -760,8 +770,8 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   // enough for a quarter of one to be fewer cache lines (HnswScanWords).
   const bool prefix = _codebook != nullptr && _d >= 512;
   if (_filter_mode != HnswFilterMode::Scan &&
-      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), parallel,
-                      prefix)) {
+      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
+                      parallel, prefix)) {
     return std::nullopt;
   }
   return matches;

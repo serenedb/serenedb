@@ -139,11 +139,10 @@ void PushHits(StreamLocalState& l) {
       return;
     }
     const auto max = first + static_cast<irs::doc_id_t>(span);
-    uint32_t n = 0;
-    while (l.stage_at + n != l.stage_len &&
-           l.stage_docs[l.stage_at + n] < max) {
-      ++n;
-    }
+    const auto* const at = l.stage_docs.data() + l.stage_at;
+    const auto* const end = l.stage_docs.data() + l.stage_len;
+    const auto n = static_cast<uint32_t>(
+      (end[-1] < max ? end : std::lower_bound(at, end, max)) - at);
     SDB_ASSERT(n != 0);
     std::copy_n(l.stage_docs.data() + l.stage_at, n, batcher.WindowHead());
     if (l.scored) {

@@ -24,6 +24,7 @@
 
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/memory.hpp"
 
@@ -40,18 +41,20 @@ uint32_t MaskedCount(const SubReader& segment) noexcept {
 
 }  // namespace
 
-QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query, const SubReader& segment,
+QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
+                               const SubReader& segment,
                                IResourceManager& memory,
                                PrepareCollector* collector, bool needs_terms) {
-  if (!query || QueryBuilder::IsEmpty(*query)) {
-    return query;
-  }
   const auto masked = MaskedCount(segment);
-  if (masked == 0) {
+  if (masked == 0 || (query && QueryBuilder::IsEmpty(*query))) {
     return query;
   }
-  BooleanBuilder builder{segment,   memory,    0, kNoBoost, ScoreMergeType::Sum,
-                         collector, needs_terms};
+  if (!query) {
+    static const All kAll;
+    query = kAll.PrepareSegment(segment, {.memory = memory});
+  }
+  BooleanBuilder builder{
+    segment, memory, 0, kNoBoost, ScoreMergeType::Sum, collector, needs_terms};
   builder.Add(std::move(query), Occur::Must);
   builder.Add(memory::make_tracked<DocsMaskQuery>(memory, segment, masked),
               Occur::MustNot);

@@ -26,6 +26,7 @@
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/queries/docs_mask_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -75,13 +76,16 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
                                const SubReader& segment,
                                const PrepareContext& ctx,
                                QueryBuilder::ptr& out) {
-  if (!inner) {
-    return true;
+  if (inner) {
+    auto inner_ctx = ctx;
+    inner_ctx.collector = nullptr;
+    out = inner->PrepareSegment(segment, inner_ctx);
+    if (out == nullptr || QueryBuilder::IsEmpty(*out)) {
+      return false;
+    }
   }
-  auto inner_ctx = ctx;
-  inner_ctx.collector = nullptr;
-  out = inner->PrepareSegment(segment, inner_ctx);
-  return out != nullptr && !QueryBuilder::IsEmpty(*out);
+  out = WithDocsMask(std::move(out), segment, ctx.memory, nullptr, false);
+  return true;
 }
 
 }  // namespace irs

@@ -1606,8 +1606,11 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
     irs::PrepareContext ctx{.collector = collector,
                             .thread = collector != nullptr ? l.thread_slot : 0,
                             .needs_terms = g.needs_terms};
-    q = irs::WithDocsMask(g.filter->PrepareSegment(seg, ctx), seg, ctx.memory,
-                          collector, g.needs_terms);
+    q = g.filter->PrepareSegment(seg, ctx);
+    if (!g.vector_scorer) {
+      q = irs::WithDocsMask(std::move(q), seg, ctx.memory, collector,
+                            g.needs_terms);
+    }
   }
   return *q;
 }

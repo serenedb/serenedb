@@ -15,6 +15,13 @@ control substitution on
 # reason inverted_index_hnsw_small.test pins quant = 'none'.
 # ============================================================================
 
+# TurboQuant is coarse enough that a pool of k cannot rank it deterministically,
+# and `auto` gives it a factor of one. This file is about the codes, not about
+# what the default spends, so the pool is pinned.
+
+statement ok
+SET sdb_ann_oversample = 4
+
 statement ok
 CREATE TABLE hnsw_tq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
 

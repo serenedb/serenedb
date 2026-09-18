@@ -160,6 +160,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // it widens, because the beam is captured when the filter is built and the
   // pool is read long after; see IResearchScanInitGlobal.
   double rerank_pool_k = 0.0;
+  /// True when `rerank_pool_k` came from AutoOversample rather than from the
+  /// user. A value the engine chose may be raised to cover a lookup filter; a
+  /// value the user wrote is left exactly as written.
+  bool rerank_pool_auto = false;
   // Covered (INCLUDE'd) `.col` filters, verified in-scan against what the
   // plan produced (codec Filter + zonemap). `field` keys the segment
   // columnstore; `filter` is the pushed ExpressionFilter. Empty => no `.col`

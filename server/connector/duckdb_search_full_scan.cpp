@@ -1586,7 +1586,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // reason; docs/hnsw-parity.md in vectorbench has the mapping.
       const auto k = static_cast<double>(*state->score_top_k);
       auto factor = ReadAnnOversample(context);
-      if (factor < 0.0) {
+      const bool chosen_here = factor < 0.0;
+      if (chosen_here) {
         factor = AutoOversample(vs);
       }
       double pool = 0.0;
@@ -1594,6 +1595,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         pool = std::max(k, std::ceil(factor * k));
       }
       state->rerank_pool_k = pool;
+      state->rerank_pool_auto = chosen_here;
       // HNSW is the one kind whose search can return fewer candidates than
       // asked for: the beam caps it. Raising the floor to the pool is not a
       // different meaning of the knob, it is what makes the meaning hold here.
@@ -1841,11 +1843,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         // selective enough filter still empties it -- the real answer is to
         // widen the probe set until k survive, which is why that is filed
         // separately. This only has to stop the common case being wrong.
+        // Only where the engine chose the oversample. A value the user wrote
+        // is a statement about how much work they want done and is left
+        // exactly as written -- raising it silently would make the knob
+        // unusable for the one case where its effect is most visible.
         constexpr double kLookupFilterOverfetch = 4.0;
         const double reachable =
           state->vector_scorer->kind == irs::AnnKind::Hnsw
             ? static_cast<double>(state->vector_scorer->ef_search)
-            : k * kLookupFilterOverfetch;
+            : (state->rerank_pool_auto ? k * kLookupFilterOverfetch : 0.0);
         pool = std::max(pool, std::max(k, reachable));
       }
       state->topk.rerank_pool =

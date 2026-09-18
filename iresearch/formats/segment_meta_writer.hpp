@@ -171,9 +171,10 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
   out->WriteV32(removal_count);
   if (removal_count != 0) {
     const auto uncommitted_count = UncommittedCount(meta);
+    const auto scattered_count = removal_count - uncommitted_count;
     out->WriteV32(uncommitted_count);
     out->WriteV32(meta.docs_mask_files);
-    if (meta.docs_mask_files == 0 && removal_count != uncommitted_count) {
+    if (meta.docs_mask_files == 0 && scattered_count != 0) {
       WriteDocumentMask(*out, compressed);
     }
   }

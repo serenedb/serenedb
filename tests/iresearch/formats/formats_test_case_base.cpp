@@ -1033,8 +1033,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(56, irs::RemovalCount(read_meta));
       ASSERT_EQ(400, read_meta.uncommitted_begin);
 
-      auto it_mask = irs::MaskedDocsIterator{read_meta.docs_mask.get(),
-                                             read_meta.uncommitted_begin};
+      auto it_mask = irs::DocumentMask::Iterator{read_meta.docs_mask.get(),
+                                                 read_meta.uncommitted_begin};
       ASSERT_EQ(42, it_mask.Seek(42));
       ASSERT_EQ(100, it_mask.Seek(43));
       ASSERT_EQ(400, it_mask.Seek(399));

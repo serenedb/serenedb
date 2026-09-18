@@ -726,17 +726,17 @@ class IndexWriter : private util::Noncopyable {
     void Reset() noexcept;
   };
 
-  void Cleanup(FlushContext& curr, FlushContext* next = nullptr) noexcept;
+  void Cleanup(FlushContext& curr) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     uint64_t tick{writer_limits::kMinTick};
 
-    void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
+    void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
         std::lock_guard lock{writer._compacting.lock};
-        writer.Cleanup(*curr, keep_next ? nullptr : curr->next);
+        writer.Cleanup(*curr);
       }
     }
   };

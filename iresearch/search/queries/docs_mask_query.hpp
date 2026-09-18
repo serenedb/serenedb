@@ -37,4 +37,9 @@ class DocsMaskQuery : public QueryBuilderImpl<DocsMaskQuery> {
   score_t Boost() const noexcept final { return kNoBoost; }
 };
 
+QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
+                               const SubReader& segment,
+                               IResourceManager& memory,
+                               PrepareCollector* collector, bool needs_terms);
+
 }  // namespace irs

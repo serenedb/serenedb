@@ -109,12 +109,15 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   const auto live_docs_count = in->ReadV32();
   const auto mask_count = in->ReadV32();
   doc_id_t uncommitted_count = 0;
+  doc_id_t scattered_count = 0;
   uint32_t docs_mask_files = 0;
   std::string inline_mask;
   if (mask_count != 0) {
     uncommitted_count = in->ReadV32();
     docs_mask_files = in->ReadV32();
-    if (docs_mask_files == 0 && mask_count != uncommitted_count) {
+    SDB_ASSERT(mask_count >= uncommitted_count);
+    scattered_count = mask_count - uncommitted_count;
+    if (docs_mask_files == 0 && scattered_count != 0) {
       inline_mask = ReadString<std::string>(*in);
     }
   }
@@ -134,8 +137,6 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
                                   ") > version(", segment_version, ") + 1")};
   }
 
-  SDB_ASSERT(mask_count >= uncommitted_count);
-  const auto scattered_count = mask_count - uncommitted_count;
   auto [docs_mask, docs_mask_size] =
     inline_mask.empty()
       ? ReadDocumentMask(dir, name, segment_version, docs_mask_files,

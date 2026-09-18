@@ -18,11 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/filters/docs_mask_filter.hpp"
-
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/docs_mask_query.hpp"
+
+#include <utility>
+
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/memory.hpp"
 
 namespace irs {
@@ -38,20 +40,22 @@ uint32_t MaskedCount(const SubReader& segment) noexcept {
 
 }  // namespace
 
-QueryBuilder::ptr DocsMaskFilter::PrepareSegment(
-  const SubReader& segment, const PrepareContext& ctx) const {
+QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query, const SubReader& segment,
+                               IResourceManager& memory,
+                               PrepareCollector* collector, bool needs_terms) {
+  if (!query || QueryBuilder::IsEmpty(*query)) {
+    return query;
+  }
   const auto masked = MaskedCount(segment);
   if (masked == 0) {
-    return QueryBuilder::Empty();
+    return query;
   }
-  return memory::make_tracked<DocsMaskQuery>(ctx.memory, segment, masked);
-}
-
-Filter::ptr WithDocsMask(Filter::ptr base) {
-  auto masked = std::make_unique<BooleanFilter>();
-  masked->Add(std::move(base), Occur::Must);
-  masked->Add(std::make_unique<DocsMaskFilter>(), Occur::MustNot);
-  return masked;
+  BooleanBuilder builder{segment,   memory,    0, kNoBoost, ScoreMergeType::Sum,
+                         collector, needs_terms};
+  builder.Add(std::move(query), Occur::Must);
+  builder.Add(memory::make_tracked<DocsMaskQuery>(memory, segment, masked),
+              Occur::MustNot);
+  return builder.Finish();
 }
 
 }  // namespace irs

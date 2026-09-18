@@ -665,7 +665,7 @@ void BmRoaringSeekRaw(benchmark::State& state) {
   size_t hits = 0;
 
   for (auto _ : state) {
-    auto it = mask.Set().Begin();
+    irs::DocumentMask::Iterator it{&mask.Set()};
     hits = 0;
     for (const auto doc : candidates) {
       hits += static_cast<size_t>(it.Seek(doc) == doc);
@@ -686,7 +686,7 @@ void BmRoaringIteratorInit(benchmark::State& state) {
   const RoaringMask mask{Deleted(state.range(0), state.range(1))};
 
   for (auto _ : state) {
-    auto it = mask.Set().Begin();
+    irs::DocumentMask::Iterator it{&mask.Set()};
     benchmark::DoNotOptimize(it.Seek(kBegin));
   }
 }
@@ -822,7 +822,7 @@ BENCHMARK_TEMPLATE(BmLookupScale, 2)->Name("Scale/hashset")->Apply(ScaleArgs);
 BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
-  auto it_mask = mask.Begin();
+  irs::DocumentMask::Iterator it_mask{&mask};
   auto next = it_mask.Seek(kBegin);
   size_t live = 0;
   for (auto doc = kBegin; doc < end; ++doc) {

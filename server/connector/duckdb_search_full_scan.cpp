@@ -59,13 +59,13 @@
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
-#include <iresearch/search/filters/docs_mask_filter.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/make.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -1097,12 +1097,6 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
 
 namespace {
 
-bool AnySegmentMasked(const irs::DirectoryReader& reader) {
-  return absl::c_any_of(reader, [](const irs::SubReader& segment) {
-    return segment.live_docs_count() != segment.docs_count();
-  });
-}
-
 const irs::Filter& MatchAllFilter() {
   static const irs::All kInstance;
   return kInstance;
@@ -1430,18 +1424,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       vs.min_ef =
         ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
     }
-    std::shared_ptr<const irs::Filter> inner = ss.stored_filter;
-    if (!inner && AnySegmentMasked(ss.snapshot->reader)) {
-      inner = irs::WithDocsMask(std::make_unique<irs::All>());
-    }
     state->owned_filter =
-      MakeVectorFilter(vs, std::move(inner), vs.EffectiveRadius());
+      MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
-  } else if (ss.stored_filter) {
-    state->filter = ss.stored_filter.get();
   } else {
-    state->owned_filter = irs::WithDocsMask(std::make_unique<irs::All>());
-    state->filter = state->owned_filter.get();
+    state->filter =
+      ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
   }
   state->queries.resize(ss.snapshot->reader.size());
 
@@ -1615,10 +1603,11 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    q = g.filter->PrepareSegment(
-      seg, {.collector = collector,
-            .thread = collector != nullptr ? l.thread_slot : 0,
-            .needs_terms = g.needs_terms});
+    irs::PrepareContext ctx{.collector = collector,
+                            .thread = collector != nullptr ? l.thread_slot : 0,
+                            .needs_terms = g.needs_terms};
+    q = irs::WithDocsMask(g.filter->PrepareSegment(seg, ctx), seg, ctx.memory,
+                          collector, g.needs_terms);
   }
   return *q;
 }

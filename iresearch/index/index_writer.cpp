@@ -418,15 +418,15 @@ std::vector<std::string_view> GetFilesToSync(
   std::span<const IndexSegment> segments,
   std::span<const PartialSync> partial_sync, size_t partial_sync_threshold) {
   // TODO(gnusi): make format dependent?
-  static constexpr size_t kMaxFilesPerSegment = 16;
+  static constexpr size_t kMaxFilesPerSegment = 14;
 
   SDB_ASSERT(partial_sync_threshold <= segments.size());
   const size_t full_sync_count = segments.size() - partial_sync_threshold;
 
   std::vector<std::string_view> files_to_sync;
   // +1 for index meta
-  files_to_sync.reserve(1 + (partial_sync.size() + full_sync_count) *
-                              kMaxFilesPerSegment);
+  files_to_sync.reserve(1 + 2 * partial_sync.size() +
+                        full_sync_count * kMaxFilesPerSegment);
 
   for (auto sync : partial_sync) {
     SDB_ASSERT(sync.segment_index < partial_sync_threshold);
@@ -434,9 +434,9 @@ std::vector<std::string_view> GetFilesToSync(
     files_to_sync.emplace_back(segment.filename);
     const auto& files = segment.meta.files;
     SDB_ASSERT(segment.meta.docs_mask_files <= files.size());
-    files_to_sync.insert(files_to_sync.end(),
-                         files.end() - segment.meta.docs_mask_files,
-                         files.end());
+    if (segment.meta.docs_mask_files != 0) {
+      files_to_sync.emplace_back(files.back());
+    }
   }
 
   std::for_each(segments.begin() + partial_sync_threshold, segments.end(),
@@ -810,19 +810,11 @@ void IndexWriter::FlushContext::Reset() noexcept {
   dir->clear_refs();
 }
 
-void IndexWriter::Cleanup(FlushContext& curr, FlushContext* next) noexcept {
+void IndexWriter::Cleanup(FlushContext& curr) noexcept {
   for (auto& import : curr.imports) {
     auto& candidates = import.compaction_ctx.candidates;
     for (const auto* candidate : candidates) {
       _compacting.segments.erase(candidate->Meta().name);
-    }
-  }
-  for (const auto& entry : curr.cached) {
-    _compacting.segments.erase(entry.second->Meta().name);
-  }
-  if (next != nullptr) {
-    for (const auto& entry : next->cached) {
-      _compacting.segments.erase(entry.second->Meta().name);
     }
   }
 }
@@ -1295,21 +1287,19 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // FIXME TODO remove from 'compacting_segments_' any segments in
     // 'committed_state_' or 'pending_state_' to avoid data duplication
     const auto floor = _compacting.floor;
-    if (floor == 0) {
-      policy(candidates, *committed_reader, _compacting.segments);
-    } else {
-      // Hide the backfill-protected segments from the policy
-      // TODO(Dronplane): maybe make it member and not refill every run?
-      CompactingSegments unavailable = _compacting.segments;
-      for (const auto& segment : *committed_reader) {
-        uint64_t id = 0;
-        const auto& name = segment.Meta().name;
-        if (ParseSegmentId(name, id) && id <= floor) {
-          unavailable.insert(name);
-        }
+    // TODO(Dronplane): maybe make it member and not refill every run?
+    CompactingSegments unavailable = _compacting.segments;
+    for (const auto& segment : *committed_reader) {
+      const auto& meta = segment.Meta();
+      uint64_t id = 0;
+      if (HasUncommitted(meta) ||
+          (floor != 0 && ParseSegmentId(meta.name, id) && id <= floor)) {
+        unavailable.insert(meta.name);
       }
-      policy(candidates, *committed_reader, unavailable);
+    }
+    policy(candidates, *committed_reader, unavailable);
 
+    if (floor != 0) {
       // TODO(Dronplane): should it be an assert?
       std::erase_if(candidates, [floor](const SubReader* candidate) {
         uint64_t id = 0;
@@ -2370,15 +2360,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   InitMeta(pending_meta, LimitTick(tick, flushed_tick));
 
-  if (!next_cached.empty()) {
-    cleanup_lock.lock();
-    _compacting.segments.reserve(_compacting.segments.size() +
-                                 next_cached.size());
-    for (const auto& entry : next_cached) {
-      _compacting.segments.emplace(entry.second->Meta().name);
-    }
-  }
-
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
                 .tick = LimitTick(tick, _committed_tick)},
@@ -2454,7 +2435,6 @@ bool IndexWriter::Start(const CommitInfo& info) {
     }
   };
 
-  // TODO(mbkkt) error here means we don't remove cached from compacting
   ApplyFlush(std::move(to_commit));
 
   return true;
@@ -2474,7 +2454,7 @@ void IndexWriter::Finish() {
   }
 
   // noexcept part!
-  _pending_state.StartReset(*this, true);
+  _pending_state.StartReset(*this);
   SDB_ASSERT(_pending_state.tick != writer_limits::kMaxTick);
   _committed_tick = _pending_state.tick;
   // after this line transaction is successful (only noexcept operations below)

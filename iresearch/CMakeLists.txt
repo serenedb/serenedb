@@ -105,7 +105,7 @@ set(IResearch_core_sources
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
     ./search/filters/filter.cpp
-    ./search/filters/docs_mask_filter.cpp
+    ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
     ./search/filters/prefix_filter.cpp

@@ -753,7 +753,7 @@ TEST(lazy_bitset_test, drops_a_masked_tail) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::MaskedDocsIterator{&removals, kTail}};
+                              irs::DocumentMask::Iterator{&removals, kTail}};
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_FALSE(set.Contains(64));

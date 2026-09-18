@@ -85,6 +85,10 @@ inline bool HasRemovals(const SegmentInfo& meta) noexcept {
   return meta.live_docs_count != meta.docs_count;
 }
 
+inline bool HasUncommitted(const SegmentInfo& meta) noexcept {
+  return meta.uncommitted_begin != doc_limits::eof();
+}
+
 static_assert(std::is_nothrow_move_constructible_v<SegmentMeta>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentMeta>);
 

@@ -182,7 +182,7 @@ void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 class MaskedPostings : public irs::TermPostings {
  public:
   MaskedPostings(irs::TermPostings::ptr&& postings,
-                 irs::MaskedDocsIterator&& it_mask) noexcept
+                 irs::DocumentMask::Iterator&& it_mask) noexcept
     : _postings{std::move(postings)}, _it_mask{std::move(it_mask)} {}
 
   irs::doc_id_t Next() final {
@@ -198,7 +198,7 @@ class MaskedPostings : public irs::TermPostings {
 
  private:
   irs::TermPostings::ptr _postings;
-  irs::MaskedDocsIterator _it_mask;
+  irs::DocumentMask::Iterator _it_mask;
 };
 
 inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,

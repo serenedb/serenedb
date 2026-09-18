@@ -1130,56 +1130,36 @@ void EnsurePlanned(bool planned) {
     ERR_MSG("this search predicate has no index plan for this scan"));
 }
 
-// -1 asks the engine to choose, by quantizer. HNSW accepts none, sq8, sq4 and
-// tq; pq and rabitq are IVF's and go through sdb_rerank_factor.
-//
-// How many candidates `auto` re-scores at minimum. A multiple of k is the
-// wrong shape on its own at small k: how many codes can be misranked ahead of
-// the true answer follows the quantizer's error, not the number of rows asked
-// for, so `LIMIT 1` at an oversample of 2 re-scores two candidates and returns
-// the wrong row. An explicit oversample is left exactly as written -- this
-// floor applies only where the engine chose the value.
-inline constexpr double kAutoMinRescorePool = 16.0;
-
-// Measured on two fixtures, both asking for an exact small top-k:
-//
-//   one-hot (inverted_index_hnsw_tq.test, 64 rows on 8 axes) -- neighbours a
-//   whole axis or magnitude step apart, so codes separate them easily:
-//     sq8 and sq4 exact even at 0; tq needs 1.0 at 1, 4 and 5 bits, 2.0 at 2
-//     and 3.
-//
-//   collinear (inverted_index_ann_prepared.test, 512 points at x = i on one
-//   axis) -- neighbours one unit apart while sq8's step over that range is two
-//   units, so the codes cannot tell adjacent points apart at all:
-//     sq8 is wrong at 0, right as soon as anything is re-scored.
-//
-// The collinear case binds, and is why `auto` re-scores for every quantizer
-// rather than following Qdrant and Elasticsearch, both of which leave scalar
-// codes unrescored by default. Being right here is cheap: the floor above is
-// sixteen vectors, against a beam that already reads dozens of codes and the
-// graph around them. TurboQuant gets 2.0 because it needed it at two widths.
-// The non-monotonicity in the tq row is real rather than noise -- 3 and 5 bits
-// are full TurboQuant with the QJL refinement stage, 1, 2 and 4 are MSE-only.
+// -1 asks the engine to choose; see AutoOversample.
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
-  // How coarse the codes are decides whether a query needs re-scoring at all;
-  // that part is the same for both structures. How wide the pool has to be is
-  // not: an HNSW query already has a beam holding ef_search candidates and the
-  // pool only chooses among them, while an IVF probe has no beam, so its pool
-  // *is* its candidate set and has to stand in for one. Four was IVF's
-  // standing default for exactly that reason.
-  const double width = vs.kind == irs::AnnKind::Hnsw ? 1.0 : 4.0;
+  // Auto is 0 or 1 and never more: a default decides *whether* to re-score,
+  // not how much to spend on it. 1 gives every segment its own pool, re-scored
+  // exactly, with only real scores crossing a segment boundary -- Qdrant's
+  // property. 0 lets quantized scores merge across segments directly.
+  //
+  // Which side a quantizer falls on is measured rather than read off its bit
+  // count. On 120k x 64, eight segments, k=10, moving from 0 to 1 gains:
+  //
+  //     sq8   +0.018 hnsw  +0.021 ivf     sq4     +0.298  +0.318
+  //     usq8  +0.020       +0.025         usq4    +0.347  +0.363
+  //                                       pq          --  +0.442
+  //                                       rabitq3 +0.265  +0.281
+  //                                       tq3     +0.360  +0.418
+  //
+  // Eight-bit codes rank well enough alone that re-scoring buys two points of
+  // recall for the reads it costs, which is not a trade to make for everyone
+  // by default. Every narrower code is unusable without it.
   switch (vs.quant) {
-    case irs::VectorQuantization::TQ:
-      return 2.0 * width;
+    case irs::VectorQuantization::None:
     case irs::VectorQuantization::SQ8:
-    case irs::VectorQuantization::SQ4:
     case irs::VectorQuantization::USQ8:
+      return 0.0;
+    case irs::VectorQuantization::SQ4:
     case irs::VectorQuantization::USQ4:
     case irs::VectorQuantization::PQ:
     case irs::VectorQuantization::RaBitQ:
-      return width;
-    case irs::VectorQuantization::None:
-      return 0.0;  // nothing to re-score
+    case irs::VectorQuantization::TQ:
+      return 1.0;
   }
   return 0.0;
 }
@@ -1606,16 +1586,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // reason; docs/hnsw-parity.md in vectorbench has the mapping.
       const auto k = static_cast<double>(*state->score_top_k);
       auto factor = ReadAnnOversample(context);
-      const bool chosen_here = factor < 0.0;
-      if (chosen_here) {
+      if (factor < 0.0) {
         factor = AutoOversample(vs);
       }
       double pool = 0.0;
       if (factor > 0.0) {
         pool = std::max(k, std::ceil(factor * k));
-        if (chosen_here) {
-          pool = std::max(pool, kAutoMinRescorePool);
-        }
       }
       state->rerank_pool_k = pool;
       // HNSW is the one kind whose search can return fewer candidates than

@@ -131,6 +131,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l,
                               &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
   irs::detail::DeadRuns* const table = l.hit_batcher->Skipper();
+  SDB_ASSERT(!share || table == nullptr);
   const auto range = g.RangeOf(l.unit);
   l.scored = g.ScanScore();
   if (share) {
@@ -322,29 +323,24 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         UnitDone(g, l);
       }
     }
-    if (!ClaimUnit(g, l)) {
-      auto joined = JoinCursor(g);
-      if (!joined) {
-        break;
-      }
-      l.unit = {.seg = joined->seg, .rg_begin = 0, .rg_end = 0, .whole = true};
-      l.has_unit = true;
-      l.joined = true;
-      l.Classify(g, l.unit.seg);
-      if (l.seg_cls.segment_dead) {
-        l.has_unit = false;
-        l.joined = false;
-        continue;
-      }
-      StartUnit(g, l, std::move(joined));
+    if (NextLiveUnit(g, l)) {
+      StartUnit(g, l);
       continue;
     }
+    auto joined = JoinCursor(g);
+    if (!joined) {
+      break;
+    }
+    l.unit = {.seg = joined->seg, .rg_begin = 0, .rg_end = 0, .whole = true};
+    l.has_unit = true;
+    l.joined = true;
     l.Classify(g, l.unit.seg);
     if (l.seg_cls.segment_dead) {
-      UnitDone(g, l);
+      l.has_unit = false;
+      l.joined = false;
       continue;
     }
-    StartUnit(g, l);
+    StartUnit(g, l, std::move(joined));
   }
   output.SetChildCardinality(0);
 }

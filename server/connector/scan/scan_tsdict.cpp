@@ -81,9 +81,6 @@ struct TsDictLocalState : public ScanLocalState {
 
   const irs::SubReader* _seg = nullptr;
   const irs::TermReader* _reader = nullptr;
-  irs::SlackBuf<irs::doc_id_t, STANDARD_VECTOR_SIZE,
-                irs::doc_limits::kDocsSlack>
-    _docs;
   ColFilterVerify _col_verify;
   std::unique_ptr<irs::detail::LazyBitset> _live;
   irs::count::TermCounts::ptr _term_counts;
@@ -345,23 +342,22 @@ uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
   _col_verify.Rewind();
   auto& live = Live();
   uint32_t total = 0;
-  std::array<irs::doc_id_t, kPlanBatch> cand_docs;
+  irs::SlackBuf<irs::doc_id_t, kPlanBatch, irs::doc_limits::kDocsSlack> docs;
   for (;;) {
-    const auto read = postings->Run(_docs.data(), kPlanBatch);
+    const auto read = postings->Run(docs.data(), kPlanBatch);
     if (read == 0) {
       return total;
     }
     uint32_t n = 0;
     for (uint32_t i = 0; i != read; ++i) {
-      if (live.Contains(_docs[i])) {
-        cand_docs[n++] = _docs[i];
+      if (live.Contains(docs[i])) {
+        docs[n++] = docs[i];
       }
     }
     if (n == 0) {
       continue;
     }
-    total +=
-      static_cast<uint32_t>(_col_verify.Narrow(cand_docs.data(), nullptr, n));
+    total += static_cast<uint32_t>(_col_verify.Narrow(docs.data(), nullptr, n));
     if (!count_all && total != 0) {
       return 1;
     }
@@ -406,8 +402,9 @@ void TsDictLocalState::StartUnit(ScanGlobalState& g) {
   emitting = false;
   StartSegment((*g.reader)[unit.seg], unit.seg, g);
   _emit_fields = _next_field;
-  counting = !unit.whole && !g.ts_dict_counts.empty() &&
-             count_mode != CountMode::Meta && _emit_fields != nullptr;
+  counting = !unit.whole && count_mode != CountMode::Meta &&
+             _emit_fields != nullptr && _seg_idx < g.ts_dict_counts.size() &&
+             !g.ts_dict_counts[_seg_idx].empty();
   if (!unit.whole && !counting) {
     _next_field = nullptr;
   }
@@ -703,6 +700,12 @@ void BuildTsDictCounts(ScanGlobalState& g) {
   const auto& reader = *g.reader;
   g.ts_dict_counts.resize(reader.size());
   for (const auto seg : g.segment_order) {
+    // A segment claimed whole is counted and emitted by the one worker that
+    // takes it, so an accumulator for it would never be read.
+    if (g.Segment(seg).claim.load(std::memory_order_relaxed) !=
+        SegmentWork::kSplit) {
+      continue;
+    }
     auto& per_field = g.ts_dict_counts[seg];
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {

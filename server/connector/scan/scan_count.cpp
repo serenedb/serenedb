@@ -28,14 +28,9 @@ namespace sdb::connector {
 
 void RunCountScan(duckdb::TableFunctionInput& /*input*/, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
-  while (ClaimUnit(g, l)) {
+  while (NextLiveUnit(g, l)) {
     const auto& unit = l.unit;
     const auto& sub = (*g.reader)[unit.seg];
-    l.Classify(g, unit.seg);
-    if (l.seg_cls.segment_dead) {
-      UnitDone(g, l);
-      continue;
-    }
     if (unit.whole && l.seg_cls.active.empty() && !g.Bind().search.filter &&
         !g.vector_scorer) {
       l.local_count += sub.live_docs_count();

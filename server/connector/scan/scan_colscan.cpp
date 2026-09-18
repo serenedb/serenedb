@@ -135,13 +135,8 @@ void RunColScan(duckdb::ClientContext& /*ctx*/,
       }
       UnitDone(g, l);
     }
-    if (!ClaimUnit(g, l)) {
+    if (!NextLiveUnit(g, l)) {
       break;
-    }
-    l.Classify(g, l.unit.seg);
-    if (l.seg_cls.segment_dead) {
-      UnitDone(g, l);
-      continue;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
     const auto docs = sub.docs_count();

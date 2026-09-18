@@ -257,6 +257,7 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::unique_ptr<SegmentWork[]> segments;
   uint32_t live_segments = 0;
   std::atomic_uint32_t next_segment{0};
+  std::atomic_uint32_t next_steal{0};
   std::vector<ScanUnit> ordered_units;
   std::atomic_uint32_t next_ordered_unit{0};
   std::atomic_uint32_t done_segments{0};
@@ -416,6 +417,9 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
+// Claims the next unit whose segment survives the whole-file column-filter
+// classification, accounting for the ones it steps over.
+bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 // Whether the unit was the last one of its segment. The completion is not
 // published yet: a shape that must expose its per-unit results to the other
 // workers publishes them first, then counts the segments with SegmentsDone.

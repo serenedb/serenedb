@@ -304,28 +304,26 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
   return true;
 }
 
+// A shared cursor over the split segments rather than a sweep of all of them:
+// a row group left anywhere keeps the cursor where it is, and a segment with
+// none is stepped over once for every worker rather than once per attempt. An
+// index of ten thousand segments would otherwise rescan all of them each time
+// a worker came looking.
 bool Steal(ScanGlobalState& g, ScanLocalState& l) {
   for (;;) {
-    uint32_t best = std::numeric_limits<uint32_t>::max();
-    uint32_t best_left = 0;
-    for (const auto seg : g.segment_order) {
-      auto& work = g.Segment(seg);
-      if (work.claim.load(std::memory_order_relaxed) != SegmentWork::kSplit) {
-        continue;
-      }
-      const auto next = work.next_rg.load(std::memory_order_relaxed);
-      const auto left = next < work.rg_count ? work.rg_count - next : 0;
-      if (left > best_left) {
-        best_left = left;
-        best = seg;
-      }
-    }
-    if (best == std::numeric_limits<uint32_t>::max()) {
+    auto i = g.next_steal.load(std::memory_order_relaxed);
+    if (i >= g.live_segments) {
       return false;
     }
-    if (ClaimRowGroup(g, l, best)) {
+    const auto seg = g.segment_order[i];
+    auto& work = g.Segment(seg);
+    if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit &&
+        work.next_rg.load(std::memory_order_relaxed) < work.rg_count &&
+        ClaimRowGroup(g, l, seg)) {
       return true;
     }
+    g.next_steal.compare_exchange_strong(i, i + 1, std::memory_order_relaxed,
+                                         std::memory_order_relaxed);
   }
 }
 
@@ -370,6 +368,17 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
     return true;
   }
   l.units_exhausted = true;
+  return false;
+}
+
+bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
+  while (ClaimUnit(g, l)) {
+    l.Classify(g, l.unit.seg);
+    if (!l.seg_cls.segment_dead) {
+      return true;
+    }
+    UnitDone(g, l);
+  }
   return false;
 }
 

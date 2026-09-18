@@ -38,6 +38,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
 
   using Base::_doc;
   using Base::_docs;
+  using Base::_end;
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
@@ -66,12 +67,14 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
 
     if (meta.docs_count == 1) {
       _doc = this->SetSingle(meta);
-      _leaf = {.bitset = nullptr,
-               .words = 0,
-               .max = _last,
-               .kind = FormatTraits128::FillLeaf::Kind::Docs};
+      _leaf = {
+        .bitset = nullptr,
+        .words = 0,
+        .max = _last,
+        .kind = FormatTraits128::FillLeaf::Kind::Docs,
+        .len = 1,
+      };
       _leaf_base = _last - 1;
-      _leaf_len = 1;
       return;
     }
 
@@ -142,7 +145,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       const auto len = std::min(_left_in_list, kBlock);
       const auto base = _last;
       const auto leaf =
-        FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, base);
+        FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, base, _end);
       _left_in_list -= len;
       _last = leaf.max;
 
@@ -155,7 +158,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
         if constexpr (!Scored) {
           if (base >= min) [[likely]] {
             const auto live = FormatTraits128::MaskLeaf<Clear>(
-              leaf, base, len, min, max, mask, std::end(_docs));
+              leaf, base, leaf.len, min, max, mask, std::end(_docs));
             SkipFreqs(len);
             if (live == 0) {
               continue;
@@ -164,12 +167,15 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
             return _doc = *(std::end(_docs) - live);
           }
         }
-        Materialize(leaf, base, len);
+        Materialize(leaf, base, leaf.len);
       }
 
       SkipFreqs(len);
 
-      const auto* const begin = Behind(end - len, end, min);
+      if (leaf.len == 0) [[unlikely]] {
+        continue;
+      }
+      const auto* const begin = Behind(end - leaf.len, end, min);
       if (leaf.max < max) {
         if (begin != end) {
           if (end - begin == kBlock) [[likely]] {
@@ -198,7 +204,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return _doc;
     }
 
-    if (_leaf_len != 0 && _last >= min) {
+    if (_leaf.len != 0 && _last >= min) {
       const auto at = AndLeaf(cursor, min, max);
       if (_last >= max) {
         cursor.Settle(limit);
@@ -227,10 +233,9 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   void ReadLeaf() {
     const auto len = std::min(_left_in_list, kBlock);
     _leaf_base = _last;
-    _leaf =
-      FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs, _leaf_base);
+    _leaf = FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs,
+                                             _leaf_base, _end);
     _leaf.bitset = StableBitset(_leaf);
-    _leaf_len = len;
     _left_in_list -= len;
     _last = _leaf.max;
     SkipFreqs(len);
@@ -265,7 +270,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return InLeafFrom(max);
     }
     const auto* const end = std::cend(_docs);
-    const auto* it = Behind(end - _leaf_len, end, min);
+    const auto* it = Behind(end - _leaf.len, end, min);
     it = cursor.AndDocs(lo, hi, it, end, min);
     return it != end ? *it : _last;
   }
@@ -290,7 +295,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return _last;
     }
     const auto* const end = std::cend(_docs);
-    for (const auto* it = end - _leaf_len; it != end; ++it) {
+    for (const auto* it = end - _leaf.len; it != end; ++it) {
       if (*it >= target) {
         return *it;
       }
@@ -363,7 +368,6 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
 
   FormatTraits128::FillLeaf _leaf{};
   doc_id_t _leaf_base = 0;
-  uint32_t _leaf_len = 0;
 };
 
 }  // namespace irs::detail

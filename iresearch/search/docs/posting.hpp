@@ -69,9 +69,9 @@ class Posting : public Root,
       }
       const auto len = std::min(_left_in_list, kBlock);
       auto* const dest = out + emitted;
-      ReadDocs(dest, len);
+      const auto live = ReadDocs(dest, len);
       SkipFreqs(len);
-      emitted += len;
+      emitted += live;
     }
     return emitted;
   }

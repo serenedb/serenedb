@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/bitset_storage.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -32,23 +33,27 @@ namespace irs::probe {
 class BitsetDocs {
  public:
   static constexpr auto kBits = detail::BitsetStorage::kBits;
-  static constexpr auto kMin = detail::BitsetStorage::kMin;
 
   explicit BitsetDocs(detail::BitsetStorage&& set) noexcept
-    : _set{std::move(set)}, _words{_set.Words()}, _count{_set.WordCount()} {}
+    : _set{std::move(set)},
+      _words{_set.Words()},
+      _count{_set.WordCount()},
+      _min{_set.Min()} {}
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
-    const auto offset = target - kMin;
+    SDB_ASSERT(target >= _min);
+    const auto offset = target - _min;
     const auto word = offset / kBits;
     if (word >= _count) [[unlikely]] {
       return doc_limits::eof();
     }
     const auto rest = _words[word] & (~uint64_t{0} << (offset % kBits));
-    return kMin + word * kBits + std::countr_zero(rest);
+    return _min + word * kBits + std::countr_zero(rest);
   }
 
   IRS_FORCE_INLINE bool Test(doc_id_t doc) const noexcept {
-    const auto offset = doc - kMin;
+    SDB_ASSERT(doc >= _min);
+    const auto offset = doc - _min;
     const auto word = offset / kBits;
     if (word >= _count) [[unlikely]] {
       return false;
@@ -60,6 +65,7 @@ class BitsetDocs {
   detail::BitsetStorage _set;
   const uint64_t* _words;
   uint32_t _count;
+  doc_id_t _min;
 };
 
 }  // namespace irs::probe

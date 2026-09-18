@@ -406,6 +406,7 @@ struct FormatTraits128 {
     uint32_t words;
     doc_id_t max;
     Kind kind;
+    uint32_t len;
 
     bool Maskable() const noexcept { return kind != Kind::Docs; }
     bool IsRun() const noexcept { return kind == Kind::Run; }
@@ -473,29 +474,62 @@ struct FormatTraits128 {
     return live;
   }
 
+  static constexpr byte_type kTrimmed = 0x80;
+
+  enum class TrimAlign : uint8_t {
+    Left,
+    Right,
+    RightEof,
+  };
+
   template<typename InputType>
   IRS_FORCE_INLINE static void ReadBlockDelta(InputType& in, uint32_t* buf,
                                               uint32_t* out, uint32_t prev) {
     ReadTailDelta(doc_limits::kBlockSize, in, buf, out, prev);
   }
 
+  template<TrimAlign Align = TrimAlign::RightEof, typename InputType>
+  IRS_FORCE_INLINE static uint32_t ReadBlockDelta(InputType& in, uint32_t* buf,
+                                                  uint32_t* out, uint32_t prev,
+                                                  doc_id_t end) {
+    return ReadTailDelta<Align>(doc_limits::kBlockSize, in, buf, out, prev,
+                                end);
+  }
+
   template<typename InputType>
   IRS_FORCE_INLINE static FillLeaf ReadTailForFill(uint32_t len, InputType& in,
                                                    uint32_t* buf, uint32_t* out,
-                                                   uint32_t prev) {
-    const auto raw_type = in.ReadByte();
+                                                   uint32_t prev,
+                                                   doc_id_t end = 0) {
+    const auto raw_type = static_cast<byte_type>(in.ReadByte() | TrimFlag(end));
+    if (raw_type >= kTrimmed) [[unlikely]] {
+      return TrimmedTailForFill(raw_type, len, in, buf, out, prev, end);
+    }
     if (raw_type == de_for_bitset) {
       const auto words = in.ReadByte();
       const auto* const bitset = reinterpret_cast<const uint64_t*>(
         ReadDataImpl(words * sizeof(uint64_t), in, buf));
       return {bitset, words, BitsetMax(prev, bitset, words),
-              FillLeaf::Kind::Bitset};
+              FillLeaf::Kind::Bitset, len};
     }
     if (raw_type == de_delta_all_equal_to_1) {
-      return {nullptr, 0, prev + len, FillLeaf::Kind::Run};
+      return {nullptr, 0, prev + len, FillLeaf::Kind::Run, len};
     }
     ReadTailDelta(raw_type, len, in, buf, out, prev);
-    return {nullptr, 0, out[doc_limits::kBlockSize - 1], FillLeaf::Kind::Docs};
+    return {nullptr, 0, out[doc_limits::kBlockSize - 1], FillLeaf::Kind::Docs,
+            len};
+  }
+
+  template<typename InputType>
+  IRS_NO_INLINE static FillLeaf TrimmedTailForFill(byte_type raw_type,
+                                                   uint32_t len, InputType& in,
+                                                   uint32_t* buf, uint32_t* out,
+                                                   uint32_t prev,
+                                                   doc_id_t end) {
+    const auto live =
+      ReadTailDelta<TrimAlign::Right>(raw_type, len, in, buf, out, prev, end);
+    return {nullptr, 0, live != 0 ? out[doc_limits::kBlockSize - 1] : prev,
+            FillLeaf::Kind::Docs, live};
   }
 
   template<typename InputType>
@@ -508,10 +542,24 @@ struct FormatTraits128 {
     ReadTailDelta(raw_type, len, in, buf, out, prev);
   }
 
-  template<typename InputType>
-  IRS_FORCE_INLINE static void ReadTailDeltaAt(byte_type raw_type, uint32_t len,
-                                               InputType& in, uint32_t* buf,
-                                               uint32_t* out, uint32_t prev) {
+  IRS_FORCE_INLINE static byte_type TrimFlag(doc_id_t end) noexcept {
+    return static_cast<byte_type>(end != 0) << 7;
+  }
+
+  template<TrimAlign Align = TrimAlign::RightEof, typename InputType>
+  IRS_FORCE_INLINE static uint32_t ReadTailDelta(uint32_t len, InputType& in,
+                                                 uint32_t* buf, uint32_t* out,
+                                                 uint32_t prev, doc_id_t end) {
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= doc_limits::kBlockSize);
+    const auto raw_type = static_cast<byte_type>(in.ReadByte() | TrimFlag(end));
+    return ReadTailDelta<Align>(raw_type, len, in, buf, out, prev, end);
+  }
+
+  template<TrimAlign Align = TrimAlign::Right, typename InputType>
+  IRS_FORCE_INLINE static uint32_t ReadTailDeltaAt(
+    byte_type raw_type, uint32_t len, InputType& in, uint32_t* buf,
+    uint32_t* out, uint32_t prev, doc_id_t end = doc_limits::eof()) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
     const auto type = static_cast<DeltaEncoding>(raw_type);
@@ -597,8 +645,10 @@ struct FormatTraits128 {
       } break;
 
       default:
-        SDB_UNREACHABLE();
+        return TrimmedTailDeltaAt<Align>(raw_type, len, in, buf, out, prev,
+                                         end);
     }
+    return len;
   }
 
   template<typename InputType>
@@ -609,11 +659,57 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
+  IRS_FORCE_INLINE static uint32_t ReadTailDeltaAt(uint32_t len, InputType& in,
+                                                   uint32_t* buf, uint32_t* out,
+                                                   uint32_t prev,
+                                                   doc_id_t end) {
+    const auto raw_type = static_cast<byte_type>(in.ReadByte() | TrimFlag(end));
+    return ReadTailDeltaAt<TrimAlign::Left>(raw_type, len, in, buf, out, prev,
+                                            end);
+  }
+
+  template<typename InputType>
   IRS_FORCE_INLINE static void ReadTailDelta(byte_type raw_type, uint32_t len,
                                              InputType& in, uint32_t* buf,
                                              uint32_t* out, uint32_t prev) {
     ReadTailDeltaAt(raw_type, len, in, buf,
                     out + (doc_limits::kBlockSize - len), prev);
+  }
+
+  template<TrimAlign Align = TrimAlign::RightEof, typename InputType>
+  IRS_FORCE_INLINE static uint32_t ReadTailDelta(byte_type raw_type,
+                                                 uint32_t len, InputType& in,
+                                                 uint32_t* buf, uint32_t* out,
+                                                 uint32_t prev, doc_id_t end) {
+    return ReadTailDeltaAt<Align>(
+      raw_type, len, in, buf, out + (doc_limits::kBlockSize - len), prev, end);
+  }
+
+  template<TrimAlign Align, typename InputType>
+  IRS_NO_INLINE static uint32_t TrimmedTailDeltaAt(byte_type raw_type,
+                                                   uint32_t len, InputType& in,
+                                                   uint32_t* buf, uint32_t* out,
+                                                   uint32_t prev,
+                                                   doc_id_t end) {
+    ReadTailDeltaAt(static_cast<byte_type>(raw_type & ~kTrimmed), len, in, buf,
+                    out, prev);
+    if (out[len - 1] < end) [[likely]] {
+      return len;
+    }
+    auto live = len - 1;
+    while (live != 0 && out[live - 1] >= end) {
+      --live;
+    }
+    if constexpr (Align != TrimAlign::Left) {
+      if constexpr (Align == TrimAlign::RightEof) {
+        if (live == 0) {
+          out[len - 1] = doc_limits::eof();
+          return 1;
+        }
+      }
+      std::memmove(out + (len - live), out, size_t{live} * sizeof(uint32_t));
+    }
+    return live;
   }
 
   template<typename InputType>
@@ -623,11 +719,47 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
+  IRS_FORCE_INLINE static void ReadBlock(InputType& in, uint32_t* buf,
+                                         uint32_t* out, doc_id_t end,
+                                         uint32_t live) {
+    ReadTail(doc_limits::kBlockSize, in, buf, out, end, live);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void ReadTail(uint32_t len, InputType& in,
+                                        uint32_t* buf, uint32_t* out,
+                                        doc_id_t end, uint32_t live) {
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= doc_limits::kBlockSize);
+    ReadTail(static_cast<byte_type>(in.ReadByte() | TrimFlag(end)), len, in,
+             buf, out, live);
+  }
+
+  template<typename InputType>
+  IRS_NO_INLINE static void TrimmedTail(byte_type raw_type, uint32_t len,
+                                        InputType& in, uint32_t* buf,
+                                        uint32_t* out, uint32_t live) {
+    ReadTail(static_cast<byte_type>(raw_type & ~kTrimmed), len, in, buf, out,
+             len);
+    SDB_ASSERT(live <= len);
+    std::memmove(out + (doc_limits::kBlockSize - live),
+                 out + (doc_limits::kBlockSize - len),
+                 size_t{live} * sizeof(uint32_t));
+  }
+
+  template<typename InputType>
   IRS_FORCE_INLINE static void ReadTail(uint32_t len, InputType& in,
                                         uint32_t* buf, uint32_t* out) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
-    const auto type = static_cast<Encoding>(in.ReadByte());
+    ReadTail(in.ReadByte(), len, in, buf, out, len);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void ReadTail(byte_type raw_type, uint32_t len,
+                                        InputType& in, uint32_t* buf,
+                                        uint32_t* out, uint32_t live) {
+    const auto type = static_cast<Encoding>(raw_type);
     auto* const begin = out + (doc_limits::kBlockSize - len);
     switch (type) {
       case e_values: {
@@ -693,7 +825,8 @@ struct FormatTraits128 {
       } break;
 
       default:
-        SDB_UNREACHABLE();
+        TrimmedTail(raw_type, len, in, buf, out, live);
+        break;
     }
   }
 

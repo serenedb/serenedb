@@ -39,13 +39,13 @@ class TermCountsOf : public TermCounts {
 
   uint64_t Count(const PostingMeta& term) final {
     SDB_ASSERT(term.docs_count != 0);
-    detail::CountAgainst sink{_set};
     if (term.docs_count == 1) {
-      sink.Doc(doc_limits::min() + term.doc_delta);
-    } else {
-      ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Docs(), _layout,
-                  _bounds, FeaturesHaveFreq(_layout), _set.Range(), sink);
+      return static_cast<uint64_t>(
+        _set.Contains(doc_limits::min() + term.doc_delta));
     }
+    detail::CountAgainst sink{_set};
+    ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Docs(), _layout,
+                _bounds, FeaturesHaveFreq(_layout), _set.Range(), sink);
     return sink.Total();
   }
 

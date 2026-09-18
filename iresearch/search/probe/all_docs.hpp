@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -27,8 +29,9 @@ namespace irs::probe {
 
 class AllDocs {
  public:
-  explicit AllDocs(const SubReader& segment) noexcept
-    : _last{static_cast<doc_id_t>(segment.docs_count())} {}
+  AllDocs(const SubReader& segment, DocRange range) noexcept
+    : _last{std::min<doc_id_t>(range.end - 1,
+                               static_cast<doc_id_t>(segment.docs_count()))} {}
 
   doc_id_t Probe(doc_id_t target) noexcept {
     return target > _last ? doc_limits::eof() : target;

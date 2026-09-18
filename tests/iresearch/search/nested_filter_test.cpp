@@ -313,6 +313,116 @@ auto MakeOptions(irs::field_id parent, irs::field_id child,
   return opts;
 }
 
+class RangeRecorder {
+ public:
+  void Add(irs::DocRange range) { _ranges.push_back(range); }
+
+  std::span<const irs::DocRange> Ranges() const noexcept { return _ranges; }
+
+ private:
+  std::vector<irs::DocRange> _ranges;
+};
+
+class RecordingQuery : public irs::QueryBuilder {
+ public:
+  RecordingQuery(const irs::SubReader& segment, irs::QueryBuilder::ptr query,
+                 RangeRecorder& recorder)
+    : irs::QueryBuilder{segment, query->EstimateMax(), query->Kind()},
+      _query{std::move(query)},
+      _recorder{&recorder} {
+    SetStats(_query->Stats());
+  }
+
+  void Visit(irs::PreparedStateVisitor& visitor,
+             irs::score_t boost) const final {
+    _query->Visit(visitor, boost);
+  }
+
+  irs::score_t Boost() const noexcept final { return _query->Boost(); }
+
+  irs::count::Root::ptr PlanCount(const irs::count::Context& ctx) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanCount(ctx);
+  }
+
+  irs::docs::Root::ptr PlanDocs(const irs::docs::Context& ctx) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanDocs(ctx);
+  }
+
+  irs::hits::Root::ptr PlanScored(const irs::hits::Context& ctx) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanScored(ctx);
+  }
+
+  irs::top::Root::ptr PlanTop(const irs::top::Context& ctx) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanTop(ctx);
+  }
+
+  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx& ctx) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanLead(ctx);
+  }
+
+  irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
+                                  uint64_t interrogations) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanProbe(ctx, interrogations);
+  }
+
+  irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
+                                irs::ScoreMergeType merge) const final {
+    _recorder->Add(ctx.range);
+    return _query->PlanFill(ctx, merge);
+  }
+
+ private:
+  irs::QueryBuilder::ptr _query;
+  RangeRecorder* _recorder;
+};
+
+class RecordingFilter final : public irs::Filter {
+ public:
+  RecordingFilter(irs::Filter::ptr child, RangeRecorder& recorder)
+    : _child{std::move(child)}, _recorder{&recorder} {}
+
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
+    auto query = _child->PrepareSegment(segment, ctx);
+    if (!query || irs::QueryBuilder::IsEmpty(*query)) {
+      return query;
+    }
+    return irs::memory::make_tracked<RecordingQuery>(
+      ctx.memory, segment, std::move(query), *_recorder);
+  }
+
+  irs::PrepareCollector::ptr MakeCollectorImpl(const irs::Scorer* scorer,
+                                               irs::StatsArena& stats,
+                                               uint32_t threads) const final {
+    SDB_ASSERT(scorer != nullptr);
+    return _child->MakeCollector(*scorer, stats, threads);
+  }
+
+  irs::TypeInfo::type_id type() const noexcept final { return _child->type(); }
+
+ private:
+  irs::Filter::ptr _child;
+  RangeRecorder* _recorder;
+};
+
+std::vector<irs::doc_id_t> CollectDocs(irs::docs::Root& docs) {
+  std::vector<irs::doc_id_t> out;
+  irs::doc_id_t buf[irs::doc_limits::kMinCapacity];
+  for (;;) {
+    const auto n = docs.Run(buf, irs::doc_limits::kMinCapacity);
+    if (n == 0) {
+      return out;
+    }
+    out.insert(out.end(), buf, buf + n);
+  }
+}
+
 TEST(NestedFilterTest, CheckMatch) {
   static_assert(irs::Match{0, 0} == irs::kMatchNone);
   static_assert(irs::Match{1, irs::doc_limits::eof()} == irs::kMatchAny &&
@@ -491,6 +601,45 @@ TEST_P(NestedFilterTestCase, JoinAny0) {
   opts.parent = MakeParentProvider(kParent);
 
   CheckQuery(filter, Docs{6}, Costs{1}, reader, SOURCE_LOCATION);
+}
+
+TEST_P(NestedFilterTestCase, ChildPlannedUnbounded) {
+  InitDataSet();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
+
+  RangeRecorder recorder;
+  irs::ByNestedFilter filter;
+  auto& opts = *filter.mutable_options();
+  opts.child =
+    std::make_unique<RecordingFilter>(MakeByTerm(kItem, "Keyboard"), recorder);
+  opts.parent = MakeParentProvider(kParent);
+
+  CheckQuery(filter, Docs{6}, Costs{1}, reader, SOURCE_LOCATION);
+
+  ASSERT_FALSE(recorder.Ranges().empty());
+  for (const auto range : recorder.Ranges()) {
+    EXPECT_FALSE(range.Bounded()) << range.begin << ".." << range.end;
+  }
+}
+
+TEST_P(NestedFilterTestCase, BoundedChildLosesParent) {
+  InitDataSet();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
+  const auto& segment = (*reader)[0];
+
+  auto child = MakeByTerm(kItem, "Keyboard");
+  auto query = child->PrepareSegment(segment, {});
+  ASSERT_NE(nullptr, query);
+
+  {
+    auto docs = query->PlanDocs({});
+    ASSERT_NE(nullptr, docs);
+    ASSERT_EQ(std::vector<irs::doc_id_t>{1}, CollectDocs(*docs));
+  }
+
+  auto docs = query->PlanDocs({.range = {.begin = 2}});
+  ASSERT_NE(nullptr, docs);
+  ASSERT_TRUE(CollectDocs(*docs).empty());
 }
 
 TEST_P(NestedFilterTestCase, JoinAny1) {

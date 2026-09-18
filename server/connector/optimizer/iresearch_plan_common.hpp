@@ -35,7 +35,7 @@
 
 #include "catalog/fwd.h"
 #include "catalog/inverted_index.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace sdb::optimizer {
@@ -43,24 +43,22 @@ namespace sdb::optimizer {
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
 
-catalog::ColumnId ResolveColumnId(
-  duckdb::ColumnBinding binding,
-  const connector::SereneDBScanBindData& bind_data,
-  const duckdb::LogicalGet& get);
+catalog::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
+                                  const connector::ScanBindData& bind_data,
+                                  const duckdb::LogicalGet& get);
 
 std::vector<catalog::ColumnId> BuildProjectedColumnIds(
-  const duckdb::LogicalGet& get,
-  const connector::SereneDBScanBindData& bind_data);
+  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data);
 
-void ResolveSearchTableIndexes(connector::SereneDBScanBindData& bind_data,
+void ResolveSearchTableIndexes(connector::ScanBindData& bind_data,
                                duckdb::ClientContext& context);
 
 std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
-  const connector::SereneDBScanBindData& bind_data, catalog::ColumnId col_id);
+  const connector::ScanBindData& bind_data, catalog::ColumnId col_id);
 
 struct FoundScan {
   duckdb::LogicalGet* get;
-  connector::SereneDBScanBindData* bind_data;
+  connector::ScanBindData* bind_data;
 
   explicit operator bool() const noexcept { return get; }
 };
@@ -93,7 +91,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
                                         std::string_view col_name,
                                         const duckdb::LogicalType& col_type);
 
-duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
+duckdb::idx_t AppendVirtualGetColumn(connector::ScanBindData& bind_data,
                                      duckdb::LogicalGet& get,
                                      catalog::ColumnId virtual_id,
                                      const duckdb::LogicalType& col_type,
@@ -128,7 +126,7 @@ struct SearchGetters {
 };
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
-                       connector::SereneDBScanBindData& bind_data,
+                       connector::ScanBindData& bind_data,
                        std::span<const catalog::InvertedIndex* const> indexes,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);

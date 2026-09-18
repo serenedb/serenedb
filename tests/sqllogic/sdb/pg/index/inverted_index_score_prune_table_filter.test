@@ -56,25 +56,19 @@ query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wtf_idx                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: term         │                │
-│ ╰─────────────────────╯                │
-│ Column Filter: n > 20                  │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 2, optimized                      │
-│ Projections: n,                        │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: wtf_idx              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: term         │     │
+│ ╰─────────────────────╯     │
+│ Column Filter: n > 20       │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2, optimized           │
+│ Projections: n              │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query
@@ -91,27 +85,21 @@ query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wtf_idx                         │
-│ Index Filter:                          │
-│ ╭─ Or ───────────────────╮             │
-│ ╰────────────┬───────────╯             │
-│ ╭─ Terms ────┴───────────╮             │
-│ │ Field: body(string)    │             │
-│ │ Values: 'rare', 'term' │             │
-│ ╰────────────────────────╯             │
-│ Column Filter: n > 20                  │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 2, optimized                      │
-│ Projections: n,                        │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: wtf_idx              │
+│ Index Filter:               │
+│ ╭─ Or ───────────────────╮  │
+│ ╰────────────┬───────────╯  │
+│ ╭─ Terms ────┴───────────╮  │
+│ │ Field: body(string)    │  │
+│ │ Values: 'rare', 'term' │  │
+│ ╰────────────────────────╯  │
+│ Column Filter: n > 20       │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2, optimized           │
+│ Projections: n              │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query
@@ -159,25 +147,19 @@ query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 2.5 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wtf_idx                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: term         │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 2, optimized                      │
-│ Min Score: 2.5                         │
-│ Projections: n,                        │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: wtf_idx              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: term         │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2, optimized           │
+│ Min Score: 2.5              │
+│ Projections: n              │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query

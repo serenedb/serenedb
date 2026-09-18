@@ -74,25 +74,19 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: prune_small_idx                 │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: prune_small_idx      │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 3, optimized           │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 # Term disjunction (ByTerms iterator) -> pruning engages.
@@ -101,27 +95,21 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) ORDER BY BM25(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: prune_small_idx                 │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Or ────────────────────╮            │
-│ ╰────────────┬────────────╯            │
-│ ╭─ Terms ────┴────────────╮            │
-│ │ Field: body(string)     │            │
-│ │ Values: 'fox', 'rabbit' │            │
-│ ╰─────────────────────────╯            │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: prune_small_idx      │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Or ────────────────────╮ │
+│ ╰────────────┬────────────╯ │
+│ ╭─ Terms ────┴────────────╮ │
+│ │ Field: body(string)     │ │
+│ │ Values: 'fox', 'rabbit' │ │
+│ ╰─────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 3, optimized           │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 # No LIMIT -> no TopK pull-up at all -> pruning can't engage.
@@ -184,26 +172,20 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid, 2.0, 0.75) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: prune_small_idx                 │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=2, b=0.75)              │
-│ Top: 3, optimized                      │
-│ Bounds: bm25(k1=1.2, b=0.75)           │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: prune_small_idx       │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Term ──────────────╮      │
+│ │ Field: body(string) │      │
+│ │ Value: fox          │      │
+│ ╰─────────────────────╯      │
+│ Score: bm25(k1=2, b=0.75)    │
+│ Top: 3, optimized            │
+│ Bounds: bm25(k1=1.2, b=0.75) │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 
 # Same bound type, different b: b does NOT cancel out of the comparison that
@@ -216,25 +198,19 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid, 1.2, 0.5) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: prune_small_idx                 │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.5)             │
-│ Top: 3                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: prune_small_idx     │
+│ Lookup: table              │
+│ Index Filter:              │
+│ ╭─ Term ──────────────╮    │
+│ │ Field: body(string) │    │
+│ │ Value: fox          │    │
+│ ╰─────────────────────╯    │
+│ Score: bm25(k1=1.2, b=0.5) │
+│ Top: 3                     │
+│ Projections: id            │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 
 # Mismatched scorer: index carries BM25 score bounds, ORDER BY uses TFIDF.
@@ -245,25 +221,19 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: prune_small_idx                 │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: tfidf(with_norms=false)         │
-│ Top: 3                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: prune_small_idx         │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: fox          │        │
+│ ╰─────────────────────╯        │
+│ Score: tfidf(with_norms=false) │
+│ Top: 3                         │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 
 # ---------------------------------------------------------------------------
@@ -571,25 +541,19 @@ EXPLAIN SELECT id FROM bnd_jm_idx WHERE body @@ ts_phrase('fox')
   ORDER BY LM_JM(bnd_jm_idx.tableoid, 0.7) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: bnd_jm_idx                      │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: lm_jm(lambda=0.7)               │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: bnd_jm_idx        │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Score: lm_jm(lambda=0.7) │
+│ Top: 3, optimized        │
+│ Projections: id          │
+│ ~4,000 rows              │
+╰──────────────────────────╯
 
 
 # Pruned and unpruned must agree exactly; a bound that under-estimates a block
@@ -620,25 +584,19 @@ EXPLAIN SELECT id FROM bnd_dir_idx WHERE body @@ ts_phrase('fox')
   ORDER BY LM_DIRICHLET(bnd_dir_idx.tableoid, 2000) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: bnd_dir_idx                     │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: lm_dirichlet(mu=2000)           │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: bnd_dir_idx           │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Term ──────────────╮      │
+│ │ Field: body(string) │      │
+│ │ Value: fox          │      │
+│ ╰─────────────────────╯      │
+│ Score: lm_dirichlet(mu=2000) │
+│ Top: 3, optimized            │
+│ Projections: id              │
+│ ~4,000 rows                  │
+╰──────────────────────────────╯
 
 
 # Pruned and unpruned must agree exactly; a bound that under-estimates a block
@@ -668,25 +626,19 @@ EXPLAIN SELECT id FROM bnd_dfi_idx WHERE body @@ ts_phrase('fox')
   ORDER BY DFI(bnd_dfi_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: bnd_dfi_idx                     │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: dfi(measure=standardized)       │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: bnd_dfi_idx               │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ──────────────╮          │
+│ │ Field: body(string) │          │
+│ │ Value: fox          │          │
+│ ╰─────────────────────╯          │
+│ Score: dfi(measure=standardized) │
+│ Top: 3, optimized                │
+│ Projections: id                  │
+│ ~4,000 rows                      │
+╰──────────────────────────────────╯
 
 
 # Pruned and unpruned must agree exactly; a bound that under-estimates a block
@@ -716,25 +668,19 @@ EXPLAIN SELECT id FROM bnd_rtf_idx WHERE body @@ ts_phrase('fox')
   ORDER BY RAW_TF(bnd_rtf_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: bnd_rtf_idx                     │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: raw_tf()                        │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: bnd_rtf_idx      │
+│ Lookup: table           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Score: raw_tf()         │
+│ Top: 3, optimized       │
+│ Projections: id         │
+│ ~4,000 rows             │
+╰─────────────────────────╯
 
 
 # Pruned and unpruned must agree exactly; a bound that under-estimates a block
@@ -768,25 +714,19 @@ EXPLAIN SELECT id FROM bnd_ind_idx WHERE body @@ ts_phrase('fox')
   ORDER BY INDRI_DIRICHLET(bnd_ind_idx.tableoid, 2000) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: bnd_ind_idx                     │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: indri_dirichlet(mu=2000)        │
-│ Top: 3                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: bnd_ind_idx              │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────╮         │
+│ │ Field: body(string) │         │
+│ │ Value: fox          │         │
+│ ╰─────────────────────╯         │
+│ Score: indri_dirichlet(mu=2000) │
+│ Top: 3                          │
+│ Projections: id                 │
+│ ~4,000 rows                     │
+╰─────────────────────────────────╯
 
 
 query

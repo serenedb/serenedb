@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -27,8 +29,11 @@ namespace irs::lead {
 
 class AllDocs {
  public:
-  explicit AllDocs(const SubReader& segment) noexcept
-    : _last{static_cast<doc_id_t>(segment.docs_count())} {}
+  AllDocs(const SubReader& segment, DocRange range) noexcept
+    : _first{range.begin},
+      _last{std::min<doc_id_t>(range.end - 1,
+                               static_cast<doc_id_t>(segment.docs_count()))},
+      _doc{range.begin - 1} {}
 
   doc_id_t Next() noexcept {
     if (_doc >= _last) {
@@ -38,6 +43,9 @@ class AllDocs {
   }
 
   doc_id_t Seek(doc_id_t target) noexcept {
+    if (target < _first) {
+      target = _first;
+    }
     if (target <= _doc) {
       return _doc;
     }
@@ -45,8 +53,9 @@ class AllDocs {
   }
 
  private:
+  doc_id_t _first;
   doc_id_t _last;
-  doc_id_t _doc = doc_limits::invalid();
+  doc_id_t _doc;
 };
 
 }  // namespace irs::lead

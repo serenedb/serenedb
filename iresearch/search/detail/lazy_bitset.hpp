@@ -58,42 +58,59 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, const DocumentMask* removals) noexcept
-    : _set{std::move(set)}, _filled{_set.End()} {
+  LazyBitset(BitsetStorage&& set, DocRange range,
+             const DocumentMask* removals) noexcept
+    : _set{std::move(set)}, _range{range}, _filled{_set.End()} {
     Drop(removals, 0, _set.WordCount());
   }
 
-  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count,
+  LazyBitset(BitsetStorage&& set, const DocumentMask* removals) noexcept
+    : LazyBitset{std::move(set), DocRange{}, removals} {}
+
+  LazyBitset(FillNode::ptr node, DocRange range, doc_id_t docs_count,
              const DocumentMask* removals)
-    : _set{docs_count}, _node{std::move(node)}, _removals{removals} {
+    : _set{range, docs_count},
+      _node{std::move(node)},
+      _removals{removals},
+      _range{range},
+      _filled{_set.Min()} {
     SDB_ASSERT(_node);
   }
 
+  LazyBitset(FillNode::ptr node, doc_id_t docs_count,
+             const DocumentMask* removals)
+    : LazyBitset{std::move(node), DocRange{}, docs_count, removals} {}
+
   const uint64_t* Words() const noexcept { return _set.Words(); }
+
+  doc_id_t Min() const noexcept { return _set.Min(); }
+
+  DocRange Range() const noexcept { return _range; }
 
   doc_id_t Filled() const noexcept { return _filled; }
 
   doc_id_t End() const noexcept { return _set.End(); }
 
   void Reach(doc_id_t upto) {
-    if (upto <= _filled) {
-      return;
-    }
     const auto end = _set.End();
     if (upto > end) {
       upto = end;
     }
+    if (upto <= _filled) {
+      return;
+    }
+    const auto base = _set.Min();
     auto* const words = _set.Words();
     do {
       const auto min = _filled;
-      const auto first = (min - kMin) / kBits;
+      const auto first = (min - base) / kBits;
       const auto next = _node->FillOr(min, min + kWindowDocs, words + first);
       Drop(_removals, first, first + kWindowWords);
       if (next >= end) {
         _filled = end;
         break;
       }
-      _filled = std::max(min + kWindowDocs, BitsetStorage::WindowMin(next));
+      _filled = std::max(min + kWindowDocs, _set.WindowMin(next));
     } while (_filled < upto);
     if (_filled >= end) {
       Finish();
@@ -102,20 +119,26 @@ class LazyBitset {
 
   bool Contains(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
+    if (doc < _set.Min() || doc >= _set.End()) {
+      return false;
+    }
     Reach(doc + 1);
-    const auto offset = doc - kMin;
+    const auto offset = doc - _set.Min();
     return CheckBit(_set.Words()[offset / kBits], offset % kBits);
   }
 
   doc_id_t Probe(doc_id_t target) {
     const auto end = _set.End();
+    if (target < _set.Min()) {
+      target = _set.Min();
+    }
     for (;;) {
       if (target >= end) {
         return doc_limits::eof();
       }
       if (target < _filled) {
         const auto stop = std::min(_filled, end);
-        if (const auto doc = NextIn(_set.Words(), target, stop);
+        if (const auto doc = NextIn(_set.Words(), _set.Min(), target, stop);
             doc_limits::valid(doc)) {
           return doc;
         }
@@ -127,14 +150,14 @@ class LazyBitset {
   }
 
  private:
-  static doc_id_t NextIn(const uint64_t* IRS_RESTRICT words, doc_id_t from,
-                         doc_id_t stop) noexcept {
+  static doc_id_t NextIn(const uint64_t* IRS_RESTRICT words, doc_id_t base,
+                         doc_id_t from, doc_id_t stop) noexcept {
     if (from >= stop) {
       return doc_limits::invalid();
     }
-    const auto offset = from - kMin;
+    const auto offset = from - base;
     auto word = static_cast<uint32_t>(offset / kBits);
-    const auto last = static_cast<uint32_t>((stop - 1 - kMin) / kBits);
+    const auto last = static_cast<uint32_t>((stop - 1 - base) / kBits);
     auto rest = words[word] & (~uint64_t{0} << (offset % kBits));
     while (rest == 0) {
       if (word == last) {
@@ -143,7 +166,7 @@ class LazyBitset {
       rest = words[++word];
     }
     const auto doc =
-      static_cast<doc_id_t>(kMin + size_t{word} * kBits +
+      static_cast<doc_id_t>(base + size_t{word} * kBits +
                             static_cast<size_t>(std::countr_zero(rest)));
     return doc < stop ? doc : doc_limits::invalid();
   }
@@ -153,13 +176,14 @@ class LazyBitset {
       return;
     }
     auto* const words = _set.Words();
+    const auto base = _set.Min();
     last = std::min(last, size_t{_set.WordCount()});
     for (auto w = first; w < last; ++w) {
       auto rest = words[w];
       while (rest != 0) {
         const auto bit = static_cast<size_t>(std::countr_zero(rest));
         rest &= rest - 1;
-        const auto doc = static_cast<doc_id_t>(kMin + w * kBits + bit);
+        const auto doc = static_cast<doc_id_t>(base + w * kBits + bit);
         if (removals->contains(doc)) {
           UnsetBit(words[w], bit);
         }
@@ -177,6 +201,7 @@ class LazyBitset {
   BitsetStorage _set;
   FillNode::ptr _node;
   const DocumentMask* _removals = nullptr;
+  DocRange _range;
   doc_id_t _filled = kMin;
 };
 
@@ -194,19 +219,20 @@ class CountAgainst {
     const auto begin = prev + 1;
     const auto end = begin + len;
     _set->Reach(static_cast<doc_id_t>(end));
-    _total += CountBitRange(_set->Words(), begin - kMin, end - kMin);
+    const auto base = _set->Min();
+    _total += CountBitRange(_set->Words(), begin - base, end - base);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) {
     _set->Reach(static_cast<doc_id_t>(max + 1));
-    _total +=
-      CountBlock(_set->Words(), static_cast<int64_t>(prev) - kMin, src, n);
+    _total += CountBlock(_set->Words(),
+                         static_cast<int64_t>(prev) - _set->Min(), src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) {
     _set->Reach(static_cast<doc_id_t>(doc + 1));
-    const auto offset = doc - kMin;
+    const auto offset = doc - _set->Min();
     _total += static_cast<uint64_t>(
       CheckBit(_set->Words()[offset / kBits], offset % kBits));
   }

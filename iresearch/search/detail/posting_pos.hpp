@@ -31,6 +31,7 @@
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -62,7 +63,7 @@ class PostingPos {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const IndexInput& pos_in,
-               const IndexInput* pay_in) {
+               const IndexInput* pay_in, DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     const auto skip = ToSkipLayout(layout);
     SDB_ASSERT(skip.pos);
@@ -102,6 +103,42 @@ class PostingPos {
       .enc_buf = Enc(),
     };
     _pos.template Prepare<InputType>(state);
+    if (meta.docs_count > 1 && range.Bounded()) [[unlikely]] {
+      Bound(meta, layout, range);
+    }
+  }
+
+  IRS_NO_INLINE void Bound(const PostingMeta& meta, IndexFeatures layout,
+                           DocRange range) {
+    const auto after = PostingsAfter<InputType>(
+      meta, In(), SkipShapeOf(layout, Bounds), range.end);
+    _left_in_list = meta.docs_count - after;
+    if (_pending_skip != 0) {
+      _pending_skip -= after;
+    }
+    if (!doc_limits::eof(range.end)) {
+      _end = range.end;
+    }
+    if (range.begin <= doc_limits::min()) {
+      return;
+    }
+    if (!SeekToLeaf(range.begin)) {
+      _left_in_leaf = 0;
+      _left_in_list = 0;
+      return;
+    }
+    const auto left = _left_in_leaf;
+    const auto* const doc = std::end(_docs) - left;
+    const auto* const freq = std::end(_freqs.data) - left;
+    uint32_t notify = 0;
+    uint32_t below = 0;
+    for (; below != left && doc[below] < range.begin; ++below) {
+      notify += freq[below];
+    }
+    _left_in_leaf = left - below;
+    if (notify != 0) {
+      _pos.Notify(0, notify);
+    }
   }
 
   doc_id_t Value() const noexcept { return _doc; }
@@ -233,16 +270,17 @@ class PostingPos {
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
-      _left_in_leaf = doc_limits::kBlockSize;
+      _left_in_leaf =
+        FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev, _end);
       _left_in_list -= doc_limits::kBlockSize;
-      FormatTraits128::ReadBlock(in, Enc(), _freqs.data);
+      FormatTraits128::ReadBlock(in, Enc(), _freqs.data, _end, _left_in_leaf);
     } else {
       const auto tail = _left_in_list;
-      FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev);
-      _left_in_leaf = tail;
+      _left_in_leaf =
+        FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev, _end);
       _left_in_list = 0;
-      FormatTraits128::ReadTail(tail, in, Enc(), _freqs.data);
+      FormatTraits128::ReadTail(tail, in, Enc(), _freqs.data, _end,
+                                _left_in_leaf);
     }
     _max_in_leaf = *(std::end(_docs) - 1);
   }
@@ -305,6 +343,7 @@ class PostingPos {
   uint64_t _skip_offs = 0;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _max_in_leaf = doc_limits::invalid();
+  doc_id_t _end = 0;
   uint32_t _docs_count = 0;
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;

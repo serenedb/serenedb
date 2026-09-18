@@ -121,19 +121,13 @@ query
 EXPLAIN SELECT emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 1                                 │
-│ Order By: #1 ASC                       │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_ivf_only_idx                │
-│ Score: l2_distance(emb, FLOAT[3])      │
-│ Top: 1                                 │
-│ Projections: emb,                      │
-│              sdb_inverted_index_score  │
-│ ~2 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: src_ivf_only_idx           │
+│ Score: l2_distance(emb, FLOAT[3]) │
+│ Top: 1                            │
+│ Projections: emb                  │
+│ ~2 rows                           │
+╰───────────────────────────────────╯
 
 
 # --- 4b. IVF with PK projection: PK is lookup-served, emb is index-served
@@ -142,20 +136,14 @@ query
 EXPLAIN SELECT id, emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 1                                 │
-│ Order By: #2 ASC                       │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_ivf_only_idx                │
-│ Lookup: table                          │
-│ Score: l2_distance(emb, FLOAT[3])      │
-│ Top: 1                                 │
-│ Projections: id (l), emb (i),          │
-│              sdb_inverted_index_score  │
-│ ~2 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: src_ivf_only_idx           │
+│ Lookup: table                     │
+│ Score: l2_distance(emb, FLOAT[3]) │
+│ Top: 1                            │
+│ Projections: id (l), emb (i)      │
+│ ~2 rows                           │
+╰───────────────────────────────────╯
 
 
 # --- 5. IVF + extra non-INCLUDE'd column → mixed annotation -----------
@@ -181,20 +169,14 @@ query
 EXPLAIN SELECT emb, label FROM src_ivf_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 1                                 │
-│ Order By: #2 ASC                       │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_ivf_mixed_idx               │
-│ Lookup: table                          │
-│ Score: l2_distance(emb, FLOAT[3])      │
-│ Top: 1                                 │
-│ Projections: emb (i), label (l),       │
-│              sdb_inverted_index_score  │
-│ ~2 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: src_ivf_mixed_idx          │
+│ Lookup: table                     │
+│ Score: l2_distance(emb, FLOAT[3]) │
+│ Top: 1                            │
+│ Projections: emb (i), label (l)   │
+│ ~2 rows                           │
+╰───────────────────────────────────╯
 
 
 # --- 6. Functional check: IVF vector is correctly materialized --------

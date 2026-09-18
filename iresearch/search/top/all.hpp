@@ -37,16 +37,18 @@ class All : public Root {
  public:
   static constexpr uint32_t kBatch = kScoreBlock;
 
-  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
+  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count, DocRange range,
       score_t score = 0) noexcept
-    : _end{doc_limits::min() + count},
+    : _begin{range.begin},
+      _end{std::min<doc_id_t>(range.end, doc_limits::min() + count)},
       _score{ScoreFunction::Constant(score)},
       _fetcher{fetcher},
       _admit{table} {}
 
-  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
+  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count, DocRange range,
       ScoreFunction score) noexcept
-    : _end{doc_limits::min() + count},
+    : _begin{range.begin},
+      _end{std::min<doc_id_t>(range.end, doc_limits::min() + count)},
       _score{std::move(score)},
       _fetcher{fetcher},
       _admit{table} {}
@@ -55,7 +57,7 @@ class All : public Root {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
 
-    for (auto doc = doc_limits::min(); doc < _end;) {
+    for (auto doc = _begin; doc < _end;) {
       const auto n = std::min<uint32_t>(kBatch, _end - doc);
       for (uint32_t i = 0; i != n; ++i) {
         docs[i] = doc + i;
@@ -69,6 +71,7 @@ class All : public Root {
   }
 
  private:
+  doc_id_t _begin;
   doc_id_t _end;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;

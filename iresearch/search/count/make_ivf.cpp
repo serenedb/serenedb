@@ -24,6 +24,7 @@
 namespace irs::count {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

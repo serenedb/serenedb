@@ -23,7 +23,8 @@
 
 namespace irs::fill {
 
-Node::ptr Make(const RangeVectorQuery& query) {
+Node::ptr Make(const RangeVectorQuery& query, DocRange range) {
+  SDB_ASSERT(!range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -37,6 +38,7 @@ Node::ptr Make(const RangeVectorQuery& query) {
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

@@ -61,14 +61,14 @@ class TermBlock : public irs::detail::PostingBatch<InputType, Table, true> {
     }
 
     if (left >= kBlock) {
-      ReadDocs(docs, kBlock);
+      const auto live = ReadDocs(docs, kBlock);
       ScoreBlock(docs, scores);
-      return kBlock;
+      return live;
     }
 
-    ReadDocs(docs, left);
+    const auto live = ReadDocs(docs, left);
     ScoreTail(docs, scores, left);
-    return left;
+    return live;
   }
 };
 

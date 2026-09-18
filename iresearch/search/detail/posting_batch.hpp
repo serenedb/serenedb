@@ -68,7 +68,7 @@ class PostingBatch {
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
-                 bool bounds) {
+                 IndexFeatures layout, bool bounds, DocRange range) {
     _in = doc_in.Reopen();
     if (!_in) [[unlikely]] {
       throw IoError{"failed to reopen document input"};
@@ -79,13 +79,30 @@ class PostingBatch {
       SkipScoreBounds(bounds, in);
     }
     _left_in_list = meta.docs_count;
+    if (range.Bounded()) [[unlikely]] {
+      Bound(meta, SkipShapeOf(layout, bounds), range);
+    }
+  }
+
+  IRS_NO_INLINE void Bound(const PostingMeta& meta, SkipShape shape,
+                           DocRange range) {
+    const auto cut = CutWindow<InputType>(meta, In(), shape, range);
+    _after_window = cut.after;
+    _left_in_list = cut.left - cut.after;
+    if (!doc_limits::eof(range.end)) {
+      _end = range.end;
+    }
+    if (_left_in_list != 0 && cut.landed) {
+      In().Seek(cut.landing.doc_ptr);
+      _last = cut.landing.doc;
+    }
   }
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if constexpr (kTable) {
-      if (meta.docs_count > kBlock) {
-        const auto skip = ToSkipLayout(layout);
-        _walk.Arm(meta, {.bounds = bounds, .pos = skip.pos, .offs = skip.offs});
+      if (meta.docs_count > kBlock && _left_in_list != 0) {
+        _walk.Arm(meta, SkipShapeOf(layout, bounds),
+                  meta.docs_count - _after_window);
       }
     }
   }
@@ -119,10 +136,13 @@ class PostingBatch {
     }
   }
 
-  IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
-    FormatTraits128::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
+  IRS_FORCE_INLINE uint32_t ReadDocs(doc_id_t* IRS_RESTRICT dest,
+                                     uint32_t len) {
+    const auto live =
+      FormatTraits128::ReadTailDeltaAt(len, In(), Enc(), dest, _last, _end);
     _last = dest[len - 1];
     _left_in_list -= len;
+    return live;
   }
 
   void ScoreBlock(const doc_id_t* docs, score_t* scores) {
@@ -146,7 +166,9 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<Scored, FreqBuf> _freqs;
   IndexInput::ptr _in;
   doc_id_t _last = 0;
+  doc_id_t _end = 0;
   uint32_t _left_in_list = 0;
+  uint32_t _after_window = 0;
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;

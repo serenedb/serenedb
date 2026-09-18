@@ -23,7 +23,8 @@
 
 namespace irs::probe {
 
-Node::ptr Make(const RangeVectorQuery& query, uint64_t) {
+Node::ptr Make(const RangeVectorQuery& query, uint64_t, DocRange range) {
+  SDB_ASSERT(!range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -37,6 +38,7 @@ Node::ptr Make(const RangeVectorQuery& query, uint64_t) {
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                uint64_t) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

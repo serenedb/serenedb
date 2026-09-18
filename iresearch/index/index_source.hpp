@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <span>
 
 namespace duckdb {
 
@@ -34,6 +35,8 @@ namespace irs {
 class IndexSource {
  public:
   virtual ~IndexSource() = default;
+
+  virtual std::span<const duckdb::idx_t> Survivors() const noexcept = 0;
 
   // Materializes the source columns for the `count` primary keys held in `pk`
   // -- the stored, self-describing PK column read straight from the index: a

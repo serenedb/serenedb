@@ -549,8 +549,10 @@ lead::Node::ptr ChildDocs(const ByNestedQuery& query, DocRange range) {
 }
 
 template<template<typename> class Impl, typename Result, typename... Head>
-Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
-  auto child = ChildDocs(query);
+Result PlanNestedDocs(const ByNestedQuery& query, DocRange range,
+                      Head&&... head) {
+  SDB_ASSERT(!range.Bounded());
+  auto child = ChildDocs(query, range);
   if (!child) {
     return {};
   }
@@ -566,6 +568,7 @@ Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
 template<template<typename> class Impl, typename Result, typename... Head>
 Result PlanNestedScored(const ByNestedQuery& query, detail::ScoredCtx ctx,
                         Head&&... head) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto fetcher = std::make_unique<ColumnArgsFetcher>();
   ctx.fetcher = fetcher.get();
   auto child = query.Child().PlanLead(ctx);

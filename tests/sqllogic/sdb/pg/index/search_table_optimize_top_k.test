@@ -22,49 +22,37 @@ query
 EXPLAIN SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 8                                 │
-│ Order By: #1 DESC                      │
-│ ~8 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: st_topk                         │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 8, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~6,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: st_topk              │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 8, optimized           │
+│ Projections: id             │
+│ ~6,000 rows                 │
+╰─────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM st_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk_idx.tableoid) DESC LIMIT 8;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 8                                 │
-│ Order By: #1 DESC                      │
-│ ~8 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: st_topk_idx                     │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 8, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~6,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: st_topk_idx          │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 8, optimized           │
+│ Projections: id             │
+│ ~6,000 rows                 │
+╰─────────────────────────────╯
 
 query
 SELECT (SELECT list(id) FROM (SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8)) AS table_top8,
@@ -78,25 +66,19 @@ query
 EXPLAIN SELECT id FROM st_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(st_topk_idx.tableoid) DESC LIMIT 8;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 8                                 │
-│ Order By: #1 DESC                      │
-│ ~8 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: st_topk_idx                     │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: tfidf(with_norms=false)         │
-│ Top: 8                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~6,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: st_topk_idx             │
+│ Lookup: search                 │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: fox          │        │
+│ ╰─────────────────────╯        │
+│ Score: tfidf(with_norms=false) │
+│ Top: 8                         │
+│ Projections: id                │
+│ ~6,000 rows                    │
+╰────────────────────────────────╯
 
 statement ok
 CREATE TABLE st_plain (id INTEGER PRIMARY KEY, body VARCHAR)
@@ -115,25 +97,19 @@ query
 EXPLAIN SELECT id FROM st_plain WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_plain.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: st_plain                        │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 2                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: st_plain             │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2                      │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 statement ok
 CREATE TABLE st_empty (id INTEGER PRIMARY KEY, body VARCHAR)

@@ -172,19 +172,19 @@ class Posting : public Root,
       const auto len = std::min(_left_in_list, kBlock);
       auto* const dest = docs + emitted;
       auto* const out = scores + emitted;
-      ReadDocs(dest, len);
+      const auto live = ReadDocs(dest, len);
       if (len == kBlock) {
         ScoreBlock(dest, out);
       } else {
         ScoreTail(dest, out, len);
       }
       if constexpr (kBoost) {
-        _boost.Apply(dest, out, len);
+        _boost.Apply(dest, out, live);
       }
       if constexpr (kExcludes) {
-        emitted += irs::detail::ExcludeBlock(_excludes, dest, out, len);
+        emitted += irs::detail::ExcludeBlock(_excludes, dest, out, live);
       } else {
-        emitted += len;
+        emitted += live;
       }
     }
     return emitted;

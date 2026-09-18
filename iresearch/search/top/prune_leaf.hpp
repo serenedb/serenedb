@@ -36,6 +36,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -198,7 +199,8 @@ class PruneLeafBase {
 
   bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
                      IndexFeatures layout, const SubReader& segment,
-                     const TermReader& field, const detail::ScoreArgs& args) {
+                     const TermReader& field, const detail::ScoreArgs& args,
+                     DocRange range) {
     SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(args.scorer != nullptr);
     SDB_ASSERT(args.fetcher != nullptr);
@@ -249,12 +251,25 @@ class PruneLeafBase {
     }
     auto& in = In();
     in.Seek(meta.doc_start);
-    _left_in_list = meta.docs_count;
+    const auto after =
+      range.Bounded()
+        ? detail::PostingsAfter<InputType>(
+            meta, in, detail::SkipShapeOf(layout, true), range.end)
+        : uint32_t{0};
+    _left_in_list = meta.docs_count - after;
+    if (!doc_limits::eof(range.end)) {
+      _end = range.end;
+    }
 
     if (meta.docs_count > doc_limits::kBlockSize) {
-      _skip.Reader().Enable(meta);
-      PrepareSkip(meta.doc_start + meta.doc_delta, meta.docs_count);
-      _upper_bound = doc_limits::invalid();
+      if (_left_in_list != 0) {
+        _skip.Reader().Enable(meta);
+        PrepareSkip(meta.doc_start + meta.doc_delta, _left_in_list);
+        _upper_bound = doc_limits::invalid();
+        if (range.begin > doc_limits::min()) {
+          SeekToBlock(range.begin);
+        }
+      }
     } else if (meta.docs_count < doc_limits::kBlockSize) {
       _skip.Reader().SkipBounds(in);
     }
@@ -357,10 +372,11 @@ class PruneLeafBase {
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
     const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
-    FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, prev);
-    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
-    _left_in_leaf = len;
-    _len = len;
+    const auto live =
+      FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, prev, _end);
+    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data, _end, live);
+    _left_in_leaf = live;
+    _len = live;
     _left_in_list -= len;
     _base = prev;
     _max_in_leaf = *(std::end(_docs) - 1);
@@ -412,6 +428,7 @@ class PruneLeafBase {
   doc_id_t _base = 0;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   doc_id_t _upper_bound = doc_limits::eof();
+  doc_id_t _end = 0;
   uint32_t _left_in_list = 0;
   bool _needs_reposition = false;
   bool _scored = false;

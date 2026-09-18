@@ -23,7 +23,8 @@
 
 namespace irs::lead {
 
-Node::ptr Make(const RangeVectorQuery& query) {
+Node::ptr Make(const RangeVectorQuery& query, DocRange range) {
+  SDB_ASSERT(!range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -36,6 +37,7 @@ Node::ptr Make(const RangeVectorQuery& query) {
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -57,6 +59,7 @@ Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
 }
 
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

@@ -23,27 +23,21 @@ query
 EXPLAIN SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC LIMIT 10;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 10                                │
-│ Order By: #1 DESC                      │
-│ ~10 rows                               │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: dd_idx                          │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Or ─────────────────╮               │
-│ ╰───────────┬──────────╯               │
-│ ╭─ Terms ───┴──────────╮               │
-│ │ Field: body(string)  │               │
-│ │ Values: 'cat', 'fox' │               │
-│ ╰──────────────────────╯               │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 10, optimized                     │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1,200 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: dd_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Or ─────────────────╮    │
+│ ╰───────────┬──────────╯    │
+│ ╭─ Terms ───┴──────────╮    │
+│ │ Field: body(string)  │    │
+│ │ Values: 'cat', 'fox' │    │
+│ ╰──────────────────────╯    │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 10, optimized          │
+│ Projections: id             │
+│ ~1,200 rows                 │
+╰─────────────────────────────╯
 
 query
 SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC, id LIMIT 10;

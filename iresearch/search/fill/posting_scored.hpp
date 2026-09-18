@@ -107,11 +107,12 @@ class PostingFillScored : public PostingLeaf<InputType, kWindowScoredShape> {
       }
       const auto len = std::min(_left_in_list, kBlock);
       _left_in_list -= len;
-      if (!ReadLeafBelow(len, min)) {
+      const auto live = ReadLeafBelow(len, min);
+      if (live == 0) {
         continue;
       }
 
-      const auto* const begin = Behind(end - len, end, min);
+      const auto* const begin = Behind(end - live, end, min);
       if (_last < max) {
         this->template AddWhole<MergeType, kCounts>(begin, end, min, kNoCounts,
                                                     mask, window);

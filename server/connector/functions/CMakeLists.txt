@@ -1,5 +1,5 @@
 target_sources(
-    serene_connector
+    sereneserver
     PRIVATE
         array.cpp
         catalog_introspect.cpp

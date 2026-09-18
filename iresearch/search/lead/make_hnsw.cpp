@@ -90,6 +90,7 @@ class HnswHits : public Node {
 }  // namespace
 
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   const auto record = query.Stats(ctx);
   const detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,

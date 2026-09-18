@@ -24,6 +24,7 @@
 namespace irs::hits {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = irs::detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};
@@ -52,6 +53,7 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   auto inner = irs::detail::InnerProbe(query);
   if (query.Inner() != nullptr && !inner) {
     return {};

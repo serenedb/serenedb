@@ -57,6 +57,7 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   return memory::make_managed<HnswHits>(query.RunSearch(), ctx.table);
 }
 

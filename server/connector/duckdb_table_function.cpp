@@ -54,9 +54,9 @@
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
 #include "search/inverted_index_storage.h"
 
@@ -76,6 +76,8 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.text_scorer = src.text_scorer;
   dst.vector_scorer = src.vector_scorer;
   dst.score_top_k = src.score_top_k;
+  dst.score_top_offset = src.score_top_offset;
+  dst.top_n_consumed = src.top_n_consumed;
   dst.score_order = src.score_order;
   dst.score_static_floor = src.score_static_floor;
   dst.offsets = src.offsets;
@@ -106,11 +108,11 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
   uint64_t estimate = 0;
   for (const auto& req : ss.ts_dicts) {
     const uint64_t rows = [&] -> uint64_t {
-      if (req.term_uses == (TsDictTermUses::kMin | TsDictTermUses::kMax)) {
+      if (req.term_uses == (TsDictTermUses::Min | TsDictTermUses::Max)) {
         return 2;
       }
-      if (req.term_uses == TsDictTermUses::kMin ||
-          req.term_uses == TsDictTermUses::kMax) {
+      if (req.term_uses == TsDictTermUses::Min ||
+          req.term_uses == TsDictTermUses::Max) {
         return 1;
       }
       uint64_t terms = 0;
@@ -656,9 +658,11 @@ void SereneDBScanBindData::AppendSummary(
     }
   }
   if (score_top_k) {
-    // TODO(mbkkt): prunnable/etc instead of optimized?
-    // TODO(mbkkt): streaming top k also should be marked when pruning enabled
-    std::string topk_val = absl::StrCat(*score_top_k);
+    std::string topk_val = absl::StrCat(
+      *score_top_k - (bind.top_n_consumed ? bind.score_top_offset : 0));
+    if (bind.top_n_consumed && bind.score_top_offset != 0) {
+      absl::StrAppend(&topk_val, ", offset ", bind.score_top_offset);
+    }
     const auto* pruning =
       ResolvePruneScorer(bind.topk_scorer, query_scorer.get());
     if (pruning) {
@@ -916,12 +920,11 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     result.insert("Lookup", bind.lookup_label);
   }
   bind.AppendSummary(result);
-  // Top-k enforces the floor via the collectors for any scorer; streaming
-  // only puts it to work as the text prune threshold.
   if (bind.score_static_floor > std::numeric_limits<float>::lowest() &&
       (bind.score_top_k || bind.text_scorer)) {
     result.insert("Min Score", absl::StrCat(bind.score_static_floor));
   }
+  AppendScanExplain(bind, input, result);
   if (count_only) {
     result.insert("Output", "row-count only");
   }
@@ -930,19 +933,6 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     result.insert("Projections", FormatProjections(entries, annotate));
   }
   return result;
-}
-
-static double IResearchScanProgress(
-  duckdb::ClientContext&, const duckdb::FunctionData*,
-  const duckdb::GlobalTableFunctionState* gstate_p) {
-  const auto& gstate = gstate_p->Cast<IResearchScanGlobalState>();
-  if (gstate.total_segments == 0) {
-    return -1;
-  }
-  const auto claimed = std::min<uint64_t>(
-    gstate.next_segment.load(std::memory_order_relaxed), gstate.total_segments);
-  return 100.0 * static_cast<double>(claimed) /
-         static_cast<double>(gstate.total_segments);
 }
 
 namespace {
@@ -1266,6 +1256,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
+  func.consume_top_n = &IResearchConsumeTopN;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;

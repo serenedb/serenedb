@@ -32,7 +32,7 @@ namespace irs::count {
 TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
                                size_t terms) {
   SDB_ASSERT(detail::DocOf(field) != nullptr);
-  if (terms < 2) {
+  if (terms == 0) {
     return {};
   }
   return detail::ResolveInput(

@@ -34,7 +34,8 @@
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_function.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
@@ -77,14 +78,14 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   auto& conn_ctx = connector::GetSereneDBContext(context);
-  auto data = duckdb::make_uniq<connector::TableScanBindData>();
+  auto data = duckdb::make_uniq<connector::ScanBindData>();
   for (const auto& col : GetColumns().Logical()) {
-    data->column_ids.emplace_back(col.CatalogOid());
-    data->column_types.push_back(col.Type());
+    data->columns.ids.emplace_back(col.CatalogOid());
+    data->columns.types.push_back(col.Type());
   }
-  data->table_entry = this;
+  data->relation.table_entry = this;
   // Carried in both roads, so pushdown targets this index's own term fields.
-  data->indexes = {
+  data->relation.indexes = {
     ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id)};
 
   const auto* relation =
@@ -96,16 +97,16 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
       GetIndexedRelationId(),
       [&] { return relation->GetSearchData()->GetDirectoryReader(); });
-    data->entry_kind = connector::ScanEntryKind::SearchTableIndex;
-    data->topk_scorer = relation->SearchOptions().topk_scorer;
-    data->lookup_label = "search";
-    data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+    data->relation.kind = connector::ScanEntryKind::SearchTableIndex;
+    data->score.prune = relation->SearchOptions().topk_scorer;
+    data->lookup.label = "search";
+    data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
   } else {
-    data->entry_kind = connector::ScanEntryKind::InvertedIndex;
-    data->lookup_label = "table";
-    data->topk_scorer = data->ScannedIndex().GetTopKScorer();
-    data->snapshot = conn_ctx.EnsureSearchSnapshot(
+    data->relation.kind = connector::ScanEntryKind::InvertedIndex;
+    data->lookup.label = "table";
+    data->score.prune = data->relation.ScannedIndex().GetTopKScorer();
+    data->search.snapshot = conn_ctx.EnsureSearchSnapshot(
       _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
   }
   bind_data = std::move(data);
@@ -186,36 +187,37 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
     _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
-  auto data = duckdb::make_uniq<connector::ViewScanBindData>();
-  data->view_id = catalog::IdOf(*_sdb_view);
+  auto data = duckdb::make_uniq<connector::ScanBindData>();
+  auto& view = data->view.emplace();
+  view.id = catalog::IdOf(*_sdb_view);
   const auto& vinfo = *_sdb_view;
   // The name as the view is called now -- a rename does not rewrite this
   // wrapper -- while the definition scanned is the one the index was built on.
   const auto* live =
-    FindIn<SereneDBViewEntry>(&context, this->catalog, data->view_id);
-  data->view_name = live ? live->name.GetIdentifierName()
-                         : vinfo.GetViewName().GetIdentifierName();
+    FindIn<SereneDBViewEntry>(&context, this->catalog, view.id);
+  view.name = live ? live->name.GetIdentifierName()
+                   : vinfo.GetViewName().GetIdentifierName();
   for (size_t i = 0; i < vinfo.names.size(); ++i) {
-    data->column_ids.push_back(static_cast<catalog::ColumnId>(i));
-    data->column_types.push_back(vinfo.types[i]);
-    data->column_names.emplace_back(vinfo.names[i].GetIdentifierName());
+    data->columns.ids.push_back(static_cast<catalog::ColumnId>(i));
+    data->columns.types.push_back(vinfo.types[i]);
+    view.column_names.emplace_back(vinfo.names[i].GetIdentifierName());
   }
-  data->table_entry = this;
-  data->entry_kind = connector::ScanEntryKind::InvertedIndex;
-  data->indexes = {
+  data->relation.table_entry = this;
+  data->relation.kind = connector::ScanEntryKind::InvertedIndex;
+  data->relation.indexes = {
     ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id)};
-  data->topk_scorer = data->ScannedIndex().GetTopKScorer();
+  data->score.prune = data->relation.ScannedIndex().GetTopKScorer();
   std::span<const std::string> key_cols =
-    data->ScannedIndex().GetOptions().key_columns;
-  data->fast_path =
+    data->relation.ScannedIndex().GetOptions().key_columns;
+  view.fast_path =
     connector::ResolveViewFastPath(context, *_sdb_view, key_cols);
-  if (data->fast_path) {
-    data->lookup_label = FormatLookupLabel(*data->fast_path);
-    data->lookup_supports_filters = data->fast_path->supports_filters;
+  if (view.fast_path) {
+    data->lookup.label = FormatLookupLabel(*view.fast_path);
+    data->lookup.supports_filters = view.fast_path->supports_filters;
   } else {
-    data->lookup_label = "view";
+    data->lookup.label = "view";
   }
-  data->snapshot = std::move(snapshot);
+  data->search.snapshot = std::move(snapshot);
   bind_data = std::move(data);
   return connector::CreateIResearchScanFunction();
 }

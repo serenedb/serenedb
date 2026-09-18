@@ -24,6 +24,7 @@
 namespace irs::count {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+  SDB_ASSERT(!ctx.range.Bounded());
   HnswRefuseFilter(ctx.table);
   return MakeConstant(query.RunSearch().size());
 }

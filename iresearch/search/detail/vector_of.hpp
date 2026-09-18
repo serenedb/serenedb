@@ -218,7 +218,7 @@ class VectorCluster {
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
-    _list.Prepare(meta, doc_in, IndexFeatures::None, false);
+    _list.Prepare(meta, doc_in, IndexFeatures::None, false, DocRange{});
   }
 
   VectorCluster(VectorCluster&&) = delete;

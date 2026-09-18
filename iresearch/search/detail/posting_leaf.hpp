@@ -215,7 +215,7 @@ class PostingLeaf {
   }
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
-                 bool bounds) {
+                 IndexFeatures layout, bool bounds, DocRange range) {
     _in = doc_in.Reopen();
     if (!_in) [[unlikely]] {
       throw IoError{"failed to reopen document input"};
@@ -226,14 +226,39 @@ class PostingLeaf {
       SkipScoreBounds(bounds, in);
     }
     _left_in_list = meta.docs_count;
+    if (range.Bounded()) [[unlikely]] {
+      Bound(meta, SkipShapeOf(layout, bounds), range);
+    }
+  }
+
+  IRS_NO_INLINE void Bound(const PostingMeta& meta, SkipShape shape,
+                           DocRange range) {
+    const auto cut = CutWindow<InputType>(meta, In(), shape, range);
+    _after_window = cut.after;
+    _left_in_list = cut.left - cut.after;
+    if (!doc_limits::eof(range.end)) {
+      _end = range.end;
+    }
+    if (_left_in_list == 0 || range.begin <= doc_limits::min()) {
+      return;
+    }
+    if (cut.landed) {
+      In().Seek(cut.landing.doc_ptr);
+      _last = cut.landing.doc;
+    }
+    if constexpr (Shape.cursor && Shape.delta) {
+      ReadLeafDelta(_last);
+      const auto* const end = std::end(_docs);
+      _left_in_leaf = static_cast<uint32_t>(
+        end - Behind(end - _left_in_leaf, end, range.begin));
+    }
   }
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     static_assert(Shape.cursor);
-    if (meta.docs_count > kBlock) {
-      const auto skip = ToSkipLayout(layout);
-      _cursor.walk.Arm(meta,
-                       {.bounds = bounds, .pos = skip.pos, .offs = skip.offs});
+    if (meta.docs_count > kBlock && _left_in_list != 0) {
+      _cursor.walk.Arm(meta, SkipShapeOf(layout, bounds),
+                       meta.docs_count - _after_window);
       _cursor.upper_bound = doc_limits::invalid();
     }
   }
@@ -302,9 +327,11 @@ class PostingLeaf {
     }
   }
 
-  IRS_FORCE_INLINE void TakeFreqs(uint32_t len) {
+  IRS_FORCE_INLINE void TakeFreqs(uint32_t len) { TakeFreqs(len, len); }
+
+  IRS_FORCE_INLINE void TakeFreqs(uint32_t len, uint32_t live) {
     if constexpr (Shape.freqs) {
-      FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data);
+      FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data, _end, live);
     } else {
       SkipFreqs(len);
     }
@@ -317,32 +344,34 @@ class PostingLeaf {
     }
     auto& in = In();
     if (_left_in_list >= kBlock) [[likely]] {
-      FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
-      _left_in_leaf = kBlock;
+      _left_in_leaf =
+        FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev, _end);
       _left_in_list -= kBlock;
-      TakeFreqs(kBlock);
+      TakeFreqs(kBlock, _left_in_leaf);
     } else {
       const auto tail = _left_in_list;
-      FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev);
-      _left_in_leaf = tail;
+      _left_in_leaf =
+        FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev, _end);
       _left_in_list = 0;
-      TakeFreqs(tail);
+      TakeFreqs(tail, _left_in_leaf);
     }
     _last = *(std::end(_docs) - 1);
   }
 
-  bool ReadLeafBelow(uint32_t len, doc_id_t min) {
+  uint32_t ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
-    FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, _last);
+    const auto live =
+      FormatTraits128::ReadTailDelta<FormatTraits128::TrimAlign::Right>(
+        len, in, _enc.data, _docs, _last, _end);
     _last = *(std::cend(_docs) - 1);
-    if (_last < min) {
+    if (live == 0 || _last < min) {
       FormatTraits128::SkipTail(len, in);
-      return false;
+      return 0;
     }
-    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
-    ScoreLeaf(kBlock - len, len);
-    return true;
+    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data, _end, live);
+    ScoreLeaf(kBlock - live, live);
+    return live;
   }
 
   void ScoreLeaf(uint32_t offset, uint32_t len) {
@@ -485,8 +514,10 @@ class PostingLeaf {
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
+  doc_id_t _end = 0;
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
+  uint32_t _after_window = 0;
   [[no_unique_address]] utils::Need<!Shape.freqs, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Shape.scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Shape.scored || Shape.defer, LeafProvider>

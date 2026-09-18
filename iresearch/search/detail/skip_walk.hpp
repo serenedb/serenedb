@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 
@@ -46,11 +47,17 @@ class SkipWalk {
   SkipWalk() : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize} {}
 
   void Arm(const PostingMeta& meta, SkipShape shape) noexcept {
+    Arm(meta, shape, meta.docs_count);
+  }
+
+  void Arm(const PostingMeta& meta, SkipShape shape,
+           uint32_t docs_count) noexcept {
     SDB_ASSERT(meta.docs_count > doc_limits::kBlockSize);
+    SDB_ASSERT(docs_count != 0 && docs_count <= meta.docs_count);
     _skip.Reader().SetShape(shape);
     _skip.Reader().Enable(meta);
     _offs = meta.doc_start + meta.doc_delta;
-    _pending = meta.docs_count;
+    _pending = docs_count;
     _bounds = shape.bounds;
   }
 
@@ -118,5 +125,61 @@ class SkipWalk {
   uint32_t _pending = 0;
   bool _bounds = false;
 };
+
+IRS_FORCE_INLINE constexpr SkipShape SkipShapeOf(IndexFeatures layout,
+                                                 bool bounds) noexcept {
+  const auto skip = ToSkipLayout(layout);
+  return {.bounds = bounds, .pos = skip.pos, .offs = skip.offs};
+}
+
+IRS_FORCE_INLINE constexpr uint32_t PostingsAfterLanding(
+  uint32_t left) noexcept {
+  return left - std::min<uint32_t>(left, doc_limits::kBlockSize);
+}
+
+template<typename InputType>
+uint32_t PostingsAfter(const PostingMeta& meta, IndexInput& in, SkipShape shape,
+                       doc_id_t end) {
+  if (doc_limits::eof(end) || meta.docs_count <= doc_limits::kBlockSize) {
+    return 0;
+  }
+  SkipWalk<InputType> walk;
+  walk.Arm(meta, shape);
+  return PostingsAfterLanding(walk.Seek(end, in));
+}
+
+struct WindowCut {
+  SkipState landing;
+  SkipState end_landing;
+  uint32_t left = 0;
+  uint32_t after = 0;
+  uint32_t end_left = 0;
+  bool landed = false;
+  bool end_landed = false;
+};
+
+template<typename InputType>
+WindowCut CutWindow(const PostingMeta& meta, IndexInput& in, SkipShape shape,
+                    DocRange range) {
+  WindowCut cut{.left = meta.docs_count};
+  if (meta.docs_count <= doc_limits::kBlockSize) {
+    return cut;
+  }
+  SkipWalk<InputType> walk;
+  walk.Arm(meta, shape);
+  if (range.begin > doc_limits::min()) {
+    cut.left = walk.Seek(range.begin, in);
+    cut.landing = walk.Landing();
+    cut.landed = true;
+  }
+  if (!doc_limits::eof(range.end)) {
+    cut.end_left = walk.Seek(range.end, in);
+    cut.end_landing = walk.Landing();
+    cut.end_landed = true;
+    cut.after = PostingsAfterLanding(cut.end_left);
+  }
+  SDB_ASSERT(cut.after <= cut.left);
+  return cut;
+}
 
 }  // namespace irs::detail

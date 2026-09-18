@@ -78,7 +78,9 @@ FullScanner::FullScanner(
 }
 
 duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
-                                duckdb::DataChunk& output) {
+                                duckdb::DataChunk& output,
+                                const duckdb::SelectionVector* live,
+                                duckdb::idx_t live_count) {
   if (count == 0) {
     return 0;
   }
@@ -87,7 +89,16 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 
-  if (_filters.Empty()) {
+  if (live != nullptr) {
+    if (live_count == 0) {
+      return 0;
+    }
+    if (live_count == count) {
+      live = nullptr;
+    }
+  }
+
+  if (_filters.Empty() && live == nullptr) {
     for (auto& b : _bound) {
       auto& out = output.data[b.output_slot];
       if (b.extract) {
@@ -111,36 +122,42 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     return count;
   }
 
-  // RowGroup::Scan-style: narrow `_sel` with the codec filters (each filter
-  // column decoded once, straight into its projected output vector), then
-  // materialize only the survivors of the remaining projected columns.
-  _sel.Initialize(_sel_data);
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    _sel.set_index(i, i);
+  const duckdb::SelectionVector* sel = live;
+  duckdb::idx_t survivors = live != nullptr ? live_count : count;
+  if (!_filters.Empty()) {
+    _sel.Initialize(_sel_data);
+    if (live != nullptr) {
+      for (duckdb::idx_t i = 0; i < survivors; ++i) {
+        _sel.set_index(i, live->get_index(i));
+      }
+    } else {
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        _sel.set_index(i, i);
+      }
+    }
+    survivors =
+      _filters.FilterWindow(start_row, count, _sel, survivors, &output);
+    if (survivors == 0) {
+      return 0;
+    }
+    _filters.FinishOutputs(start_row, count, _sel, survivors, output);
+    sel = &_sel;
   }
-  const duckdb::idx_t survivors =
-    _filters.FilterWindow(start_row, count, _sel, count, &output);
-  if (survivors == 0) {
-    // Every row filtered out. Column scan cursors that didn't advance this
-    // vector re-position to the next anchor on the following call.
-    return 0;
-  }
-  _filters.FinishOutputs(start_row, count, _sel, survivors, output);
-  // Materialize the survivors of the non-filter projected columns.
+  SDB_ASSERT(sel != nullptr);
   for (auto& b : _bound) {
     auto& out = output.data[b.output_slot];
     if (b.extract) {
       if (survivors == count) {
         b.extract->MaterializeContiguous(start_row, count, out);
       } else {
-        b.extract->MaterializeSelected(start_row, _sel, survivors, out);
+        b.extract->MaterializeSelected(start_row, *sel, survivors, out);
       }
       continue;
     }
     if (b.is_list_like) {
       duckdb::ListVector::SetListSize(out, 0);
     }
-    b.reader->GatherDense(*b.state, start_row, _sel, survivors, count, out);
+    b.reader->GatherDense(*b.state, start_row, *sel, survivors, count, out);
   }
   return survivors;
 }

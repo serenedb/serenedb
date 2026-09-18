@@ -238,7 +238,7 @@
 	shallow = true
 [submodule "third_party/protobuf"]
 	path = third_party/protobuf
-	url = https://github.com/protocolbuffers/protobuf.git
+	url = https://github.com/serenedb/protobuf.git
 [submodule "third_party/opentelemetry-proto"]
 	path = third_party/opentelemetry-proto
-	url = https://github.com/open-telemetry/opentelemetry-proto.git
+	url = https://github.com/serenedb/opentelemetry-proto.git

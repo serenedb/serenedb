@@ -92,12 +92,15 @@ class LazyBitset {
   doc_id_t End() const noexcept { return _set.End(); }
 
   void Reach(doc_id_t upto) {
-    const auto end = _set.End();
-    if (upto > end) {
-      upto = end;
-    }
     if (upto <= _filled) {
       return;
+    }
+    const auto end = _set.End();
+    if (_filled >= end) {
+      return;
+    }
+    if (upto > end) {
+      upto = end;
     }
     const auto base = _set.Min();
     auto* const words = _set.Words();

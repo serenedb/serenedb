@@ -758,3 +758,51 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   ASSERT_FALSE(set.Contains(5000));
   ASSERT_EQ(2, fill->windows());
 }
+
+// A set that is already folded has no clause left to fill from, so a question
+// past its end has to stop at the end rather than reach for one. CountAgainst
+// asks exactly that of the last leaf of a bounded scan.
+TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
+  constexpr irs::doc_id_t kDocs = 300;
+  irs::detail::LazyBitset set{MakeSet(kDocs, {3, 100, 299}), nullptr};
+
+  ASSERT_EQ(kDocs + 1, set.End());
+  ASSERT_EQ(kDocs + 1, set.Filled());
+
+  set.Reach(kDocs + 1);
+  set.Reach(kDocs + 2);
+  set.Reach(irs::doc_limits::eof());
+  ASSERT_EQ(kDocs + 1, set.Filled());
+
+  ASSERT_TRUE(set.Contains(3));
+  ASSERT_TRUE(set.Contains(299));
+  ASSERT_FALSE(set.Contains(4));
+  ASSERT_EQ(irs::doc_limits::eof(), set.Probe(kDocs + 1));
+}
+
+// The same question against a set that a range cut short: the storage ends
+// before the segment does, and what is past that end is not this set's to
+// answer.
+TEST(lazy_bitset_test, reaching_past_the_end_of_a_range_bounded_set) {
+  constexpr irs::doc_id_t kDocs = 300;
+  const irs::DocRange range{.begin = kMin, .end = 128};
+  irs::detail::BitsetStorage storage{range, kDocs};
+  auto* words = storage.Words();
+  for (const auto doc : {irs::doc_id_t{3}, irs::doc_id_t{100}}) {
+    const auto offset = doc - storage.Min();
+    irs::SetBit(words[offset / kBits], offset % kBits);
+  }
+  irs::detail::LazyBitset set{std::move(storage), range, nullptr};
+
+  ASSERT_EQ(128, set.End());
+  ASSERT_EQ(128, set.Filled());
+
+  set.Reach(200);
+  set.Reach(irs::doc_limits::eof());
+  ASSERT_EQ(128, set.Filled());
+
+  ASSERT_TRUE(set.Contains(3));
+  ASSERT_TRUE(set.Contains(100));
+  ASSERT_FALSE(set.Contains(200));
+  ASSERT_EQ(irs::doc_limits::eof(), set.Probe(128));
+}

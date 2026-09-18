@@ -646,7 +646,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   auto it_mask = donor.reader->MaskedDocs();
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (doc == it_mask.Seek(doc)) {
+    if (it_mask.Probe(doc)) {
       continue;
     }
     if (donor.out_base + rank >= rows) {

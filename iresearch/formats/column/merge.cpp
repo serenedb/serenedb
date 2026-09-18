@@ -130,7 +130,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
       for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
         const auto src_doc = static_cast<doc_id_t>(pos + i + doc_limits::min());
-        if (src_doc != it_mask->Seek(src_doc)) {
+        if (!it_mask->Probe(src_doc)) {
           slot->push_back(static_cast<duckdb::sel_t>(i));
         }
       }

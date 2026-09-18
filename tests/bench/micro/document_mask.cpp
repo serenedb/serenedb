@@ -24,6 +24,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -588,6 +589,33 @@ void BmLookupTest(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BmLookupTest, RoaringMask)
   ->Name("LookupTest/roaring")
   ->Apply(RatioStride);
+
+void BmRoaringContainsBulk(benchmark::State& state) {
+  const auto& deleted = Deleted(state.range(0), state.range(1));
+  roaring::Roaring set;
+  set.addMany(deleted.size(), deleted.data());
+  set.runOptimize();
+  set.shrinkToFit();
+  const auto& candidates = Candidates(state.range(2));
+  size_t hits = 0;
+
+  for (auto _ : state) {
+    roaring::BulkContext ctx;
+    hits = 0;
+    for (const auto doc : candidates) {
+      hits += static_cast<size_t>(set.containsBulk(ctx, doc));
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+
+  state.counters["hits"] = static_cast<double>(hits);
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>(candidates.size()));
+}
+
+BENCHMARK(BmRoaringContainsBulk)
+  ->Name("LookupTest/roaring_bulk")
+  ->Apply(RatioStride);
 BENCHMARK_TEMPLATE(BmLookupTest, HashSetMask)
   ->Name("LookupTest/hashset")
   ->Apply(RatioStride);
@@ -664,6 +692,134 @@ void BmRoaringIteratorInit(benchmark::State& state) {
 }
 
 BENCHMARK(BmRoaringIteratorInit)->Name("LookupInit/roaring")->Apply(RatioShape);
+
+constexpr size_t kScaleProbes = 65536;
+
+struct ScaleData {
+  doc_id_t docs = 0;
+  roaring::Roaring set;
+  absl::flat_hash_set<doc_id_t> hash;
+  std::vector<uint64_t> bits;
+  std::vector<doc_id_t> ordered;
+  std::vector<doc_id_t> shuffled;
+};
+
+const ScaleData& Scale(int64_t docs_m, int64_t per_mille, int64_t shape) {
+  static ScaleData gCache;
+  static std::array<int64_t, 3> gKey{-1, -1, -1};
+  const std::array<int64_t, 3> key{docs_m, per_mille, shape};
+  if (gKey == key) {
+    return gCache;
+  }
+
+  const auto docs = static_cast<doc_id_t>(docs_m * 1'000'000);
+  const auto count = static_cast<size_t>(
+    uint64_t{docs} * static_cast<uint64_t>(per_mille) / 1000);
+  std::mt19937_64 rng{42};
+
+  std::vector<doc_id_t> deleted;
+  deleted.reserve(count);
+  if (shape == kClustered) {
+    const auto runs = (count + kRunLength - 1) / kRunLength;
+    const auto slots = static_cast<size_t>(docs / kRunLength);
+    absl::flat_hash_set<size_t> picked;
+    picked.reserve(runs);
+    while (picked.size() < std::min(runs, slots)) {
+      picked.insert(rng() % slots);
+    }
+    std::vector<size_t> sorted{picked.begin(), picked.end()};
+    std::sort(sorted.begin(), sorted.end());
+    for (const auto slot : sorted) {
+      const auto first = kBegin + static_cast<doc_id_t>(slot * kRunLength);
+      for (doc_id_t i = 0; i != kRunLength && deleted.size() != count; ++i) {
+        deleted.push_back(first + i);
+      }
+    }
+  } else {
+    absl::flat_hash_set<doc_id_t> picked;
+    picked.reserve(count);
+    while (picked.size() < count) {
+      picked.insert(kBegin + static_cast<doc_id_t>(rng() % docs));
+    }
+    deleted.assign(picked.begin(), picked.end());
+    std::sort(deleted.begin(), deleted.end());
+  }
+
+  gCache = ScaleData{};
+  gCache.docs = docs;
+  gCache.set.addMany(deleted.size(), deleted.data());
+  gCache.set.runOptimize();
+  gCache.set.shrinkToFit();
+  gCache.hash.reserve(deleted.size());
+  gCache.hash.insert(deleted.begin(), deleted.end());
+  gCache.bits.assign((docs + kBits - 1) / kBits, 0);
+  for (const auto doc : deleted) {
+    const auto off = static_cast<size_t>(doc - kBegin);
+    gCache.bits[off / kBits] |= uint64_t{1} << (off % kBits);
+  }
+
+  gCache.ordered.reserve(kScaleProbes);
+  const auto stride = std::max<doc_id_t>(1, docs / kScaleProbes);
+  for (size_t i = 0; i != kScaleProbes; ++i) {
+    gCache.ordered.push_back(kBegin + static_cast<doc_id_t>(i) * stride);
+  }
+  gCache.shuffled = gCache.ordered;
+  std::shuffle(gCache.shuffled.begin(), gCache.shuffled.end(), rng);
+
+  gKey = key;
+  return gCache;
+}
+
+void ScaleArgs(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct({{1, 8, 64}, {10, 200}, {kUniform, kClustered}, {0, 1}});
+}
+
+template<int Arm>
+void BmLookupScale(benchmark::State& state) {
+  const auto& data = Scale(state.range(0), state.range(1), state.range(2));
+  const auto& probes = state.range(3) == 0 ? data.ordered : data.shuffled;
+  size_t hits = 0;
+
+  for (auto _ : state) {
+    hits = 0;
+    if constexpr (Arm == 0) {
+      for (const auto doc : probes) {
+        hits += static_cast<size_t>(data.set.contains(doc));
+      }
+    } else if constexpr (Arm == 1) {
+      roaring::BulkContext ctx;
+      for (const auto doc : probes) {
+        hits += static_cast<size_t>(data.set.containsBulk(ctx, doc));
+      }
+    } else if constexpr (Arm == 2) {
+      for (const auto doc : probes) {
+        hits += static_cast<size_t>(data.hash.contains(doc));
+      }
+    } else {
+      for (const auto doc : probes) {
+        const auto off = static_cast<size_t>(doc - kBegin);
+        hits +=
+          static_cast<size_t>((data.bits[off / kBits] >> (off % kBits)) & 1);
+      }
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+
+  state.counters["hits"] = static_cast<double>(hits);
+  state.counters["roaring_bytes"] =
+    static_cast<double>(data.set.getSizeInBytes());
+  state.counters["bitset_bytes"] =
+    static_cast<double>(data.bits.size() * sizeof(uint64_t));
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>(probes.size()));
+}
+
+BENCHMARK_TEMPLATE(BmLookupScale, 0)->Name("Scale/roaring")->Apply(ScaleArgs);
+BENCHMARK_TEMPLATE(BmLookupScale, 1)
+  ->Name("Scale/roaring_bulk")
+  ->Apply(ScaleArgs);
+BENCHMARK_TEMPLATE(BmLookupScale, 2)->Name("Scale/hashset")->Apply(ScaleArgs);
+BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
   auto it_mask = mask.Begin();

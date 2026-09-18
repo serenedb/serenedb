@@ -188,7 +188,7 @@ class MaskedPostings : public irs::TermPostings {
   irs::doc_id_t Next() final {
     do {
       _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _doc == _it_mask.Seek(_doc));
+    } while (!irs::doc_limits::eof(_doc) && _it_mask.Probe(_doc));
     return _doc;
   }
 

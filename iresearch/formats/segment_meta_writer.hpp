@@ -67,26 +67,34 @@ struct DocsMaskWriter {
   static constexpr std::string_view kFormatExt = "dm";
 };
 
-inline void WriteDocumentMask(IndexOutput& out, const DocumentMask& mask) {
-  const auto size = mask.ByteSize();
+inline void WriteDocumentMask(IndexOutput& out,
+                              const roaring::Roaring& compressed) {
+  const auto size = compressed.getSizeInBytes();
   SDB_ASSERT(size < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(size));
   if (auto* buf = out.Reserve(size); buf != nullptr) {
-    mask.Write(reinterpret_cast<char*>(buf));
+    compressed.write(reinterpret_cast<char*>(buf));
     return;
   }
   bstring blob(size, 0);
-  mask.Write(reinterpret_cast<char*>(blob.data()));
+  compressed.write(reinterpret_cast<char*>(blob.data()));
   out.WriteData(blob.data(), size);
 }
 
 inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
-                                  const DocumentMask* patch) {
+                                  const DocumentMask* patch,
+                                  roaring::Roaring& compressed) {
   SDB_ASSERT(meta.docs_mask_files <= meta.files.size());
 
   const auto& docs_mask = meta.docs_mask;
-  if (!docs_mask || docs_mask->Empty() ||
-      docs_mask->ByteSize() <= SegmentMetaWriterImpl::kMaxInlineBytes) {
+  if (!docs_mask || docs_mask->Empty()) {
+    meta.files.resize(meta.files.size() - meta.docs_mask_files);
+    meta.docs_mask_files = 0;
+    return 0;
+  }
+  compressed = docs_mask->Compress();
+  const auto mask_size = compressed.getSizeInBytes();
+  if (mask_size <= SegmentMetaWriterImpl::kMaxInlineBytes) {
     meta.files.resize(meta.files.size() - meta.docs_mask_files);
     meta.docs_mask_files = 0;
     return 0;
@@ -96,7 +104,7 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
   const bool append =
     patch != nullptr && meta.docs_mask_files != 0 &&
     meta.docs_mask_files < SegmentMetaWriterImpl::kMaxMaskFiles &&
-    docs_mask->ByteSize() > SegmentMetaWriterImpl::kMinChainBytes;
+    mask_size > SegmentMetaWriterImpl::kMinChainBytes;
   auto chain_size = meta.docs_mask_size;
   if (!append) {
     meta.files.resize(meta.files.size() - meta.docs_mask_files);
@@ -117,7 +125,7 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
     throw IoError{absl::StrCat("failed to create file, path: ", name)};
   }
 
-  WriteDocumentMask(*out, append ? *patch : *docs_mask);
+  WriteDocumentMask(*out, append ? patch->Compress() : compressed);
 
   return chain_size + out->Position();
 }
@@ -145,7 +153,8 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
-  const auto docs_mask_size = WriteDocumentMask(dir, meta, patch);
+  roaring::Roaring compressed;
+  const auto docs_mask_size = WriteDocumentMask(dir, meta, patch, compressed);
 
   meta_file = FileName<SegmentMetaWriter>(meta);
   auto out = dir.create(meta_file);
@@ -165,7 +174,7 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     out->WriteV32(uncommitted_count);
     out->WriteV32(meta.docs_mask_files);
     if (meta.docs_mask_files == 0 && removal_count != uncommitted_count) {
-      WriteDocumentMask(*out, *meta.docs_mask);
+      WriteDocumentMask(*out, compressed);
     }
   }
   out->WriteV64(size_without_mask);

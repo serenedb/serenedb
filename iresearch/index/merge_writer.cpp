@@ -551,7 +551,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       for (size_t i = 0; i < n; ++i) {
         const auto src_doc =
           static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (src_doc == it_mask->Seek(src_doc)) {
+        if (it_mask->Probe(src_doc)) {
           flush_run(i);
           run_start = i + 1;
         }

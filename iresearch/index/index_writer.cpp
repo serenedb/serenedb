@@ -137,18 +137,14 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
     return false;  // skip a query kind that has no plan
   }
 
-  const auto* docs_mask = reader.docs_mask();
   const auto uncommitted_begin = reader.Meta().uncommitted_begin;
-  std::optional<DocumentMask::Iterator> it_mask;
-  if (docs_mask != nullptr) {
-    it_mask.emplace(docs_mask->Begin());
-  }
+  MaskedDocsIterator it_mask{reader.docs_mask(), uncommitted_begin};
   bool modified = false;
   for (auto doc_id = plan->Next();
        !doc_limits::eof(doc_id) && doc_id < uncommitted_begin;
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
-    if (it_mask && doc_id == it_mask->Seek(doc_id)) {
+    if (it_mask.Probe(doc_id)) {
       continue;
     }
     modified |= deleted_docs.Add(doc_id);

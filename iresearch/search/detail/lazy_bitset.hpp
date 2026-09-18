@@ -122,11 +122,12 @@ class LazyBitset {
 
   bool Contains(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
-    if (doc < _set.Min() || doc >= _set.End()) {
+    const auto base = _set.Min();
+    if (doc < base || doc >= _set.End()) {
       return false;
     }
     Reach(doc + 1);
-    const auto offset = doc - _set.Min();
+    const auto offset = doc - base;
     return CheckBit(_set.Words()[offset / kBits], offset % kBits);
   }
 
@@ -214,7 +215,8 @@ class CountAgainst {
   static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = true;
 
-  explicit CountAgainst(LazyBitset& set) noexcept : _set{&set} {}
+  explicit CountAgainst(LazyBitset& set) noexcept
+    : _set{&set}, _base{set.Min()} {}
 
   uint64_t Total() const noexcept { return _total; }
 
@@ -222,20 +224,19 @@ class CountAgainst {
     const auto begin = prev + 1;
     const auto end = begin + len;
     _set->Reach(static_cast<doc_id_t>(end));
-    const auto base = _set->Min();
-    _total += CountBitRange(_set->Words(), begin - base, end - base);
+    _total += CountBitRange(_set->Words(), begin - _base, end - _base);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) {
     _set->Reach(static_cast<doc_id_t>(max + 1));
-    _total += CountBlock(_set->Words(),
-                         static_cast<int64_t>(prev) - _set->Min(), src, n);
+    _total +=
+      CountBlock(_set->Words(), static_cast<int64_t>(prev) - _base, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) {
     _set->Reach(static_cast<doc_id_t>(doc + 1));
-    const auto offset = doc - _set->Min();
+    const auto offset = doc - _base;
     _total += static_cast<uint64_t>(
       CheckBit(_set->Words()[offset / kBits], offset % kBits));
   }
@@ -244,6 +245,7 @@ class CountAgainst {
 
  private:
   LazyBitset* _set;
+  doc_id_t _base;
   uint64_t _total = 0;
 };
 

@@ -339,6 +339,33 @@ static_assert(requires(const InnerAndTableFilter& f) {
 // count, what the scan would have cost) falls back to the scan.
 inline constexpr long double kWalkShare = 0.25L;
 
+// The nodes a walk is expected to touch, in the units `HnswPreferScan`
+// compares: `kWalkShare * ef * m0` candidates per admitted node, scaled by how
+// much of the graph the predicate rejects.
+long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
+                          uint64_t nodes) noexcept {
+  if (matches == 0) {
+    return static_cast<long double>(nodes);
+  }
+  return kWalkShare * static_cast<long double>(ef) * m0 * nodes /
+         static_cast<long double>(matches);
+}
+
+// Asking the columnstore about the nodes a walk reaches, instead of folding the
+// predicate over the segment once, is only worth it while the walk stays small.
+// The two are not the same kind of work: a fold is a vectorised compare per row
+// (about a nanosecond), a probe is a positioned read that locates a block,
+// checks its zonemap and decodes it for one row (microseconds), and the walk
+// re-decodes the same block every time it comes back to it. Measured on a
+// million-row search table the probe came out near four thousand times the
+// per-row fold, which is the ratio here: below it the walk touches few enough
+// nodes to beat reading the column, above it -- which is every beam over a
+// segment of any size -- folding wins, by 4x at a tenth selectivity.
+//
+// This is the columnstore's price alone. A predicate the term index answers
+// costs a bit test per node and never reaches this decision.
+inline constexpr long double kProbeFoldRatio = 4096;
+
 // Windows of the set filled to estimate its size before a plan is chosen: about
 // thirty thousand docs, a twentieth of a millisecond on a million-row segment.
 inline constexpr uint32_t kCountSampleWindows = 8;
@@ -352,8 +379,7 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   if (matches == 0 || nodes == 0) {
     return true;
   }
-  const long double walk = kWalkShare * static_cast<long double>(ef) * m0 *
-                           nodes / static_cast<long double>(matches);
+  const long double walk = HnswWalkNodes(matches, ef, m0, nodes);
   // A scan splits across `parallel` workers; the walk is one thread moving
   // through the graph, so only the scan's side of the comparison shrinks. A
   // scan that ranks on a prefix of each code reads a quarter of the rows it
@@ -583,8 +609,12 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   }
   // A walk asks the columnstore about the nodes it reaches; only a scan needs the predicate applied
   // to the whole segment up front, which is what building the set with the table does.
+  // Where the walk is wide enough that probing costs more than the fold it
+  // saves, the walk still runs -- against the folded set, one bit test a node.
   const bool ask_per_hop =
-    table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk;
+    table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk &&
+    HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * kProbeFoldRatio <=
+      static_cast<long double>(graph.Size());
   auto set = probe && !ask_per_hop
                ? std::move(*probe)
                : MakeSet(_inner.get(), ask_per_hop ? nullptr : table, docs_count);

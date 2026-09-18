@@ -377,12 +377,14 @@ bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
     if (!l.seg_cls.segment_dead) {
       return true;
     }
-    UnitDone(g, l);
+    if (FinishUnit(g, l)) {
+      FinishSegments(g, 1);
+    }
   }
   return false;
 }
 
-bool UnitFinished(ScanGlobalState& g, ScanLocalState& l) {
+bool FinishUnit(ScanGlobalState& g, ScanLocalState& l) {
   SDB_ASSERT(l.has_unit);
   l.has_unit = false;
   const auto& unit = l.unit;
@@ -396,7 +398,7 @@ bool UnitFinished(ScanGlobalState& g, ScanLocalState& l) {
   return done == work.rg_count;
 }
 
-bool SegmentsDone(ScanGlobalState& g, uint32_t count) {
+bool FinishSegments(ScanGlobalState& g, uint32_t count) {
   SDB_ASSERT(count != 0);
   return g.done_segments.fetch_add(count, std::memory_order_acq_rel) + count ==
          g.live_segments;

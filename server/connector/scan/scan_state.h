@@ -420,17 +420,13 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 // Claims the next unit whose segment survives the whole-file column-filter
 // classification, accounting for the ones it steps over.
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
-// Whether the unit was the last one of its segment. The completion is not
-// published yet: a shape that must expose its per-unit results to the other
-// workers publishes them first, then counts the segments with SegmentsDone.
-bool UnitFinished(ScanGlobalState& g, ScanLocalState& l);
-// Whether the count reached the last live segment, so the caller owns whatever
-// runs once every unit is collected.
-bool SegmentsDone(ScanGlobalState& g, uint32_t count);
-
-inline bool UnitDone(ScanGlobalState& g, ScanLocalState& l) {
-  return UnitFinished(g, l) && SegmentsDone(g, 1);
-}
+// Gives the unit up and answers whether it was the last one of its segment.
+// The segment is not counted yet: a shape whose per-unit results the other
+// workers read publishes them first, then counts with FinishSegments.
+bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
+// Counts segments whose units are all collected, and answers whether that
+// reached the last live one, so the caller owns whatever runs at the end.
+bool FinishSegments(ScanGlobalState& g, uint32_t count);
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,

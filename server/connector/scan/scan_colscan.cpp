@@ -133,7 +133,9 @@ void RunColScan(duckdb::ClientContext& /*ctx*/,
         output.SetChildCardinality(added);
         return;
       }
-      UnitDone(g, l);
+      if (FinishUnit(g, l)) {
+        FinishSegments(g, 1);
+      }
     }
     if (!NextLiveUnit(g, l)) {
       break;

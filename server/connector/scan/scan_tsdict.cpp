@@ -748,9 +748,9 @@ void RunTsDictScan(duckdb::ClientContext& /*ctx*/, ScanGlobalState& g,
       }
       if (l.has_unit) {
         const bool split = !l.unit.whole;
-        const bool segment_done = UnitFinished(g, l);
+        const bool segment_done = FinishUnit(g, l);
         if (segment_done) {
-          SegmentsDone(g, 1);
+          FinishSegments(g, 1);
         }
         if (segment_done && split) {
           // Every range of this segment is counted, so its terms can answer.

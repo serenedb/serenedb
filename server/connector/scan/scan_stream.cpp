@@ -320,7 +320,9 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         l.has_unit = false;
         l.joined = false;
       } else {
-        UnitDone(g, l);
+        if (FinishUnit(g, l)) {
+          FinishSegments(g, 1);
+        }
       }
     }
     if (NextLiveUnit(g, l)) {

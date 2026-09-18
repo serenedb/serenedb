@@ -411,14 +411,14 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
         break;
       }
       CollectUnit(g, l);
-      finished += static_cast<uint32_t>(UnitFinished(g, l));
+      finished += static_cast<uint32_t>(FinishUnit(g, l));
     }
     // The hits have to be visible to the merger before the segments they came
     // from are counted: the merge runs as soon as the count is complete.
     PublishHits(g, l);
     l.published = true;
     if (finished != 0) {
-      SegmentsDone(g, finished);
+      FinishSegments(g, finished);
     }
   }
   if (!t.merge_barrier.Released()) {

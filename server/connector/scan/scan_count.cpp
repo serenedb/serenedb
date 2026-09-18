@@ -34,7 +34,9 @@ void RunCountScan(duckdb::TableFunctionInput& /*input*/, ScanGlobalState& g,
     if (unit.whole && l.seg_cls.active.empty() && !g.Bind().search.filter &&
         !g.vector_scorer) {
       l.local_count += sub.live_docs_count();
-      UnitDone(g, l);
+      if (FinishUnit(g, l)) {
+        FinishSegments(g, 1);
+      }
       continue;
     }
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
@@ -43,7 +45,9 @@ void RunCountScan(duckdb::TableFunctionInput& /*input*/, ScanGlobalState& g,
       seg_query, {.table = table, .range = g.RangeOf(unit)});
     EnsurePlanned(plan != nullptr);
     l.local_count += plan->Run();
-    UnitDone(g, l);
+    if (FinishUnit(g, l)) {
+      FinishSegments(g, 1);
+    }
   }
   if (l.local_emitted >= l.local_count) {
     output.SetChildCardinality(0);

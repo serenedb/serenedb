@@ -122,6 +122,12 @@ DEALLOCATE ap_knn;
 statement ok
 DEALLOCATE ap_where;
 
+# `auto` no longer re-scores eight-bit codes, so the distance it reports is
+# the estimate. This file is about the re-score, so it asks for one.
+
+statement ok
+SET sdb_ann_oversample = 4
+
 # A quantized index reranks the beam with the stored vectors: the rerank reads
 # this execution's query vector, so a prepared search answers exactly what the
 # same search with a literal vector answers.

@@ -38,7 +38,7 @@
 #include "connector/functions/otlp.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
-#include "otel/model.h"
+#include "otel/otlp.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
 #include "pg/connection_context.h"

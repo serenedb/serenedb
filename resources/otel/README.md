@@ -21,6 +21,8 @@ scripts/otel_schema.py check      # fail if the include has drifted
 ## References
 
 - OTLP data model and wire formats — https://github.com/open-telemetry/opentelemetry-proto
+  (vendored as `third_party/opentelemetry-proto`; `server/otel/CMakeLists.txt`
+  runs `protoc` over it, and the generated messages are the in-memory model)
 - OTLP/HTTP spec (endpoints, responses, encodings) — https://opentelemetry.io/docs/specs/otlp/
 - Attribute keys promoted to columns are semantic conventions — https://opentelemetry.io/docs/specs/semconv/
 - Column naming follows the ClickHouse exporter's schema, the de-facto standard

@@ -39,6 +39,7 @@ SIGNALS = [
     ("metrics", "metrics/int_and_multi_datapoint.otlp.json"),
     ("logs", "logs/upstream.otlp.json"),
     ("traces", "traces/upstream.otlp.json"),
+    ("traces", "traces/enum_names_and_unknown_fields.otlp.json"),
     ("metrics", "metrics/upstream.otlp.json"),
 ]
 

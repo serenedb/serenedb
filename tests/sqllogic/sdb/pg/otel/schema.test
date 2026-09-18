@@ -843,6 +843,26 @@ FROM otel_traces WHERE service_name = 'my.service' LIMIT 1;
 span_name	trace_id	span_id	parent_span_id	span_kind	duration_ns
 I'm a server span	5b8efff798038103d269b633813fc60c	eee19b7ec3c1b174	eee19b7ec3c1b173	Server	1000000000
 
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otlp_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"enumtest"}}]},"someUnknownResourceField":{"ignored":true},"scopeSpans":[{"scope":{"name":"names"},"spans":[{"traceId":"AABBCCDDEEFF00112233445566778899","spanId":"0011223344556677","name":"kind and status by name","kind":"SPAN_KIND_PRODUCER","startTimeUnixNano":"1544712660000000000","endTimeUnixNano":"1544712660000000005","status":{"code":"STATUS_CODE_ERROR","message":"named"},"futureField":42},{"trace_id":"aabbccddeeff00112233445566778899","span_id":"0011223344556678","name":"snake_case field names","kind":5,"start_time_unix_nano":"1544712660000000000","end_time_unix_nano":"1544712660000000009","status":{"code":1}}]}]}]}');
+
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otlp_traces('Cs4BChwKGgoMc2VydmljZS5uYW1lEgoKCGVudW10ZXN0Eq0BCgcKBW5hbWVzElQKEKq7zN3u/wARIjNEVWZ3iJkSCAARIjNEVWZ3KhdraW5kIGFuZCBzdGF0dXMgYnkgbmFtZTAEOQBIWeP6628VQQVIWeP6628VegkSBW5hbWVkGAISTAoQqrvM3e7/ABEiM0RVZneImRIIABEiM0RVZngqFnNuYWtlX2Nhc2UgZmllbGQgbmFtZXMwBTkASFnj+utvFUEJSFnj+utvFXoCGAE=', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+query
+SELECT span_name, span_kind, status_code, status_message, trace_id, span_id,
+       duration_ns
+FROM otel_traces WHERE service_name = 'enumtest' ORDER BY span_id, span_name;
+----
+span_name	span_kind	status_code	status_message	trace_id	span_id	duration_ns
+kind and status by name	Producer	Error	named	aabbccddeeff00112233445566778899	0011223344556677	5
+kind and status by name	Producer	Error	named	aabbccddeeff00112233445566778899	0011223344556677	5
+snake_case field names	Consumer	Ok	NULL	aabbccddeeff00112233445566778899	0011223344556678	9
+snake_case field names	Consumer	Ok	NULL	aabbccddeeff00112233445566778899	0011223344556678	9
+
 statement ok
 INSERT INTO otel_logs ("timestamp", body) VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'x');
 

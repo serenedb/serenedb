@@ -68,12 +68,18 @@ Both OTLP encodings are accepted, and the response always uses the request's:
 | `application/x-protobuf` | the OTLP binary wire format, and the collector's default |
 | `application/json` | ProtoJSON |
 
-The JSON reader takes both lowerCamelCase and the original snake_case field
-names, 64-bit integers as decimal strings or numbers, enums as integers or
-names, and trace/span ids as hex (the OTLP deviation from ProtoJSON, which
-would otherwise ask for base64). The protobuf reader skips unknown fields, so
-a newer sender keeps working, and accepts both packed and unpacked encodings
-of repeated numeric fields.
+Binary payloads are decoded by protobuf's own generated code, from the
+vendored `opentelemetry-proto` schemas — so unknown fields are skipped and a
+newer sender keeps working.
+
+JSON is read into the same generated messages through protobuf reflection, so
+the accepted field set comes from the schema itself. It takes both
+lowerCamelCase and the original snake_case field names, 64-bit integers as
+decimal strings or numbers, enums as integers or as their proto value names,
+and skips fields it does not know. Trace and span ids are hex — the OTLP
+deviation from ProtoJSON, which would otherwise ask for base64, and the reason
+protobuf's own JSON parser cannot be used as-is: a hex id is also valid base64,
+so it would decode to the wrong bytes without complaining.
 
 Both decoders feed the same mapper, and the conformance fixtures ship as an
 `.otlp.json` and an `.otlp.pb` of the same payload: a test asserts that each

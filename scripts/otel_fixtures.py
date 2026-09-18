@@ -39,7 +39,14 @@ SIGNALS = {
 # as hex, not base64. json_format.Parse only knows the ProtoJSON rule, so the
 # ids are rewritten before it sees them.
 # https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
-ID_KEYS = ("traceId", "spanId", "parentSpanId")
+ID_KEYS = (
+    "traceId",
+    "spanId",
+    "parentSpanId",
+    "trace_id",
+    "span_id",
+    "parent_span_id",
+)
 
 
 def hex_ids_to_base64(node):
@@ -65,7 +72,13 @@ def encode(signal, text):
     module_name, message_name = SIGNALS[signal]
     module = importlib.import_module(module_name)
     message = getattr(module, message_name)()
-    json_format.Parse(json.dumps(hex_ids_to_base64(json.loads(text))), message)
+    json_format.Parse(
+        json.dumps(hex_ids_to_base64(json.loads(text))),
+        message,
+        # ProtoJSON allows a receiver to skip fields it does not know; our
+        # reader does, so the encoder must too or the pair would diverge.
+        ignore_unknown_fields=True,
+    )
     return message.SerializeToString(deterministic=True)
 
 

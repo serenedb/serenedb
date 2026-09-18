@@ -17,16 +17,15 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-
 #include "otel/mapper.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/escaping.h>
 #include <absl/strings/str_format.h>
-#include <absl/time/civil_time.h>
 #include <absl/time/time.h>
 #include <simdjson.h>
 
-#include <variant>
+#include <vector>
 
 // Canonical value rules shared by every ingestion route: attribute JSON with
 // sorted keys, body stringification, and the string forms stored for the
@@ -40,16 +39,16 @@ namespace {
 
 using StringBuilder = simdjson::builder::string_builder;
 
-void AppendAnyValue(StringBuilder& sb, const AnyValue* value);
+void AppendAnyValue(StringBuilder& sb, const AnyValue& value);
 
-void AppendAttributes(StringBuilder& sb, const KeyValueList& attributes) {
+void AppendAttributes(StringBuilder& sb, const Attributes& attributes) {
   std::vector<const KeyValue*> sorted;
   sorted.reserve(attributes.size());
   for (const auto& kv : attributes) {
     sorted.push_back(&kv);
   }
   absl::c_stable_sort(sorted, [](const KeyValue* lhs, const KeyValue* rhs) {
-    return lhs->key < rhs->key;
+    return lhs->key() < rhs->key();
   });
   sb.start_object();
   bool first = true;
@@ -58,49 +57,50 @@ void AppendAttributes(StringBuilder& sb, const KeyValueList& attributes) {
       sb.append_comma();
     }
     first = false;
-    sb.escape_and_append_with_quotes(kv->key);
+    sb.escape_and_append_with_quotes(kv->key());
     sb.append_colon();
-    AppendAnyValue(sb, kv->value);
+    AppendAnyValue(sb, kv->value());
   }
   sb.end_object();
 }
 
-void AppendAnyValue(StringBuilder& sb, const AnyValue* value) {
-  if (value == nullptr) {
-    sb.append_null();
-    return;
-  }
-  std::visit(
-    [&](const auto& held) {
-      using Held = std::decay_t<decltype(held)>;
-      if constexpr (std::is_same_v<Held, std::monostate>) {
-        sb.append_null();
-      } else if constexpr (std::is_same_v<Held, std::string>) {
-        sb.escape_and_append_with_quotes(held);
-      } else if constexpr (std::is_same_v<Held, bool>) {
-        sb.append_raw(held ? "true" : "false");
-      } else if constexpr (std::is_same_v<Held, int64_t>) {
-        sb.append(held);
-      } else if constexpr (std::is_same_v<Held, double>) {
-        sb.append(held);
-      } else if constexpr (std::is_same_v<Held, BytesValue>) {
-        sb.escape_and_append_with_quotes(held.data);
-      } else if constexpr (std::is_same_v<Held, ArrayValue>) {
-        sb.start_array();
-        bool first = true;
-        for (const auto* element : held.values) {
-          if (!first) {
-            sb.append_comma();
-          }
-          first = false;
-          AppendAnyValue(sb, element);
+void AppendAnyValue(StringBuilder& sb, const AnyValue& value) {
+  switch (value.value_case()) {
+    case AnyValue::kStringValue:
+      sb.escape_and_append_with_quotes(value.string_value());
+      return;
+    case AnyValue::kBoolValue:
+      sb.append_raw(value.bool_value() ? "true" : "false");
+      return;
+    case AnyValue::kIntValue:
+      sb.append(value.int_value());
+      return;
+    case AnyValue::kDoubleValue:
+      sb.append(value.double_value());
+      return;
+    case AnyValue::kBytesValue:
+      sb.escape_and_append_with_quotes(absl::Base64Escape(value.bytes_value()));
+      return;
+    case AnyValue::kArrayValue: {
+      sb.start_array();
+      bool first = true;
+      for (const auto& element : value.array_value().values()) {
+        if (!first) {
+          sb.append_comma();
         }
-        sb.end_array();
-      } else if constexpr (std::is_same_v<Held, KvlistValue>) {
-        AppendAttributes(sb, held.values);
+        first = false;
+        AppendAnyValue(sb, element);
       }
-    },
-    value->value);
+      sb.end_array();
+      return;
+    }
+    case AnyValue::kKvlistValue:
+      AppendAttributes(sb, value.kvlist_value().values());
+      return;
+    default:
+      sb.append_null();
+      return;
+  }
 }
 
 std::string Finish(StringBuilder& sb) {
@@ -120,89 +120,99 @@ std::string FormatTimestampNs(uint64_t unix_nano) {
     absl::FormatTime("%H:%M:%S", time, absl::UTCTimeZone()), nanos);
 }
 
-std::string AnyValueToJson(const AnyValue* value) {
-  StringBuilder sb;
-  AppendAnyValue(sb, value);
-  return Finish(sb);
+void AppendIdOrNull(StringBuilder& sb, std::string_view raw) {
+  const auto hex = HexId(raw);
+  if (hex.empty()) {
+    sb.append_null();
+  } else {
+    sb.escape_and_append_with_quotes(hex);
+  }
 }
 
 }  // namespace
 
-std::string AttributesToJson(const KeyValueList& attributes) {
+std::string AttributesToJson(const Attributes& attributes) {
   StringBuilder sb;
   AppendAttributes(sb, attributes);
   return Finish(sb);
 }
 
-std::string BodyToText(const AnyValue* body) {
-  if (body == nullptr) {
-    return {};
+std::string BodyToText(const AnyValue& body) {
+  switch (body.value_case()) {
+    case AnyValue::kStringValue:
+      return body.string_value();
+    case AnyValue::kBytesValue:
+      return body.bytes_value();
+    case AnyValue::VALUE_NOT_SET:
+      return {};
+    default:
+      break;
   }
-  if (const auto* text = std::get_if<std::string>(&body->value)) {
-    return *text;
-  }
-  if (const auto* bytes = std::get_if<BytesValue>(&body->value)) {
-    return bytes->data;
-  }
-  if (std::holds_alternative<std::monostate>(body->value)) {
-    return {};
-  }
-  return AnyValueToJson(body);
+  StringBuilder sb;
+  AppendAnyValue(sb, body);
+  return Finish(sb);
 }
 
-const AnyValue* FindAttribute(const KeyValueList& attributes,
+const AnyValue* FindAttribute(const Attributes& attributes,
                               std::string_view key) {
   for (const auto& kv : attributes) {
-    if (kv.key == key) {
-      return kv.value;
+    if (kv.key() == key) {
+      return &kv.value();
     }
   }
   return nullptr;
 }
 
-std::string_view SpanKindName(SpanKind kind) {
+std::string HexId(std::string_view raw) {
+  if (raw.empty() || raw.find_first_not_of('\0') == std::string_view::npos) {
+    return {};
+  }
+  return absl::BytesToHexString(raw);
+}
+
+std::string_view SpanKindName(pb::trace::v1::Span_SpanKind kind) {
   switch (kind) {
-    case SpanKind::Internal:
+    case pb::trace::v1::Span_SpanKind_SPAN_KIND_INTERNAL:
       return "Internal";
-    case SpanKind::Server:
+    case pb::trace::v1::Span_SpanKind_SPAN_KIND_SERVER:
       return "Server";
-    case SpanKind::Client:
+    case pb::trace::v1::Span_SpanKind_SPAN_KIND_CLIENT:
       return "Client";
-    case SpanKind::Producer:
+    case pb::trace::v1::Span_SpanKind_SPAN_KIND_PRODUCER:
       return "Producer";
-    case SpanKind::Consumer:
+    case pb::trace::v1::Span_SpanKind_SPAN_KIND_CONSUMER:
       return "Consumer";
-    case SpanKind::Unspecified:
-      break;
+    default:
+      return "Unspecified";
   }
-  return "Unspecified";
 }
 
-std::string_view StatusCodeName(StatusCode code) {
+std::string_view StatusCodeName(pb::trace::v1::Status_StatusCode code) {
   switch (code) {
-    case StatusCode::Ok:
+    case pb::trace::v1::Status_StatusCode_STATUS_CODE_OK:
       return "Ok";
-    case StatusCode::Error:
+    case pb::trace::v1::Status_StatusCode_STATUS_CODE_ERROR:
       return "Error";
-    case StatusCode::Unset:
-      break;
+    default:
+      return "Unset";
   }
-  return "Unset";
 }
 
-std::string_view TemporalityName(AggregationTemporality temporality) {
+std::string_view TemporalityName(
+  pb::metrics::v1::AggregationTemporality temporality) {
   switch (temporality) {
-    case AggregationTemporality::Delta:
+    case pb::metrics::v1::AGGREGATION_TEMPORALITY_DELTA:
       return "Delta";
-    case AggregationTemporality::Cumulative:
+    case pb::metrics::v1::AGGREGATION_TEMPORALITY_CUMULATIVE:
       return "Cumulative";
-    case AggregationTemporality::Unspecified:
-      break;
+    default:
+      return "Unspecified";
   }
-  return "Unspecified";
 }
 
-std::string EventsToJson(const std::vector<SpanEvent>& events) {
+std::string EventsToJson(
+  const ::google::protobuf::RepeatedPtrField<pb::trace::v1::Span_Event>&
+    events) {
   StringBuilder sb;
   sb.start_array();
   bool first = true;
@@ -214,26 +224,27 @@ std::string EventsToJson(const std::vector<SpanEvent>& events) {
     sb.start_object();
     sb.escape_and_append_with_quotes("attributes");
     sb.append_colon();
-    AppendAttributes(sb, event.attributes);
+    AppendAttributes(sb, event.attributes());
     sb.append_comma();
     sb.escape_and_append_with_quotes("dropped_attributes_count");
     sb.append_colon();
-    sb.append(static_cast<uint64_t>(event.dropped_attributes_count));
+    sb.append(static_cast<uint64_t>(event.dropped_attributes_count()));
     sb.append_comma();
     sb.escape_and_append_with_quotes("name");
     sb.append_colon();
-    sb.escape_and_append_with_quotes(event.name);
+    sb.escape_and_append_with_quotes(event.name());
     sb.append_comma();
     sb.escape_and_append_with_quotes("timestamp");
     sb.append_colon();
-    sb.escape_and_append_with_quotes(FormatTimestampNs(event.time_unix_nano));
+    sb.escape_and_append_with_quotes(FormatTimestampNs(event.time_unix_nano()));
     sb.end_object();
   }
   sb.end_array();
   return Finish(sb);
 }
 
-std::string LinksToJson(const std::vector<SpanLink>& links) {
+std::string LinksToJson(
+  const ::google::protobuf::RepeatedPtrField<pb::trace::v1::Span_Link>& links) {
   StringBuilder sb;
   sb.start_array();
   bool first = true;
@@ -245,30 +256,22 @@ std::string LinksToJson(const std::vector<SpanLink>& links) {
     sb.start_object();
     sb.escape_and_append_with_quotes("attributes");
     sb.append_colon();
-    AppendAttributes(sb, link.attributes);
+    AppendAttributes(sb, link.attributes());
     sb.append_comma();
     sb.escape_and_append_with_quotes("span_id");
     sb.append_colon();
-    if (link.span_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(link.span_id);
-    }
+    AppendIdOrNull(sb, link.span_id());
     sb.append_comma();
     sb.escape_and_append_with_quotes("trace_id");
     sb.append_colon();
-    if (link.trace_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(link.trace_id);
-    }
+    AppendIdOrNull(sb, link.trace_id());
     sb.append_comma();
     sb.escape_and_append_with_quotes("trace_state");
     sb.append_colon();
-    if (link.trace_state.empty()) {
+    if (link.trace_state().empty()) {
       sb.append_null();
     } else {
-      sb.escape_and_append_with_quotes(link.trace_state);
+      sb.escape_and_append_with_quotes(link.trace_state());
     }
     sb.end_object();
   }
@@ -276,7 +279,8 @@ std::string LinksToJson(const std::vector<SpanLink>& links) {
   return Finish(sb);
 }
 
-std::string ExemplarsToJson(const std::vector<Exemplar>& exemplars) {
+std::string ExemplarsToJson(
+  const ::google::protobuf::RepeatedPtrField<Exemplar>& exemplars) {
   StringBuilder sb;
   sb.start_array();
   bool first = true;
@@ -288,35 +292,27 @@ std::string ExemplarsToJson(const std::vector<Exemplar>& exemplars) {
     sb.start_object();
     sb.escape_and_append_with_quotes("filtered_attributes");
     sb.append_colon();
-    AppendAttributes(sb, exemplar.filtered_attributes);
+    AppendAttributes(sb, exemplar.filtered_attributes());
     sb.append_comma();
     sb.escape_and_append_with_quotes("span_id");
     sb.append_colon();
-    if (exemplar.span_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(exemplar.span_id);
-    }
+    AppendIdOrNull(sb, exemplar.span_id());
     sb.append_comma();
     sb.escape_and_append_with_quotes("timestamp");
     sb.append_colon();
     sb.escape_and_append_with_quotes(
-      FormatTimestampNs(exemplar.time_unix_nano));
+      FormatTimestampNs(exemplar.time_unix_nano()));
     sb.append_comma();
     sb.escape_and_append_with_quotes("trace_id");
     sb.append_colon();
-    if (exemplar.trace_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(exemplar.trace_id);
-    }
+    AppendIdOrNull(sb, exemplar.trace_id());
     sb.append_comma();
     sb.escape_and_append_with_quotes("value");
     sb.append_colon();
-    if (const auto* number = std::get_if<int64_t>(&exemplar.value)) {
-      sb.append(static_cast<double>(*number));
-    } else if (const auto* real = std::get_if<double>(&exemplar.value)) {
-      sb.append(*real);
+    if (exemplar.has_as_int()) {
+      sb.append(static_cast<double>(exemplar.as_int()));
+    } else if (exemplar.has_as_double()) {
+      sb.append(exemplar.as_double());
     } else {
       sb.append_null();
     }

@@ -226,14 +226,12 @@ Click **Run and Debug** on the left sidebar (Shift+Ctrl+D / Shift+Cmd+D). This a
 
 ### Sqllogic test highlighting
 
-`tools/vscode-sqllogic/` is a small declarative extension that colors `.test` files under `tests/sqllogic/`: SQL bodies as SQL, sqllogictest-rs directives as keywords, `#` comments as comments. Build it and install it, then reload the window:
-
-```bash
-tools/vscode-sqllogic/package.sh
-code --install-extension tools/vscode-sqllogic/sqllogic-0.1.0.vsix
-```
-
-Dropping the folder into `~/.vscode-server/extensions/` does **not** work -- VSCode only loads extensions recorded in the `extensions.json` beside them, which the CLI install writes. Over SSH, `code` is on `$PATH` only inside VSCode's terminal; the extension's `README.md` has the invocation for other shells, plus file associations outside `tests/sqllogic/` and how to swap in a different SQL grammar.
+`.test` files are Plain Text until you install the VSCode extension that ships
+with the runner: it colors SQL bodies as SQL, sqllogictest-rs directives as
+keywords, and `#` comments as comments. It lives beside the parser whose syntax
+it tracks, so the build-and-install steps -- including what to run when the
+`code` CLI is not on `$PATH`, as over SSH -- are in
+[`third_party/sqllogictest-rs/README.md`](third_party/sqllogictest-rs/README.md).
 
 ## C++ Code Style
 

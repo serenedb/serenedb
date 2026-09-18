@@ -33,7 +33,7 @@ To find the copies you compare every pair and keep the ones inside a tiny radius
 
 ## MinHash for near-duplicate text
 
-Distances work once you have vectors. To catch near-duplicate text from the words alone, with no embedding model in the loop, SereneDB has the [`minhash`](../../sql/statements/create_text_search_dictionary/minhash/index.md) scalar function. It takes a list of tokens and a signature width, hashes every token and keeps the smallest hashes; that set is the document's signature. Two documents that share most of their words share most of their signature, so the fraction of matching components estimates the Jaccard similarity of their word sets. That estimate is the standard signal for approximate deduplication across a large collection.
+Distances work once you have vectors. To catch near-duplicate text from the words alone, with no embedding model in the loop, SereneDB has the [`minhash`](../../sql/functions/search/tokenizers/minhash.md) scalar function. It takes a list of tokens and a signature width, hashes every token and keeps the smallest hashes; that set is the document's signature. Two documents that share most of their words share most of their signature, so the fraction of matching components estimates the Jaccard similarity of their word sets. That estimate is the standard signal for approximate deduplication across a large collection.
 
 There is no `minhash` dictionary template. The signature is built by calling the function, either inside an indexed expression or inside the `expression` of a [`sql`](../../sql/statements/create_text_search_dictionary/sql.md) dictionary. Index the signature, then match its components as keyword terms:
 
@@ -57,4 +57,4 @@ The `min_match` argument of `ts_any` is how many components must match, so it is
 - [Semantic and Hybrid Search](./hybrid-search.md): ranking by a search-box query vector and fusing it with keyword matches
 - [Vector Search guide](../../sql/indexes/inverted/vector-search.md): building `ivf` indexes, choosing a metric and tuning recall
 - [Vector functions reference](../../sql/functions/vector.md): `l2_distance`, `cosine_distance` and the distance operators
-- [`minhash` function](../../sql/statements/create_text_search_dictionary/minhash/index.md): the signature arguments and how overlap estimates Jaccard similarity
+- [`minhash` function](../../sql/functions/search/tokenizers/minhash.md): the signature arguments and how overlap estimates Jaccard similarity

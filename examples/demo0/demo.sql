@@ -20,16 +20,9 @@ DROP TEXT SEARCH DICTIONARY IF EXISTS imdb_en;
 
 -- Tokenizer config. norm/frequency/position together enable BM25 with
 -- positional phrase matching.
-CREATE TEXT SEARCH DICTIONARY imdb_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY imdb_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 -- The view is the table. The hf:// glob expands across train, test, and
 -- unsupervised splits (3 files, 100k rows). SereneDB recognises

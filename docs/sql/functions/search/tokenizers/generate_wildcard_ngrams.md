@@ -1,0 +1,56 @@
+---
+title: "generate_wildcard_ngrams"
+split: headings
+---
+
+import SqlLogicTest from "@site/src/components/SqlLogicTest";
+
+# generate_wildcard_ngrams
+
+The `generate_wildcard_ngrams` template indexes text for wildcard and prefix matching.
+
+It wraps an inner tokenizer to split the input into terms, then emits boundary-marked character n-grams of each term so that `LIKE`-style patterns can be answered from the index instead of by a full scan. Each term is wrapped in one marker byte at each end before the grams are cut, so a leading-anchored prefix and a trailing-anchored suffix stay distinguishable from a match in the middle of a term. The template also stores the terms it saw, and a candidate the grams select is re-checked against that stored copy whenever the grams alone cannot decide the pattern, so a match is exact rather than gram-approximate. For plain substring search over code and logs, [`generate_sparse_ngrams`](./generate_sparse_ngrams.md) is usually the better fit.
+
+**As a function:** `generate_wildcard_ngrams(value, ngram_size := 3)` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/function_form" />
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `NGRAM_SIZE` | integer | `3` | Gram length in codepoints, measured over the marker-wrapped term. Minimum `2` |
+
+The nested tokenizer is the first argument and `NGRAM_SIZE` the second: `generate_wildcard_ngrams(split_text_csv(' '), 3)`.
+
+An `NGRAM_SIZE` below `2` is rejected with `"ngram_size" must be at least 2`; there is no upper bound. The nested tokenizer is required for a new dictionary — `generate_wildcard_ngrams(3)` fails with `generate_wildcard_ngrams() requires a nested analyzer as its first argument`. The template supports the `FREQUENCY` and `POSITION` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` requiring `FREQUENCY`; `NORM` and `OFFSET` are rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: <mask>`.
+
+## Tokenization
+
+The nested tokenizer, the first argument, first splits the input into terms. Every term is then wrapped in a single marker byte (`0xFF`) at each end, and windows of `NGRAM_SIZE` codepoints slide across the wrapped term one codepoint at a time. Each window spans `NGRAM_SIZE` codepoints or stops at the trailing marker, whichever comes first, so the last gram of a term is two symbols long. A term yields exactly one gram more than it has codepoints.
+
+Writing the marker as `⟨M⟩`, with `NGRAM_SIZE = 3` the term `search` yields `⟨M⟩se`, `sea`, `ear`, `arc`, `rch`, `ch⟨M⟩` and `h⟨M⟩`, and `cat` yields `⟨M⟩ca`, `cat`, `at⟨M⟩` and `t⟨M⟩`. The marker byte is part of the gram text, so the boundary grams of a term are not valid UTF-8 — these grams are an internal representation rather than something you inspect with `ts_lexize`, and you query them indirectly through `LIKE`-style patterns.
+
+Gram lengths always count codepoints, whatever the nested tokenizer is; there is no `INPUT_TYPE` option here. Input that is not valid UTF-8 is not rejected: symbol boundaries fall back to a lead-byte walk. The wildcard layer changes no bytes of its own, so all case, accent and normalization behaviour belongs to the nested tokenizer. Alongside the grams the template stores the encoded term stream of the value; a value whose nested tokenizer produced no terms emits no tokens and stores nothing.
+
+## Searching
+
+Index a column with the wildcard dictionary, then match it with [`ts_like`](../full-text.md#ts_like). A SQL `LIKE` predicate on that column, with or without `ESCAPE`, is lowered to the same filter, so it too is answered from the indexed grams instead of a full scan. The grams only select candidate documents. Because the terms themselves are stored, a candidate is re-checked against that copy whenever the grams alone cannot decide the match, so the result is exact rather than gram-approximate. The pattern always applies to one whole nested term at a time — with a delimiter tokenizer that means per word, never across the value. Enabling `POSITION` requires the grams of a pattern fragment to occur adjacently instead of merely co-occurring, which leaves fewer candidates to re-check. Every wildcard hit receives the same constant score, so `BM25()` and `TFIDF()` do not rank wildcard matches against each other.
+
+A **substring** pattern matches anywhere in a term:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/example_001" />
+
+A **prefix** pattern is anchored to the start of a term:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/example_002" />
+
+The same dictionary in the expression form, indexing a second table:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/example_003" />
+
+## See also
+
+- [`generate_sparse_ngrams`](./generate_sparse_ngrams.md) — compact substring search over code and logs
+- [`generate_ngrams`](./generate_ngrams.md) — fixed-length character n-grams
+- [CREATE TEXT SEARCH DICTIONARY](../../../statements/create_text_search_dictionary/index.md)

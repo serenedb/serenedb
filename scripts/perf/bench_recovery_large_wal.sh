@@ -124,7 +124,9 @@ bench_one() {
 	wait_up
 
 	"${PSQL[@]}" \
-		-c "CREATE TEXT SEARCH DICTIONARY rec_dict(template='text', locale='en_US.UTF-8', case='none', stemming=false, accent=false, frequency=true, position=true);" \
+		-c "CREATE TEXT SEARCH DICTIONARY rec_dict AS
+		    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+		    WITH (frequency, position);" \
 		-c "CREATE TABLE rec_txt (id INTEGER PRIMARY KEY, body TEXT);" \
 		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, ${TABLE_ROWS}) t(x);" \
 		-c "CREATE INDEX rec_txt_idx ON rec_txt USING inverted(body rec_dict);" \

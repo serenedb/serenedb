@@ -70,14 +70,14 @@ std::optional<std::vector<std::string>> DecodeWildcardStore(
       error = "record runs past the blob";
       return std::nullopt;
     }
-    if (*p != irs::byte_type{0xFF}) {
+    if (*p != irs::analysis::WildcardTokenizer::kBoundary) {
       error = "missing leading sentinel";
       return std::nullopt;
     }
     ++p;
     out.emplace_back(reinterpret_cast<const char*>(p), size);
     p += size;
-    if (*p != irs::byte_type{0xFF}) {
+    if (*p != irs::analysis::WildcardTokenizer::kBoundary) {
       error = "missing trailing sentinel";
       return std::nullopt;
     }

@@ -10,16 +10,57 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `CREATE TEXT SEARCH DICTIONARY` statement defines a *text search dictionary* — the analyzer that turns raw text into the tokens stored in an [inverted index](../create_index/index.md). The dictionary controls every stage of that transformation: how text is split into tokens, how each token is normalized (case folding, accent folding, stemming) and which extra information (term positions, frequencies) is recorded for searching and ranking. The same dictionary is applied both when a column is indexed and when a full-text query runs against that column, so the data and the query are always analyzed the same way.
 
-Every dictionary is built from a single **template**. A template implements one analysis strategy — splitting text on word boundaries, cutting on a delimiter, emitting character n-grams, filtering stop words and so on — and exposes its own set of options. Templates can also be composed: [`pipeline`](./pipeline/index.md) chains several analyzers end to end, [`union`](./union.md) merges the tokens of several analyzers, [`shingle`](./shingle.md) wraps another analyzer to emit word n-grams and [`copy_from`](./copy-from.md) derives a variant of an existing dictionary.
+What follows `AS` is an *analyzer expression*. Each stage of it is a call to a **template** — one analysis strategy, with its own options: split on word boundaries, cut on a delimiter, emit character n-grams, drop stop words. `|` chains stages, so every token one stage emits is re-analyzed by the next; a list merges stages over the same input; a lambda drops to plain SQL for anything no template covers. The statement compiles the expression once, builds the analyzer it describes, checks it against the requested feature flags and stores it under the given name. Nothing is analyzed yet: the name is what `CREATE INDEX` and every full-text query refer to later, and because both sides run the same stored analyzer, a document and a query term are always reduced the same way.
 
-## Options
+Every template that analyzes text is also a scalar function of the same name, and the two forms are the same tokenizer: `split_text(body, case := 'lower')` in a query produces what a dictionary created `AS split_text(case := 'lower')` produces for `body`. The per-template reference — options, defaults, errors, examples — therefore lives with those functions, under [tokenizer functions](../../functions/search/tokenizers/index.md).
+
+## The analyzer expression
+
+The expression after `AS` names each template as a function call and chains stages with `|`, so a pipeline reads left to right:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_004" />
+
+```
+CREATE TEXT SEARCH DICTIONARY [IF NOT EXISTS] name AS <chain> [WITH (<flag> [, ...])]
+
+<chain> := <stage> [| <stage> ...]
+<stage> := <template>(<arguments>)
+         | generate_shingles(<chain>, <arguments>) | generate_wildcard_ngrams(<chain>, <arguments>)
+         | [<chain>, <chain>, ...]
+         | <SQL function call> | (lambda <x>: <expression over x>)
+         | <dictionary name>
+```
+
+- **Template stage.** `split_text(case := 'lower')` is the [`split_text`](../../functions/search/tokenizers/split_text.md) template with its options as arguments. Named arguments use DuckDB's `name := value` and take the option names of the template's page; positional arguments bind to the options in the order `HELP` prints them, which is also the order of the template page's option table, so `generate_ngrams(2, 3)` sets `MIN_GRAM` and `MAX_GRAM` and `split_text_csv(',')` sets `DELIMITER`. A `NULL` argument leaves its option at the default. Template and option names are case-insensitive. A list-valued option takes a list, `remove_stopwords(['the', 'a'])`, a fixed-size array, or the string spelling documented on its template page.
+- **Chain.** `a | b | c` runs the stages in order, each one re-analyzing every token the previous one produced, and creates a [`pipeline`](./pipeline/index.md); a single stage creates that template directly. Parentheses group, and `(a | b) | c` is the same three-step pipeline as `a | b | c`.
+- **Wrappers.** [`generate_shingles`](../../functions/search/tokenizers/generate_shingles.md) and [`generate_wildcard_ngrams`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) analyze the tokens of a nested analyzer, so they take a chain as their first argument: `generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 3)`.
+- **Union.** A list of chains runs all of them over the same input and merges the tokens, which is the [`union`](./union.md) template: `[keyword(), generate_ngrams(2, 2)]`.
+- **SQL stages.** A call at a stage position takes the value as its first argument, so `lower()` in front of a tokenizer preprocesses the value, `upper()` behind one rewrites each token, and a list-returning function such as `string_split(',')` fans a value out into tokens. For anything a call cannot express — an operator, a cast, a `CASE`, or a value that is not the first argument — name the value with a lambda: `split_text_csv(',') | (lambda x: upper(trim(x)))`. The parentheses are needed whenever a stage follows the lambda, since the body would otherwise swallow the rest of the chain. A call whose name is neither a template nor a built-in function fails with `unknown stage "<name>"`, which suggests the nearest template name when there is one.
+- **Existing dictionaries.** A bare dictionary name, optionally schema-qualified, is a stage that runs that dictionary's analyzer, so `english_dict | remove_stopwords(['run'])` builds on a stored dictionary and `english_dict` alone duplicates one. The stage copies the dictionary's configuration as it stands when the new dictionary is created, so dropping or altering the source afterwards does not affect the copy; the source's feature flags are not copied. A dictionary is a stored analyzer rather than a function, so its name is callable nowhere: an expression names it as a stage, and [`ts_lexize`](../../functions/search/full-text.md#ts_lexize) runs it over a value.
+- **Features.** `WITH (frequency, position)` carries the [feature flags](#feature-flags) and `help`, and nothing else: every analyzer option belongs in the expression.
+
+A template name always wins over an SQL function of the same name. At a stage position `stem_words(...)` is the template, and a template-named call inside an SQL stage is rejected rather than silently taken as a function; to call such a function, qualify it, as in `main.normalize_tokens()` for a user macro of that name. `|` binds tighter than `||` and the comparison operators, so an expression using them belongs in a lambda: `(lambda x: lower(x) || '-') | split_text_csv('-')`.
+
+SQL functions as stages:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_005" />
+
+A union of two analyzers:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_006" />
+
+An existing dictionary as a building block:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_007" />
+
+## The WITH clause
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `TEMPLATE` | string | **required** | The analysis template the dictionary is built from, one of the [templates](#templates) below |
-| `HELP` | boolean | `false` | Report the whole option tree — every template with its options, types and defaults — as an error message and create nothing |
+| `frequency`, `position`, `norm`, `offset` | boolean | `false` | The [feature flags](#feature-flags) |
+| `help` | boolean | `false` | Report every template as a call signature with its options, defaults and descriptions, as an error message, and create nothing |
 
-Option names are case-insensitive, and an option written without a value means `= true`, so `(frequency, position)` is the same as `frequency = true, position = true`. The value of `TEMPLATE` is compared literally and must therefore be lower case, while the values of the enum-valued options — `CASE`, `BREAK`, `MODE`, `INPUTTYPE` and the like — are matched case-insensitively. Every other option comes either from the chosen template, documented on that template's page, or from the feature flags below.
+Names in the `WITH` clause are case-insensitive, and a flag written without a value means `= true`, so `WITH (frequency, position)` is the same as `WITH (frequency = true, position = true)`. Template names and option names in the expression are case-insensitive too, and so are the values of the enum-valued options — `case`, `break`, `mode`, `input_type` and the like. Every analyzer option comes from the template it belongs to and is documented on that template's page.
 
 ## Examples
 
@@ -37,85 +78,18 @@ Because `english_dict` stems its input, the query term `searching` is reduced to
 
 ## Templates
 
-A dictionary must name exactly one template through the `TEMPLATE` option. The available templates are grouped below by what they do; follow a link for the options each one accepts.
+A stage is a call to a template. Twenty-one templates analyze text, and each one is documented together with its function form under [tokenizer functions](../../functions/search/tokenizers/index.md): the splitters, the token filters, the n-gram and shingle wrappers, the synonym expanders, the geospatial encoders and the fastText models.
 
-### Text processing
+Four more templates exist only inside an analyzer expression, because the expression itself is how they are written:
 
-These templates turn human language into searchable tokens.
+| Template | Written as | Description |
+|---|---|---|
+| [`pipeline`](./pipeline/index.md) | `a \| b` | Chain analyzers, each re-analyzing the tokens of the one before |
+| [`union`](./union.md) | `[a, b]` | Merge the tokens of several analyzers over the same input |
+| [`keyword`](./keyword.md) | `keyword()` | Emit the whole input as one verbatim token |
+| [`sql`](./sql.md) | `upper()`, `(lambda x: x \|\| '!')` | Emit the result of a scalar expression over the value |
 
-| Template | Description |
-|---|---|
-| [`text`](./text.md) | Tokenize into words with stemming, stopwords and accent handling |
-| [`icu_text`](./icu_text.md) | Segment text into words or sentences with ICU for a given locale |
-| [`ngram`](./ngram.md) | Generate character n-grams for fuzzy and substring matching |
-| [`sparse_ngram`](./sparse-ngram.md) | Generate sparse variable-length n-grams for substring search over code and logs |
-| [`wildcard`](./wildcard.md) | Generate boundary-marked n-grams for wildcard and prefix matching |
-| [`shingle`](./shingle.md) | Join the tokens of a nested analyzer into word n-grams for phrase search |
-| [`stem`](./stem.md) | Apply stemming only |
-| [`norm`](./norm.md) | Normalize case and accents without tokenization |
-| [`keyword`](./keyword.md) | Emit the whole input as one verbatim token |
-| [`segmentation`](./segmentation.md) | Segment text by Unicode word boundaries |
-
-### Splitting & filtering
-
-These templates carve structured text into tokens or refine an existing token stream.
-
-| Template | Description |
-|---|---|
-| [`delimiter`](./delimiter.md) | Split on a single delimiter |
-| [`multi_delimiter`](./multi-delimiter.md) | Split on multiple delimiters |
-| [`split_by_non_alpha`](./split_by_non_alpha.md) | Split on every byte that is not an ASCII letter or digit |
-| [`pattern`](./pattern.md) | Match or split with a regular expression |
-| [`path_hierarchy`](./path-hierarchy.md) | Tokenize a path into its hierarchical prefixes |
-| [`stopwords`](./stopwords.md) | Filter out stop words |
-| [`collation`](./collation.md) | Produce collation keys for sorting |
-
-### Composition
-
-These templates build a dictionary out of other dictionaries.
-
-| Template | Description |
-|---|---|
-| [`pipeline`](./pipeline/index.md) | Chain multiple analyzers in sequence |
-| [`union`](./union.md) | Merge the tokens of several analyzers run in parallel |
-| [`copy_from`](./copy-from.md) | Copy and override an existing dictionary |
-
-A nested analyzer is configured through prefixed option names: `STEP1_`, `STEP2_` … for the steps of a `pipeline`, `TOKENIZER1_`, `TOKENIZER2_` … for the branches of a `union` and `TOKENIZER_` for the single nested analyzer of `wildcard` or `shingle`. Each prefix carries the nested `TEMPLATE` and that template's own options.
-
-### Expressions
-
-This template derives tokens by evaluating a SQL expression.
-
-| Template | Description |
-|---|---|
-| [`sql`](./sql.md) | Emit the result of a DuckDB scalar expression over the input value |
-
-### Synonyms
-
-These templates expand a token into its synonyms so a search finds related wording.
-
-| Template | Description |
-|---|---|
-| [`solr_synonyms`](./solr-synonyms.md) | Expand tokens using a Solr-format synonyms map |
-| [`wordnet_synonyms`](./wordnet-synonyms.md) | Expand tokens using a WordNet synonyms database |
-
-### Geospatial
-
-These templates index geometries and coordinates for [geospatial search](../../indexes/inverted/geospatial-search.md).
-
-| Template | Description |
-|---|---|
-| [`geojson`](./geojson.md) | Index GeoJSON geometries (points, lines, polygons) |
-| [`geopoint`](./geopoint.md) | Index latitude/longitude points |
-
-### Machine learning
-
-These templates run a pre-trained model (for example [fastText](https://fasttext.cc/)) to emit tokens.
-
-| Template | Description |
-|---|---|
-| [`classification`](./classification.md) | ML-based text classification |
-| [`nearest_neighbors`](./nearest-neighbors.md) | ML-based nearest neighbor tokens |
+A stage may also be the name of a stored dictionary, which copies that dictionary's analyzer as it stands.
 
 ## Feature flags
 
@@ -128,9 +102,9 @@ The following flags control how much information the index records about each to
 | `NORM` | `false` | Store the field length normalization factor; requires `FREQUENCY` |
 | `OFFSET` | `false` | Store the byte offsets of each token in the source value; requires `POSITION` |
 
-Enable `FREQUENCY` when you rank results by relevance and `POSITION` when you run phrase or proximity queries. The dictionary in the example above sets both. The four flags are root options: they have no prefixed spelling for a nested analyzer, and [`copy_from`](./copy-from.md) does not inherit them from the source dictionary.
+Enable `FREQUENCY` when you rank results by relevance and `POSITION` when you run phrase or proximity queries. The dictionary in the example above sets both. The four flags belong to the dictionary, not to a stage: they are written in the `WITH (...)` clause after the expression, and a stored dictionary used as a stage does not carry its own flags into the new dictionary.
 
-Not every template records every flag, and a dictionary that asks for a flag its template does not support is rejected when it is created. The geospatial templates record none of the four, [`wildcard`](./wildcard.md) accepts only `FREQUENCY` and `POSITION`, [`sparse_ngram`](./sparse-ngram.md) only `FREQUENCY` and `NORM`, and [`union`](./union.md), [`sql`](./sql.md) and [`shingle`](./shingle.md) accept every flag except `OFFSET`. Two further limits depend on the configured analyzer rather than on its template: `OFFSET` requires an analyzer that tracks offsets, so a [`pipeline`](./pipeline/index.md) whose steps drop them is rejected, and `NORM` cannot be combined with an analyzer that stores a per-document blob, which is what `shingle` does unless `STORETOKENS = false`.
+Not every template records every flag, and a dictionary that asks for a flag its template does not support is rejected when it is created. The geospatial templates record none of the four, [`generate_wildcard_ngrams`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) accepts only `FREQUENCY` and `POSITION`, [`generate_sparse_ngrams`](../../functions/search/tokenizers/generate_sparse_ngrams.md) only `FREQUENCY` and `NORM`, and [`union`](./union.md), [`sql`](./sql.md) and [`generate_shingles`](../../functions/search/tokenizers/generate_shingles.md) accept every flag except `OFFSET`. Two further limits depend on the configured analyzer rather than on its template: `OFFSET` requires an analyzer that tracks offsets, so a [`pipeline`](./pipeline/index.md) whose stages drop them is rejected, and `NORM` cannot be combined with an analyzer that stores a per-document blob, which is what `generate_shingles` does unless `store_tokens := false`.
 
 ## See also
 

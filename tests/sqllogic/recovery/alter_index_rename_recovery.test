@@ -47,15 +47,9 @@ COMMENT ON INDEX rni_ai3 IS 'renamed twice';
 # An inverted index rebuilds through its own Deserialize, which reads the same
 # ancestry; renaming it must leave the iresearch directory (named by id) alone.
 statement ok
-CREATE TEXT SEARCH DICTIONARY rni_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY rni_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok

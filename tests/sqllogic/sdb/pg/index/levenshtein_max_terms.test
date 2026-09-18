@@ -5,13 +5,8 @@ statement ok
 DROP TABLE IF EXISTS mt_words;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mt_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY mt_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
 CREATE TABLE mt_words (a INTEGER PRIMARY KEY, b VARCHAR);
@@ -315,15 +310,9 @@ statement ok
 CREATE TABLE mt_phrases (a INTEGER PRIMARY KEY, b VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mt_english_pos(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    position = true,
-    frequency = true
-);
+CREATE TEXT SEARCH DICTIONARY mt_english_pos AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX mt_phrases_idx ON mt_phrases USING inverted(a, b mt_english_pos);

@@ -1,0 +1,53 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_delim AS
+    split_text_csv('|');
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY comma_delim AS
+    split_text_csv(',');
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_delim_comma AS
+    split_text_csv(',');
+
+query
+SELECT ts_lexize('tok_delim_comma', 'red,green,blue');
+----
+ts_lexize
+{red,green,blue}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_delim_dot AS
+    split_text_csv('.');
+
+query
+SELECT ts_lexize('tok_delim_dot', 'com.example.app');
+----
+ts_lexize
+{com,example,app}
+
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_text_csv('red,green,blue', ',') AS tokens;
+----
+tokens
+{red,green,blue}

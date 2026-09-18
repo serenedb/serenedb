@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2019 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -50,12 +47,15 @@ class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr std::string_view type_name() noexcept { return "stopwords"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "remove_stopwords";
+  }
 
   explicit StopwordsTokenizer(
     duckdb::shared_ptr<const StopwordSet> stopwords) noexcept;
   TokenTraits Traits() const noexcept final {
-    return {.unique = true, .offsets = true, .stable = true};
+    return {
+      .unique = true, .offsets = true, .stable = true, .keeps_ascii = true};
   }
 
   template<TokenLayout Layout, typename Sink>

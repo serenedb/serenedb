@@ -25,18 +25,14 @@
 # re-parses the force-included cs[user_id]).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY g_dict(template = 'geojson', coding = 's2point');
+CREATE TEXT SEARCH DICTIONARY g_dict AS encode_geojson(coding := 's2point');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY g_src_dict(template = 'geojson', coding = 'source');
+CREATE TEXT SEARCH DICTIONARY g_src_dict AS encode_geojson(coding := 'source');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY w_dict(
-    template = 'wildcard',
-    ngramsize = 3,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
+CREATE TEXT SEARCH DICTIONARY w_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3);
 
 # -------- Case 1: geo + INCLUDE --------
 
@@ -259,7 +255,7 @@ QUERY PLAN
 │ │ Token:                                                                                                                                                                                             │ │
 │ │ Has Pos: false                                                                                                                                                                                     │ │
 │ │ Parts:                                                                                                                                                                                             │ │
-│ │ <Term:\\xffpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\xff(1, 1); >;  │ │
+│ │ <Term:\\x1fpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\x1f(1, 1); >;  │ │
 │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: b (i), pk (l)                                                                                                                                                                             │
 │ ~1 row                                                                                                                                                                                                 │
@@ -303,7 +299,7 @@ QUERY PLAN
 │ │ Token:                                                                                                                                                                                             │ │
 │ │ Has Pos: false                                                                                                                                                                                     │ │
 │ │ Parts:                                                                                                                                                                                             │ │
-│ │ <Term:\\xffpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\xff(1, 1); >;  │ │
+│ │ <Term:\\x1fpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\x1f(1, 1); >;  │ │
 │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: b, pk                                                                                                                                                                                     │
 │ ~1 row                                                                                                                                                                                                 │

@@ -15,12 +15,12 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY akw(template = 'keyword', frequency = true)
+CREATE TEXT SEARCH DICTIONARY akw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY atx(template = 'text', locale = 'en_US.UTF-8',
-    case = 'lower', stemming = false, accent = false, frequency = true,
-    position = true)
+CREATE TEXT SEARCH DICTIONARY atx AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
 
 statement ok
 CREATE TABLE abase(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,

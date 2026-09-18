@@ -2,10 +2,9 @@ statement ok
 CREATE TABLE fo_score (id INTEGER PRIMARY KEY, s VARCHAR, n INTEGER, t VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fo_score_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY fo_score_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX fo_score_idx ON fo_score USING inverted(id, s, n, t fo_score_en);
@@ -21,11 +20,9 @@ statement ok
 VACUUM (REFRESH_TABLE) fo_score;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fo_score_ng_dict(
-    template = 'wildcard', ngramsize = 3,
-    tokenizer_template = 'delimiter', tokenizer_delimiter = ' ',
-    frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY fo_score_ng_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE fo_score_ng (id INTEGER PRIMARY KEY, g VARCHAR);
@@ -151,7 +148,7 @@ QUERY PLAN
 │ ╭─ Terms ──────────────────────────────────┴──────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                    │ │
 │ │ Values:                                                                             │ │
-│ │ 'aly', 'al\\xff', 'ana', 'cal', 'ica', 'lyt', 'l\\xff', 'nal', 'tic', 'yti', '\\xffan' │ │
+│ │ '\\x1fan', 'al\\x1f', 'aly', 'ana', 'cal', 'ica', 'l\\x1f', 'lyt', 'nal', 'tic', 'yti' │ │
 │ ╰─────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: id                                                                         │
 │ ~1 row                                                                                  │
@@ -168,7 +165,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
+│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
 │ │ Threshold: 0.01                           │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                   │
@@ -187,7 +184,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
+│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
 │ │ Threshold: 1                              │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Projections: id                               │
@@ -205,7 +202,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
+│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
 │ │ Threshold: 1                              │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                   │

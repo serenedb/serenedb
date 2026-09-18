@@ -210,9 +210,8 @@ def read_table(table_key):
 def create_tokenizer(names):
     name = names.fresh("d")
     return Op("create_tokenizer", [
-        f"CREATE TEXT SEARCH DICTIONARY {name}("
-        f"template = 'text', locale = 'en_US.UTF-8', case = 'lower', "
-        f"stemming = false, accent = false)",
+        f"CREATE TEXT SEARCH DICTIONARY {name} AS "
+        f"split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)",
     ], creates=[(key_of(TOKENIZER, name), None)], key=key_of(TOKENIZER, name))
 
 

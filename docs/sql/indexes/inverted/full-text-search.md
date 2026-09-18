@@ -94,7 +94,7 @@ In short: build the phrase with `##` and the allowed parts, then combine the fin
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_022" />
 
-[`ts_ngram`](../../functions/search/full-text.md#ts_ngram) matches by n-gram similarity against an [n-gram-tokenized](../../statements/create_text_search_dictionary/ngram.md) column; the optional threshold (0–1) trades precision for recall:
+[`ts_ngram`](../../functions/search/full-text.md#ts_ngram) matches by n-gram similarity against an [n-gram-tokenized](../../functions/search/tokenizers/generate_ngrams.md) column; the optional threshold (0–1) trades precision for recall:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_023" />
 

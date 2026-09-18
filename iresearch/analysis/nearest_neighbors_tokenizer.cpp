@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2021 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Alex Geenen
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "nearest_neighbors_tokenizer.hpp"
@@ -38,10 +35,10 @@ namespace irs::analysis {
 Tokenizer::ptr NearestNeighborsTokenizer::Make(
   Options opts, duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: empty model location"));
+    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: top_k must be positive"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::ImmutableFastText>(
     cache, opts.model_location);

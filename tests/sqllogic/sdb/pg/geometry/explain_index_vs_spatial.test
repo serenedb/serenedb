@@ -18,7 +18,7 @@ CREATE TABLE places(id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'), other GEO
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY geoshape(template = 'geojson')
+CREATE TEXT SEARCH DICTIONARY geoshape AS encode_geojson()
 
 
 statement ok

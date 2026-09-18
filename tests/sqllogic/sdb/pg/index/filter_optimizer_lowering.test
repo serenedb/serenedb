@@ -2,10 +2,9 @@ statement ok
 CREATE TABLE fo_low (id INTEGER PRIMARY KEY, name VARCHAR, t VARCHAR);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fo_low_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'none',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY fo_low_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX fo_low_idx ON fo_low USING inverted(id, name, t fo_low_en);

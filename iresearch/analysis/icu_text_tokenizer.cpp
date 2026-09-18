@@ -49,7 +49,7 @@ std::unique_ptr<icu::BreakIterator> MakeBreakIterator(
       : icu::BreakIterator::createSentenceInstance(locale, err)};
   if (!U_SUCCESS(err) || !it) {
     THROW_SQL_ERROR(
-      ERR_MSG("icu_text: failed to create a break iterator for locale '",
+      ERR_MSG("split_text_icu: failed to create a break iterator for locale '",
               locale.getName(), "': ", u_errorName(err)));
   }
   return it;
@@ -175,7 +175,7 @@ namespace irs::analysis {
 
 Tokenizer::ptr IcuTextTokenizer::Make(Options options) {
   if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("icu_text: locale is required"));
+    THROW_SQL_ERROR(ERR_MSG("split_text_icu: locale is required"));
   }
   using Separate = Options::Separate;
   switch (options.separate) {

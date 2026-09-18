@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <tuple>
 #include <vector>
 
 #include "iresearch/analysis/tokenizer.hpp"
@@ -30,7 +31,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
                                    private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept {
-    return "sparse_ngram";
+    return "generate_sparse_ngrams";
   }
 
   struct Options {
@@ -44,13 +45,18 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   TokenTraits Traits() const noexcept final { return {}; }
 
+  std::tuple<bool> PrepareBatch(BlockTraits traits) const noexcept {
+    return {traits.ascii};
+  }
+
   size_t MemoryUsage() const noexcept final {
     return _stack.capacity() * sizeof(HashAndPos) +
            _pending.capacity() * sizeof(EmitKSlot) +
-           _hashes.capacity() * sizeof(uint32_t);
+           _hashes.capacity() * sizeof(uint32_t) +
+           _bounds.capacity() * sizeof(uint32_t);
   }
 
-  template<TokenLayout Layout>
+  template<TokenLayout Layout, bool KnownAscii>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
@@ -61,6 +67,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   struct Cursor {
     bytes_view data;
+    size_t units{0};
     size_t hash_base{0};
     size_t hash_end{0};
     size_t pos{0};
@@ -70,8 +77,14 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
   };
 
   void EnsureScratch();
+  template<bool Symbols>
   bool Next(Cursor& ctx);
-  void FillHashes(Cursor& ctx);
+  template<bool Symbols>
+  uint64_t FillHashes(Cursor& ctx);
+  template<TokenLayout Layout, bool Detect>
+  bool FillBytes(duckdb::string_t value, TokenSink& sink);
+  template<TokenLayout Layout>
+  bool FillSymbols(duckdb::string_t value, TokenSink& sink);
   IRS_FORCE_INLINE void StepAll(HashAndPos* base, HashAndPos* limit,
                                 HashAndPos*& top, EmitKSlot*& out, size_t i,
                                 uint32_t hash) const;
@@ -87,6 +100,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
   std::vector<HashAndPos> _stack;
   std::vector<EmitKSlot> _pending;
   std::vector<uint32_t> _hashes;
+  std::vector<uint32_t> _bounds;
 };
 
 }  // namespace irs::analysis

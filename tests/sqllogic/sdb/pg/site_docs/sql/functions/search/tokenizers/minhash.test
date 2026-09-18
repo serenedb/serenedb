@@ -1,0 +1,10 @@
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(list_intersect(minhash(['a', 'b', 'c', 'd'], 4), minhash(['a', 'b', 'c', 'e'], 4))) AS shared,
+       length(list_intersect(minhash(['a', 'b', 'c', 'd'], 4), minhash(['w', 'x', 'y', 'z'], 4))) AS unrelated;
+----
+shared	unrelated
+3	0

@@ -4,13 +4,8 @@ statement ok
 CREATE TABLE t(r text);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 
 statement ok
@@ -84,13 +79,8 @@ statement ok
 DROP TEXT SEARCH DICTIONARY test_english;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY test_english(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY test_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
@@ -486,22 +476,12 @@ statement ok
 CREATE SCHEMA s2;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s1.te(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY s1.te AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY s2.te(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY s2.te AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 
 statement ok
@@ -552,13 +532,8 @@ db error: ERROR: Referenced column "a" was not found because the FROM clause is 
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ts(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false
-);
+CREATE TEXT SEARCH DICTIONARY ts AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 
 statement ok

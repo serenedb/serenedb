@@ -290,18 +290,16 @@ bool TSQueryFromStringCast(duckdb::Vector& source, duckdb::Vector& result,
                            duckdb::idx_t count,
                            duckdb::CastParameters& params) {
   const auto& data = params.cast_data->Cast<TSQueryCastData>();
-  duckdb::UnifiedVectorFormat fmt;
-  source.ToUnifiedFormat(count, fmt);
-  const auto* src = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  auto src = source.Values<duckdb::string_t>();
   TSQueryStructWriter writer{result};
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    const auto idx = fmt.sel->get_index(i);
-    if (!fmt.validity.RowIsValid(idx)) {
+    auto value = src[i];
+    if (!value.IsValid()) {
       duckdb::FlatVector::SetNull(result, i, true);
       continue;
     }
     TSQueryRowView parts;
-    parts.text = {src[idx].GetData(), src[idx].GetSize()};
+    parts.text = {value.GetValue().GetData(), value.GetValue().GetSize()};
     writer.Write(i, ComposeParts(parts, data));
   }
   return true;

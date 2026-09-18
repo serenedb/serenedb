@@ -31,7 +31,6 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/store_utils.hpp>
@@ -41,6 +40,7 @@
 
 #include "insert_field.hpp"
 #include "test_resources.hpp"
+#include "text_chain.hpp"
 
 namespace irs {
 
@@ -800,15 +800,9 @@ class JsonDocGenerator : public DocGeneratorBase {
   std::vector<Document>::const_iterator _next;
 };
 
-// Construct the "text" analyzer with locale=C and an empty (explicit) stopword
-// list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text",
-// Json,
-// "{\"locale\":\"C\", \"stopwords\":[]}")`.
 inline irs::analysis::Tokenizer::ptr MakeDocGenTextTokenizer() {
-  irs::analysis::TextTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("C");
-  opts.explicit_stopwords_set = true;
-  return irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
+  return MakeTextChain(
+    {.locale = "C", .convert = irs::Case::Lower, .accent = false});
 }
 
 // field which uses text analyzer for tokenization and stemming

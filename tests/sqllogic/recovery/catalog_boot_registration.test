@@ -37,15 +37,9 @@ statement ok
 CREATE TYPE bootreg.mood AS ENUM ('ok', 'meh');
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bootreg.dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY bootreg.dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE INDEX bootreg_inv ON bootreg.t USING inverted(id, a bootreg.dict);

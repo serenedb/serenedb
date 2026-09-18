@@ -493,12 +493,9 @@ void RenderChunk(HighlightState& state, duckdb::DataChunk& args,
                  duckdb::Vector& result) {
   const auto count = args.size();
 
-  duckdb::UnifiedVectorFormat doc_format;
+  auto docs = args.data[0].Values<duckdb::string_t>();
   duckdb::UnifiedVectorFormat list_format;
-  args.data[0].ToUnifiedFormat(count, doc_format);
   args.data[1].ToUnifiedFormat(count, list_format);
-  const auto* doc_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(doc_format);
   const auto* list_entries =
     duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(list_format);
 
@@ -514,14 +511,13 @@ void RenderChunk(HighlightState& state, duckdb::DataChunk& args,
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
 
   for (size_t i = 0; i < count; ++i) {
-    const auto doc_idx = doc_format.sel->get_index(i);
+    auto doc_value = docs[i];
     const auto list_idx = list_format.sel->get_index(i);
-    if (!doc_format.validity.RowIsValid(doc_idx) ||
-        !list_format.validity.RowIsValid(list_idx)) {
+    if (!doc_value.IsValid() || !list_format.validity.RowIsValid(list_idx)) {
       result_validity.SetInvalid(i);
       continue;
     }
-    const auto doc = AsView(doc_data[doc_idx]);
+    const auto doc = AsView(doc_value.GetValue());
     const HitsView view{list_entries[list_idx], child_format, child_data};
     ValidateHits(doc, view);
 

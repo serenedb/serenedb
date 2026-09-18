@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2020 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,9 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrei Lobov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "pipeline_tokenizer.hpp"
@@ -58,6 +55,8 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
   bool segment_stable = true;
   bool producer_dense = true;
   bool producer_stable = false;
+  bool head_keeps_ascii = false;
+  std::vector<bool> filter_keeps_ascii;
   for (size_t i = 0; i < options.size(); ++i) {
     SDB_ASSERT(options[i]);
     auto& child = *options[i];
@@ -78,6 +77,7 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
     if (i == 0) {
       producer_dense = !traits.explicit_pos;
       producer_stable = traits.stable;
+      head_keeps_ascii = traits.keeps_ascii;
       _traits = traits;
     } else {
       _split_mixed_blocks |= child.WantedBlockTraits().ascii;
@@ -93,6 +93,7 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
       if (auto* stage = dynamic_cast<TokenStage*>(&child)) {
         SDB_ASSERT(!traits.explicit_pos);
         _filters.push_back(stage);
+        filter_keeps_ascii.push_back(traits.keeps_ascii);
         segment_stable &= traits.stable;
       } else {
         auto* expander = dynamic_cast<TokenExpander*>(&child);
@@ -121,6 +122,11 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
     const uint32_t end =
       i + 1 == n ? static_cast<uint32_t>(_filters.size()) : offsets[i + 1];
     _links[i]->SetFilters({_filters.data() + offsets[i], end - offsets[i]});
+    bool filters_keep = true;
+    for (uint32_t f = offsets[i]; f < end; ++f) {
+      filters_keep = filters_keep && filter_keeps_ascii[f];
+    }
+    _links[i]->SetAsciiPreservation(head_keeps_ascii && filters_keep);
   }
   _chain = _interpose ? _links.size() - 1 : _links.size();
   _head = _links.front().get();
@@ -146,7 +152,7 @@ const uint64_t* PipelineTokenizer::ChainSink::RunFilters(TokenBatch& batch) {
     return nullptr;
   }
   std::memset(_valid, 0xFF, sizeof _valid);
-  BatchCtx ctx{{.ascii = _ascii}, _arena, _valid};
+  BatchCtx ctx{{.ascii = _ascii && _keeps_ascii}, _arena, _valid};
   bool all_kept = true;
   for (auto* stage : _filters) {
     all_kept &= stage->ProcessTokens(batch, ctx);
@@ -236,12 +242,9 @@ void PipelineTokenizer::ChainSink::ExpandBatch(TokenBatch& batch, DocRuns runs,
     base = end;
     const bool open_after = r + 1 == n && runs.tail_open;
     OpenRun(run.doc);
-    _expander->ExpandTokens(batch, first, end, *_out,
-                            {_out_layout,
-                             {.ascii = _ascii && _filters.empty()},
-                             _value,
-                             &_pos,
-                             valid});
+    _expander->ExpandTokens(
+      batch, first, end, *_out,
+      {_out_layout, {.ascii = _ascii && _keeps_ascii}, _value, &_pos, valid});
     if (!open_after) {
       CloseSource();
     }
@@ -266,7 +269,7 @@ void PipelineTokenizer::ChainSink::DriveTerminal(TokenBatch& batch,
   _scan = 0;
   _cur_parent = kNoParent;
   _terminal->Fill(fmt, batch.count, doc_limits::min(), *_scratch,
-                  {_out_layout, {.ascii = _ascii && _filters.empty()}});
+                  {_out_layout, {.ascii = _ascii && _keeps_ascii}});
   _scratch->Finish();
   FinishSourceBatch(runs.tail_open);
   _src = nullptr;

@@ -40,9 +40,6 @@
 #include <array>
 #include <bit>
 #include <cmath>
-#if defined(__x86_64__)
-#include <immintrin.h>
-#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -714,13 +711,11 @@ class ScalarQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(block.size() % cs == 0);
     const size_t n = block.size() / cs;
     const byte_type* c = block.data();
-#if defined(__x86_64__)
     if (_fast) {
       faiss::scalar_quantizer::sq8_batch_score_n(
         _weights, [&](size_t j) { return c + j * cs; }, n, out, 0);
       return;
     }
-#endif
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       _dc->distance_to_code_batch_4(c + i * cs, c + (i + 1) * cs,
@@ -740,20 +735,15 @@ class ScalarQuantizerReader final : public QuantizerReader {
   // A quarter of the dimensions, rounded to a cache line, once that is enough
   // of the code to rank by: below it the read is a cache line either way.
   uint32_t PrefixDims() const noexcept final {
-#if defined(__x86_64__)
     if (!_fast || _weights.d < 512) {
       return 0;
     }
     return (_weights.d / 4 + 63) & ~uint32_t{63};
-#else
-    return 0;
-#endif
   }
 
   void ComputeGatheredPrefix(const byte_type* base, uint32_t record_size,
                              std::span<const uint32_t> ids,
                              score_t* out) final {
-#if defined(__x86_64__)
     const auto dims = PrefixDims();
     if (dims != 0) {
       const auto row = [&](size_t j) {
@@ -763,7 +753,6 @@ class ScalarQuantizerReader final : public QuantizerReader {
                                                dims);
       return;
     }
-#endif
     ComputeGathered(base, record_size, ids, kHnswNoThresholdValue, out);
   }
 
@@ -775,12 +764,10 @@ class ScalarQuantizerReader final : public QuantizerReader {
       return base + static_cast<size_t>(ids[j]) * record_size;
     };
     const size_t n = ids.size();
-#if defined(__x86_64__)
     if (_fast) {
       faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, n, out, 0);
       return;
     }
-#endif
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       _dc->distance_to_code_batch_4(row(i), row(i + 1), row(i + 2), row(i + 3),
@@ -811,10 +798,10 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
  private:
   void PrepareFast(std::span<const float> query) {
-#if defined(__x86_64__)
     // faiss dispatches the kernel by runtime SIMD level, so there is no CPU
     // probe here any more: AVX-512 where the machine has it, AVX2 or NEON
-    // otherwise, and a scalar loop on anything else.
+    // otherwise, and a scalar loop on anything else. Nothing here is x86, and
+    // gating it on x86 is what made the NEON kernel we wrote unreachable.
     const auto qt = _cb->Sq().qtype;
     _fast = (qt == faiss::ScalarQuantizer::QT_8bit ||
              qt == faiss::ScalarQuantizer::QT_8bit_uniform) &&
@@ -823,7 +810,6 @@ class ScalarQuantizerReader final : public QuantizerReader {
       faiss::scalar_quantizer::sq8_batch_train(
         _cb->Sq(), query.data(), M == VectorMetric::L2Sqr, _weights);
     }
-#endif
   }
 
   std::shared_ptr<const ScalarQuantizerCodebook<M>> _cb;
@@ -2887,8 +2873,16 @@ class RaBitQuantizerReader final : public QuantizerReader {
     const auto* cs = reinterpret_cast<const float*>(codes + _lay.CsOffset());
     const size_t storage = _lay.storage;
     ScoreLanes(
-      codes, [aux, storage](size_t i) { return aux + i * storage; }, cs,
-      kFastScanBbs, mt, out);
+      codes, [aux, storage](size_t i) { return aux + i * storage; },
+      [this, codes](size_t i) {
+        // A group interleaves the sign bits across lanes, so the flat bitmap
+        // compute_full_multibit_distance wants has to be rebuilt per lane.
+        faiss::rabitq_utils::unpack_sign_bits_from_packed(
+          codes, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
+          _sign_bits.data());
+        return const_cast<const uint8_t*>(_sign_bits.data());
+      },
+      cs, kFastScanBbs, mt, out);
   }
 
   /// Row-major records are transposed into one fast-scan block so the same
@@ -2903,12 +2897,16 @@ class RaBitQuantizerReader final : public QuantizerReader {
     const uint32_t aux_off = _lay.RowAuxOffset();
     ScoreLanes(
       _packed.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
+      // The nibbles sit in dimension order, so a record's sign bytes already
+      // are the bitmap the refine wants -- packing them into a fast-scan block
+      // and unpacking them back out again was work that cancelled itself.
+      [row](size_t i) { return reinterpret_cast<const uint8_t*>(row(i)); },
       _rm_cs.data(), count, mt, out);
   }
 
-  template<typename Aux>
-  void ScoreLanes(const byte_type* packed, Aux aux, const float* cs,
-                  size_t count, float mt, score_t* out) {
+  template<typename Aux, typename Signs>
+  void ScoreLanes(const byte_type* packed, Aux aux, Signs signs,
+                  const float* cs, size_t count, float mt, score_t* out) {
     const FastScanLut& lut = _cur->Lut();
     faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq),
                              packed, lut.Packed(), _accu.data());
@@ -2920,7 +2918,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
         normalized, *fac, _qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
     }
     if (_lay.ex_bits > 0) {
-      Refine(packed, aux, count, mt, out);
+      Refine(aux, signs, count, mt, out);
     }
     if constexpr (M == VectorMetric::L2Sqr) {
       for (size_t i = 0; i < count; ++i) {
@@ -2929,8 +2927,8 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
   }
 
-  template<typename Aux>
-  void Refine(const byte_type* packed, Aux aux, size_t count, float threshold,
+  template<typename Aux, typename Signs>
+  void Refine(Aux aux, Signs signs, size_t count, float threshold,
               score_t* out) {
     const float qr_base =
       M == VectorMetric::L2Sqr ? _qf.qr_to_c_L2sqr : _qf.q_dot_c;
@@ -2944,16 +2942,13 @@ class RaBitQuantizerReader final : public QuantizerReader {
             M != VectorMetric::L2Sqr)) {
         continue;
       }
-      faiss::rabitq_utils::unpack_sign_bits_from_packed(
-        packed, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
-        _sign_bits.data());
       const uint8_t* ex_code =
         rec + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
       const auto* ex_fac =
         reinterpret_cast<const faiss::rabitq_utils::ExtraBitsFactors*>(
           ex_code + _lay.ex_code_size);
       out[i] = faiss::rabitq_utils::compute_full_multibit_distance(
-        _sign_bits.data(), ex_code, *ex_fac, _q_res.data(), qr_base, _rd,
+        signs(i), ex_code, *ex_fac, _q_res.data(), qr_base, _rd,
         _lay.ex_bits,
         M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                  : faiss::MetricType::METRIC_INNER_PRODUCT);

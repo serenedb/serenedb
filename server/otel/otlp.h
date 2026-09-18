@@ -27,7 +27,7 @@
 // The OTLP data model, generated from the vendored opentelemetry-proto by
 // protoc; see third_party/opentelemetry-proto and server/otel/CMakeLists.txt.
 // Both decoders (protojson.cpp, protobuf.cpp) fill these messages and
-// mapper.cpp reads them, so every ingestion route produces the same rows.
+// mapper.cpp reads them, so both wire encodings produce the same rows.
 namespace sdb::otel {
 
 namespace pb = ::opentelemetry::proto;

@@ -1,71 +1,32 @@
-# Canonical-mapping conformance fixtures
+# Conformance fixtures
 
-Three implementations map OTLP to rows — the `?api=otlp` handlers, the `?api=es`
-otel-document translator, and the Go `serenedbexporter`. They must produce
-**identical rows for identical input**, or a user switching routes sees their
-saved queries change behaviour. These fixtures are the shared ground truth.
-
-## Where the payloads come from
-
-`<signal>/upstream.otlp.json` are the official example payloads, vendored from
-https://github.com/open-telemetry/opentelemetry-proto/tree/main/examples —
-the only OTLP payloads published upstream. They are genuinely external input:
-uppercase hex ids, an apostrophe in a span name, every AnyValue type, and all
-four metric shapes in one request.
-
-The rest are written here, each for a case the examples do not reach (zero
-timestamps, all-zero ids, span kinds and statuses, negative exponential
-histogram scale and offsets, multi-resource ordering).
-
-Every `.otlp.pb` is generated from its `.otlp.json` by
-`scripts/otel_fixtures.py`, using the official `opentelemetry-proto` Python
-bindings — so the binary side is encoded by upstream code rather than by the
-decoder it tests.
-
-## Layout
+OTLP payloads used to check that the two decoders — protobuf and JSON —
+produce identical rows.
 
 ```
-<signal>/<case>.otlp.json       one Export<Signal>ServiceRequest, ProtoJSON
-<signal>/<case>.expected.jsonl  the rows it must produce, one JSON object per line
+<signal>/<case>.otlp.json       an Export<Signal>ServiceRequest
+<signal>/<case>.otlp.pb         the same request, binary
+<signal>/<case>.expected.jsonl  the rows it should produce
 ```
 
-`<case>.otlp.json` is exactly what an SDK or collector would POST to
-`/v1/logs`, `/v1/traces` or `/v1/metrics`.
+`.otlp.pb` is generated from `.otlp.json` by `scripts/otel_fixtures.py`, using
+the official `opentelemetry-proto` bindings. `check` fails on drift and runs in
+the python driver suite.
 
-Each line of `<case>.expected.jsonl` is one row. `__table` names the target
-table; every other key is a column name. **A column that is absent from the
-object must be NULL in the row** — that keeps the files readable. Row order is
-significant and must match the mapper's emission order.
+`upstream.otlp.json` are vendored from
+https://github.com/open-telemetry/opentelemetry-proto/tree/main/examples; the
+rest are written here for cases those do not reach.
 
-## Normalization rules
+Consumed by `tests/drivers/python/test_otlp_api.py` and
+`tests/sqllogic/sdb/pg/otel/schema.test`. `.expected.jsonl` is not asserted by
+anything yet.
 
-These exist so the comparison can be a byte comparison. Every implementation
-must follow them, not just the test harness.
+## Mapping rules the fixtures pin
 
 | Subject | Rule |
 |---|---|
-| JSON attribute columns | object keys sorted, compact separators, no whitespace |
-| Timestamps | RFC3339 with exactly 9 fractional digits and a `Z` suffix |
+| JSON attribute columns | keys sorted, compact, no whitespace |
+| Timestamps in JSON columns | RFC3339, 9 fractional digits, `Z` |
 | Integer attribute values | JSON numbers, not strings |
-| Byte attribute values | base64, standard alphabet with padding |
-| Doubles | shortest representation that round-trips |
-| Trace and span ids | lowercase hex; all-zero or empty becomes `null` |
-
-## Consumers
-
-| Route | Harness |
-|---|---|
-| `?api=otlp` | posts each `.otlp.json`, reads the rows back, diffs |
-| `?api=es` | replays `_bulk` bodies recorded from the real `elasticsearchexporter` for the same input, diffs |
-| `serenedbexporter` | maps the fixture and diffs the encoded `COPY` text rows |
-| mapper unit test | `tests/server/otel_mapper_test.cpp`, in process, no server |
-
-A new fixture must pass in all of them.
-
-## Adding a case
-
-1. Write the `.otlp.json`, or capture one with `telemetrygen`.
-2. Run the mapper unit test with `--update` to write the `.expected.jsonl`.
-3. Read the generated file in the diff. **That review is the spec review** —
-   the expected file is the specification, not a recording of whatever the
-   first implementation happened to do.
+| Byte attribute values | base64 |
+| Trace and span ids | lowercase hex; all-zero or empty becomes NULL |

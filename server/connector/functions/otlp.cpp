@@ -329,139 +329,147 @@ void AppendMetricCommon(Row& row, const otel::Metric& metric,
     {"flags", duckdb::Value::INTEGER(static_cast<int32_t>(point.flags()))});
 }
 
-enum class MetricTable : size_t {
-  Gauge = 0,
-  Sum = 1,
-  Histogram = 2,
-  ExponentialHistogram = 3,
-  Summary = 4,
+// One policy per metric shape: whether a metric carries it, how to reach it,
+// and the columns a data point of that shape adds beyond the common block.
+// The walk over resources, scopes, metrics and data points is shared.
+
+void AppendTemporality(
+  Row& row, otel::pb::metrics::v1::AggregationTemporality temporality) {
+  row.push_back(
+    {"aggregation_temporality",
+     duckdb::Value{std::string{otel::TemporalityName(temporality)}}});
+}
+
+template<typename Point>
+void AppendExemplars(Row& row, const Point& point) {
+  row.push_back(
+    {"exemplars", duckdb::Value{otel::ExemplarsToJson(point.exemplars())}});
+}
+
+template<typename Point>
+void AppendCountAndSum(Row& row, const Point& point) {
+  row.push_back(
+    {"count", duckdb::Value::BIGINT(static_cast<int64_t>(point.count()))});
+  row.push_back({"sum", OptionalDouble(point.has_sum(), point.sum())});
+}
+
+template<typename Point>
+void AppendMinAndMax(Row& row, const Point& point) {
+  row.push_back({"min", OptionalDouble(point.has_min(), point.min())});
+  row.push_back({"max", OptionalDouble(point.has_max(), point.max())});
+}
+
+struct GaugeShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_gauge(); }
+  static const auto& Get(const otel::Metric& metric) { return metric.gauge(); }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape&, const Point& point) {
+    row.push_back({"value", NumberValue(point)});
+    AppendExemplars(row, point);
+  }
 };
 
+struct SumShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_sum(); }
+  static const auto& Get(const otel::Metric& metric) { return metric.sum(); }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& sum, const Point& point) {
+    row.push_back({"value", NumberValue(point)});
+    AppendTemporality(row, sum.aggregation_temporality());
+    row.push_back({"is_monotonic", duckdb::Value::BOOLEAN(sum.is_monotonic())});
+    AppendExemplars(row, point);
+  }
+};
+
+struct HistogramShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_histogram(); }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.histogram();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& histogram, const Point& point) {
+    AppendCountAndSum(row, point);
+    row.push_back({"bucket_counts", BigintList(point.bucket_counts())});
+    row.push_back({"explicit_bounds", DoubleList(point.explicit_bounds())});
+    AppendMinAndMax(row, point);
+    AppendTemporality(row, histogram.aggregation_temporality());
+    AppendExemplars(row, point);
+  }
+};
+
+struct ExponentialHistogramShape {
+  static bool Has(const otel::Metric& metric) {
+    return metric.has_exponential_histogram();
+  }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.exponential_histogram();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& exponential, const Point& point) {
+    AppendCountAndSum(row, point);
+    row.push_back({"scale", duckdb::Value::INTEGER(point.scale())});
+    row.push_back({"zero_count", duckdb::Value::BIGINT(
+                                   static_cast<int64_t>(point.zero_count()))});
+    row.push_back(
+      {"positive_offset", duckdb::Value::INTEGER(point.positive().offset())});
+    row.push_back(
+      {"positive_bucket_counts", BigintList(point.positive().bucket_counts())});
+    row.push_back(
+      {"negative_offset", duckdb::Value::INTEGER(point.negative().offset())});
+    row.push_back(
+      {"negative_bucket_counts", BigintList(point.negative().bucket_counts())});
+    AppendMinAndMax(row, point);
+    AppendTemporality(row, exponential.aggregation_temporality());
+    AppendExemplars(row, point);
+  }
+};
+
+struct SummaryShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_summary(); }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.summary();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape&, const Point& point) {
+    row.push_back(
+      {"count", duckdb::Value::BIGINT(static_cast<int64_t>(point.count()))});
+    row.push_back({"sum", duckdb::Value::DOUBLE(point.sum())});
+    std::vector<double> quantiles;
+    std::vector<double> values;
+    quantiles.reserve(point.quantile_values().size());
+    values.reserve(point.quantile_values().size());
+    for (const auto& quantile : point.quantile_values()) {
+      quantiles.push_back(quantile.quantile());
+      values.push_back(quantile.value());
+    }
+    row.push_back({"quantiles", DoubleList(quantiles)});
+    row.push_back({"values", DoubleList(values)});
+  }
+};
+
+template<typename MetricShape>
 void BuildMetricRows(const otel::ExportMetricsRequest& request,
-                     MetricTable table, std::vector<Row>& rows) {
+                     std::vector<Row>& rows) {
   for (const auto& resource_metrics : request.resource_metrics()) {
-    const auto& resource = resource_metrics.resource();
     for (const auto& scope_metrics : resource_metrics.scope_metrics()) {
-      const auto& scope = scope_metrics.scope();
       for (const auto& metric : scope_metrics.metrics()) {
-        const auto common = [&](Row& row, const auto& point) {
-          AppendMetricCommon(row, metric, point, resource, scope,
+        if (!MetricShape::Has(metric)) {
+          continue;
+        }
+        const auto& shape = MetricShape::Get(metric);
+        for (const auto& point : shape.data_points()) {
+          Row row;
+          AppendMetricCommon(row, metric, point, resource_metrics.resource(),
+                             scope_metrics.scope(),
                              resource_metrics.schema_url(),
                              scope_metrics.schema_url());
-        };
-        if (table == MetricTable::Gauge) {
-          if (!metric.has_gauge()) {
-            continue;
-          }
-          for (const auto& point : metric.gauge().data_points()) {
-            Row row;
-            common(row, point);
-            row.push_back({"value", NumberValue(point)});
-            row.push_back({"exemplars", duckdb::Value{otel::ExemplarsToJson(
-                                          point.exemplars())}});
-            rows.push_back(std::move(row));
-          }
-        } else if (table == MetricTable::Sum) {
-          if (!metric.has_sum()) {
-            continue;
-          }
-          const auto& sum = metric.sum();
-          for (const auto& point : sum.data_points()) {
-            Row row;
-            common(row, point);
-            row.push_back({"value", NumberValue(point)});
-            row.push_back({"aggregation_temporality",
-                           duckdb::Value{std::string{otel::TemporalityName(
-                             sum.aggregation_temporality())}}});
-            row.push_back(
-              {"is_monotonic", duckdb::Value::BOOLEAN(sum.is_monotonic())});
-            row.push_back({"exemplars", duckdb::Value{otel::ExemplarsToJson(
-                                          point.exemplars())}});
-            rows.push_back(std::move(row));
-          }
-        } else if (table == MetricTable::Histogram) {
-          if (!metric.has_histogram()) {
-            continue;
-          }
-          const auto& histogram = metric.histogram();
-          for (const auto& point : histogram.data_points()) {
-            Row row;
-            common(row, point);
-            row.push_back({"count", duckdb::Value::BIGINT(
-                                      static_cast<int64_t>(point.count()))});
-            row.push_back(
-              {"sum", OptionalDouble(point.has_sum(), point.sum())});
-            row.push_back({"bucket_counts", BigintList(point.bucket_counts())});
-            row.push_back(
-              {"explicit_bounds", DoubleList(point.explicit_bounds())});
-            row.push_back(
-              {"min", OptionalDouble(point.has_min(), point.min())});
-            row.push_back(
-              {"max", OptionalDouble(point.has_max(), point.max())});
-            row.push_back({"aggregation_temporality",
-                           duckdb::Value{std::string{otel::TemporalityName(
-                             histogram.aggregation_temporality())}}});
-            row.push_back({"exemplars", duckdb::Value{otel::ExemplarsToJson(
-                                          point.exemplars())}});
-            rows.push_back(std::move(row));
-          }
-        } else if (table == MetricTable::ExponentialHistogram) {
-          if (!metric.has_exponential_histogram()) {
-            continue;
-          }
-          const auto& exponential = metric.exponential_histogram();
-          for (const auto& point : exponential.data_points()) {
-            Row row;
-            common(row, point);
-            row.push_back({"count", duckdb::Value::BIGINT(
-                                      static_cast<int64_t>(point.count()))});
-            row.push_back(
-              {"sum", OptionalDouble(point.has_sum(), point.sum())});
-            row.push_back({"scale", duckdb::Value::INTEGER(point.scale())});
-            row.push_back(
-              {"zero_count", duckdb::Value::BIGINT(
-                               static_cast<int64_t>(point.zero_count()))});
-            row.push_back({"positive_offset",
-                           duckdb::Value::INTEGER(point.positive().offset())});
-            row.push_back({"positive_bucket_counts",
-                           BigintList(point.positive().bucket_counts())});
-            row.push_back({"negative_offset",
-                           duckdb::Value::INTEGER(point.negative().offset())});
-            row.push_back({"negative_bucket_counts",
-                           BigintList(point.negative().bucket_counts())});
-            row.push_back(
-              {"min", OptionalDouble(point.has_min(), point.min())});
-            row.push_back(
-              {"max", OptionalDouble(point.has_max(), point.max())});
-            row.push_back({"aggregation_temporality",
-                           duckdb::Value{std::string{otel::TemporalityName(
-                             exponential.aggregation_temporality())}}});
-            row.push_back({"exemplars", duckdb::Value{otel::ExemplarsToJson(
-                                          point.exemplars())}});
-            rows.push_back(std::move(row));
-          }
-        } else {
-          if (!metric.has_summary()) {
-            continue;
-          }
-          for (const auto& point : metric.summary().data_points()) {
-            Row row;
-            common(row, point);
-            row.push_back({"count", duckdb::Value::BIGINT(
-                                      static_cast<int64_t>(point.count()))});
-            row.push_back({"sum", duckdb::Value::DOUBLE(point.sum())});
-            std::vector<double> quantiles;
-            std::vector<double> values;
-            quantiles.reserve(point.quantile_values().size());
-            values.reserve(point.quantile_values().size());
-            for (const auto& quantile : point.quantile_values()) {
-              quantiles.push_back(quantile.quantile());
-              values.push_back(quantile.value());
-            }
-            row.push_back({"quantiles", DoubleList(quantiles)});
-            row.push_back({"values", DoubleList(values)});
-            rows.push_back(std::move(row));
-          }
+          MetricShape::Append(row, shape, point);
+          rows.push_back(std::move(row));
         }
       }
     }
@@ -532,13 +540,13 @@ void BuildTraces(duckdb::ClientContext&, const std::string& body, bool protobuf,
   BuildSpanRows(request, rows);
 }
 
-template<MetricTable Table>
+template<typename MetricShape>
 void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
                   bool protobuf, std::vector<Row>& rows) {
   // One request feeds five tables, so the handler decodes the payload once and
   // leaves it on the connection; only a standalone SQL call decodes here.
   if (const auto* decoded = GetSereneDBContext(context).GetOtlpMetrics()) {
-    BuildMetricRows(decoded->request, Table, rows);
+    BuildMetricRows<MetricShape>(decoded->request, rows);
     return;
   }
   otel::ExportMetricsRequest request;
@@ -547,7 +555,7 @@ void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
   } else {
     otel::ParseMetricsRequest(body, request);
   }
-  BuildMetricRows(request, Table, rows);
+  BuildMetricRows<MetricShape>(request, rows);
 }
 
 constexpr std::string_view kLogsTable = kOtelLogsTable;
@@ -580,16 +588,14 @@ void RegisterOtlpFunctions(duckdb::DatabaseInstance& db) {
 
   add("otlp_logs", OtlpBind<kLogsTable, BuildLogs>);
   add("otlp_traces", OtlpBind<kTracesTable, BuildTraces>);
-  add("otlp_metrics_gauge",
-      OtlpBind<kGaugeTable, BuildMetrics<MetricTable::Gauge>>);
-  add("otlp_metrics_sum", OtlpBind<kSumTable, BuildMetrics<MetricTable::Sum>>);
+  add("otlp_metrics_gauge", OtlpBind<kGaugeTable, BuildMetrics<GaugeShape>>);
+  add("otlp_metrics_sum", OtlpBind<kSumTable, BuildMetrics<SumShape>>);
   add("otlp_metrics_histogram",
-      OtlpBind<kHistogramTable, BuildMetrics<MetricTable::Histogram>>);
+      OtlpBind<kHistogramTable, BuildMetrics<HistogramShape>>);
   add("otlp_metrics_exponential_histogram",
-      OtlpBind<kExponentialTable,
-               BuildMetrics<MetricTable::ExponentialHistogram>>);
+      OtlpBind<kExponentialTable, BuildMetrics<ExponentialHistogramShape>>);
   add("otlp_metrics_summary",
-      OtlpBind<kSummaryTable, BuildMetrics<MetricTable::Summary>>);
+      OtlpBind<kSummaryTable, BuildMetrics<SummaryShape>>);
 }
 
 }  // namespace sdb::connector

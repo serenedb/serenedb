@@ -102,4 +102,11 @@ if ! python3 "${SCRIPT_DIR}/../../../scripts/otel_fixtures.py" check; then
 	final=1
 fi
 
+# The sqllogic include must match the canonical OTel DDL it is generated from.
+# Regenerate with: scripts/otel_schema.py generate.
+echo "[python][otel_schema] check"
+if ! python3 "${SCRIPT_DIR}/../../../scripts/otel_schema.py" check; then
+	final=1
+fi
+
 exit "$final"

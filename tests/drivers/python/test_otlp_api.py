@@ -2,7 +2,7 @@
 
 Exercises the otlp_*() table functions through the thin HTTP handlers, using
 the same conformance payloads the sqllogic contract test uses. Skipped
-wholesale when no OTLP endpoint is configured (SDB_DRV_OTLP_PORT).
+wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import socket
 import pytest
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
-PORT = int(os.environ.get("SDB_DRV_OTLP_PORT", "4318"))
+PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
 USER = os.environ.get("SDB_DRV_USER", "postgres")
 PASSWORD = os.environ.get("SDB_DRV_PASSWORD", "")
 
@@ -53,7 +53,7 @@ def _reachable() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _reachable(), reason=f"no OTLP endpoint at {HOST}:{PORT}"
+    not _reachable(), reason=f"no HTTP endpoint at {HOST}:{PORT}"
 )
 
 

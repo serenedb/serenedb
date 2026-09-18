@@ -27,7 +27,7 @@
 
 #include <vector>
 
-// Canonical value rules shared by every ingestion route: attribute JSON with
+// Canonical value rules shared by both decoders: attribute JSON with
 // sorted keys, body stringification, and the string forms stored for the
 // SpanKind / StatusCode / AggregationTemporality enums.
 //

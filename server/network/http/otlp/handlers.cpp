@@ -29,6 +29,7 @@
 #include <array>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -54,27 +55,42 @@ namespace {
 inline constexpr std::string_view kProtobufContentType =
   "application/x-protobuf";
 
+// google.rpc.Code, the enum google.rpc.Status carries:
+// https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
+inline constexpr int32_t kCodeInvalidArgument = 3;
+inline constexpr int32_t kCodeInternal = 13;
+
+// A protobuf tag is (field number << 3) | wire type:
+// https://protobuf.dev/programming-guides/encoding/#structure
+inline constexpr uint32_t kFieldNumberShift = 3;
+inline constexpr uint32_t kWireTypeVarint = 0;
+inline constexpr uint32_t kWireTypeLengthDelimited = 2;
+
+// google/rpc/status.proto is not vendored -- it is googleapis, not protobuf --
+// and the message is two fields, so it is encoded by hand:
+//   int32 code = 1; string message = 2;
+// https://github.com/googleapis/googleapis/blob/master/google/rpc/status.proto
+inline constexpr uint32_t kStatusCodeField = 1;
+inline constexpr uint32_t kStatusMessageField = 2;
+
 void AppendVarint(std::string& out, uint64_t value) {
-  while (value >= 0x80) {
-    out.push_back(static_cast<char>((value & 0x7F) | 0x80));
-    value >>= 7;
-  }
-  out.push_back(static_cast<char>(value));
+  irs::WriteVarint(value, [&out](irs::byte_type byte) {
+    out.push_back(static_cast<char>(byte));
+  });
 }
 
 void AppendTag(std::string& out, uint32_t field, uint32_t wire_type) {
-  AppendVarint(out, (static_cast<uint64_t>(field) << 3) | wire_type);
+  AppendVarint(out, (field << kFieldNumberShift) | wire_type);
 }
 
-// google.rpc.Status: code = 1 (varint), message = 2 (length-delimited).
 std::string EncodeStatus(int32_t code, std::string_view message) {
   std::string out;
   if (code != 0) {
-    AppendTag(out, 1, 0);
+    AppendTag(out, kStatusCodeField, kWireTypeVarint);
     AppendVarint(out, static_cast<uint64_t>(code));
   }
   if (!message.empty()) {
-    AppendTag(out, 2, 2);
+    AppendTag(out, kStatusMessageField, kWireTypeLengthDelimited);
     AppendVarint(out, message.size());
     out.append(message);
   }
@@ -177,7 +193,7 @@ class ExportHandler final : public HttpHandler {
                         HttpResponseWriter& writer) override {
     const bool protobuf = IsProtobufRequest(request);
     if (!protobuf && !IsJsonRequest(request)) {
-      WriteStatus(writer, HttpStatus::BadRequest, 3,
+      WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   "unsupported Content-Type; expected application/json or "
                   "application/x-protobuf",
                   /*protobuf=*/false);
@@ -185,7 +201,7 @@ class ExportHandler final : public HttpHandler {
     }
     // TODO(mkornaukhov) content encoding
     if (!request.Header(HttpHeader::ContentEncoding).empty()) {
-      WriteStatus(writer, HttpStatus::BadRequest, 3,
+      WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   absl::StrCat("unsupported Content-Encoding: ",
                                request.Header(HttpHeader::ContentEncoding)),
                   protobuf);
@@ -194,8 +210,8 @@ class ExportHandler final : public HttpHandler {
 
     const auto raw = FlattenBody(request.body);
     if (raw.empty()) {
-      WriteStatus(writer, HttpStatus::BadRequest, 3, "empty request body",
-                  protobuf);
+      WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                  "empty request body", protobuf);
       co_return {};
     }
 
@@ -215,7 +231,8 @@ class ExportHandler final : public HttpHandler {
           otel::ParseMetricsRequest(raw, decoded.request);
         }
       } catch (const std::exception& error) {
-        WriteStatus(writer, HttpStatus::BadRequest, 3, error.what(), protobuf);
+        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                    error.what(), protobuf);
         co_return {};
       }
       sdb_ctx.SetOtlpMetrics(&decoded);
@@ -227,13 +244,14 @@ class ExportHandler final : public HttpHandler {
         co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
       if (outcome.missing_table) {
         WriteStatus(
-          writer, HttpStatus::InternalError, 12,
+          writer, HttpStatus::InternalError, kCodeInternal,
           absl::StrCat("the OpenTelemetry schema is missing: ", outcome.error),
           protobuf);
         co_return {};
       }
       if (!outcome.ok) {
-        WriteStatus(writer, HttpStatus::BadRequest, 3, outcome.error, protobuf);
+        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                    outcome.error, protobuf);
         co_return {};
       }
     }

@@ -20,7 +20,7 @@ services:
         printf "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n" \
           > /tmp/serenedb_datadir/pg_hba.conf &&
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-          --listen postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otlp \
+          --listen postgres://0.0.0.0:5432,http://0.0.0.0:9200?api=es\&api=mcp\&api=test\&api=otlp \
           --auth_timeout=600s \
       '
 
@@ -42,7 +42,7 @@ services:
       - HOME=/tmp/home
       - LOG_DIR=/logs
       - SDB_DRV_LANG
-      - SDB_DRV_OTLP_PORT=4318
+      - SDB_DRV_HTTP_PORT=9200
       - SDB_FUZZ_QUERIES
       - SDB_FUZZ_PARALLEL
     networks:

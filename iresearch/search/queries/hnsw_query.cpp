@@ -374,6 +374,27 @@ inline constexpr uint32_t kCountSampleWindows = 8;
 // `keep` of HnswScanWords.
 inline constexpr long double kScanPrefixPool = 8;
 
+// What one scanned row costs against one walked candidate. They are not the
+// same work: the scan reads the codes in order, in batches, and the distance
+// kernel runs over a contiguous stream it can prefetch, while every walked
+// candidate arrives through a random read, loads its links, and pays the
+// visited set and two heaps. Counting the two as one -- which is what this
+// was before -- makes the plan walk where scanning is both faster and exact.
+//
+// Calibrated by forcing both plans over a million clustered rows in three
+// segments, sq8, d=128, one thread, across seven predicates (term and
+// columnstore, 1% to 20%) and four beams (k=ef in 10, 10/64, 100, 1000).
+// Writing the decision in terms of `walk / matches`, the two plans are:
+//
+//   ratio <= 0.24   walk wins, by up to 3x at 20% selectivity
+//   ratio >= 0.60   scan wins, by 10% to 100%
+//
+// with nothing measured in between. This constant is that crossover, and it
+// puts all twenty-eight cells on the right side. The scan is exact, so every
+// cell it takes over also comes back at recall 1.000 where the walk was at
+// 0.996 to 0.999.
+inline constexpr long double kScanCandidateCost = 0.4L;
+
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
                     uint32_t parallel = 1, bool prefix = false) noexcept {
   if (matches == 0 || nodes == 0) {
@@ -384,7 +405,7 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   // through the graph, so only the scan's side of the comparison shrinks. A
   // scan that ranks on a prefix of each code reads a quarter of the rows it
   // scores, and scores a pool of them in full on top.
-  long double scan = static_cast<long double>(matches);
+  long double scan = static_cast<long double>(matches) * kScanCandidateCost;
   if (prefix) {
     scan = scan / 4 + kScanPrefixPool * ef;
   }

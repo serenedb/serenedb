@@ -1,0 +1,77 @@
+# A search table holds one columnstore shared by every index on it, so the
+# row-group size is a table option rather than an index one. It is also the unit
+# one scan worker claims, so a table whose rows are expensive to materialise can
+# be spread over more threads by lowering it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rg_en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+# The same rule DuckDB applies to a table's row-group size: a whole number of
+# vectors.
+statement error
+CREATE TABLE rg_bad (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', row_group_size = 3000);
+----
+db error: ERROR: value for option "row_group_size" must be a multiple of the vector size 2048
+
+
+statement error
+CREATE TABLE rg_bad (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', row_group_size = 0);
+----
+db error: ERROR: invalid value for parameter "row_group_size": "0"
+
+
+statement ok
+CREATE TABLE rg_small (id INT PRIMARY KEY, body TEXT, n BIGINT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 2048)
+
+
+statement ok
+CREATE INDEX rg_small_idx ON rg_small USING inverted (body rg_en)
+
+
+statement ok
+CREATE TABLE rg_default (id INT PRIMARY KEY, body TEXT, n BIGINT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX rg_default_idx ON rg_default USING inverted (body rg_en)
+
+
+statement ok
+INSERT INTO rg_small SELECT i, 'fox w' || (i % 7), i * 3 FROM range(20000) t(i)
+
+
+statement ok
+INSERT INTO rg_default SELECT i, 'fox w' || (i % 7), i * 3 FROM range(20000) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rg_small
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rg_default
+
+
+# The size the table was written with is the size the scan claims by, so the
+# smaller one yields strictly more units over identical data -- and both answer
+# the same.
+
+query
+SELECT count(*) AS n, sum(n)::BIGINT AS total FROM rg_small WHERE body @@ 'fox';
+----
+n	total
+20000	599970000
+
+
+query
+SELECT count(*) AS n, sum(n)::BIGINT AS total FROM rg_default WHERE body @@ 'fox';
+----
+n	total
+20000	599970000

@@ -349,6 +349,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
     }
     data->relation.table_entry = this;
     data->relation.kind = connector::ScanEntryKind::SearchTable;
+    data->relation.row_group_size = SearchOptions().row_group_size;
     data->score.prune = SearchOptions().topk_scorer;
     data->lookup.label = "search";
     data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(

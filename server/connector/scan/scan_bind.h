@@ -183,6 +183,7 @@ struct RelationSpec {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   std::vector<std::shared_ptr<const catalog::Index>> indexes;
   ScanEntryKind kind = ScanEntryKind::BaseTable;
+  uint32_t row_group_size = 0;
 
   bool IsInvertedIndex() const noexcept {
     return kind == ScanEntryKind::InvertedIndex;

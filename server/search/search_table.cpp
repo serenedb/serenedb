@@ -142,9 +142,12 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
 // resolved from the merged config.
 class MergedFieldOptions final : public irs::IndexFieldOptions {
  public:
-  explicit MergedFieldOptions(
-    std::shared_ptr<const catalog::InvertedIndex::Entries> entries)
-    : _entries{std::move(entries)} {}
+  MergedFieldOptions(
+    std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
+    uint32_t rows_per_row_group)
+    : _entries{std::move(entries)} {
+    row_group_size = rows_per_row_group;
+  }
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
     const auto it = _entries->find(id);
@@ -179,8 +182,10 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
 };
 
 std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
-  std::shared_ptr<const catalog::InvertedIndex::Entries> entries) {
-  return std::make_shared<const MergedFieldOptions>(std::move(entries));
+  std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
+  uint32_t row_group_size) {
+  return std::make_shared<const MergedFieldOptions>(std::move(entries),
+                                                    row_group_size);
 }
 
 }  // namespace
@@ -194,14 +199,17 @@ SearchTable::SearchTable(
     _schema_id{schema_id},
     _is_new{is_new},
     _pk_columns{std::move(pk_columns)},
-    _segment_memory_max{options.segment_memory_max} {
+    _segment_memory_max{options.segment_memory_max},
+    _row_group_size{options.row_group_size != 0
+                      ? options.row_group_size
+                      : static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE)} {
   catalog::InvertedIndex::Entries entries;
   TermsByColumn terms;
   BuildPkInto(entries, terms, _pk_columns);
   _entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
-  _field_options = MakeFieldOptions(_entries);
+  _field_options = MakeFieldOptions(_entries, _row_group_size);
   if (options.topk_scorer) {
     _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
   }
@@ -319,7 +327,7 @@ void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   MergeIndexInto(*merged_entries, *merged_terms, index);
   _entries = std::move(merged_entries);
   _terms_by_column = std::move(merged_terms);
-  _field_options = MakeFieldOptions(_entries);
+  _field_options = MakeFieldOptions(_entries, _row_group_size);
 }
 
 void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
@@ -336,7 +344,7 @@ void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
   std::unique_lock lock(_table_lock);
   _entries = std::move(next_entries);
   _terms_by_column = std::move(next_terms);
-  _field_options = MakeFieldOptions(_entries);
+  _field_options = MakeFieldOptions(_entries, _row_group_size);
 }
 
 SearchTable::~SearchTable() {

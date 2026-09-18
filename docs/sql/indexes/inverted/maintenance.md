@@ -72,7 +72,7 @@ An inverted index pins every column it reads, including columns reached only thr
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
 - **Refresh vs. compaction cadence** — lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` / `cleanup_interval_step` govern how aggressively segments merge.
-- **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting.
+- **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** — for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Top-K** — set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> … LIMIT k`.
 

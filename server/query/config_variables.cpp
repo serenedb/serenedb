@@ -624,11 +624,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
-          if (n == 0) {
+          if (n == 0 || n % STANDARD_VECTOR_SIZE != 0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"row_group_size\": \"",
-                                    value.ToString(), "\""));
+                                    value.ToString(),
+                                    "\" (must be a positive multiple of the "
+                                    "vector size ",
+                                    STANDARD_VECTOR_SIZE, ")"));
           }
         },
       },

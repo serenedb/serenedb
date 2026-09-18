@@ -81,8 +81,8 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
                     ObjectId generated_pk_seq_id) {
   for (const auto& key :
        {kStorageOption, kRefreshIntervalSetting, kCompactionIntervalSetting,
-        kCleanupIntervalStepSetting, kSegmentMemoryMaxSetting,
-        kGeneratedPkSeqTag}) {
+        kCleanupIntervalStepSetting, kRowGroupSizeSetting,
+        kSegmentMemoryMaxSetting, kGeneratedPkSeqTag}) {
     if (const auto it = tags.find(std::string{key}); it != tags.end()) {
       tags.erase(it);
     }
@@ -101,6 +101,8 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
                 absl::StrCat(search_options.compaction_interval_ms));
     tags.insert(std::string{kCleanupIntervalStepSetting},
                 absl::StrCat(search_options.cleanup_interval_step));
+    tags.insert(std::string{kRowGroupSizeSetting},
+                absl::StrCat(search_options.row_group_size));
     tags.insert(std::string{kSegmentMemoryMaxSetting},
                 absl::StrCat(search_options.segment_memory_max));
   }
@@ -124,6 +126,7 @@ persistence::SearchTableOptions ReadSearchOptionTags(
       TagUint<uint32_t>(tags, kCompactionIntervalSetting),
     .cleanup_interval_step =
       TagUint<uint32_t>(tags, kCleanupIntervalStepSetting),
+    .row_group_size = TagUint<uint32_t>(tags, kRowGroupSizeSetting),
     .segment_memory_max = TagUint<uint64_t>(tags, kSegmentMemoryMaxSetting),
     .topk_scorer = ReadScorerTag(TagValue(tags, kOptimizeTopKSetting)),
   };

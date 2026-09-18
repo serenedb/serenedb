@@ -171,16 +171,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     bind.scan_order.has_value() &&
     (g.shape == ScanShape::Stream || g.shape == ScanShape::ColScan);
 
-  uint64_t rg_rows =
-    bind.relation.IsIndexRelation()
-      ? bind.relation.ScannedIndex().GetOptions().row_group_size
-      : 0;
-  if (rg_rows == 0) {
-    rg_rows = DEFAULT_ROW_GROUP_SIZE;
-  }
-  g.rg_size = rg_rows >= DEFAULT_ROW_GROUP_SIZE
-                ? rg_rows
-                : DEFAULT_ROW_GROUP_SIZE / rg_rows * rg_rows;
+  g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
+                                                : DEFAULT_ROW_GROUP_SIZE;
 
   g.order = ReadOrder(context, scan_ordered);
 

@@ -1,0 +1,143 @@
+# `ORDER BY <score> DESC LIMIT k` must read columns for k rows, not for k rows
+# per worker. Each worker collects its own k hits, but the merge picks the k
+# that win before anything is materialised, so the heavy columns are read once
+# for the answer and never for the losers.
+#
+# The `TopKFetchBudget` failure point counts the rows whose columns were read
+# and fails the query as soon as that passes the limit, so a design that went
+# back to materialising per worker fails here rather than merely getting slower.
+# Four segments against sixteen workers is where that difference is visible.
+#
+# The count lives in a static inside the failure point, so it spans the process
+# and only one query may run while the point is set. Each recovery test gets a
+# fresh serened, so that one query is this file's.
+#
+# `threads` is instance-wide, hence the recovery subtree.
+
+onlyif serenedb
+statement ok
+SET threads = 16;
+
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY fb_en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE fb (id INT PRIMARY KEY, body TEXT, heavy TEXT)
+
+
+onlyif serenedb
+statement ok
+CREATE INDEX fb_idx ON fb USING inverted (id, body fb_en) INCLUDE (heavy)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+# Four refreshes seal four segments. `body` repeats 'fox' a varying number of
+# times so scores differ and the winners are spread across all four.
+onlyif serenedb
+statement ok
+INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
+FROM range(30000) t(i)
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) fb
+
+onlyif serenedb
+statement ok
+INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
+FROM range(30000, 45000) t(i)
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) fb
+
+onlyif serenedb
+statement ok
+INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
+FROM range(45000, 52000) t(i)
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) fb
+
+onlyif serenedb
+statement ok
+INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
+FROM range(52000, 54000) t(i)
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) fb
+
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'TopKFetchBudget';
+
+
+# Reading a heavy column for more than 100 rows raises the failure point's
+# error, so this succeeding is the assertion.
+onlyif serenedb
+query
+SELECT count(*) AS n, count(DISTINCT heavy) AS distinct_heavy
+FROM (SELECT heavy FROM fb_idx WHERE body @@ 'fox'
+      ORDER BY bm25(fb_idx.tableoid) DESC, heavy LIMIT 100) t;
+----
+n	distinct_heavy
+100	100
+
+
+onlyif serenedb
+statement ok
+RESET sdb_faults;
+
+
+# With the budget off again: a limit spanning several fetch units, and one with
+# an offset on top, both of which materialise more rows than the query returns.
+onlyif serenedb
+query
+SELECT count(*) AS n FROM (SELECT id, heavy FROM fb_idx WHERE body @@ 'fox'
+      ORDER BY bm25(fb_idx.tableoid) DESC, id LIMIT 4000) t;
+----
+n
+4000
+
+
+onlyif serenedb
+query
+SELECT count(*) AS n FROM (SELECT id, heavy FROM fb_idx WHERE body @@ 'fox'
+      ORDER BY bm25(fb_idx.tableoid) DESC, id LIMIT 100 OFFSET 200) t;
+----
+n
+100
+
+
+# Same answers with the failure point off, and against a single worker.
+onlyif serenedb
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM (SELECT id FROM fb_idx WHERE body @@ 'fox'
+      ORDER BY bm25(fb_idx.tableoid) DESC, id LIMIT 100) t;
+----
+n	ids
+100	35250
+
+
+onlyif serenedb
+statement ok
+SET threads = 1;
+
+
+onlyif serenedb
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM (SELECT id FROM fb_idx WHERE body @@ 'fox'
+      ORDER BY bm25(fb_idx.tableoid) DESC, id LIMIT 100) t;
+----
+n	ids
+100	35250

@@ -215,6 +215,15 @@ void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
                TopKLocalState& l, uint32_t index) {
   auto& t = g.topk;
   const auto& fu = t.fetch_units[index];
+  SDB_IF_FAILURE("TopKFetchBudget") {
+    static std::atomic_uint64_t gFetchedRows{0};
+    const auto fetched =
+      gFetchedRows.fetch_add(fu.count, std::memory_order_relaxed) + fu.count;
+    if (fetched > t.limit) {
+      THROW_SQL_ERROR(ERR_MSG("top-k read columns for ", fetched,
+                              " rows against a limit of ", t.limit));
+    }
+  }
   auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
   chunk->Initialize(ctx, g.projected_types, fu.count);
   if (l.fetch_tmp.ColumnCount() == 0) {

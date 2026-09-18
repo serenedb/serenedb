@@ -22,17 +22,22 @@ CREATE TEXT SEARCH DICTIONARY tds_kw(template = 'keyword')
 
 statement ok
 CREATE TABLE tds(id INTEGER PRIMARY KEY, g INTEGER NOT NULL, h INTEGER NOT NULL,
-                 cat VARCHAR, body VARCHAR)
+                 cat VARCHAR, body VARCHAR, uniq VARCHAR)
 
+# `uniq` holds one term per row: every posting list is a single document, which
+# a doc range can only answer by bounds-checking the one document it holds
+# rather than by reading a list.
 statement ok
 INSERT INTO tds
   SELECT i, i % 1000, i % 7,
          CASE WHEN i % 17 = 0 THEN NULL ELSE 'c' || (i % 313) END,
-         'w' || (i % 977)
+         'w' || (i % 977),
+         'u' || i
   FROM range(300000) t(i)
 
 statement ok
-CREATE INDEX tds_idx ON tds USING inverted(g, cat tds_kw, body tds_kw)
+CREATE INDEX tds_idx ON tds USING inverted(g, cat tds_kw, body tds_kw,
+                                           uniq tds_kw)
     INCLUDE (h) WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
@@ -140,6 +145,18 @@ n	nulls
 314	1
 
 
+# Single-document terms: each one is either inside the claimed range or outside
+# it, so counting them is a bounds check and never a posting read. Filtered, so
+# the counts are document-dependent and the segment does split.
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, max(c) AS widest
+FROM (SELECT unnest(ts_dict_agg(uniq)) t, unnest(ts_dict_count(uniq)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs	widest
+87098	87098	1
+
+
 # Same answers when every row group is a unit of its own.
 
 statement ok
@@ -211,3 +228,12 @@ FROM (SELECT array_agg(DISTINCT cat) a FROM tds_idx) x;
 ----
 n	nulls
 314	1
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, max(c) AS widest
+FROM (SELECT unnest(ts_dict_agg(uniq)) t, unnest(ts_dict_count(uniq)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs	widest
+87098	87098	1

@@ -149,7 +149,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const DocumentMask* docs_mask() const = 0;
 
-  MaskedDocsIterator MaskedDocs() const noexcept {
+  DocumentMask::Iterator MaskedDocs() const noexcept {
     return {docs_mask(), Meta().uncommitted_begin};
   }
 

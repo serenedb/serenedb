@@ -66,20 +66,18 @@ class SegmentLiveDocs : public lead::Node {
  public:
   SegmentLiveDocs(doc_id_t begin, doc_id_t end,
                   const DocumentMask& docs_mask) noexcept
-    : _it_mask{docs_mask.Begin()}, _end{end}, _next{begin} {
+    : _it_mask{&docs_mask}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
     SDB_ASSERT(!doc_limits::eof(end));
-    _it_mask.Seek(begin);
   }
 
   doc_id_t Next() noexcept final {
     while (_next < _end) {
       const auto doc = _next++;
-      if (doc < _it_mask.Value()) {
+      if (doc < _it_mask.Seek(doc)) {
         return _doc = doc;
       }
-      _it_mask.Next();
     }
     return _doc = doc_limits::eof();
   }
@@ -89,7 +87,6 @@ class SegmentLiveDocs : public lead::Node {
       return _doc;
     }
     _next = target;
-    _it_mask.Seek(target);
     return Next();
   }
 

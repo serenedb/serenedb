@@ -687,7 +687,7 @@ void BmRoaringIteratorInit(benchmark::State& state) {
 
   for (auto _ : state) {
     auto it = mask.Set().Begin();
-    benchmark::DoNotOptimize(it.Value());
+    benchmark::DoNotOptimize(it.Seek(kBegin));
   }
 }
 
@@ -823,7 +823,7 @@ BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
   auto it_mask = mask.Begin();
-  auto next = it_mask.Value();
+  auto next = it_mask.Seek(kBegin);
   size_t live = 0;
   for (auto doc = kBegin; doc < end; ++doc) {
     if (doc < next) {

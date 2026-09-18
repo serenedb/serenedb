@@ -40,7 +40,7 @@ class DocsMask {
   }
 
  private:
-  MaskedDocsIterator _it;
+  DocumentMask::Iterator _it;
 };
 
 }  // namespace irs::probe

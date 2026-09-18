@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <optional>
 
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -35,24 +34,16 @@ namespace irs::fill {
 class DocsMask {
  public:
   DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
-    : _uncommitted{uncommitted} {
-    if (mask != nullptr && !mask->Empty()) {
-      _it.emplace(mask->Begin());
-    }
-  }
+    : _it{mask, doc_limits::eof()}, _uncommitted{uncommitted} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
     : DocsMask{segment.docs_mask(), segment.Meta().uncommitted_begin} {}
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
-    doc_id_t next = doc_limits::eof();
-    if (_it) {
-      auto doc = _it->Seek(min);
-      while (doc < max) {
-        Set(words, doc - min);
-        doc = _it->Next();
-      }
-      next = doc;
+    auto next = _it.Seek(min);
+    while (next < max) {
+      Set(words, next - min);
+      next = _it.Next();
     }
     if (_uncommitted < max) {
       for (auto doc = std::max(min, _uncommitted); doc < max; ++doc) {
@@ -69,7 +60,7 @@ class DocsMask {
     words[offset / 64] |= uint64_t{1} << (offset % 64);
   }
 
-  std::optional<DocumentMask::Iterator> _it;
+  DocumentMask::Iterator _it;
   doc_id_t _uncommitted;
 };
 

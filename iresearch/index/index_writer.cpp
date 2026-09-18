@@ -138,7 +138,7 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
   }
 
   const auto uncommitted_begin = reader.Meta().uncommitted_begin;
-  MaskedDocsIterator it_mask{reader.docs_mask(), uncommitted_begin};
+  DocumentMask::Iterator it_mask{reader.docs_mask(), uncommitted_begin};
   bool modified = false;
   for (auto doc_id = plan->Next();
        !doc_limits::eof(doc_id) && doc_id < uncommitted_begin;

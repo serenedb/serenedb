@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <optional>
 #include <roaring/roaring.hh>
 #include <span>
 
@@ -40,21 +39,30 @@ class DocumentMask final {
  public:
   class Iterator final {
    public:
-    explicit Iterator(const DocumentMask& mask) noexcept : _bits{&mask._bits} {
-      _value = Find(0);
+    Iterator() = default;
+
+    Iterator(const DocumentMask* mask,
+             doc_id_t uncommitted = doc_limits::eof()) noexcept
+      : _bits{mask != nullptr ? &mask->_bits : nullptr},
+        _uncommitted{uncommitted} {}
+
+    bool Empty() const noexcept {
+      return doc_limits::eof(_uncommitted) &&
+             (_bits == nullptr || roaring::api::bitset_empty(_bits));
     }
 
-    bool Probe(doc_id_t doc) noexcept {
-      return roaring::api::bitset_get(_bits, doc - kBase);
+    bool Probe(doc_id_t doc) const noexcept {
+      return doc >= _uncommitted ||
+             (_bits != nullptr && roaring::api::bitset_get(_bits, doc - kBase));
     }
 
     doc_id_t Value() const noexcept { return _value; }
 
     doc_id_t Next() noexcept {
-      if (doc_limits::eof(_value)) {
+      if (_value >= _uncommitted) {
         return _value;
       }
-      return _value = Find(_value - kBase + 1);
+      return _value = std::min(Find(_value - kBase + 1), _uncommitted);
     }
 
     doc_id_t Seek(doc_id_t target) noexcept {
@@ -65,18 +73,22 @@ class DocumentMask final {
       if (target <= _value) {
         return _value;
       }
-      return _value = Find(target - kBase);
+      if (target >= _uncommitted) {
+        return _value = target;
+      }
+      return _value = std::min(Find(target - kBase), _uncommitted);
     }
 
    private:
     doc_id_t Find(size_t at) const noexcept {
-      return roaring::api::bitset_next_set_bit(_bits, &at)
+      return _bits != nullptr && roaring::api::bitset_next_set_bit(_bits, &at)
                ? static_cast<doc_id_t>(at + kBase)
                : doc_limits::eof();
     }
 
-    const roaring::api::bitset_t* _bits;
-    doc_id_t _value;
+    const roaring::api::bitset_t* _bits = nullptr;
+    doc_id_t _value = doc_limits::invalid();
+    doc_id_t _uncommitted = doc_limits::eof();
 #ifdef SDB_DEV
     doc_id_t _prev = doc_limits::invalid();
 #endif
@@ -95,8 +107,6 @@ class DocumentMask final {
   static DocumentMask Read(const char* buf, size_t size);
 
   roaring::Roaring Compress() const;
-
-  Iterator Begin() const noexcept { return Iterator{*this}; }
 
   bool Contains(doc_id_t doc) const noexcept {
     return roaring::api::bitset_get(&_bits, doc - kBase);
@@ -118,39 +128,6 @@ class DocumentMask final {
   void Assign(const roaring::api::bitset_t& other);
 
   roaring::api::bitset_t _bits{};
-};
-
-class MaskedDocsIterator final {
- public:
-  MaskedDocsIterator() = default;
-
-  MaskedDocsIterator(const DocumentMask* mask,
-                     doc_id_t uncommitted_begin) noexcept
-    : _uncommitted{uncommitted_begin} {
-    if (mask != nullptr && !mask->Empty()) {
-      _it.emplace(mask->Begin());
-    }
-  }
-
-  bool Empty() const noexcept { return !_it && doc_limits::eof(_uncommitted); }
-
-  bool Probe(doc_id_t doc) noexcept {
-    return doc >= _uncommitted || (_it && _it->Probe(doc));
-  }
-
-  doc_id_t Seek(doc_id_t target) noexcept {
-    if (target >= _uncommitted) {
-      return target;
-    }
-    if (!_it) {
-      return _uncommitted;
-    }
-    return std::min(_it->Seek(target), _uncommitted);
-  }
-
- private:
-  std::optional<DocumentMask::Iterator> _it;
-  doc_id_t _uncommitted = doc_limits::eof();
 };
 
 class DocumentMaskBuilder final {

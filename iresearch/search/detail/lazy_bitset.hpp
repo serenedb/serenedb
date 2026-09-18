@@ -59,7 +59,7 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, MaskedDocsIterator&& it_mask) noexcept
+  LazyBitset(BitsetStorage&& set, DocumentMask::Iterator&& it_mask) noexcept
     : _set{std::move(set)},
       _it_mask{std::move(it_mask)},
       _has_removals{!_it_mask.Empty()},
@@ -68,7 +68,7 @@ class LazyBitset {
   }
 
   LazyBitset(FillNode::ptr&& node, doc_id_t docs_count,
-             MaskedDocsIterator&& it_mask)
+             DocumentMask::Iterator&& it_mask)
     : _set{docs_count},
       _node{std::move(node)},
       _it_mask{std::move(it_mask)},
@@ -183,7 +183,7 @@ class LazyBitset {
 
   BitsetStorage _set;
   FillNode::ptr _node;
-  MaskedDocsIterator _it_mask;
+  DocumentMask::Iterator _it_mask;
   bool _has_removals = false;
   doc_id_t _filled = kMin;
 };

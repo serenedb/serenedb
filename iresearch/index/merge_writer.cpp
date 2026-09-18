@@ -524,10 +524,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
 
     SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
     const bool has_mask = HasRemovals(src.reader->Meta());
-    std::optional<MaskedDocsIterator> it_mask;
-    if (has_mask) {
-      it_mask.emplace(src.reader->MaskedDocs());
-    }
+    auto it_mask = src.reader->MaskedDocs();
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
       const auto bytes = norm_reader->RowGroupBytes(rg);
@@ -551,7 +548,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       for (size_t i = 0; i < n; ++i) {
         const auto src_doc =
           static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (it_mask->Probe(src_doc)) {
+        if (it_mask.Probe(src_doc)) {
           flush_run(i);
           run_start = i + 1;
         }

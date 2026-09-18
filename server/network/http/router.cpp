@@ -20,6 +20,7 @@
 
 #include "network/http/router.h"
 
+#include <absl/algorithm/container.h>
 #include <ada.h>
 
 #include <iresearch/utils/assert.hpp>
@@ -52,7 +53,10 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
       rest = rest.substr(slash + 1);
     }
   }
-  _routes.push_back({method, std::move(segments), std::move(handler)});
+  const bool has_param =
+    absl::c_any_of(segments, [](const Segment& s) { return s.param; });
+  _routes.push_back(
+    {method, std::move(segments), std::move(handler), has_param});
 }
 
 bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
@@ -74,9 +78,6 @@ bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
       slash == std::string_view::npos ? rest : rest.substr(0, slash);
     const Segment& pat = segments[i];
     if (pat.param) {
-      if (seg.starts_with('_')) {
-        return false;
-      }
       request.params.emplace_back(pat.text, std::string{seg});
     } else if (seg != pat.text) {
       return false;
@@ -111,15 +112,18 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   if (path.empty() || path.front() != '/') {
     return nullptr;
   }
-  for (auto& route : _routes) {
-    if (route.method != request.method) {
-      continue;
-    }
-    request.params.clear();
-    if (MatchPath(route.segments, path, request)) {
-      return route.handler.get();
+  for (const bool params : {false, true}) {
+    for (auto& route : _routes) {
+      if (route.method != request.method || route.has_param != params) {
+        continue;
+      }
+      request.params.clear();
+      if (MatchPath(route.segments, path, request)) {
+        return route.handler.get();
+      }
     }
   }
+  request.params.clear();
   return nullptr;
 }
 

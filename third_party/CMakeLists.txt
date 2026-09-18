@@ -203,6 +203,22 @@ add_subdirectory(abseil-cpp)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
+### protobuf library -- OTLP wire decoding
+################################################################################
+
+# Must follow abseil-cpp: protobuf reuses an existing absl::strings target and
+# only falls back to find_package/FetchContent when none is defined.
+sdb_update_module(${GIT_EXECUTABLE} "protobuf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_CONFORMANCE OFF CACHE BOOL "" FORCE)
+set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(protobuf_LOCAL_DEPENDENCIES_ONLY ON CACHE BOOL "" FORCE)
+set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+add_subdirectory(protobuf)
+
+################################################################################
 ### re2 library
 ################################################################################
 

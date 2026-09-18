@@ -1,0 +1,601 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "connector/functions/otlp.h"
+
+#include <absl/strings/escaping.h>
+
+#include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/table.h"
+#include "connector/duckdb_client_state.h"
+#include "otel/mapper.h"
+#include "otel/otlp.h"
+#include "otel/protobuf.h"
+#include "otel/protojson.h"
+#include "pg/connection_context.h"
+
+namespace sdb::connector {
+namespace {
+
+struct Cell {
+  std::string_view column;
+  duckdb::Value value;
+};
+
+using Row = std::vector<Cell>;
+
+duckdb::Value TimestampNs(uint64_t unix_nano) {
+  return duckdb::Value::TIMESTAMPNS(
+    duckdb::timestamp_ns_t{static_cast<int64_t>(unix_nano)});
+}
+
+duckdb::Value NullableText(std::string_view text) {
+  if (text.empty()) {
+    return duckdb::Value{};
+  }
+  return duckdb::Value{std::string{text}};
+}
+
+duckdb::Value TextList(const std::vector<std::string>& items) {
+  duckdb::vector<duckdb::Value> values;
+  values.reserve(items.size());
+  for (const auto& item : items) {
+    values.emplace_back(item);
+  }
+  return duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(values));
+}
+
+template<typename Repeated>
+duckdb::Value BigintList(const Repeated& items) {
+  duckdb::vector<duckdb::Value> values;
+  values.reserve(items.size());
+  for (const auto item : items) {
+    values.emplace_back(duckdb::Value::BIGINT(static_cast<int64_t>(item)));
+  }
+  return duckdb::Value::LIST(duckdb::LogicalType::BIGINT, std::move(values));
+}
+
+template<typename Repeated>
+duckdb::Value DoubleList(const Repeated& items) {
+  duckdb::vector<duckdb::Value> values;
+  values.reserve(items.size());
+  for (const auto item : items) {
+    values.emplace_back(duckdb::Value::DOUBLE(item));
+  }
+  return duckdb::Value::LIST(duckdb::LogicalType::DOUBLE, std::move(values));
+}
+
+duckdb::Value OptionalDouble(bool present, double number) {
+  if (!present) {
+    return duckdb::Value{};
+  }
+  return duckdb::Value::DOUBLE(number);
+}
+
+// A data point carries its value as either an int or a double; the column is
+// DOUBLE PRECISION either way.
+template<typename Point>
+duckdb::Value NumberValue(const Point& point) {
+  if (point.has_as_int()) {
+    return duckdb::Value::DOUBLE(static_cast<double>(point.as_int()));
+  }
+  if (point.has_as_double()) {
+    return duckdb::Value::DOUBLE(point.as_double());
+  }
+  return duckdb::Value{};
+}
+
+struct OtlpBindData final : duckdb::TableFunctionData {
+  std::string body;
+  std::vector<Row> rows;
+  irs::containers::FlatHashMap<std::string, size_t> columns;
+  duckdb::vector<duckdb::LogicalType> types;
+};
+
+struct OtlpState final : duckdb::GlobalTableFunctionState {
+  size_t pos = 0;
+
+  static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
+    duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
+    return duckdb::make_uniq<OtlpState>();
+  }
+};
+
+void BindTarget(duckdb::ClientContext& context, std::string_view table_name,
+                OtlpBindData& data,
+                duckdb::vector<duckdb::LogicalType>& return_types,
+                duckdb::vector<duckdb::string>& names) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  const auto* table = catalog::FindTableEntry(
+    &context, conn_ctx.GetDatabaseId(), kOtelSchema, table_name);
+  if (table == nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", kOtelSchema, ".", table_name,
+                            "\" does not exist; create the OpenTelemetry "
+                            "schema first"));
+  }
+  size_t index = 0;
+  for (const auto& column : table->GetColumns().Logical()) {
+    return_types.push_back(column.Type());
+    names.emplace_back(column.Name().GetIdentifierName());
+    data.columns.emplace(column.Name().GetIdentifierName(), index);
+    data.types.push_back(column.Type());
+    ++index;
+  }
+}
+
+std::string ReadBodyArgument(const duckdb::Value& argument) {
+  if (argument.IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("OTLP payload cannot be NULL"));
+  }
+  return argument.GetValue<std::string>();
+}
+
+// `protobuf` payloads are base64 so the binary body survives the SQL literal.
+bool ReadProtobufArgument(const duckdb::vector<duckdb::Value>& inputs) {
+  if (inputs.size() < 2 || inputs[1].IsNull()) {
+    return false;
+  }
+  const auto encoding = inputs[1].GetValue<std::string>();
+  if (encoding == "json") {
+    return false;
+  }
+  if (encoding == "protobuf") {
+    return true;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("unknown OTLP encoding [", encoding,
+                          "], expected json or protobuf"));
+}
+
+std::string DecodeBase64Payload(const std::string& payload) {
+  std::string wire;
+  if (!absl::Base64Unescape(payload, &wire)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG("OTLP payload is not valid base64"));
+  }
+  return wire;
+}
+
+// Resource and scope columns are identical across every signal.
+void AppendCommon(Row& row, const otel::Resource& resource,
+                  const otel::InstrumentationScope& scope,
+                  std::string_view resource_schema_url,
+                  std::string_view scope_schema_url) {
+  const auto* service =
+    otel::FindAttribute(resource.attributes(), otel::kServiceNameKey);
+  row.push_back({"service_name", service == nullptr
+                                   ? duckdb::Value{}
+                                   : NullableText(otel::BodyToText(*service))});
+  row.push_back({"resource_schema_url", NullableText(resource_schema_url)});
+  row.push_back({"scope_schema_url", NullableText(scope_schema_url)});
+  row.push_back({"scope_name", NullableText(scope.name())});
+  row.push_back({"scope_version", NullableText(scope.version())});
+  row.push_back({"resource_attributes",
+                 duckdb::Value{otel::AttributesToJson(resource.attributes())}});
+  row.push_back({"scope_attributes",
+                 duckdb::Value{otel::AttributesToJson(scope.attributes())}});
+}
+
+void BuildLogRows(const otel::ExportLogsRequest& request,
+                  std::vector<Row>& rows) {
+  for (const auto& resource_logs : request.resource_logs()) {
+    for (const auto& scope_logs : resource_logs.scope_logs()) {
+      for (const auto& record : scope_logs.log_records()) {
+        Row row;
+        const uint64_t observed = record.observed_time_unix_nano();
+        const uint64_t timestamp =
+          record.time_unix_nano() != 0 ? record.time_unix_nano() : observed;
+        row.push_back({"timestamp", TimestampNs(timestamp)});
+        row.push_back({"observed_timestamp", observed == 0
+                                               ? duckdb::Value{}
+                                               : TimestampNs(observed)});
+        row.push_back(
+          {"trace_id", NullableText(otel::HexId(record.trace_id()))});
+        row.push_back({"span_id", NullableText(otel::HexId(record.span_id()))});
+        row.push_back({"trace_flags", duckdb::Value::INTEGER(
+                                        static_cast<int32_t>(record.flags()))});
+        row.push_back({"severity_text", NullableText(record.severity_text())});
+        row.push_back({"severity_number",
+                       record.severity_number() == 0
+                         ? duckdb::Value{}
+                         : duckdb::Value::SMALLINT(
+                             static_cast<int16_t>(record.severity_number()))});
+        std::string event_name = record.event_name();
+        if (event_name.empty()) {
+          if (const auto* attribute =
+                otel::FindAttribute(record.attributes(), otel::kEventNameKey)) {
+            event_name = otel::BodyToText(*attribute);
+          }
+        }
+        row.push_back({"event_name", NullableText(event_name)});
+        row.push_back({"body", NullableText(otel::BodyToText(record.body()))});
+        AppendCommon(row, resource_logs.resource(), scope_logs.scope(),
+                     resource_logs.schema_url(), scope_logs.schema_url());
+        row.push_back({"log_attributes", duckdb::Value{otel::AttributesToJson(
+                                           record.attributes())}});
+        rows.push_back(std::move(row));
+      }
+    }
+  }
+}
+
+void BuildSpanRows(const otel::ExportTracesRequest& request,
+                   std::vector<Row>& rows) {
+  for (const auto& resource_spans : request.resource_spans()) {
+    for (const auto& scope_spans : resource_spans.scope_spans()) {
+      for (const auto& span : scope_spans.spans()) {
+        Row row;
+        row.push_back({"timestamp", TimestampNs(span.start_time_unix_nano())});
+        row.push_back(
+          {"end_timestamp", span.end_time_unix_nano() == 0
+                              ? duckdb::Value{}
+                              : TimestampNs(span.end_time_unix_nano())});
+        row.push_back({"trace_id", NullableText(otel::HexId(span.trace_id()))});
+        row.push_back({"span_id", NullableText(otel::HexId(span.span_id()))});
+        row.push_back(
+          {"parent_span_id", NullableText(otel::HexId(span.parent_span_id()))});
+        row.push_back({"trace_state", NullableText(span.trace_state())});
+        row.push_back({"span_name", NullableText(span.name())});
+        row.push_back({"span_kind", duckdb::Value{std::string{
+                                      otel::SpanKindName(span.kind())}}});
+        const bool has_duration =
+          span.end_time_unix_nano() >= span.start_time_unix_nano() &&
+          span.end_time_unix_nano() != 0;
+        row.push_back(
+          {"duration_ns",
+           has_duration
+             ? duckdb::Value::BIGINT(static_cast<int64_t>(
+                 span.end_time_unix_nano() - span.start_time_unix_nano()))
+             : duckdb::Value{}});
+        row.push_back(
+          {"status_code", duckdb::Value{std::string{
+                            otel::StatusCodeName(span.status().code())}}});
+        row.push_back(
+          {"status_message", NullableText(span.status().message())});
+        AppendCommon(row, resource_spans.resource(), scope_spans.scope(),
+                     resource_spans.schema_url(), scope_spans.schema_url());
+        row.push_back({"span_attributes", duckdb::Value{otel::AttributesToJson(
+                                            span.attributes())}});
+        row.push_back(
+          {"events", duckdb::Value{otel::EventsToJson(span.events())}});
+        row.push_back(
+          {"links", duckdb::Value{otel::LinksToJson(span.links())}});
+        std::vector<std::string> event_names;
+        event_names.reserve(span.events().size());
+        for (const auto& event : span.events()) {
+          event_names.push_back(event.name());
+        }
+        std::vector<std::string> link_trace_ids;
+        link_trace_ids.reserve(span.links().size());
+        for (const auto& link : span.links()) {
+          link_trace_ids.push_back(otel::HexId(link.trace_id()));
+        }
+        row.push_back({"event_names", TextList(event_names)});
+        row.push_back({"link_trace_ids", TextList(link_trace_ids)});
+        rows.push_back(std::move(row));
+      }
+    }
+  }
+}
+
+template<typename Point>
+void AppendMetricCommon(Row& row, const otel::Metric& metric,
+                        const Point& point, const otel::Resource& resource,
+                        const otel::InstrumentationScope& scope,
+                        std::string_view resource_schema_url,
+                        std::string_view scope_schema_url) {
+  row.push_back({"timestamp", TimestampNs(point.time_unix_nano())});
+  row.push_back(
+    {"start_timestamp", point.start_time_unix_nano() == 0
+                          ? duckdb::Value{}
+                          : TimestampNs(point.start_time_unix_nano())});
+  row.push_back({"metric_name", duckdb::Value{metric.name()}});
+  row.push_back({"metric_description", NullableText(metric.description())});
+  row.push_back({"metric_unit", NullableText(metric.unit())});
+  AppendCommon(row, resource, scope, resource_schema_url, scope_schema_url);
+  row.push_back(
+    {"attributes", duckdb::Value{otel::AttributesToJson(point.attributes())}});
+  row.push_back(
+    {"flags", duckdb::Value::INTEGER(static_cast<int32_t>(point.flags()))});
+}
+
+// One policy per metric shape: whether a metric carries it, how to reach it,
+// and the columns a data point of that shape adds beyond the common block.
+// The walk over resources, scopes, metrics and data points is shared.
+
+void AppendTemporality(
+  Row& row, otel::pb::metrics::v1::AggregationTemporality temporality) {
+  row.push_back(
+    {"aggregation_temporality",
+     duckdb::Value{std::string{otel::TemporalityName(temporality)}}});
+}
+
+template<typename Point>
+void AppendExemplars(Row& row, const Point& point) {
+  row.push_back(
+    {"exemplars", duckdb::Value{otel::ExemplarsToJson(point.exemplars())}});
+}
+
+template<typename Point>
+void AppendCountAndSum(Row& row, const Point& point) {
+  row.push_back(
+    {"count", duckdb::Value::BIGINT(static_cast<int64_t>(point.count()))});
+  row.push_back({"sum", OptionalDouble(point.has_sum(), point.sum())});
+}
+
+template<typename Point>
+void AppendMinAndMax(Row& row, const Point& point) {
+  row.push_back({"min", OptionalDouble(point.has_min(), point.min())});
+  row.push_back({"max", OptionalDouble(point.has_max(), point.max())});
+}
+
+struct GaugeShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_gauge(); }
+  static const auto& Get(const otel::Metric& metric) { return metric.gauge(); }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape&, const Point& point) {
+    row.push_back({"value", NumberValue(point)});
+    AppendExemplars(row, point);
+  }
+};
+
+struct SumShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_sum(); }
+  static const auto& Get(const otel::Metric& metric) { return metric.sum(); }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& sum, const Point& point) {
+    row.push_back({"value", NumberValue(point)});
+    AppendTemporality(row, sum.aggregation_temporality());
+    row.push_back({"is_monotonic", duckdb::Value::BOOLEAN(sum.is_monotonic())});
+    AppendExemplars(row, point);
+  }
+};
+
+struct HistogramShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_histogram(); }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.histogram();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& histogram, const Point& point) {
+    AppendCountAndSum(row, point);
+    row.push_back({"bucket_counts", BigintList(point.bucket_counts())});
+    row.push_back({"explicit_bounds", DoubleList(point.explicit_bounds())});
+    AppendMinAndMax(row, point);
+    AppendTemporality(row, histogram.aggregation_temporality());
+    AppendExemplars(row, point);
+  }
+};
+
+struct ExponentialHistogramShape {
+  static bool Has(const otel::Metric& metric) {
+    return metric.has_exponential_histogram();
+  }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.exponential_histogram();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape& exponential, const Point& point) {
+    AppendCountAndSum(row, point);
+    row.push_back({"scale", duckdb::Value::INTEGER(point.scale())});
+    row.push_back({"zero_count", duckdb::Value::BIGINT(
+                                   static_cast<int64_t>(point.zero_count()))});
+    row.push_back(
+      {"positive_offset", duckdb::Value::INTEGER(point.positive().offset())});
+    row.push_back(
+      {"positive_bucket_counts", BigintList(point.positive().bucket_counts())});
+    row.push_back(
+      {"negative_offset", duckdb::Value::INTEGER(point.negative().offset())});
+    row.push_back(
+      {"negative_bucket_counts", BigintList(point.negative().bucket_counts())});
+    AppendMinAndMax(row, point);
+    AppendTemporality(row, exponential.aggregation_temporality());
+    AppendExemplars(row, point);
+  }
+};
+
+struct SummaryShape {
+  static bool Has(const otel::Metric& metric) { return metric.has_summary(); }
+  static const auto& Get(const otel::Metric& metric) {
+    return metric.summary();
+  }
+
+  template<typename Shape, typename Point>
+  static void Append(Row& row, const Shape&, const Point& point) {
+    row.push_back(
+      {"count", duckdb::Value::BIGINT(static_cast<int64_t>(point.count()))});
+    row.push_back({"sum", duckdb::Value::DOUBLE(point.sum())});
+    std::vector<double> quantiles;
+    std::vector<double> values;
+    quantiles.reserve(point.quantile_values().size());
+    values.reserve(point.quantile_values().size());
+    for (const auto& quantile : point.quantile_values()) {
+      quantiles.push_back(quantile.quantile());
+      values.push_back(quantile.value());
+    }
+    row.push_back({"quantiles", DoubleList(quantiles)});
+    row.push_back({"values", DoubleList(values)});
+  }
+};
+
+template<typename MetricShape>
+void BuildMetricRows(const otel::ExportMetricsRequest& request,
+                     std::vector<Row>& rows) {
+  for (const auto& resource_metrics : request.resource_metrics()) {
+    for (const auto& scope_metrics : resource_metrics.scope_metrics()) {
+      for (const auto& metric : scope_metrics.metrics()) {
+        if (!MetricShape::Has(metric)) {
+          continue;
+        }
+        const auto& shape = MetricShape::Get(metric);
+        for (const auto& point : shape.data_points()) {
+          Row row;
+          AppendMetricCommon(row, metric, point, resource_metrics.resource(),
+                             scope_metrics.scope(),
+                             resource_metrics.schema_url(),
+                             scope_metrics.schema_url());
+          MetricShape::Append(row, shape, point);
+          rows.push_back(std::move(row));
+        }
+      }
+    }
+  }
+}
+
+void Emit(duckdb::DataChunk& output, const OtlpBindData& data,
+          OtlpState& state) {
+  duckdb::idx_t emitted = 0;
+  while (emitted < STANDARD_VECTOR_SIZE && state.pos < data.rows.size()) {
+    for (duckdb::idx_t column = 0; column < output.ColumnCount(); ++column) {
+      output.SetValue(column, emitted, duckdb::Value{});
+    }
+    for (const auto& cell : data.rows[state.pos]) {
+      const auto it = data.columns.find(std::string{cell.column});
+      if (it == data.columns.end()) {
+        continue;
+      }
+      const auto& type = data.types[it->second];
+      if (cell.value.IsNull()) {
+        continue;
+      }
+      output.SetValue(it->second, emitted, cell.value.DefaultCastAs(type));
+    }
+    ++state.pos;
+    ++emitted;
+  }
+  output.SetCardinality(emitted);
+}
+
+template<const std::string_view& Table, auto Build>
+duckdb::unique_ptr<duckdb::FunctionData> OtlpBind(
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::string>& names) {
+  auto data = duckdb::make_uniq<OtlpBindData>();
+  BindTarget(context, Table, *data, return_types, names);
+  data->body = ReadBodyArgument(input.inputs[0]);
+  Build(context, data->body, ReadProtobufArgument(input.inputs), data->rows);
+  return data;
+}
+
+void OtlpExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
+                 duckdb::DataChunk& output) {
+  Emit(output, input.bind_data->Cast<OtlpBindData>(),
+       input.global_state->Cast<OtlpState>());
+}
+
+void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
+               std::vector<Row>& rows) {
+  otel::ExportLogsRequest request;
+  if (protobuf) {
+    otel::DecodeLogsRequest(DecodeBase64Payload(body), request);
+  } else {
+    otel::ParseLogsRequest(body, request);
+  }
+  BuildLogRows(request, rows);
+}
+
+void BuildTraces(duckdb::ClientContext&, const std::string& body, bool protobuf,
+                 std::vector<Row>& rows) {
+  otel::ExportTracesRequest request;
+  if (protobuf) {
+    otel::DecodeTracesRequest(DecodeBase64Payload(body), request);
+  } else {
+    otel::ParseTracesRequest(body, request);
+  }
+  BuildSpanRows(request, rows);
+}
+
+template<typename MetricShape>
+void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
+                  bool protobuf, std::vector<Row>& rows) {
+  // One request feeds five tables, so the handler decodes the payload once and
+  // leaves it on the connection; only a standalone SQL call decodes here.
+  if (const auto* decoded = GetSereneDBContext(context).GetOtlpMetrics()) {
+    BuildMetricRows<MetricShape>(decoded->request, rows);
+    return;
+  }
+  otel::ExportMetricsRequest request;
+  if (protobuf) {
+    otel::DecodeMetricsRequest(DecodeBase64Payload(body), request);
+  } else {
+    otel::ParseMetricsRequest(body, request);
+  }
+  BuildMetricRows<MetricShape>(request, rows);
+}
+
+constexpr std::string_view kLogsTable = kOtelLogsTable;
+constexpr std::string_view kTracesTable = kOtelTracesTable;
+constexpr std::string_view kGaugeTable = kOtelMetricTables[0];
+constexpr std::string_view kSumTable = kOtelMetricTables[1];
+constexpr std::string_view kHistogramTable = kOtelMetricTables[2];
+constexpr std::string_view kExponentialTable = kOtelMetricTables[3];
+constexpr std::string_view kSummaryTable = kOtelMetricTables[4];
+
+}  // namespace
+
+void RegisterOtlpFunctions(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader{db, "serenedb"};
+
+  const auto add = [&](const char* name, auto bind) {
+    loader.RegisterFunction(
+      duckdb::TableFunction{name,
+                            {duckdb::LogicalType::VARCHAR},
+                            OtlpExecute,
+                            bind,
+                            OtlpState::Init});
+    loader.RegisterFunction(duckdb::TableFunction{
+      name,
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      OtlpExecute,
+      bind,
+      OtlpState::Init});
+  };
+
+  add("otlp_logs", OtlpBind<kLogsTable, BuildLogs>);
+  add("otlp_traces", OtlpBind<kTracesTable, BuildTraces>);
+  add("otlp_metrics_gauge", OtlpBind<kGaugeTable, BuildMetrics<GaugeShape>>);
+  add("otlp_metrics_sum", OtlpBind<kSumTable, BuildMetrics<SumShape>>);
+  add("otlp_metrics_histogram",
+      OtlpBind<kHistogramTable, BuildMetrics<HistogramShape>>);
+  add("otlp_metrics_exponential_histogram",
+      OtlpBind<kExponentialTable, BuildMetrics<ExponentialHistogramShape>>);
+  add("otlp_metrics_summary",
+      OtlpBind<kSummaryTable, BuildMetrics<SummaryShape>>);
+}
+
+}  // namespace sdb::connector

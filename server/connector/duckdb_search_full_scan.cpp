@@ -1131,6 +1131,23 @@ void EnsurePlanned(bool planned) {
 }
 
 // -1 asks the engine to choose; see AutoOversample.
+// The share of a global top-k that one of `segments` segments is expected to
+// hold. Every segment is searched with its own beam and the results are
+// merged, so a segment never has to be able to answer the whole query alone --
+// only to hold its part of the answer. How many of the top k land in one
+// segment is Binomial(k, 1/segments); three standard deviations above the mean
+// covers the segment that happens to draw more than its share. One segment
+// gets the whole k, and a beam this narrow is pointless below a few dozen.
+double SegmentBeamShare(double k, size_t segments) noexcept {
+  if (segments <= 1) {
+    return k;
+  }
+  const double n = static_cast<double>(segments);
+  const double mean = k / n;
+  const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
+  return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
+}
+
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
   // Auto is 0 or 1 and never more: a default decides *whether* to re-score,
   // not how much to spend on it. 1 gives every segment its own pool, re-scored
@@ -1602,7 +1619,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // An IVF probe returns whatever the collector keeps, so the pool is the
       // candidate count outright and nothing needs widening.
       if (vs.kind == irs::AnnKind::Hnsw) {
-        vs.min_ef = static_cast<uint32_t>(pool > 0.0 ? pool : k);
+        // The floor is what one segment must hold, not what the query returns.
+        // Asking each of eight segments for a thousand is eight thousand
+        // candidates produced to answer with one thousand. This is a floor and
+        // never a cap: a wider `ef_search` still wins, and a single-segment
+        // index still gets the whole k.
+        const auto segments = ss.snapshot ? ss.snapshot->reader.size() : 1;
+        const double share = SegmentBeamShare(k, segments);
+        const double seg_pool =
+          factor > 0.0 ? std::max(share, std::ceil(factor * share)) : 0.0;
+        vs.min_ef = static_cast<uint32_t>(seg_pool > 0.0 ? seg_pool : share);
       }
     }
     state->vector_scorer = &vs;

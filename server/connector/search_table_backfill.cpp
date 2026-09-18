@@ -107,8 +107,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader != nullptr,
              "search-table build: segment has no columnstore");
-  FullScanner scanner{
-    *col_reader, source.projections, {}, &context, source.filter_states};
+  FullScanner scanner{*col_reader, source.projections,   {},
+                      &context,    source.filter_states, false};
   const auto* mask = sub.docs_mask();
   if (mask != nullptr && mask->empty()) {
     mask = nullptr;

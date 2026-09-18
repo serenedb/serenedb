@@ -705,12 +705,11 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (gstate.backfill_rowid_end != std::numeric_limits<int64_t>::max()) {
     auto& rowid_vec = chunk.data[gstate.pk_base_col_idx];
     duckdb::UnifiedVectorFormat fmt;
-    rowid_vec.ToUnifiedFormat(num_rows, fmt);
-    auto* rowids = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+    auto rowids = rowid_vec.Values<int64_t>();
     auto& sel = lstate->backfill_sel;
     duckdb::idx_t keep = 0;
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-      if (rowids[fmt.sel->get_index(i)] < gstate.backfill_rowid_end) {
+      if (rowids[i].GetValueUnsafe() < gstate.backfill_rowid_end) {
         sel.set_index(keep++, i);
       }
     }
@@ -758,29 +757,24 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       case PkShape::Single: {
         auto& pk_vec = chunk.data[gstate.pk_base_col_idx];
         duckdb::UnifiedVectorFormat fmt;
-        pk_vec.ToUnifiedFormat(num_rows, fmt);
-        auto* pks = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+        auto pks = pk_vec.Values<int64_t>();
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           key_terms.push_back(catalog::duckdb_primary_key::SignedKeyTerm(
-            pks[fmt.sel->get_index(row)]));
+            pks[row].GetValueUnsafe()));
         }
       } break;
       case PkShape::Struct: {
         SDB_ASSERT(gstate.generated_pk_type == FileIndexRowNumberStructType());
         const auto base = gstate.pk_base_col_idx;
-        duckdb::UnifiedVectorFormat file_fmt;
-        chunk.data[base].ToUnifiedFormat(num_rows, file_fmt);
-        auto* files = duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
-        duckdb::UnifiedVectorFormat row_fmt;
-        chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
-        auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
+        auto files = chunk.data[base].Values<uint64_t>();
+        auto rows = chunk.data[base + 1].Values<int64_t>();
         auto& row_keys = lstate->row_keys;
         row_keys.clear();
         row_keys.reserve(num_rows);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           auto& key = row_keys.emplace_back();
-          primary_key::AppendUnsigned(key, files[file_fmt.sel->get_index(row)]);
-          primary_key::AppendSigned(key, rows[row_fmt.sel->get_index(row)]);
+          primary_key::AppendUnsigned(key, files[row].GetValueUnsafe());
+          primary_key::AppendSigned(key, rows[row].GetValueUnsafe());
           key_terms.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
         }
       } break;
@@ -820,10 +814,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (commit_on_flush.committed &&
       lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max()) {
     duckdb::UnifiedVectorFormat fmt;
-    chunk.data[gstate.pk_base_col_idx].ToUnifiedFormat(num_rows, fmt);
-    auto* rowids = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-    const auto batch_min_rowid = rowids[fmt.sel->get_index(0)];
-    SDB_ASSERT(batch_min_rowid <= rowids[fmt.sel->get_index(num_rows - 1)]);
+    auto rowids = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
+    const auto batch_min_rowid = rowids[0].GetValueUnsafe();
+    SDB_ASSERT(batch_min_rowid <= rowids[num_rows - 1].GetValueUnsafe());
     AdvanceUncommittedMin(gstate, lstate->uncommitted_min_slot,
                           batch_min_rowid);
   }

@@ -1,0 +1,190 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_bigram AS
+    generate_shingles(split_text_csv(' '), 2, 2);
+
+query
+SELECT ts_lexize('shingle_bigram', 'quick brown fox');
+----
+ts_lexize
+{quick,"quick brown",brown,"brown fox",fox}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_escalate AS
+    generate_shingles(split_text_csv(' '), 2, 3, frequent_words := ['the', 'of']);
+
+# A frequent-containing window escalates to the trigram (6 terms); an all-rare
+# window keeps only the dense bigrams (5 terms).
+
+query
+SELECT array_length(ts_lexize('shingle_escalate', 'the quick brown'), 1) AS n;
+----
+n
+6
+
+query
+SELECT array_length(ts_lexize('shingle_escalate', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+# DOCS_TEST_END
+
+# indexing + a plain term match (positional phrase search is a follow-up; a
+# shingle dictionary already indexes the unigrams and shingle terms)
+
+statement ok
+CREATE TABLE shingle_docs(pk INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX shingle_docs_idx ON shingle_docs
+    USING inverted(pk, body shingle_bigram);
+
+statement ok
+INSERT INTO shingle_docs VALUES (1, 'quick brown fox'), (2, 'lazy dog sleeps');
+
+statement ok
+VACUUM (REFRESH_TABLE) shingle_docs;
+
+query
+SELECT count(*) FROM shingle_docs_idx;
+----
+count
+2
+
+query
+SELECT pk FROM shingle_docs_idx WHERE body @@ 'quick' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM shingle_docs_idx WHERE body @@ 'dog' ORDER BY pk;
+----
+pk
+2
+
+# token_separator: a space by default, empty concatenates, any string is allowed
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_join AS
+    generate_shingles(split_text_csv(' '), 2, 2, token_separator := '');
+
+query
+SELECT ts_lexize('shingle_join', 'quick brown fox');
+----
+ts_lexize
+{quick,quickbrown,brown,brownfox,fox}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_sep AS
+    generate_shingles(split_text_csv(' '), 2, 2, token_separator := '::');
+
+query
+SELECT ts_lexize('shingle_sep', 'quick brown fox');
+----
+ts_lexize
+{quick,quick::brown,brown,brown::fox,fox}
+
+query
+SELECT generate_shingles(['quick', 'brown'], 2, 2, store_tokens := false) AS spaced,
+       generate_shingles(['quick', 'brown'], 2, 2, store_tokens := false, token_separator := '') AS joined;
+----
+spaced	joined
+{quick,"quick brown",brown}	{quick,quickbrown,brown}
+
+# The filler lives only in the stored token stream, so it may hold the separator.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_filler_space AS
+    generate_shingles(split_text_csv(' '), 2, 2, filler_token := 'a b');
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_filler_space;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_join;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_sep;
+
+# errors
+
+statement error "max_gram" must be >= "min_gram"
+CREATE TEXT SEARCH DICTIONARY shingle_bad_size AS
+    generate_shingles(split_text_csv(' '), 3, 2);
+
+statement error "store_tokens" = false cannot be combined with "frequent_words"
+CREATE TEXT SEARCH DICTIONARY shingle_store_freq AS
+    generate_shingles(split_text_csv(' '), store_tokens := false, frequent_words := ['the']);
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY shingle_offset AS
+    generate_shingles(split_text_csv(' '))
+    WITH (frequency, position, offset);
+
+statement error the 'norm' feature cannot be combined with an analyzer that stores a per-document blob
+CREATE TEXT SEARCH DICTIONARY shingle_norm_store AS
+    generate_shingles(split_text_csv(' '))
+    WITH (frequency, position, norm);
+
+# norm is allowed once token storage is off (norm reuses the synthetic column)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_norm_ok AS
+    generate_shingles(split_text_csv(' '), store_tokens := false)
+    WITH (frequency, position, norm);
+
+query
+SELECT array_length(ts_lexize('shingle_norm_ok', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+statement ok
+DROP TABLE shingle_docs CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_bigram;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_escalate;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_norm_ok;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_expr AS generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 2);
+
+query
+SELECT array_length(ts_lexize('shingle_expr', 'Quick Brown Fox'), 1) AS n;
+----
+n
+5
+
+query
+SELECT 'quick' = ANY(ts_lexize('shingle_expr', 'Quick Brown Fox')) AS has_unigram;
+----
+has_unigram
+t
+
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_shingles(['quick', 'brown', 'fox'], 2, 2, store_tokens := false) AS tokens;
+----
+tokens
+{quick,"quick brown",brown,"brown fox",fox}

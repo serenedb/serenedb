@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2019 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "stemming_tokenizer.hpp"
@@ -34,7 +31,7 @@ namespace irs::analysis {
 
 StemmingTokenizer::StemmingTokenizer(const Options& options) {
   if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("stem: invalid locale"));
+    THROW_SQL_ERROR(ERR_MSG("stem_words: invalid locale"));
   }
   _stemmer = make_stemmer_ptr(options.locale.getLanguage(), nullptr);
 }

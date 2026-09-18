@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2021 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Alex Geenen
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "classification_tokenizer.hpp"
@@ -37,13 +34,13 @@ namespace irs::analysis {
 Tokenizer::ptr ClassificationTokenizer::Make(Options opts,
                                              duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("classification: empty model location"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("classification: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: top_k must be positive"));
   }
   if (opts.threshold < 0.0 || opts.threshold > 1.0) {
-    THROW_SQL_ERROR(ERR_MSG("classification: threshold must be in [0, 1]"));
+    THROW_SQL_ERROR(ERR_MSG("classify_text: threshold must be in [0, 1]"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::FastText>(
     cache, opts.model_location);

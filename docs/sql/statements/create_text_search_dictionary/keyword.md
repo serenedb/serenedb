@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `keyword` template emits the entire input as a single verbatim token — it performs no splitting, normalization or stemming. It is the right choice for values that must match exactly and as a whole: tags, status codes, enum values, identifiers and other atomic strings.
 
-Because the token is the raw input, a query matches only when it is byte-for-byte identical, including case and spacing. For an exact-match column that should still be case- or accent-insensitive, use [`norm`](./norm.md), which normalizes the single token; for per-word search, use [`text`](./text.md).
+Because the token is the raw input, a query matches only when it is byte-for-byte identical, including case and spacing. For an exact-match column that should still be case- or accent-insensitive, use [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md), which normalizes the single token; for per-word search, use [`split_text`](../../functions/search/tokenizers/split_text.md).
 
 ## Options
 
@@ -41,6 +41,6 @@ Preview how it tokenizes — the whole string, spaces and all, becomes one token
 
 ## See also
 
-- [norm](./norm.md) — a single token, normalized for case and accents
-- [text](./text.md) — split into words
+- [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md) — a single token, normalized for case and accents
+- [`split_text`](../../functions/search/tokenizers/split_text.md) — split into words
 - [CREATE TEXT SEARCH DICTIONARY](./index.md)

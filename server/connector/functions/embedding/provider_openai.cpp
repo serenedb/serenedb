@@ -208,10 +208,7 @@ void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg) {
 void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
                       duckdb::Vector& texts, duckdb::idx_t count,
                       duckdb::Vector& result) {
-  duckdb::UnifiedVectorFormat text_format;
-  texts.ToUnifiedFormat(count, text_format);
-  const auto* text_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
+  auto values = texts.Values<duckdb::string_t>();
 
   auto* list_entries =
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
@@ -234,13 +231,13 @@ void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
     valid_in_batch = 0;
   };
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto idx = text_format.sel->get_index(i);
-    if (!text_format.validity.RowIsValid(idx)) {
+    auto value = values[i];
+    if (!value.IsValid()) {
       result_validity.SetInvalid(i);
       list_entries[i] = {0, 0};
       batch[batch_n++] = nullptr;
     } else {
-      batch[batch_n++] = &text_data[idx];
+      batch[batch_n++] = &value.GetValueUnsafe();
       valid_in_batch++;
     }
     if (valid_in_batch == kMaxBatch) {

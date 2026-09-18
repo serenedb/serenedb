@@ -1,7 +1,7 @@
 ---
 title: Highlighting
 sidebar_label: Highlighting
-sidebar_position: 5
+sidebar_position: 6
 split: headings
 ---
 

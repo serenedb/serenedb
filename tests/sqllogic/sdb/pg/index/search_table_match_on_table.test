@@ -1,8 +1,7 @@
 statement ok
-CREATE TEXT SEARCH DICTIONARY mt_en (
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true, norm = true
-);
+CREATE TEXT SEARCH DICTIONARY mt_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE TABLE mt_src AS SELECT (TIMESTAMP '2025-09-23' + INTERVAL (i) SECOND)::TIMESTAMPTZ_NS AS ts,
@@ -29,7 +28,7 @@ statement ok
 CREATE TABLE mt_expr WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc FROM mt_src WHERE false;
 
 statement ok
-CREATE INDEX mt_expr_idx ON mt_expr USING inverted ((ts_split_by_non_alpha(body, true)) mt_en);
+CREATE INDEX mt_expr_idx ON mt_expr USING inverted ((split_by_non_alpha(body, case := 'lower')) mt_en);
 
 statement ok
 INSERT INTO mt_expr SELECT body, ts, svc FROM mt_src;
@@ -65,8 +64,8 @@ index	2
 table	2
 
 query
-SELECT 'table' AS via, count(*) AS errors FROM mt_expr WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
-UNION ALL SELECT 'index', count(*) FROM mt_expr_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+SELECT 'table' AS via, count(*) AS errors FROM mt_expr WHERE split_by_non_alpha(body, case := 'lower') @@ ts_phrase('error')
+UNION ALL SELECT 'index', count(*) FROM mt_expr_idx WHERE split_by_non_alpha(body, case := 'lower') @@ ts_phrase('error')
 ORDER BY 1;
 ----
 via	errors
@@ -105,24 +104,25 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────────────╯
 
 query
-EXPLAIN SELECT count(*) FROM mt_expr WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error');
+EXPLAIN SELECT count(*) FROM mt_expr WHERE split_by_non_alpha(body, case := 'lower') @@ ts_phrase('error');
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────────────────────╮
-│ Aggregates: count_star()                     │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
-│ Index: mt_expr                               │
-│ Lookup: search                               │
-│ Index Filter:                                │
-│ ╭─ Term ───────────────────────────────────╮ │
-│ │ Field: ts_split_by_non_alpha(body, true) │ │
-│ │ Value: error                             │ │
-│ ╰──────────────────────────────────────────╯ │
-│ Output: row-count only                       │
-│ ~4 rows                                      │
-╰──────────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────────────────────╮
+│ Aggregates: count_star()                        │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: mt_expr                                  │
+│ Lookup: search                                  │
+│ Index Filter:                                   │
+│ ╭─ Term ──────────────────────────────────────╮ │
+│ │ Field:                                      │ │
+│ │ split_by_non_alpha(body, "case" := 'lower') │ │
+│ │ Value: error                                │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ Output: row-count only                          │
+│ ~4 rows                                         │
+╰─────────────────────────────────────────────────╯
 
 statement ok
 CREATE TABLE mt_pk (id BIGINT PRIMARY KEY, svc TEXT NOT NULL, body TEXT, n INT) WITH (storage = 'search', compaction_interval = 0);

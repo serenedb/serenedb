@@ -51,15 +51,9 @@ CREATE TYPE ckp.mood AS ENUM ('ok', 'meh');
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ckp.dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY ckp.dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 statement ok
@@ -576,15 +570,9 @@ SET sdb_faults = 'compact_inside_ddl';
 
 connection after_seq_window
 statement ok
-CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 connection after_seq_window

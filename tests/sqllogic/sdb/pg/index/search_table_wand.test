@@ -5,11 +5,9 @@
 # rows are observed after VACUUM (REFRESH_TABLE).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY bm(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true,
-    norm = true
-);
+CREATE TEXT SEARCH DICTIONARY bm AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE TABLE w (id BIGINT PRIMARY KEY, body TEXT)

@@ -6,46 +6,37 @@ control substitution on
 # --- Missing required parameter: pattern ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY pat_err1(
-    template = 'pattern'
-)
+CREATE TEXT SEARCH DICTIONARY pat_err1 AS
+    split_by_pattern()
 ----
-db error: ERROR: required parameter "pattern" was not found
+db error: ERROR: split_by_pattern(): required option "pattern" not given
 
 
 # --- Invalid regex pattern ---
 
 statement error pattern: invalid regex
-CREATE TEXT SEARCH DICTIONARY pat_err2(
-    template = 'pattern',
-    pattern = '('
-)
+CREATE TEXT SEARCH DICTIONARY pat_err2 AS
+    split_by_pattern('(')
 
 
 # --- Pattern option not applicable to other tokenizers ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY pat_err3(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    pattern = '[0-9]+'
-)
+CREATE TEXT SEARCH DICTIONARY pat_err3 AS
+    split_text(pattern := '[0-9]+')
 ----
-db error: ERROR: option "pattern" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "pattern"
+HINT: known names: case, break
 
 
 # --- Group option not applicable to other tokenizers ---
 
 statement error
-CREATE TEXT SEARCH DICTIONARY pat_err4(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    group = 1
-)
+CREATE TEXT SEARCH DICTIONARY pat_err4 AS
+    split_text(group := 1)
 ----
-db error: ERROR: option "group" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
+db error: ERROR: split_text(): unknown option "group"
+HINT: known names: case, break
 
 
 # PATTERN TOKENIZER
@@ -53,10 +44,8 @@ HINT: Use WITH (HELP) to see available options
 # --- Basic split mode (group = -1): emit text between matches ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_split(
-    template = 'pattern',
-    pattern = '[0-9]+'
-)
+CREATE TEXT SEARCH DICTIONARY pattern_split AS
+    split_by_pattern('[0-9]+')
 
 
 query
@@ -69,11 +58,8 @@ ts_lexize
 # --- Whole match mode (group = 0): emit the entire match ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_whole(
-    template = 'pattern',
-    pattern = '[0-9]+',
-    group = 0
-)
+CREATE TEXT SEARCH DICTIONARY pattern_whole AS
+    split_by_pattern('[0-9]+', group := 0)
 
 
 query
@@ -86,11 +72,8 @@ ts_lexize
 # --- Capturing group mode (group = 1): emit specific capture group ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_group1(
-    template = 'pattern',
-    pattern = '([a-z]+)([0-9]+)',
-    group = 1
-)
+CREATE TEXT SEARCH DICTIONARY pattern_group1 AS
+    split_by_pattern('([a-z]+)([0-9]+)', group := 1)
 
 
 query
@@ -103,11 +86,8 @@ ts_lexize
 # --- Capturing group mode (group = 2): emit second capture group ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_group2(
-    template = 'pattern',
-    pattern = '([a-z]+)([0-9]+)',
-    group = 2
-)
+CREATE TEXT SEARCH DICTIONARY pattern_group2 AS
+    split_by_pattern('([a-z]+)([0-9]+)', group := 2)
 
 
 query
@@ -120,10 +100,8 @@ ts_lexize
 # --- Split on whitespace: default behavior ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_whitespace(
-    template = 'pattern',
-    pattern = '\s+'
-)
+CREATE TEXT SEARCH DICTIONARY pattern_whitespace AS
+    split_by_pattern('\s+')
 
 
 query
@@ -136,11 +114,8 @@ ts_lexize
 # --- Match word characters ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_words(
-    template = 'pattern',
-    pattern = '\w+',
-    group = 0
-)
+CREATE TEXT SEARCH DICTIONARY pattern_words AS
+    split_by_pattern('\w+', group := 0)
 
 
 query
@@ -153,11 +128,8 @@ ts_lexize
 # --- Email-like pattern with capturing groups ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_email(
-    template = 'pattern',
-    pattern = '([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)',
-    group = 1
-)
+CREATE TEXT SEARCH DICTIONARY pattern_email AS
+    split_by_pattern('([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)', group := 1)
 
 
 query
@@ -170,11 +142,8 @@ ts_lexize
 # --- Email domain extraction ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_domain(
-    template = 'pattern',
-    pattern = '([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)',
-    group = 2
-)
+CREATE TEXT SEARCH DICTIONARY pattern_domain AS
+    split_by_pattern('([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)', group := 2)
 
 
 query
@@ -187,11 +156,8 @@ ts_lexize
 # --- Case sensitivity: regex is case-sensitive ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_case_sens(
-    template = 'pattern',
-    pattern = '[A-Z]+',
-    group = 0
-)
+CREATE TEXT SEARCH DICTIONARY pattern_case_sens AS
+    split_by_pattern('[A-Z]+', group := 0)
 
 
 query
@@ -204,11 +170,8 @@ ts_lexize
 # --- Unicode support: match Unicode word boundaries ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_unicode(
-    template = 'pattern',
-    pattern = '\p{L}+',
-    group = 0
-)
+CREATE TEXT SEARCH DICTIONARY pattern_unicode AS
+    split_by_pattern('\p{L}+', group := 0)
 
 
 query
@@ -220,20 +183,15 @@ ts_lexize
 
 # --- Empty pattern should fail ---
 
-statement error pattern: empty pattern
-CREATE TEXT SEARCH DICTIONARY pattern_empty(
-    template = 'pattern',
-    pattern = ''
-)
+statement error split_by_pattern: empty pattern
+CREATE TEXT SEARCH DICTIONARY pattern_empty AS
+    split_by_pattern('')
 
 # --- Alternation: match either pattern ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_alt(
-    template = 'pattern',
-    pattern = 'cat|dog|bird',
-    group = 0
-)
+CREATE TEXT SEARCH DICTIONARY pattern_alt AS
+    split_by_pattern('cat|dog|bird', group := 0)
 
 
 query
@@ -246,11 +204,8 @@ ts_lexize
 # --- Optional groups: match with or without optional pattern ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY pattern_optional(
-    template = 'pattern',
-    pattern = '([a-z]+)([0-9]*)',
-    group = 1
-)
+CREATE TEXT SEARCH DICTIONARY pattern_optional AS
+    split_by_pattern('([a-z]+)([0-9]*)', group := 1)
 
 
 query

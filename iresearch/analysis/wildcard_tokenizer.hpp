@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2024 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,9 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Valery Mironov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -52,7 +49,11 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr std::string_view type_name() noexcept { return "wildcard"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "generate_wildcard_ngrams";
+  }
+
+  static constexpr byte_type kBoundary{0x1F};
 
   explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
   ~WildcardTokenizer() override;

@@ -1,12 +1,8 @@
 # DOCS_TEST: example_001
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY logmsg (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY logmsg AS
+    split_text(case := 'lower');
 
 statement ok
 CREATE TABLE logs (
@@ -38,12 +34,8 @@ id	host
 # DOCS_TEST: example_002
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jlow (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY jlow AS
+    split_text(case := 'lower');
 
 statement ok
 CREATE TABLE tickets (
@@ -81,15 +73,9 @@ id	title
 # DOCS_TEST: example_003
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE documents (
@@ -143,12 +129,8 @@ id	host
 # DOCS_TEST: example_005
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jtext (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY jtext AS
+    split_text(case := 'lower');
 
 statement ok
 CREATE TABLE events_json (
@@ -184,12 +166,8 @@ id	title
 # DOCS_TEST: example_006
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY cat_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-);
+CREATE TEXT SEARCH DICTIONARY cat_dict AS
+    split_text(case := 'lower');
 
 statement ok
 CREATE TABLE catalog (

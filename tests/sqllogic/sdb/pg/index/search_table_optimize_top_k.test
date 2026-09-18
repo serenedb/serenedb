@@ -3,7 +3,9 @@
 # every index relation on it alike. The index-level option is refused there.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY st_topk_en (template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true, norm = true);
+CREATE TEXT SEARCH DICTIONARY st_topk_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE TABLE st_topk (id INTEGER PRIMARY KEY, body VARCHAR)

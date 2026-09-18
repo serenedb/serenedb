@@ -18,10 +18,8 @@ control substitution on
 # aux cs column.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wal_geo_dict(
-    template = 'geojson',
-    coding = 's2point'
-);
+CREATE TEXT SEARCH DICTIONARY wal_geo_dict AS
+    encode_geojson(coding := 's2point');
 
 statement ok
 CREATE TABLE wal_geo_t(pk INTEGER PRIMARY KEY, geo JSON);

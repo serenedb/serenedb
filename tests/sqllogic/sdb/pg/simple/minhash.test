@@ -231,10 +231,8 @@ db error: ERROR: minhash: num_hashes must be a constant
 # --- Composes with any dictionary through ts_lexize ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_delim(
-    template = 'delimiter',
-    delimiter = ','
-)
+CREATE TEXT SEARCH DICTIONARY mh_delim AS
+    split_text_csv(',')
 
 
 query
@@ -247,11 +245,8 @@ A2887D396E1BB271
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_seg(
-    template = 'segmentation',
-    break = 'alpha',
-    case = 'lower'
-)
+CREATE TEXT SEARCH DICTIONARY mh_seg AS
+    split_text(break := 'alpha', case := 'lower')
 
 
 query
@@ -265,12 +260,8 @@ F734A8DCAC263610
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_text(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false
-)
+CREATE TEXT SEARCH DICTIONARY mh_text AS
+    split_text(case := 'lower')
 
 
 query
@@ -297,10 +288,8 @@ t
 # --- And inside a sql dictionary, which then yields BLOB tokens ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY mh_sql(
-    template = 'sql',
-    expression = 'minhash(string_split(lower(input), '' ''), 16)'
-)
+CREATE TEXT SEARCH DICTIONARY mh_sql AS
+    (lambda x: minhash(string_split(lower(x), ' '), 16))
 
 
 query
@@ -327,3 +316,18 @@ SELECT ts_lexize('mh_sql', 'A quick brown fox')
 ----
 same_signature
 t
+
+
+# --- A chain dictionary feeds minhash the same tokens the chain emits ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_chain AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8')
+
+
+query
+SELECT array_length(minhash(ts_lexize('mh_chain', 'Running Dogs'), 2), 1) AS n,
+       minhash(ts_lexize('mh_chain', 'Running Dogs'), 2) = minhash(['run', 'dog'], 2) AS same;
+----
+n	same
+2	t

@@ -92,7 +92,7 @@ class SolrSynonymsTokenizer final
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
-    return "solr_synonyms";
+    return "expand_solr_synonyms";
   }
 
   static SynonymsLines ParseSynonymsLines(std::string_view input);

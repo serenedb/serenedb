@@ -20,6 +20,8 @@
 
 #include "regexp_utils.hpp"
 
+#include <string_view>
+
 #include "automaton_utils.hpp"
 #include "fst/closure.h"
 #include "fst/concat.h"
@@ -553,8 +555,8 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
     return MakeEpsilon();
   }
 
-  absl::string_view sv(reinterpret_cast<const char*>(pattern.data()),
-                       pattern.size());
+  std::string_view sv(reinterpret_cast<const char*>(pattern.data()),
+                      pattern.size());
 
   // Parse pattern -> AST.
   //

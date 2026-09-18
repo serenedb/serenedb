@@ -2,16 +2,9 @@ statement ok
 CREATE TABLE offsets_test (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, wordcount INTEGER);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY offsets_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY offsets_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE INDEX offsets_test_idx ON offsets_test
@@ -946,16 +939,9 @@ DROP TEXT SEARCH DICTIONARY offsets_en;
 # body builds a per-chunk mini-segment from `body` and emits hits.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY standalone_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    offset = false
-)
+CREATE TEXT SEARCH DICTIONARY standalone_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset = false)
 
 query
 SELECT ts_offsets('standalone_dict', 'the quick brown fox', ts_phrase('quick'))

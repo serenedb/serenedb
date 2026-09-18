@@ -1,0 +1,168 @@
+# A text search dictionary and a function are different kinds of object in
+# different namespaces, so one name can hold both. A call always reaches the
+# function -- a built-in, a macro or a tokenizer template -- and ts_lexize
+# always reaches the dictionary. Neither shadows the other and neither drop
+# takes the other with it.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fnd_english AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
+
+
+# --- A dictionary has no call form of its own ---
+
+statement error does not exist
+SELECT fnd_english('The Runners were Running');
+
+query
+SELECT ts_lexize('fnd_english', 'The Runners were Running') AS tokens;
+----
+tokens
+{the,runner,were,run}
+
+
+# --- A macro takes the name a dictionary already has ---
+
+statement ok
+CREATE MACRO fnd_english(x) AS upper(x);
+
+query
+SELECT fnd_english('ab cd') AS macro, ts_lexize('fnd_english', 'ab cd') AS dictionary;
+----
+macro	dictionary
+AB CD	{ab,cd}
+
+
+# --- And a dictionary takes the name a macro already has ---
+
+statement ok
+CREATE MACRO fnd_macro(x) AS lower(x);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fnd_macro AS split_text(case := 'upper');
+
+query
+SELECT fnd_macro('AB cd') AS macro, ts_lexize('fnd_macro', 'AB cd') AS dictionary;
+----
+macro	dictionary
+ab cd	{AB,CD}
+
+
+# --- A built-in keeps its name too ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY upper AS split_text(case := 'lower');
+
+query
+SELECT upper('AB cd') AS builtin, ts_lexize('upper', 'AB cd') AS dictionary;
+----
+builtin	dictionary
+AB CD	{ab,cd}
+
+
+# --- Including a tokenizer template, whose function form and whose meaning as
+# --- a stage are both untouched by a dictionary of that name ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY split_text AS keyword() WITH (frequency);
+
+query
+SELECT split_text('a b') AS template, ts_lexize('split_text', 'a b') AS dictionary;
+----
+template	dictionary
+{a,b}	{"a b"}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fnd_stage AS split_text() | normalize_tokens(case := 'upper');
+
+query
+SELECT ts_lexize('fnd_stage', 'a b') AS stage_is_the_template;
+----
+stage_is_the_template
+{A,B}
+
+
+# --- Each kind is listed by its own catalog and by no other: pg_ts_dict holds
+# --- the dictionaries, pg_proc and sdb_functions hold the functions ---
+
+query
+SELECT count(*) AS dicts FROM pg_ts_dict
+WHERE dictname IN ('fnd_english', 'fnd_macro', 'upper', 'split_text');
+----
+dicts
+4
+
+query
+SELECT count(*) AS dictionaries_in_pg_proc FROM pg_proc p, pg_ts_dict d
+WHERE p.oid = d.oid;
+----
+dictionaries_in_pg_proc
+0
+
+query
+SELECT proname, prokind FROM pg_proc
+WHERE proname IN ('fnd_english', 'fnd_macro') ORDER BY proname;
+----
+proname	prokind
+fnd_english	f
+fnd_macro	f
+
+query
+SELECT count(DISTINCT function_name) AS listed FROM sdb_functions()
+WHERE function_name IN ('fnd_english', 'fnd_macro', 'fnd_stage');
+----
+listed
+2
+
+
+# --- The two lifetimes are independent in both directions ---
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fnd_macro;
+
+query
+SELECT fnd_macro('AB cd') AS macro_survives;
+----
+macro_survives
+ab cd
+
+statement error does not exist
+SELECT ts_lexize('fnd_macro', 'AB cd');
+
+statement ok
+DROP MACRO fnd_english;
+
+query
+SELECT ts_lexize('fnd_english', 'Running') AS dictionary_survives;
+----
+dictionary_survives
+{run}
+
+statement error does not exist
+SELECT fnd_english('Running');
+
+
+# --- Dropping one kind never resolves to the other ---
+
+statement error Cannot drop internal catalog entry
+DROP MACRO upper;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY upper;
+
+query
+SELECT upper('ab') AS builtin_survives;
+----
+builtin_survives
+AB
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fnd_stage;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY split_text;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fnd_english;

@@ -52,10 +52,14 @@ struct OptionInfo {
     Integer,
     Double,
     Character,
+    StringList,
   };
 
   template<typename T>
   struct RequiredTag {};
+
+  struct ListTag {};
+  struct RequiredListTag {};
 
   template<typename T>
   static consteval Type GetType() {
@@ -72,12 +76,6 @@ struct OptionInfo {
     } else {
       static_assert(false);
     }
-  }
-
-  template<typename... Args>
-  static std::string AdjustPrefix(std::string_view prefix, Args&&... args) {
-    return absl::StrCat(prefix, prefix.empty() ? "" : "_",
-                        std::forward<Args>(args)...);
   }
 
   using DefaultValue =
@@ -123,6 +121,16 @@ struct OptionInfo {
     }
   }
 
+  consteval OptionInfo(std::string_view name, ListTag, std::string_view desc)
+    : name{name},
+      type{Type::StringList},
+      description{desc},
+      default_value{std::string_view{}} {}
+
+  consteval OptionInfo(std::string_view name, RequiredListTag,
+                       std::string_view desc)
+    : name{name}, type{Type::StringList}, description{desc} {}
+
   bool IsRequired() const {
     return std::holds_alternative<std::monostate>(default_value);
   }
@@ -143,7 +151,7 @@ struct OptionInfo {
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String, std::string,
+    V == Type::String || V == Type::StringList, std::string,
     std::conditional_t<
       V == Type::Boolean, bool,
       std::conditional_t<V == Type::Integer, int,
@@ -161,6 +169,8 @@ struct OptionInfo {
         return "double";
       case Type::Character:
         return "character";
+      case Type::StringList:
+        return "list";
     }
   }
 
@@ -176,15 +186,31 @@ struct OptionInfo {
         return absl::StrCat(operation, " ", name,
                             " must be a single one-byte character");
       case Type::String:
+      case Type::StringList:
         return absl::StrCat(operation, " ", name, " must be a string");
     }
   }
+};
+
+enum class TemplateKind : uint8_t {
+  Tokenizer,
+  Wrapper,
+  Composite,
+  Features,
+};
+
+enum class TemplateInput : uint8_t {
+  Text,
+  Json,
 };
 
 struct OptionGroup {
   std::string_view name;
   std::span<const OptionInfo> options;     // leaf options in this group
   std::span<const OptionGroup> subgroups;  // nested groups
+  std::string_view function = {};
+  TemplateKind kind = TemplateKind::Tokenizer;
+  TemplateInput input = TemplateInput::Text;
 
   std::vector<OptionInfo> FlatOptions() const {
     std::vector<OptionInfo> result;
@@ -216,5 +242,8 @@ struct OptionGroup {
 };
 
 std::string FormatHelp(const OptionGroup& group);
+
+std::string_view FindClosestName(std::span<const std::string_view> known_names,
+                                 std::string_view name);
 
 }  // namespace sdb::pg

@@ -12,15 +12,9 @@ control substitution on
 # ============================================================================
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hy_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    frequency = true,
-    position = true,
-    offset = true
-);
+CREATE TEXT SEARCH DICTIONARY hy_en AS
+    split_text(case := 'lower')
+    WITH (frequency, position, offset);
 
 statement ok
 CREATE TABLE docs(

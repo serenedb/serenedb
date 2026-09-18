@@ -10,14 +10,14 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TEXT SEARCH DICTIONARY stem_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = true, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY stem_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY plain_en(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY plain_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE m(id BIGINT PRIMARY KEY, body TEXT)

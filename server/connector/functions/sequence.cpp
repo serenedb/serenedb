@@ -216,13 +216,11 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     return;
   }
 
-  duckdb::UnifiedVectorFormat fmt;
-  args.data[0].ToUnifiedFormat(num_rows, fmt);
-  auto* names = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  auto names = args.data[0].Values<duckdb::string_t>();
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    auto idx = fmt.sel->get_index(i);
-    std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
-    out.WriteValue(Nextval(context, seq_name));
+    const auto& name = names[i].GetValue();
+    out.WriteValue(
+      Nextval(context, std::string_view{name.GetData(), name.GetSize()}));
   }
 }
 
@@ -244,13 +242,11 @@ void CurrvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto out = duckdb::FlatVector::Writer<int64_t>(result, num_rows);
-  duckdb::UnifiedVectorFormat fmt;
-  args.data[0].ToUnifiedFormat(num_rows, fmt);
-  auto* names = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  auto names = args.data[0].Values<duckdb::string_t>();
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    auto idx = fmt.sel->get_index(i);
-    std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
-    out.WriteValue(Currval(context, seq_name));
+    const auto& name = names[i].GetValue();
+    out.WriteValue(
+      Currval(context, std::string_view{name.GetData(), name.GetSize()}));
   }
 }
 

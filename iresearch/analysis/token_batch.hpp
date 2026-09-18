@@ -46,6 +46,7 @@ struct TokenTraits {
   bool offsets = false;
   bool store = false;
   bool stable = false;
+  bool keeps_ascii = false;
 };
 
 enum class TokenLayout : uint8_t {

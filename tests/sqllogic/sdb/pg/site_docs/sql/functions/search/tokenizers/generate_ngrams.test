@@ -1,0 +1,67 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_dict AS
+    generate_ngrams(2, 3);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY unigram_dict AS
+    generate_ngrams(1, 2);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_ngram AS
+    generate_ngrams(2, 3);
+
+query
+SELECT ts_lexize('tok_ngram', 'search');
+----
+ts_lexize
+{se,sea,ea,ear,ar,arc,rc,rch,ch}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_ngram_orig AS
+    generate_ngrams(2, 3, preserve_original := true);
+
+query
+SELECT ts_lexize('tok_ngram_orig', 'search');
+----
+ts_lexize
+{se,sea,search,ea,ear,ar,arc,rc,rch,ch}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_ngram_mark AS
+    generate_ngrams(2, 3, start_marker := '^', end_marker := '$');
+
+query
+SELECT ts_lexize('tok_ngram_mark', 'cat');
+----
+ts_lexize
+{^ca,^cat,cat$,at$}
+
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_ngrams('abcd', 2, 3) AS tokens;
+----
+tokens
+{ab,abc,bc,bcd,cd}

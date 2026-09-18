@@ -263,24 +263,20 @@ template<typename TA, typename TB, typename FN>
 void JsonBinaryExecuteWithNulls(duckdb::Vector& left, duckdb::Vector& right,
                                 duckdb::Vector& result, duckdb::idx_t count,
                                 FN&& fn) {
-  duckdb::UnifiedVectorFormat ldata, rdata;
-  left.ToUnifiedFormat(ldata);
-  right.ToUnifiedFormat(rdata);
-  const auto* lptr = duckdb::UnifiedVectorFormat::GetData<TA>(ldata);
-  const auto* rptr = duckdb::UnifiedVectorFormat::GetData<TB>(rdata);
+  auto lhs = left.Values<TA>();
+  auto rhs = right.Values<TB>();
   auto* result_ptr =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   for (duckdb::idx_t i = 0; i < count; i++) {
-    auto l_idx = ldata.sel->get_index(i);
-    auto r_idx = rdata.sel->get_index(i);
-    if (!ldata.validity.RowIsValid(l_idx) ||
-        !rdata.validity.RowIsValid(r_idx)) {
+    auto l = lhs[i];
+    auto r = rhs[i];
+    if (!l.IsValid() || !r.IsValid()) {
       result_validity.SetInvalid(i);
       continue;
     }
     bool valid = true;
-    result_ptr[i] = fn(lptr[l_idx], rptr[r_idx], valid);
+    result_ptr[i] = fn(l.GetValue(), r.GetValue(), valid);
     if (!valid) {
       result_validity.SetInvalid(i);
     }
@@ -387,6 +383,15 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
+  const bool list_path =
+    ncols == 2 && args.data[1].GetType().id() == duckdb::LogicalTypeId::LIST;
+  duckdb::UnifiedVectorFormat child_data;
+  if (list_path) {
+    duckdb::ListVector::GetEntry(args.data[1])
+      .ToUnifiedFormat(duckdb::ListVector::GetListSize(args.data[1]),
+                       child_data);
+  }
+
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto json_idx = vdata[0].sel->get_index(row);
     if (!vdata[0].validity.RowIsValid(json_idx)) {
@@ -399,8 +404,7 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
     // For #> / #>> the 2nd arg is text[]; for json_extract_path it's variadic
     // Collect path segments
     std::vector<std::string> path;
-    if (ncols == 2 &&
-        args.data[1].GetType().id() == duckdb::LogicalTypeId::LIST) {
+    if (list_path) {
       // #> / #>> with text[] argument
       auto list_idx = vdata[1].sel->get_index(row);
       if (!vdata[1].validity.RowIsValid(list_idx)) {
@@ -410,10 +414,6 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
       auto& list_entry =
         duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
           vdata[1])[list_idx];
-      auto& child = duckdb::ListVector::GetEntry(args.data[1]);
-      duckdb::UnifiedVectorFormat child_data;
-      child.ToUnifiedFormat(duckdb::ListVector::GetListSize(args.data[1]),
-                            child_data);
       for (duckdb::idx_t i = 0; i < list_entry.length; i++) {
         auto child_idx = child_data.sel->get_index(list_entry.offset + i);
         if (!child_data.validity.RowIsValid(child_idx)) {

@@ -174,19 +174,18 @@ but not facets: `ts_dict_*` accepts only real indexed columns.
 
 ## The body dictionary
 
-`body` is analyzed with `otel_body_dict`, a `segmentation` dictionary rather
-than `text`:
+`body` is analyzed with `otel_body_dict`, which splits on Unicode word
+boundaries and lowercases, with no stemming:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY otel_body_dict (
-    template = 'segmentation', case = 'lower', break = 'alpha',
-    frequency = true, position = true, norm = true
-);
+CREATE TEXT SEARCH DICTIONARY otel_body_dict AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position, norm);
 ```
 
 Log bodies are multilingual and full of identifiers, paths, IPs and durations,
-where stemming is wrong. `segmentation` keeps dotted identifiers and addresses
-whole:
+where stemming is wrong. Splitting on word boundaries keeps dotted
+identifiers and addresses whole:
 
 ```sql
 SELECT ts_lexize('otel_body_dict', 'ERROR io.grpc.Client 10.0.0.7:5432 took 12ms');
@@ -284,8 +283,6 @@ A search table's schema is fixed. `ALTER TABLE ADD COLUMN`, `DROP COLUMN` and
 while the table is still empty. To change the schema, create a new table with
 `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
 
-Re-running the DDL is safe on an empty database — every statement is
-`IF NOT EXISTS`. Once a table holds rows, re-running its `CREATE INDEX IF NOT
-EXISTS` raises `CREATE INDEX on a non-empty search-backed table is not yet
-supported`; skip the index statements when the index already exists. Startup
-checks for the schema before running any of it, so restarts are unaffected.
+Re-running the DDL is safe — every statement is `IF NOT EXISTS`, including on
+a table that already holds rows. Startup checks for the schema before running
+any of it, so a restart does no work at all.

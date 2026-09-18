@@ -1,11 +1,6 @@
-CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS otel_body_dict (
-    template  = 'segmentation',
-    case      = 'lower',
-    break     = 'alpha',
-    frequency = true,
-    position  = true,
-    norm      = true
-);
+CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS otel_body_dict AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position, norm);
 
 CREATE TABLE IF NOT EXISTS otel_logs (
     "timestamp"         TIMESTAMP_NS NOT NULL,

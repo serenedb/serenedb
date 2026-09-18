@@ -852,7 +852,5 @@ VACUUM (REFRESH_TABLE) otel_logs;
 statement ok
 CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL) WITH (storage = 'search');
 
-statement error
+statement ok
 CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted ("timestamp", body otel_body_dict);
-----
-db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)

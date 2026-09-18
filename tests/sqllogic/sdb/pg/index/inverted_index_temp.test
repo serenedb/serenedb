@@ -26,15 +26,9 @@ INSERT INTO temp_docs VALUES
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY temp_en(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
+CREATE TEXT SEARCH DICTIONARY temp_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 # TEMP tables live in DuckDB's in-memory catalog, which serenedb's

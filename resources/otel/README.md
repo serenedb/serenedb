@@ -49,15 +49,6 @@ scripts/otel_schema.py check      # fail if the include has drifted
 - **Five metric tables.** The OTLP metric shapes do not share a column set;
   one table each keeps every column meaningful.
 
-## Known limitation: re-running the DDL after ingest
-
-The DDL is idempotent on an empty database, but `CREATE INDEX IF NOT EXISTS`
-raises `CREATE INDEX on a non-empty search-backed table is not yet supported`
-once the table holds rows — the existence check happens after the non-empty
-gate. A route that runs `create_schema` unconditionally at startup therefore
-fails on its second boot. Until that is fixed in the engine, callers must skip
-the index statements when the index already exists.
-
 ## Conformance fixtures
 
 `conformance/` holds the canonical-mapping fixtures: an OTLP request in

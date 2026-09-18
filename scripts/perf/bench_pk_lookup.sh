@@ -120,9 +120,9 @@ SELECT i AS pk,
        i * 7 AS val
 FROM range(0, ${ROW_COUNT}) t(i);"
 run_sql "create_text_search_dict" "${BUILD_THREADS}" "
-CREATE TEXT SEARCH DICTIONARY pk_dict(
-  template = 'text', locale = 'en_US.UTF-8', case = 'none',
-  stemming = false, accent = false, frequency = true, position = true);"
+CREATE TEXT SEARCH DICTIONARY pk_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);"
 # `val` is INCLUDE'd so it's projectable from `pk_bench_idx`. The bench
 # query below uses ts_phrase('row') -- the dict is configured for
 # Positions+Frequency above so phrases work; a single token that's in

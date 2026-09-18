@@ -1,7 +1,7 @@
 ---
 title: Relevance Scoring
 sidebar_label: Scoring
-sidebar_position: 4
+sidebar_position: 5
 split: headings
 ---
 
@@ -48,13 +48,11 @@ Every scorer follows this shape — swap `BM25` for any function in the table ab
 Set both flags on the text search dictionary used by the indexed column:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY scored_en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    frequency = true,   -- term frequency, needed by every scorer
-    position = true,
-    norm = true         -- document length norms, needed by lm_* and dfi
-);
+-- term frequency, needed by every scorer
+-- document length norms, needed by lm_* and dfi
+CREATE TEXT SEARCH DICTIONARY scored_en AS
+    split_text() | stem_words('en_US.UTF-8')
+    WITH (frequency, position, norm);
 ```
 
 See [token positions and feature flags](../../indexes/inverted/text-analysis.md#token-positions-and-feature-flags) for the full list. `BM25`, `TFIDF`, `raw_tf`, `raw_boost` and `raw_dl` need only `frequency`; the language-model scorers and `dfi` silently score `0` until `norm` is enabled.

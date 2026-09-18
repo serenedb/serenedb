@@ -3,16 +3,11 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tx (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true,
-    stopwords = '"the","a","an","and","at","to","of","in","for","more","than"'
-);
+CREATE TEXT SEARCH DICTIONARY tx AS
+    split_text(case := 'lower')
+    | normalize_tokens('en_US.UTF-8', accent := false)
+    | remove_stopwords(['the', 'a', 'an', 'and', 'at', 'to', 'of', 'in', 'for', 'more', 'than'])
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE posts (id INTEGER PRIMARY KEY, body VARCHAR);

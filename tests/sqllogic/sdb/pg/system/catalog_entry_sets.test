@@ -166,7 +166,7 @@ View	v
 # TOKENIZER_ENTRY rather than the object borrowing a kind whose machinery would
 # then mishandle it.
 statement ok
-CREATE TEXT SEARCH DICTIONARY ces.tok (template = 'text', locale = 'en_US.UTF-8')
+CREATE TEXT SEARCH DICTIONARY ces.tok AS split_text() | stem_words('en_US.UTF-8')
 
 
 query

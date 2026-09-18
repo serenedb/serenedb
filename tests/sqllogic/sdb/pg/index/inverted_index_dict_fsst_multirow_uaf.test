@@ -20,10 +20,9 @@
 # single scan crosses one. Synthetic range()/repeat() data never lands here.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY uaf_words(
-    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
-    stemming = false, accent = false, frequency = true, position = true
-);
+CREATE TEXT SEARCH DICTIONARY uaf_words AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 statement ok
 CREATE TABLE uaf_src AS

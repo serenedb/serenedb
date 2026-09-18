@@ -1,12 +1,7 @@
 statement ok
-CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS otel_body_dict (
-    template  = 'segmentation',
-    case      = 'lower',
-    break     = 'alpha',
-    frequency = true,
-    position  = true,
-    norm      = true
-);
+CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS otel_body_dict AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position, norm);
 
 statement ok
 CREATE TABLE IF NOT EXISTS otel_logs (

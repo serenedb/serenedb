@@ -250,14 +250,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (state->shape == ScanShape::TopK) {
     InitTopKGlobal(*state, context);
   }
-  if (state->shape == ScanShape::Stream) {
-    state->stream_threads = static_cast<uint32_t>(std::max<uint64_t>(
-      state->workers,
-      duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads()));
-    state->stream_slot_count = state->stream_threads;
-    state->stream_slots = std::make_unique<ScanGlobalState::StreamCursorSlot[]>(
-      state->stream_slot_count);
-  }
   return state;
 }
 

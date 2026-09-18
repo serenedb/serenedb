@@ -38,7 +38,6 @@
 #include <iresearch/types.hpp>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -77,9 +76,6 @@ enum class OrderMode : uint8_t {
   Size,
   Order,
 };
-
-std::string_view ToString(SplitMode mode) noexcept;
-std::string_view ToString(OrderMode mode) noexcept;
 
 struct ScanUnit {
   uint32_t seg = 0;
@@ -211,46 +207,8 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
-  uint32_t stream_threads = 1;
   uint64_t rg_size = 0;
   std::atomic_uint32_t worker_count{0};
-
-  // A segment whose documents need nothing per-worker to produce -- no score
-  // and no dead-row skipper -- is drained by however many workers reach it,
-  // each pulling a batch under the cursor's lock. Whole segments are the unit,
-  // so without this the largest one bounds the scan however many threads idle.
-  struct StreamCursor {
-    StreamCursor(uint32_t seg, uint64_t live_docs) noexcept
-      : seg{seg}, live_docs{live_docs} {}
-
-    const uint32_t seg;
-    const uint64_t live_docs;
-    std::mutex mutex;
-    std::atomic_uint32_t workers{1};
-    std::atomic_uint64_t produced{0};
-    std::atomic_bool exhausted{false};
-    // Guarded by mutex: whoever attaches first builds the root, so the cursor
-    // can be published before that cost and spare workers find it at once.
-    bool started = false;
-    irs::memory::managed_ptr<irs::memory::Managed> root;
-
-    bool Exhausted() const noexcept {
-      return exhausted.load(std::memory_order_relaxed);
-    }
-    bool Joinable() const noexcept { return !Exhausted(); }
-    uint64_t Remaining() const noexcept {
-      const auto done = produced.load(std::memory_order_relaxed);
-      return done < live_docs ? live_docs - done : 0;
-    }
-  };
-
-  struct StreamCursorSlot {
-    std::mutex mutex;
-    std::shared_ptr<StreamCursor> cursor;
-  };
-  std::unique_ptr<StreamCursorSlot[]> stream_slots;
-  uint32_t stream_slot_count = 0;
-  std::atomic_uint32_t stream_slot_next{0};
 
   std::vector<uint32_t> segment_order;
   std::vector<std::vector<irs::doc_id_t>> dead_rows;
@@ -319,10 +277,7 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic<duckdb::idx_t> produced_rows{0};
   ScanMetrics metrics;
 
-  duckdb::idx_t MaxThreads() const final {
-    return shape == ScanShape::Stream ? std::max(workers, stream_threads)
-                                      : workers;
-  }
+  duckdb::idx_t MaxThreads() const final { return workers; }
 
   const ScanBindData& Bind() const noexcept { return *scan; }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
@@ -374,9 +329,6 @@ struct ColScanLocalState : public ScanLocalState {
 
 struct StreamLocalState : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
-  std::shared_ptr<ScanGlobalState::StreamCursor> cursor;
-  uint32_t slot = std::numeric_limits<uint32_t>::max();
-  bool joined = false;
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
   irs::SlackBuf<irs::doc_id_t, STANDARD_VECTOR_SIZE,

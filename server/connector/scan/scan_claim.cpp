@@ -31,33 +31,10 @@
 #include <iresearch/utils/assert.hpp>
 #include <optional>
 
-#include "catalog/inverted_index.h"
 #include "connector/scan/scan_state.h"
 #include "query/config.h"
 
 namespace sdb::connector {
-
-std::string_view ToString(SplitMode mode) noexcept {
-  switch (mode) {
-    case SplitMode::Tail:
-      return "tail";
-    case SplitMode::Always:
-      return "always";
-    case SplitMode::Never:
-      return "never";
-  }
-  return "";
-}
-
-std::string_view ToString(OrderMode mode) noexcept {
-  switch (mode) {
-    case OrderMode::Size:
-      return "size";
-    case OrderMode::Order:
-      return "order";
-  }
-  return "";
-}
 
 irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
   if (unit.whole) {

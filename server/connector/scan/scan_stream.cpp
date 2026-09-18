@@ -47,6 +47,13 @@ bool Shareable(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
          g.stream_slot_count != 0;
 }
 
+void DetachCursor(StreamLocalState& l) noexcept {
+  if (l.cursor) {
+    l.cursor->workers.fetch_sub(1, std::memory_order_relaxed);
+    l.cursor.reset();
+  }
+}
+
 void PublishCursor(ScanGlobalState& g, StreamLocalState& l,
                    std::shared_ptr<ScanGlobalState::StreamCursor> cursor) {
   if (l.slot == std::numeric_limits<uint32_t>::max()) {
@@ -104,6 +111,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l,
   const auto& seg = (*g.reader)[seg_idx];
   l.stage_at = 0;
   l.stage_len = 0;
+  DetachCursor(l);
   const bool share = joined != nullptr || Shareable(g, l);
   if (joined) {
     l.cursor = std::move(joined);
@@ -153,7 +161,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l,
 void Exhaust(StreamLocalState& l) {
   l.root_exhausted = true;
   l.root.reset();
-  l.cursor.reset();
+  DetachCursor(l);
 }
 
 uint32_t PullShared(StreamLocalState& l) {

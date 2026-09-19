@@ -153,7 +153,13 @@ class RawVectorReader {
     SDB_ASSERT(child != nullptr);
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
-    const auto window = child->Locate(elem);
+    // The rows a scan hands over ascend, so the block one lands in is almost
+    // always the block the last one landed in. Locate takes the previous
+    // window as a hint and answers from it instead of searching the block
+    // list -- which a selective predicate would otherwise pay for once per
+    // row, its runs being a single row each.
+    _win = child->Locate(elem, _win);
+    const auto& window = _win;
     const auto& meta = child->DataBlocks()[window.block];
     const size_t bytes = count * _d * sizeof(float);
     if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
@@ -173,6 +179,7 @@ class RawVectorReader {
   }
 
   ReadContext _read_ctx;
+  irs::BlockWindow _win{};
   IvfVectorReader _vreader;
   const ColumnReader* _column;
   std::vector<byte_type> _buf;

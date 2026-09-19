@@ -213,7 +213,7 @@ size_t CompareWindowByWindow(tests::LeadCursor& reference_iter,
 // The batched emit plan against the same query's lead plan: same documents,
 // same order, whatever capacity the batches are drained at.
 size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
-                       uint32_t capacity) {
+                       uint32_t capacity, irs::doc_id_t docs_count) {
   std::vector<irs::doc_id_t> reference_docs;
   while (!irs::doc_limits::eof(reference_iter.Next())) {
     reference_docs.push_back(reference_iter.Value());
@@ -221,11 +221,10 @@ size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
 
   std::vector<irs::doc_id_t> test_docs;
   std::vector<irs::doc_id_t> buf(capacity + irs::doc_limits::kDocsSlack);
-  for (;;) {
-    const auto n = root.Run(buf.data(), capacity);
-    if (n == 0) {
-      break;
-    }
+  const auto end = irs::doc_limits::min() + docs_count;
+  for (auto min = irs::doc_limits::min(); min < end; min += capacity) {
+    const auto max = std::min<irs::doc_id_t>(min + capacity, end);
+    const auto n = root.Run(min, max, buf.data());
     test_docs.insert(test_docs.end(), buf.begin(), buf.begin() + n);
   }
 
@@ -298,7 +297,9 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
         CompareWindowByWindow(reference_iter, filler, max_doc, window_size);
 
       EXPECT_GT(total, 0u) << "query should have matches";
-      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
+      EXPECT_EQ(total,
+                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()))
+        << "total docs vs count mismatch";
     });
 }
 
@@ -321,10 +322,14 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
 
       const auto capacity = std::max<uint32_t>(
         static_cast<uint32_t>(window_size), irs::doc_limits::kMinCapacity);
-      auto total = CompareEmitDocs(reference_iter, *emit, capacity);
+      auto total =
+        CompareEmitDocs(reference_iter, *emit, capacity,
+                        static_cast<irs::doc_id_t>(segment.docs_count()));
 
       EXPECT_GT(total, 0u) << "query should have matches";
-      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
+      EXPECT_EQ(total,
+                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()))
+        << "total docs vs count mismatch";
     });
 }
 

@@ -44,9 +44,10 @@ Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
   if (!disjunction) {
     return {};
   }
-  const uint64_t total = uint64_t{terms.front().state.cookie.docs_count} +
-                         uint64_t{terms.back().state.cookie.docs_count};
-  return memory::make_managed<Subtract>(total, std::move(disjunction));
+  return memory::make_managed<Subtract>(
+    MakeSum(MakeTermCount(terms.front(), ctx),
+            MakeTermCount(terms.back(), ctx)),
+    std::move(disjunction));
 }
 
 }  // namespace irs::count

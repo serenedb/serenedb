@@ -119,4 +119,10 @@ class SkipWalk {
   bool _bounds = false;
 };
 
+IRS_FORCE_INLINE constexpr SkipShape SkipShapeOf(IndexFeatures layout,
+                                                 bool bounds) noexcept {
+  const auto skip = ToSkipLayout(layout);
+  return {.bounds = bounds, .pos = skip.pos, .offs = skip.offs};
+}
+
 }  // namespace irs::detail

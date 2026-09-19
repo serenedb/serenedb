@@ -73,6 +73,7 @@ class PostingFillScored : public PostingLeaf<InputType, kWindowScoredShape> {
     }
 
     this->OpenInput(meta, doc_in, has_score_bounds);
+    this->ArmWalk(meta, field.meta().index_features, has_score_bounds);
   }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -81,6 +82,7 @@ class PostingFillScored : public PostingLeaf<InputType, kWindowScoredShape> {
     if (_doc >= max) {
       return _doc;
     }
+    this->Start(min);
     const auto* const end = std::cend(_docs);
 
     if (_left_in_leaf != 0) {

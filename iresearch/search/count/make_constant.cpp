@@ -34,20 +34,93 @@ Root::ptr MakeConstant(uint64_t count) {
   return memory::make_managed<Constant>(count);
 }
 
-Root::ptr MakeTerm(const detail::PostingClause& posting, const SubReader&,
-                   const Context& ctx) {
-  if (ctx.table == nullptr) {
-    return MakeConstant(posting.state.cookie.docs_count);
-  }
+namespace {
+
+Root::ptr MakeTermWalk(const detail::PostingClause& posting,
+                       const Context& ctx) {
   return lead::ResolvePostingDocs<Root::ptr>(
     posting, [&]<typename Leaf>(auto&&... args) -> Root::ptr {
       return MakeShape<Walk, Leaf>(ctx, std::forward<decltype(args)>(args)...);
     });
 }
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
+class TermCount : public Root {
+ public:
+  TermCount(const detail::PostingClause& posting, const Context& ctx) noexcept
+    : _posting{posting}, _ctx{ctx} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    if (min == doc_limits::min() && doc_limits::eof(max)) {
+      return _posting.state.cookie.docs_count;
+    }
+    if (!_exact) {
+      _exact = MakeTermWalk(_posting, _ctx);
+    }
+    return _exact->Run(min, max);
+  }
+
+ private:
+  detail::PostingClause _posting;
+  Context _ctx;
+  Root::ptr _exact;
+};
+
+class AllCount : public Root {
+ public:
+  explicit AllCount(doc_id_t count) noexcept
+    : _end{doc_limits::min() + count} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    const auto stop = std::min(max, _end);
+    return stop > min ? stop - min : 0;
+  }
+
+ private:
+  doc_id_t _end;
+};
+
+class Sum : public Root {
+ public:
+  Sum(Root::ptr lhs, Root::ptr rhs) noexcept
+    : _lhs{std::move(lhs)}, _rhs{std::move(rhs)} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    return _lhs->Run(min, max) + _rhs->Run(min, max);
+  }
+
+ private:
+  Root::ptr _lhs;
+  Root::ptr _rhs;
+};
+
+}  // namespace
+
+Root::ptr MakeAllCount(doc_id_t count) {
+  return memory::make_managed<AllCount>(count);
+}
+
+Root::ptr MakeTermCount(const detail::PostingClause& posting,
+                        const Context& ctx) {
+  return memory::make_managed<TermCount>(posting, ctx);
+}
+
+Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
+  return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
+}
+
+Root::ptr MakeTerm(const detail::PostingClause& posting, const SubReader&,
+                   const Context& ctx) {
   if (ctx.table == nullptr) {
-    return MakeConstant(segment.live_docs_count());
+    return memory::make_managed<TermCount>(posting, ctx);
+  }
+  return MakeTermWalk(posting, ctx);
+}
+
+Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
+  if (ctx.table == nullptr &&
+      segment.live_docs_count() == segment.docs_count()) {
+    return memory::make_managed<AllCount>(
+      static_cast<doc_id_t>(segment.docs_count()));
   }
   return MakeShape<Walk, lead::AllDocs>(ctx, segment);
 }

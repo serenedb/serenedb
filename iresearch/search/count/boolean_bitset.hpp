@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 
@@ -42,10 +43,25 @@ class BooleanBitset : public Root {
       _docs_count{docs_count},
       _table{table} {}
 
-  uint64_t Run() final {
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    constexpr auto kMin = detail::BitsetStorage::kMin;
+    constexpr auto kBits = detail::BitsetStorage::kBits;
     auto set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-    return _table.Count(detail::BitsetStorage::kMin, set.Words(),
-                        set.WordCount());
+    const uint64_t total = uint64_t{set.WordCount()} * kBits;
+    const uint64_t lo = min - kMin;
+    const uint64_t hi =
+      std::min<uint64_t>(doc_limits::eof(max) ? total : max - kMin, total);
+    if (lo >= hi) {
+      return 0;
+    }
+    auto* const words = set.Words();
+    const auto first = static_cast<uint32_t>(lo / kBits);
+    const auto last = static_cast<uint32_t>((hi - 1) / kBits);
+    words[first] &= ~uint64_t{0} << (lo % kBits);
+    if (const auto tail = hi % kBits; tail != 0) {
+      words[last] &= (uint64_t{1} << tail) - 1;
+    }
+    return _table.Count(kMin + first * kBits, words + first, last + 1 - first);
   }
 
  private:

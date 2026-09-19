@@ -58,14 +58,10 @@ class FullScanner {
     return _filters.Empty() ? 0 : _filters.DeadUntil(row);
   }
 
-  // Scans the contiguous rows [start_row, start_row+count)
-  // RowGroup::Scan-style: the pushed `.col` filters narrow the row selection
-  // in-scan (codec Filter + zonemap, decoded once into the projected output
-  // vector then Sliced), and the remaining projected columns materialize only
-  // the survivors. Returns the number of rows written to `output` (== count
-  // when there are no filters).
   duckdb::idx_t Scan(uint64_t start_row, duckdb::idx_t count,
-                     duckdb::DataChunk& output);
+                     duckdb::DataChunk& output,
+                     const duckdb::SelectionVector* live = nullptr,
+                     duckdb::idx_t live_count = 0);
 
  private:
   struct Binding {

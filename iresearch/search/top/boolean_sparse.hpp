@@ -73,12 +73,12 @@ class BooleanSparse : public Root {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     uint32_t batch = 0;
-    auto doc = _lead.Next();
-    [[clang::code_align(64)]] while (!doc_limits::eof(doc)) {
+    auto doc = _lead.Seek(min);
+    [[clang::code_align(64)]] while (doc < max) {
       if constexpr (kProbes) {
         if (const auto probe = _probes.Probe(doc); probe != doc) {
           doc = _lead.Seek(probe);

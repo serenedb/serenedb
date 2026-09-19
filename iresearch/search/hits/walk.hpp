@@ -25,41 +25,30 @@
 #include <utility>
 
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::hits {
 
-template<typename Node, typename Table>
+template<typename Node>
 class Walk : public Root {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr uint32_t kBatch = kScoreBlock;
 
   template<typename... Args>
-  explicit Walk(Table table, ColumnArgsFetcher& fetcher, Args&&... args)
-    : _fetcher{fetcher}, _node{std::forward<Args>(args)...}, _table{table} {
+  explicit Walk(ColumnArgsFetcher& fetcher, Args&&... args)
+    : _fetcher{fetcher}, _node{std::forward<Args>(args)...} {
     _score = _node.PrepareScore();
   }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
     uint32_t n = 0;
     uint32_t batch = 0;
 
-    while (n != capacity) {
-      auto doc = _node.Next();
-      if constexpr (kTable) {
-        if (const auto live = _table.Live(doc); live != doc) {
-          doc = _node.Seek(live);
-        }
-      }
-      if (doc_limits::eof(doc)) {
-        break;
-      }
+    auto doc = _node.Seek(min);
+    while (doc < max) {
       out[n] = doc;
       _node.FetchScoreArgs(batch);
       ++n;
@@ -67,6 +56,7 @@ class Walk : public Root {
         ScoreFull(out + n - batch, scores + n - batch);
         batch = 0;
       }
+      doc = _node.Next();
     }
 
     if (batch != 0) {
@@ -90,34 +80,23 @@ class Walk : public Root {
   ColumnArgsFetcher& _fetcher;
   Node _node;
   ScoreFunction _score;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
-template<typename Node, typename Table>
+template<typename Node>
 class ConstantWalk : public Root {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-
   template<typename... Args>
-  explicit ConstantWalk(Table table, score_t score, Args&&... args)
-    : _node{std::forward<Args>(args)...}, _score{score}, _table{table} {}
+  explicit ConstantWalk(score_t score, Args&&... args)
+    : _node{std::forward<Args>(args)...}, _score{score} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
     uint32_t n = 0;
 
-    while (n != capacity) {
-      auto doc = _node.Next();
-      if constexpr (kTable) {
-        if (const auto live = _table.Live(doc); live != doc) {
-          doc = _node.Seek(live);
-        }
-      }
-      if (doc_limits::eof(doc)) {
-        break;
-      }
+    auto doc = _node.Seek(min);
+    while (doc < max) {
       out[n++] = doc;
+      doc = _node.Next();
     }
     std::fill_n(scores, n, _score);
     return n;
@@ -126,7 +105,6 @@ class ConstantWalk : public Root {
  private:
   Node _node;
   score_t _score;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

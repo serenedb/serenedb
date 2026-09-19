@@ -625,7 +625,7 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
   irs::score_t score_threshold = static_cast<irs::score_t>(threshold);
   std::vector<irs::ScoreDoc> hits(k);
   irs::LoserScoreCollector collector{score_threshold, hits};
-  root->Run(collector);
+  root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
 
   Docs expected;
   for (const auto& doc : docs) {

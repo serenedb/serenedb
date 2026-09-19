@@ -28,7 +28,6 @@
 
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/make_conjunction.hpp"
@@ -40,50 +39,39 @@
 
 namespace irs::hits {
 
-template<lead::Type Lead, typename Probes, typename Optional, typename Excludes,
-         typename Table>
+template<lead::Type Lead, typename Probes, typename Optional, typename Excludes>
 class BooleanSparse : public Root {
  public:
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr uint32_t kBatch = kScoreBlock;
   static_assert(kProbes || kOptional || kExcludes);
 
   template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
            typename ExcludesArgs>
-  BooleanSparse(Table table, std::piecewise_construct_t,
-                ColumnArgsFetcher& fetcher, irs::detail::Scored score,
-                LeadArgs&& lead, ProbesArgs&& probes, OptionalArgs&& optional,
-                ExcludesArgs&& excludes)
+  BooleanSparse(std::piecewise_construct_t, ColumnArgsFetcher& fetcher,
+                irs::detail::Scored score, LeadArgs&& lead, ProbesArgs&& probes,
+                OptionalArgs&& optional, ExcludesArgs&& excludes)
     : _fetcher{fetcher},
       _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _table{table} {
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {
     _score = Compose(score);
   }
 
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
     uint32_t n = 0;
     uint32_t batch = 0;
-    auto doc = _lead.Next();
-    while (!doc_limits::eof(doc)) {
-      if constexpr (kTable) {
-        if (const auto live = _table.Live(doc); live != doc) {
-          doc = _lead.Seek(live);
-          continue;
-        }
-      }
+    auto doc = _lead.Seek(min);
+    while (doc < max) {
       if constexpr (kProbes) {
         if (const auto probe = _probes.Probe(doc); probe != doc) {
           doc = _lead.Seek(probe);
@@ -114,9 +102,6 @@ class BooleanSparse : public Root {
       if (++batch == kBatch) {
         ScoreFull(out + n - batch, scores + n - batch);
         batch = 0;
-      }
-      if (n == capacity) {
-        break;
       }
       doc = _lead.Next();
     }
@@ -166,7 +151,6 @@ class BooleanSparse : public Root {
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   ScoreFunction _score;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

@@ -26,7 +26,7 @@ namespace irs::top {
 
 class Empty : public Root {
  public:
-  void Run(LoserScoreCollector&) final {}
+  void Run(doc_id_t, doc_id_t, LoserScoreCollector&) final {}
 };
 
 }  // namespace irs::top

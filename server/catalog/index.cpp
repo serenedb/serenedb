@@ -882,13 +882,15 @@ void ApplyHNSWOptions(std::string_view column_name,
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
-  const auto f = ReadDoubleSetting(context, "sdb_ivf_sample_factor");
+  static constinit SettingRef gSampleFactor{"sdb_ivf_sample_factor"};
+  const auto f = gSampleFactor.Double(context);
   SDB_ASSERT(f > 0.0 && f <= 1.0);
   return static_cast<float>(f);
 }
 
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
-  const auto n = ReadIntSetting(context, "sdb_ivf_posting_size");
+  static constinit SettingRef gPostingSize{"sdb_ivf_posting_size"};
+  const auto n = gPostingSize.Int(context);
   SDB_ASSERT(n >= 1);
   return n;
 }

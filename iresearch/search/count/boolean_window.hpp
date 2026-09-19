@@ -61,9 +61,9 @@ class BooleanWindow : public Root {
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  uint64_t Run() final {
+  uint64_t Run(doc_id_t begin, doc_id_t end) final {
     uint64_t total = 0;
-    doc_id_t min = doc_limits::min();
+    doc_id_t min = begin;
 
     for (;;) {
       if constexpr (kOptional) {
@@ -71,11 +71,11 @@ class BooleanWindow : public Root {
           return total;
         }
       }
-      if (!_table.Skip(min)) {
+      if (!_table.Skip(min) || min >= end) {
         return total;
       }
       SDB_ASSERT(min <= doc_limits::eof() - detail::kWindowDocs);
-      const doc_id_t max = min + detail::kWindowDocs;
+      const doc_id_t max = std::min<doc_id_t>(min + detail::kWindowDocs, end);
 
       auto* const words = _mask.data();
       doc_id_t next;
@@ -93,7 +93,7 @@ class BooleanWindow : public Root {
 
       total += _table.CountAndClear(min, words, detail::kWindowWords);
 
-      if (doc_limits::eof(next)) {
+      if (next >= end) {
         return total;
       }
       min = next;

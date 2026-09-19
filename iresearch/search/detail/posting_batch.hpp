@@ -45,10 +45,9 @@
 
 namespace irs::detail {
 
-template<typename InputType, typename Table, bool Scored>
+template<typename InputType, bool Scored>
 class PostingBatch {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
 
   doc_id_t Last() const noexcept { return _last; }
@@ -56,8 +55,14 @@ class PostingBatch {
   uint32_t Left() const noexcept { return _left_in_list; }
 
   bool Step(doc_id_t live) {
-    static_assert(kTable);
     return StepToLive(_walk, In(), live, _left_in_list, _last);
+  }
+
+  bool Start(doc_id_t min) {
+    if (min <= _last + 1) {
+      return true;
+    }
+    return Step(min);
   }
 
  protected:
@@ -82,11 +87,8 @@ class PostingBatch {
   }
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
-    if constexpr (kTable) {
-      if (meta.docs_count > kBlock) {
-        const auto skip = ToSkipLayout(layout);
-        _walk.Arm(meta, {.bounds = bounds, .pos = skip.pos, .offs = skip.offs});
-      }
+    if (meta.docs_count > kBlock) {
+      _walk.Arm(meta, SkipShapeOf(layout, bounds));
     }
   }
 
@@ -150,7 +152,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  [[no_unique_address]] utils::Need<kTable, SkipWalk<InputType>> _walk;
+  SkipWalk<InputType> _walk;
 };
 
 }  // namespace irs::detail

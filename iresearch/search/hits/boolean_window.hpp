@@ -28,7 +28,6 @@
 #include <utility>
 
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -38,7 +37,7 @@
 
 namespace irs::hits {
 
-template<typename Lead, typename Optional, typename Excludes, typename Table>
+template<typename Lead, typename Optional, typename Excludes>
 class BooleanWindow : public Root {
  public:
   static constexpr int kSparseWord = 32;
@@ -52,7 +51,7 @@ class BooleanWindow : public Root {
   static_assert(!kTally || !kExcludes);
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OptionalArgs&& optional, ExcludesArgs&& excludes,
                 score_t constant)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
@@ -60,18 +59,18 @@ class BooleanWindow : public Root {
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _constant{constant},
-      _table{table} {
+      _constant{constant} {
     std::fill_n(_window, irs::detail::kWindowDocs, _constant);
   }
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    SDB_ASSERT(capacity >= BitsRequired<uint64_t>());
+  uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
+    if (_next < begin) {
+      _next = begin;
+    }
     uint32_t n = 0;
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
@@ -80,11 +79,6 @@ class BooleanWindow : public Root {
         auto word = _mask[_word];
         if (word == 0) {
           continue;
-        }
-        if (n + BitsRequired<uint64_t>() > capacity) [[unlikely]] {
-          if (n + static_cast<uint32_t>(std::popcount(word)) > capacity) {
-            return n;
-          }
         }
         _mask[_word] = 0;
         const auto base = _word * BitsRequired<uint64_t>();
@@ -99,11 +93,14 @@ class BooleanWindow : public Root {
               MaterializeWord(min + static_cast<doc_id_t>(base), answer,
                               out + n) -
               out);
-            const auto padded = first + ((n - first + 7) & ~uint32_t{7});
-            for (auto i = first; i != padded; i += 8) {
+            const auto full = first + ((n - first) & ~uint32_t{7});
+            for (auto i = first; i != full; i += 8) {
               for (uint32_t j = 0; j != 8; ++j) {
                 scores[i + j] = window[out[i + j] - min];
               }
+            }
+            for (auto i = full; i != n; ++i) {
+              scores[i] = window[out[i] - min];
             }
             std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
             continue;
@@ -140,11 +137,14 @@ class BooleanWindow : public Root {
         n = static_cast<uint32_t>(
           MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) -
           out);
-        const auto padded = first + ((n - first + 7) & ~uint32_t{7});
-        for (auto i = first; i != padded; i += 8) {
+        const auto full = first + ((n - first) & ~uint32_t{7});
+        for (auto i = first; i != full; i += 8) {
           for (uint32_t j = 0; j != 8; ++j) {
             scores[i + j] = window[out[i + j] - min];
           }
+        }
+        for (auto i = full; i != n; ++i) {
+          scores[i] = window[out[i] - min];
         }
         if constexpr (kResets) {
           std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
@@ -153,11 +153,11 @@ class BooleanWindow : public Root {
       if (_spent) {
         return n;
       }
-      if (!_table.Skip(_next)) {
+      if (_next >= end) {
         return n;
       }
       _min = _next;
-      const auto max = _min + irs::detail::kWindowDocs;
+      const auto max = std::min<doc_id_t>(_min + irs::detail::kWindowDocs, end);
       doc_id_t next;
       if constexpr (kLead) {
         next = _lead.FillOr(_min, max, _mask);
@@ -189,7 +189,6 @@ class BooleanWindow : public Root {
   uint32_t _word = irs::detail::kWindowWords;
   score_t _constant;
   bool _spent = false;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

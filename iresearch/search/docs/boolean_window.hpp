@@ -34,8 +34,7 @@
 
 namespace irs::docs {
 
-template<typename Lead, typename Others, typename Optional, typename Excludes,
-         typename Table>
+template<typename Lead, typename Others, typename Optional, typename Excludes>
 class BooleanWindow : public Root {
  public:
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
@@ -47,11 +46,10 @@ class BooleanWindow : public Root {
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
            typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
                 ExcludesArgs&& excludes)
-    : _emit{table},
-      _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
@@ -61,26 +59,23 @@ class BooleanWindow : public Root {
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out) final {
+    if (_min < begin) {
+      _min = begin;
+    }
     uint32_t n = 0;
     for (;;) {
-      if (!_emit.Drain(out, capacity, n)) {
-        return n;
-      }
+      _emit.Drain(out, n);
       if constexpr (kOptional) {
         if (_optional.Exhausted()) {
           _spent = true;
         }
       }
-      if (!_emit.Skip(_min)) {
-        _spent = true;
-      }
-      if (_spent || n == capacity) {
+      if (_spent || _min >= end) {
         return n;
       }
       SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
-      const doc_id_t max = _min + detail::kWindowDocs;
+      const doc_id_t max = std::min<doc_id_t>(_min + detail::kWindowDocs, end);
       auto* const words = _mask.data();
       doc_id_t next;
       if constexpr (kLead) {
@@ -104,7 +99,7 @@ class BooleanWindow : public Root {
   }
 
  private:
-  Emit<Table> _emit;
+  Emit _emit;
   detail::Scratch _mask{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;

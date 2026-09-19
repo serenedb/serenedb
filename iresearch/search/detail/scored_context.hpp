@@ -43,7 +43,6 @@ namespace hits {
 struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
-  detail::DeadRuns* table = nullptr;
 };
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {

@@ -36,40 +36,19 @@
 namespace irs::docs {
 
 template<template<typename...> class Shape, typename... Parts, typename... Args>
-Root::ptr MakeShape(const Context& ctx, Args&&... args) {
-  if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., detail::DeadRuns*>>(
-      ctx.table, std::forward<Args>(args)...);
-  }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
-    utils::Empty{}, std::forward<Args>(args)...);
+Root::ptr MakeShape(const Context&, Args&&... args) {
+  return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
 }
 
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, detail::DeadRuns*>;
-
 template<detail::PhraseMatch M>
-Root::ptr MakeFixedPhraseWalk(const FixedPhraseQuery& query,
-                              const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return detail::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                 ctx.table);
-  }
-  return detail::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query,
-                                                            utils::Empty{});
+Root::ptr MakeFixedPhraseWalk(const FixedPhraseQuery& query, const Context&) {
+  return detail::MakeFixedPhraseOf<M, Walk, Root::ptr>(query);
 }
 
 template<detail::PhraseMatch M>
 Root::ptr MakeVariadicPhraseWalk(const VariadicPhraseQuery& query,
-                                 const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return detail::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                    ctx.table);
-  }
-  return detail::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
-                                                               utils::Empty{});
+                                 const Context&) {
+  return detail::MakeVariadicPhraseOf<M, Walk, Root::ptr>(query);
 }
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);

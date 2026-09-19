@@ -45,9 +45,9 @@
 
 namespace irs::detail {
 
-inline IRS_FORCE_INLINE uint32_t CopyBelow16(
-  const doc_id_t* IRS_RESTRICT first, doc_id_t max,
-  doc_id_t* IRS_RESTRICT out) noexcept {
+inline IRS_FORCE_INLINE uint32_t
+CopyBelow16(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
+            doc_id_t* IRS_RESTRICT out) noexcept {
 #ifdef __AVX2__
   const auto lo = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
   const auto hi =
@@ -72,15 +72,15 @@ inline IRS_FORCE_INLINE uint32_t CopyBelow16(
 #endif
 }
 
-inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
-                                    const doc_id_t* IRS_RESTRICT last,
-                                    doc_id_t max,
-                                    doc_id_t* IRS_RESTRICT out) noexcept {
+inline IRS_FORCE_INLINE uint32_t
+CopyBelow(const doc_id_t* IRS_RESTRICT first, const doc_id_t* IRS_RESTRICT last,
+          doc_id_t max, doc_id_t* IRS_RESTRICT out) noexcept {
   uint32_t n = 0;
 #ifdef __AVX2__
   const auto edge = _mm256_set1_epi32(static_cast<int32_t>(max));
   for (; first + 8 <= last; first += 8) {
-    const auto ids = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+    const auto ids =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + n), ids);
     const auto keep = _mm256_cmpgt_epi32(edge, ids);
     const auto mask =
@@ -98,15 +98,17 @@ inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
 }
 
 inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
-                                    const doc_id_t* IRS_RESTRICT last,
-                                    doc_id_t max, doc_id_t* IRS_RESTRICT out,
-                                    const score_t* IRS_RESTRICT src,
-                                    score_t* IRS_RESTRICT dst) noexcept {
+                                           const doc_id_t* IRS_RESTRICT last,
+                                           doc_id_t max,
+                                           doc_id_t* IRS_RESTRICT out,
+                                           const score_t* IRS_RESTRICT src,
+                                           score_t* IRS_RESTRICT dst) noexcept {
   uint32_t n = 0;
 #ifdef __AVX2__
   const auto edge = _mm256_set1_epi32(static_cast<int32_t>(max));
   for (; first + 8 <= last; first += 8, src += 8) {
-    const auto ids = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+    const auto ids =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + n), ids);
     _mm256_storeu_ps(dst + n, _mm256_loadu_ps(src));
     const auto keep = _mm256_cmpgt_epi32(edge, ids);

@@ -95,9 +95,13 @@ class BooleanWindow : public Root {
         auto word = _mask[_word] & ((uint64_t{1} << tail) - 1);
         if (word != 0) {
           _mask[_word] ^= word;
-          auto* const counts =
-            [&] { if constexpr (kTally) { return _optional.Counts() + base; }
-                  else { return static_cast<uint32_t*>(nullptr); } }();
+          auto* const counts = [&] {
+            if constexpr (kTally) {
+              return _optional.Counts() + base;
+            } else {
+              return static_cast<uint32_t*>(nullptr);
+            }
+          }();
           while (word != 0) {
             const auto bit = static_cast<uint32_t>(std::countr_zero(word));
             const auto offset = base + bit;

@@ -18,7 +18,7 @@ statement ok
 SET refresh_interval = 0
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tds_kw(template = 'keyword')
+CREATE TEXT SEARCH DICTIONARY tds_kw AS keyword()
 
 statement ok
 CREATE TABLE tds(id INTEGER PRIMARY KEY, g INTEGER NOT NULL, h INTEGER NOT NULL,

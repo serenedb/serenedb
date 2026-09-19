@@ -37,9 +37,9 @@ class TermCountsOf : public TermCounts {
                IndexFeatures layout, bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
-  uint64_t Count(const PostingMeta& term) final {
+  uint64_t Count(const PostingMeta& term, doc_id_t min, doc_id_t max) final {
     SDB_ASSERT(term.docs_count != 0);
-    detail::CountAgainst sink{_set};
+    detail::CountAgainst sink{_set, min, max};
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
@@ -49,23 +49,24 @@ class TermCountsOf : public TermCounts {
     return sink.Total();
   }
 
-  bool Any(const PostingMeta& term) final {
+  bool Any(const PostingMeta& term, doc_id_t min, doc_id_t max) final {
     SDB_ASSERT(term.docs_count != 0);
     if (term.docs_count == 1) {
-      return _set.Contains(doc_limits::min() + term.doc_delta);
+      const auto doc = doc_limits::min() + term.doc_delta;
+      return doc >= min && doc < max && _set.Contains(doc);
     }
     detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
-    auto doc = doc_limits::min();
+    auto doc = min;
     for (;;) {
       doc = posting.Probe(doc);
-      if (doc_limits::eof(doc)) {
+      if (doc >= max) {
         return false;
       }
       const auto next = _set.Probe(doc);
       if (next == doc) {
         return true;
       }
-      if (doc_limits::eof(next)) {
+      if (next >= max) {
         return false;
       }
       doc = next;

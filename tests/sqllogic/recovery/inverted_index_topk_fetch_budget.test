@@ -19,8 +19,8 @@ SET threads = 16;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY fb_en
-  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+CREATE TEXT SEARCH DICTIONARY fb_en AS split_text_csv(' ')
+  WITH (frequency, position)
 
 
 statement ok

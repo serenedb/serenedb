@@ -372,8 +372,10 @@ uint32_t TsDictLocalState::NullDocs(const irs::TermReader& reader,
     if (auto counts =
           irs::count::MakeTermCounts(Live(), reader, reader.size())) {
       const auto& term = it->cookie();
-      return count_all ? static_cast<uint32_t>(counts->Count(term))
-                       : static_cast<uint32_t>(counts->Any(term));
+      return count_all ? static_cast<uint32_t>(
+                           counts->Count(term, _range.begin, _range.end))
+                       : static_cast<uint32_t>(
+                           counts->Any(term, _range.begin, _range.end));
     }
   }
   return WalkLive(reader, *it, count_all);
@@ -466,8 +468,10 @@ uint32_t TsDictLocalState::TermCount(irs::TermIterator& it, bool count_all) {
 uint32_t TsDictLocalState::LiveDocs(irs::TermIterator& it, bool count_all) {
   if (_term_counts) {
     const auto& term = it.cookie();
-    return count_all ? static_cast<uint32_t>(_term_counts->Count(term))
-                     : static_cast<uint32_t>(_term_counts->Any(term));
+    return count_all ? static_cast<uint32_t>(
+                         _term_counts->Count(term, _range.begin, _range.end))
+                     : static_cast<uint32_t>(
+                         _term_counts->Any(term, _range.begin, _range.end));
   }
   SDB_ASSERT(_reader != nullptr);
   return WalkLive(*_reader, it, count_all);

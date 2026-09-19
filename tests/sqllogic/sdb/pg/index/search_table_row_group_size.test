@@ -4,8 +4,8 @@
 # be spread over more threads by lowering it.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY rg_en
-  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+CREATE TEXT SEARCH DICTIONARY rg_en AS split_text_csv(' ')
+  WITH (frequency, position)
 
 
 # The same rule DuckDB applies to a table's row-group size: a whole number of

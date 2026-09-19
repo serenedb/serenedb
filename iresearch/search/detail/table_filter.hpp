@@ -30,13 +30,11 @@
 
 namespace irs::detail {
 
-struct DeadRuns {
-  virtual ~DeadRuns() = default;
+struct TableFilter {
+  virtual ~TableFilter() = default;
 
   virtual doc_id_t Live(doc_id_t doc) = 0;
-};
 
-struct TableFilter : DeadRuns {
   virtual uint64_t CountAndClear(doc_id_t base, uint64_t* mask,
                                  uint32_t words) = 0;
 

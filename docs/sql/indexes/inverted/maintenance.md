@@ -72,7 +72,7 @@ An inverted index pins every column it reads, including columns reached only thr
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
 - **Refresh vs. compaction cadence** — lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` / `cleanup_interval_step` govern how aggressively segments merge.
-- **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting.
+- **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** — for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Top-K** — set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> … LIMIT k`.
 
@@ -87,6 +87,9 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_levenshtein_max_terms` | `64` | Maximum number of dictionary terms a fuzzy predicate ([`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein)) expands to, per index segment. The terms closest to the query survive; the rest neither match nor contribute to scoring. Raise it for wide expansions, or set `0` to match every term within the edit distance. A predicate on a column that a `ts_dict_*` query enumerates is exempt, since there the terms are the result; other predicates in the same query keep the cap. |
 | `sdb_nprobe` | `8` | Number of IVF cluster lists scanned per [vector](./vector-search.md) kNN query (`ORDER BY <dist> LIMIT k`). Higher = better recall, slower queries. Does not affect range (`WHERE <dist> < r`) queries. |
 | `sdb_rerank_factor` | `4` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#quantization) index, the candidate pool re-scored with exact distances is `sdb_rerank_factor * k`. Higher = better recall, slower queries; `0` disables reranking. Ignored for unquantized indexes. |
+| `sdb_scan_split` | `auto` | When an index scan splits a segment into row-group units across worker threads. `tail` claims whole segments while more segments remain than workers, then row groups of the remaining ones; `always` claims row groups from the first unit; `never` claims whole segments only. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests: whole-segment units run with no per-unit overhead, row-group units keep every core busy on one large segment. |
+| `sdb_scan_order` | `auto` | The order an index scan claims its units in. `size` is smallest segment first, so the large segments are what is left for the row-group tail; `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `size` otherwise. |
+| `sdb_scan_no_split_row_groups` | `1` | A segment with at most this many row groups is always one unit of an index scan and is never split across workers. |
 
 ```sql
 SET sdb_nprobe = 32;             -- scan more clusters for this session

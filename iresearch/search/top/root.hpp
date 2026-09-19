@@ -47,7 +47,8 @@ inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
-  virtual void Run(LoserScoreCollector& collector) = 0;
+  virtual void Run(doc_id_t min, doc_id_t max,
+                   LoserScoreCollector& collector) = 0;
 };
 
 }  // namespace irs::top

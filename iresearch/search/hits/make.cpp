@@ -50,22 +50,14 @@
 namespace irs::hits {
 namespace {
 
-Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
+Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context&) {
+  return irs::detail::MakeFixedPhrase<ConstantWalk, Root::ptr>(query,
+                                                               score_t{0});
 }
 
-Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
+Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context&) {
+  return irs::detail::MakeVariadicPhrase<ConstantWalk, Root::ptr>(query,
+                                                                  score_t{0});
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {

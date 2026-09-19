@@ -72,14 +72,16 @@ Result<Api> MakeWindowOfTerms(std::span<const PostingClause> terms,
     const auto& front = CookieOf(terms.front());
     return Api::template MakeWindow<Leaf, Others, utils::Empty, Excludes>(
       ctx,
-      std::forward_as_tuple(front, doc, front.docs_count != 1 && BoundsOf(own),
+      std::forward_as_tuple(front, doc, LayoutOf(own),
+                            front.docs_count != 1 && BoundsOf(own),
                             front.docs_count != 1 && FreqOf(own)),
       std::forward_as_tuple(
         terms.size() - 1,
         [&](Leaf& leaf, size_t i) {
           const auto& other = FieldOf(terms[i + 1], nullptr);
           const auto& meta = CookieOf(terms[i + 1]);
-          leaf.Prepare(meta, doc, meta.docs_count != 1 && BoundsOf(other),
+          leaf.Prepare(meta, doc, LayoutOf(other),
+                       meta.docs_count != 1 && BoundsOf(other),
                        meta.docs_count != 1 && FreqOf(other));
         }),
       std::forward_as_tuple(), std::forward<ExcludesArgs>(excludes));
@@ -217,7 +219,7 @@ Result<Api> MakeWindowExclusion(
             return Api::template MakeWindow<PostingFill<Input>, utils::Empty,
                                             utils::Empty, Excludes>(
               ctx,
-              std::forward_as_tuple(front, *doc,
+              std::forward_as_tuple(front, *doc, LayoutOf(own),
                                     front.docs_count != 1 && BoundsOf(own),
                                     front.docs_count != 1 && FreqOf(own)),
               std::forward_as_tuple(), std::forward_as_tuple(),
@@ -267,7 +269,8 @@ Result<Api> MakeWindowThreshold(std::span<const PostingClause> terms,
       const auto init = [&](Leaf& leaf, size_t i) {
         const auto& own = FieldOf(terms[i], nullptr);
         const auto& meta = CookieOf(terms[i]);
-        leaf.Prepare(meta, in, meta.docs_count != 1 && BoundsOf(own),
+        leaf.Prepare(meta, in, LayoutOf(own),
+                     meta.docs_count != 1 && BoundsOf(own),
                      meta.docs_count != 1 && FreqOf(own));
       };
       return Api::template MakeWindow<utils::Empty, utils::Empty,

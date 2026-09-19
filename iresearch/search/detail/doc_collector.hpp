@@ -80,7 +80,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     if (!plan) {
       continue;
     }
-    plan->Run(collector);
+    plan->Run(doc_limits::min(), doc_limits::eof(), collector);
   }
 
   std::sort(

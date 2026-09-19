@@ -34,7 +34,7 @@ struct Context {
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
-  virtual uint64_t Run() = 0;
+  virtual uint64_t Run(doc_id_t min, doc_id_t max) = 0;
 };
 
 }  // namespace irs::count

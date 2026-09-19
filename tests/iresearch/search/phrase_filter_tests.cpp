@@ -8609,7 +8609,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_count) {
     ASSERT_NE(nullptr, query);
     auto count = query->PlanCount({});
     ASSERT_NE(nullptr, count);
-    ASSERT_EQ(5, count->Run());
+    ASSERT_EQ(5, count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
   }
 }
 

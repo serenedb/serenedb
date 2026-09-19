@@ -45,12 +45,12 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
   PostingCount() = default;
 
   PostingCount(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
-    Prepare(meta, doc_in, has_score_bounds, has_freq);
+               IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+    Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
+               IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
 
@@ -60,6 +60,7 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
     }
 
     this->OpenInput(meta, doc_in, has_score_bounds);
+    this->ArmWalk(meta, layout, has_score_bounds);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts) {
@@ -68,6 +69,7 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
     if (_doc >= max) {
       return _doc;
     }
+    this->Start(min);
 
     const auto* const end = std::cend(_docs);
     for (;;) {

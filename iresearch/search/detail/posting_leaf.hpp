@@ -98,9 +98,7 @@ struct LeafScore {
   ScoreFunction score;
 };
 
-template<typename InputType>
 struct LeafCursor {
-  SkipWalk<InputType> walk;
   doc_id_t base = 0;
   doc_id_t upper_bound = doc_limits::eof();
 };
@@ -229,12 +227,32 @@ class PostingLeaf {
   }
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
-    static_assert(Shape.cursor);
     if (meta.docs_count > kBlock) {
-      const auto skip = ToSkipLayout(layout);
-      _cursor.walk.Arm(meta,
-                       {.bounds = bounds, .pos = skip.pos, .offs = skip.offs});
-      _cursor.upper_bound = doc_limits::invalid();
+      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      if constexpr (Shape.cursor) {
+        _cursor.upper_bound = doc_limits::invalid();
+      }
+    }
+  }
+
+  IRS_NO_INLINE void Land(doc_id_t min) {
+    const auto left = _walk.Seek(min, *_in);
+    _left_in_leaf = 0;
+    _left_in_list = left;
+    if (left == 0) [[unlikely]] {
+      _doc = doc_limits::eof();
+      return;
+    }
+    In().Seek(_walk.Landing().doc_ptr);
+    _last = _walk.Landing().doc;
+    if constexpr (Shape.cursor) {
+      _cursor.upper_bound = _walk.UpperBound();
+    }
+  }
+
+  IRS_FORCE_INLINE void Start(doc_id_t min) {
+    if (min > doc_limits::min() && _last < min && _walk.Armed()) [[unlikely]] {
+      Land(min);
     }
   }
 
@@ -440,14 +458,14 @@ class PostingLeaf {
       }
     }
 
-    const auto left = _cursor.walk.Seek(target, *_in);
-    _cursor.upper_bound = _cursor.walk.UpperBound();
+    const auto left = _walk.Seek(target, *_in);
+    _cursor.upper_bound = _walk.UpperBound();
     if (left == 0) [[unlikely]] {
       return false;
     }
     _left_in_list = left;
-    In().Seek(_cursor.walk.Landing().doc_ptr);
-    read(_cursor.walk.Landing().doc);
+    In().Seek(_walk.Landing().doc_ptr);
+    read(_walk.Landing().doc);
     return true;
   }
 
@@ -492,8 +510,8 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.scored || Shape.defer, LeafProvider>
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
-  [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor<InputType>>
-    _cursor;
+  [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
+  SkipWalk<InputType> _walk;
 };
 
 }  // namespace irs::detail

@@ -131,7 +131,8 @@ Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
       const auto& own = detail::FieldOf(terms[i], field);
       const auto& meta = detail::CookieOf(terms[i]);
       SDB_ASSERT(meta.docs_count != 0);
-      leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+      leaf.Prepare(meta, doc, detail::LayoutOf(own),
+                   meta.docs_count != 1 && detail::BoundsOf(own),
                    meta.docs_count != 1 && detail::FreqOf(own));
     };
     return MakeShape<BooleanWindow, utils::Empty, utils::Empty, Optional,

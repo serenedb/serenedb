@@ -26,7 +26,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -35,17 +34,12 @@
 
 namespace irs::hits {
 
-template<typename Table>
 class All : public Root {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-
-  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
-      score_t score = 0) noexcept
+  All(ColumnArgsFetcher& fetcher, doc_id_t count, score_t score = 0) noexcept
     : _end{doc_limits::min() + count},
       _score{ScoreFunction::Constant(score)},
-      _fetcher{fetcher},
-      _table{table} {}
+      _fetcher{fetcher} {}
 
   void Prepare(const SubReader& segment, const detail::ScoreArgs& args) {
     if (detail::AllDocsConstant(args)) {
@@ -55,15 +49,12 @@ class All : public Root {
     _score = detail::AllDocsScorer(segment, args);
   }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    if constexpr (kTable) {
-      _doc = std::min(_table.Live(_doc), _end);
-    }
-    const auto n = std::min<uint32_t>(capacity, _end - _doc);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
+    const auto stop = std::min(max, _end);
+    const auto n = min < stop ? static_cast<uint32_t>(stop - min) : 0;
     for (uint32_t i = 0; i != n; ++i) {
-      out[i] = _doc + i;
+      out[i] = min + i;
     }
     uint32_t offset = 0;
     for (; offset + kScoreBlock <= n; offset += kScoreBlock) {
@@ -75,16 +66,13 @@ class All : public Root {
       _fetcher.Fetch(std::span<const doc_id_t>{out + offset, n - offset});
       _score.Score(scores + offset, static_cast<scores_size_t>(n - offset));
     }
-    _doc += n;
     return n;
   }
 
  private:
-  doc_id_t _doc = doc_limits::min();
   doc_id_t _end;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

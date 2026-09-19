@@ -73,17 +73,14 @@ Root::ptr MakeBoostedPosting(const BooleanQuery& query,
     return {};
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    return MakePrepared(ctx, [&](auto table) -> Root::ptr {
-      auto root = memory::make_managed<
-        Posting<Input, BoostTerm<Input>, utils::Empty, decltype(table)>>(
-        table, std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
+    auto root =
+      memory::make_managed<Posting<Input, BoostTerm<Input>, utils::Empty>>(
+        std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
         std::forward_as_tuple());
-      root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
-                    irs::detail::BoundsOf(own));
-      root->Optional().Prepare(boost_meta, *doc, segment, boost_own,
-                               boost_args);
-      return root;
-    });
+    root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
+                  irs::detail::BoundsOf(own));
+    root->Optional().Prepare(boost_meta, *doc, segment, boost_own, boost_args);
+    return root;
   });
 }
 

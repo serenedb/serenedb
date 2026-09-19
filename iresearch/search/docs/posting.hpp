@@ -24,17 +24,15 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
-template<typename InputType, typename Table>
-class Posting : public Root,
-                public detail::PostingBatch<InputType, Table, false> {
-  using Base = detail::PostingBatch<InputType, Table, false>;
+template<typename InputType>
+class Posting : public Root, public detail::PostingBatch<InputType, false> {
+  using Base = detail::PostingBatch<InputType, false>;
 
   using Base::_last;
   using Base::_left_in_list;
@@ -43,10 +41,6 @@ class Posting : public Root,
   using Base::SkipFreqs;
 
  public:
-  using Base::kTable;
-
-  explicit Posting(Table table) noexcept : _table{table} {}
-
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
@@ -55,28 +49,75 @@ class Posting : public Root,
     this->ArmWalk(meta, layout, has_score_bounds);
   }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    uint32_t emitted = 0;
-    while (_left_in_list != 0 && emitted + kBlock <= capacity) {
-      if constexpr (kTable) {
-        const auto from = _last + doc_limits::min();
-        if (const auto live = _table.Live(from);
-            live != from && !this->Step(live)) {
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
+    uint32_t emitted = Drain(out, min, max);
+    if (_at != _len) {
+      return emitted;
+    }
+    if (!this->Start(min)) {
+      return emitted;
+    }
+    const auto capacity = static_cast<uint32_t>(max - min);
+    while (_left_in_list != 0) {
+      const auto len = std::min(_left_in_list, kBlock);
+      if (emitted + kBlock > capacity) [[unlikely]] {
+        _len = len;
+        _at = 0;
+        ReadDocs(_block.data(), _len);
+        SkipFreqs(_len);
+        emitted += Drain(out + emitted, min, max);
+        if (_at != _len) {
           break;
         }
+        continue;
       }
-      const auto len = std::min(_left_in_list, kBlock);
       auto* const dest = out + emitted;
       ReadDocs(dest, len);
       SkipFreqs(len);
-      emitted += len;
+      if (dest[len - 1] < max) [[likely]] {
+        emitted += len;
+        continue;
+      }
+      auto* stop = dest + len;
+      do {
+        --stop;
+      } while (stop != dest && stop[-1] >= max);
+      _len = len - static_cast<uint32_t>(stop - dest);
+      _at = 0;
+      std::copy_n(stop, _len, _block.data());
+      return emitted + static_cast<uint32_t>(stop - dest);
     }
     return emitted;
   }
 
  private:
-  [[no_unique_address]] detail::Narrowing<Table> _table;
+  IRS_FORCE_INLINE uint32_t Drain(doc_id_t* IRS_RESTRICT out, doc_id_t min,
+                                  doc_id_t max) noexcept {
+    if (_at == _len) {
+      return 0;
+    }
+    const doc_id_t* const begin = _block.data();
+    const auto* first = begin + _at;
+    const auto* last = begin + _len;
+    if (*first < min) [[unlikely]] {
+      do {
+        ++first;
+      } while (first != last && *first < min);
+    }
+    if (first != last && last[-1] >= max) [[unlikely]] {
+      do {
+        --last;
+      } while (last != first && last[-1] >= max);
+    }
+    const auto n = static_cast<uint32_t>(last - first);
+    std::copy_n(first, n, out);
+    _at = static_cast<uint32_t>(last - begin);
+    return n;
+  }
+
+  DocsBuf _block;
+  uint32_t _len = 0;
+  uint32_t _at = 0;
 };
 
 }  // namespace irs::docs

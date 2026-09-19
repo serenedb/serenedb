@@ -33,10 +33,9 @@ class Masked : public Root {
   Masked(Root::ptr&& plan, const DocumentMask& mask) noexcept
     : _plan{std::move(plan)}, _mask{&mask} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     for (;;) {
-      const auto n = _plan->Run(out, capacity);
+      const auto n = _plan->Run(min, max, out);
       if (n == 0) {
         return 0;
       }

@@ -596,11 +596,8 @@ Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
 }  // namespace count
 namespace docs {
 
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return PlanNestedDocs<FilteredWalk, Root::ptr>(query, ctx.table);
-  }
-  return PlanNestedDocs<PlainWalk, Root::ptr>(query, utils::Empty{});
+Root::ptr Make(const ByNestedQuery& query, const Context&) {
+  return PlanNestedDocs<Walk, Root::ptr>(query);
 }
 
 }  // namespace docs
@@ -654,19 +651,9 @@ namespace hits {
 
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
   if (query.ScoresChildren()) {
-    if (ctx.table != nullptr) {
-      return PlanNestedScored<FilteredWalk, Root::ptr>(query, ScoredOf(ctx),
-                                                       ctx.table, ctx.fetcher);
-    }
-    return PlanNestedScored<PlainWalk, Root::ptr>(query, ScoredOf(ctx),
-                                                  utils::Empty{}, ctx.fetcher);
+    return PlanNestedScored<Walk, Root::ptr>(query, ScoredOf(ctx), ctx.fetcher);
   }
-  if (ctx.table != nullptr) {
-    return PlanNestedDocs<FilteredConstantWalk, Root::ptr>(query, ctx.table,
-                                                           query.Constant());
-  }
-  return PlanNestedDocs<PlainConstantWalk, Root::ptr>(query, utils::Empty{},
-                                                      query.Constant());
+  return PlanNestedDocs<ConstantWalk, Root::ptr>(query, query.Constant());
 }
 
 }  // namespace hits

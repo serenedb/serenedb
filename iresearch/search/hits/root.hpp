@@ -31,7 +31,8 @@ namespace irs::hits {
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
-  virtual uint32_t Run(doc_id_t* docs, score_t* scores, uint32_t capacity) = 0;
+  virtual uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* docs,
+                       score_t* scores) = 0;
 };
 
 }  // namespace irs::hits

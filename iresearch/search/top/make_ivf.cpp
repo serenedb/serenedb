@@ -50,7 +50,8 @@ class VectorChain : public Root {
     });
   }
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
     for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
       auto& cluster = _clusters[i];
       for (;;) {

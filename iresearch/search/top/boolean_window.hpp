@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -60,14 +61,14 @@ class BooleanWindow : public Root {
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  void Run(LoserScoreCollector& collector) final {
-    doc_id_t next = doc_limits::min();
-    while (!doc_limits::eof(next)) {
-      if (!_admit.Skip(next)) {
+  void Run(doc_id_t begin, doc_id_t end, LoserScoreCollector& collector) final {
+    doc_id_t next = begin;
+    for (;;) {
+      if (!_admit.Skip(next) || next >= end) {
         break;
       }
       const auto min = next;
-      const auto max = min + irs::detail::kWindowDocs;
+      const auto max = std::min<doc_id_t>(min + irs::detail::kWindowDocs, end);
       if constexpr (kLead) {
         next = _lead.FillOr(min, max, _mask);
         if constexpr (kExcludes) {

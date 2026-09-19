@@ -56,12 +56,12 @@ class BooleanSparse : public Root {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  uint64_t Run() final {
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
     uint64_t total = 0;
     uint32_t n = 0;
-    auto doc = _lead.Next();
+    auto doc = _lead.Seek(min);
 
-    while (!doc_limits::eof(doc)) {
+    while (doc < max) {
       if constexpr (kTable) {
         const auto live = _table.Live(doc);
         if (live != doc) {

@@ -51,12 +51,13 @@ class All : public Root {
       _fetcher{fetcher},
       _admit{table} {}
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
 
-    for (auto doc = doc_limits::min(); doc < _end;) {
-      const auto n = std::min<uint32_t>(kBatch, _end - doc);
+    const auto stop = std::min(max, _end);
+    for (auto doc = min; doc < stop;) {
+      const auto n = std::min<uint32_t>(kBatch, stop - doc);
       for (uint32_t i = 0; i != n; ++i) {
         docs[i] = doc + i;
       }

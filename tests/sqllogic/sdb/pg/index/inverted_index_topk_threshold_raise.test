@@ -50,21 +50,22 @@ SELECT i,
          || repeat('filler ', 1 + (i % 97))
          || CASE WHEN i % 11 = 0 THEN 'epsilon ' ELSE '' END
          || CASE WHEN i % 17 = 0 THEN 'zeta' ELSE 'eta' END
-FROM range(1, 20000) t(i)
+FROM range(1, 200000) t(i)
 
 
 statement ok
 CREATE INDEX tk_whole ON tkbase USING inverted(body tk_tx)
     WITH (refresh_interval = 0, compaction_interval = 0,
-          row_group_size = 2000000000)
+          row_group_size = 1999998976)
 
 
-# 64 rows per row group: ~470 row groups over the two segments, far more than
-# the worker count, which is what puts a raise in the middle of a live buffer.
+# A row group holds one vector, so the two segments carry ~146 of them -- far
+# more than the worker count, which is what puts a raise in the middle of a
+# live buffer.
 statement ok
 CREATE INDEX tk_w ON tkbase USING inverted(body tk_tx)
     WITH (refresh_interval = 0, compaction_interval = 0,
-          row_group_size = 64, optimize_top_k = 'bm25(1.2, 0.75)')
+          row_group_size = 2048, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok
@@ -79,7 +80,7 @@ SELECT i,
        repeat('delta ', 1 + (i % 5))
          || repeat('filler ', 1 + (i % 61))
          || CASE WHEN i % 5 = 0 THEN 'epsilon zeta' ELSE 'eta' END
-FROM range(20000, 30000) t(i)
+FROM range(200000, 300000) t(i)
 
 
 statement ok

@@ -69,6 +69,10 @@ struct Api {
     return nullptr;
   }
 
+  static doc_id_t BitsetSpan(const Context&, doc_id_t docs_count) noexcept {
+    return docs_count;
+  }
+
   static Result MakeNegation(
     std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,

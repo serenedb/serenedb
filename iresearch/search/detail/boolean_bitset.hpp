@@ -175,8 +175,11 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
 
 template<typename Result>
 Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
-                         TableFilter* table) {
+                         TableFilter* table, doc_id_t span) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  if (span < docs_count) {
+    return {};
+  }
   if (groups.must.empty() && groups.must_filters.empty()) {
     if (groups.should.empty() || !groups.must_not.empty() ||
         !groups.must_not_filters.empty() ||

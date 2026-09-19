@@ -57,7 +57,9 @@ using Context = typename Api::Context;
 template<typename Api>
 Result<Api> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                        const Context<Api>& ctx) {
-  return MakeBooleanBitset<Result<Api>>(groups, segment, Api::BitsetTable(ctx));
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  return MakeBooleanBitset<Result<Api>>(groups, segment, Api::BitsetTable(ctx),
+                                        Api::BitsetSpan(ctx, docs_count));
 }
 
 template<typename Api, typename Excludes, typename ExcludesArgs>

@@ -89,7 +89,7 @@ class BooleanWindow : public Root {
       if constexpr (kExcludes) {
         _excludes.Remove(_min, max, words);
       }
-      _emit.Opened(_min, words);
+      _emit.Opened(_min, max, words);
       if (doc_limits::eof(next)) {
         _spent = true;
       } else {

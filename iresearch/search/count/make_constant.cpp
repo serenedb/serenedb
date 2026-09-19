@@ -22,6 +22,8 @@
 #include "iresearch/search/count/constant.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/detail/posting_batch.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/make.hpp"
@@ -44,25 +46,121 @@ Root::ptr MakeTermWalk(const detail::PostingClause& posting,
     });
 }
 
+template<typename InputType>
+class TermRange : public detail::PostingBatch<InputType, false> {
+  using Base = detail::PostingBatch<InputType, false>;
+
+  using Base::_in;
+  using Base::_last;
+  using Base::_left_in_list;
+  using Base::_walk;
+  using Base::In;
+  using Base::kBlock;
+  using Base::ReadDocs;
+  using Base::SkipFreqs;
+
+ public:
+  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+               IndexFeatures layout, bool bounds, bool freq) {
+    _docs_count = meta.docs_count;
+    this->SetFreqLen(freq);
+    this->OpenInput(meta, doc_in, bounds);
+    this->ArmWalk(meta, layout, bounds);
+  }
+
+  uint64_t AtLeast(doc_id_t doc) {
+    if (!_walk.Armed()) {
+      if (_cached == 0) {
+        _cached = _docs_count;
+        _left_in_list = _docs_count;
+        ReadDocs(_block.data(), _cached);
+        SkipFreqs(_cached);
+      }
+      return _docs_count - Below(_cached, doc);
+    }
+    const auto left = _walk.Seek(doc, *_in);
+    if (left == 0) {
+      return 0;
+    }
+    In().Seek(_walk.Landing().doc_ptr);
+    _last = _walk.Landing().doc;
+    _left_in_list = left;
+    const auto len = std::min(left, kBlock);
+    ReadDocs(_block.data(), len);
+    SkipFreqs(len);
+    return left - Below(len, doc);
+  }
+
+ private:
+  uint32_t Below(uint32_t len, doc_id_t doc) const noexcept {
+    uint32_t n = 0;
+    while (n != len && _block[n] < doc) {
+      ++n;
+    }
+    return n;
+  }
+
+  DocsBuf _block;
+  uint32_t _docs_count = 0;
+  uint32_t _cached = 0;
+};
+
 class TermCount : public Root {
  public:
   TermCount(const detail::PostingClause& posting, const Context& ctx) noexcept
     : _posting{posting}, _ctx{ctx} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    if (min == doc_limits::min() && doc_limits::eof(max)) {
-      return _posting.state.cookie.docs_count;
+    const auto count = _posting.state.cookie.docs_count;
+    const bool from_start = min == doc_limits::min();
+    const bool to_end = doc_limits::eof(max);
+    if (from_start && to_end) {
+      return count;
     }
-    if (!_exact) {
-      _exact = MakeTermWalk(_posting, _ctx);
+    if (_ctx.table != nullptr) {
+      if (!_exact) {
+        _exact = MakeTermWalk(_posting, _ctx);
+      }
+      return _exact->Run(min, max);
     }
-    return _exact->Run(min, max);
+    auto& ranks = Source();
+    const auto above = from_start ? count : ranks.AtLeast(min);
+    const auto below = to_end ? 0 : ranks.AtLeast(max);
+    SDB_ASSERT(above >= below);
+    return above - below;
   }
 
  private:
+  struct RankSource {
+    virtual ~RankSource() = default;
+    virtual uint64_t AtLeast(doc_id_t doc) = 0;
+  };
+
+  template<typename InputType>
+  struct RankSourceOf final : RankSource {
+    uint64_t AtLeast(doc_id_t doc) final { return impl.AtLeast(doc); }
+    TermRange<InputType> impl;
+  };
+
+  RankSource& Source() {
+    if (!_ranks) {
+      const auto& own = *_posting.state.reader;
+      const auto& doc = *detail::DocOf(own);
+      _ranks = detail::ResolveInput(
+        doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
+          auto out = std::make_unique<RankSourceOf<Input>>();
+          out->impl.Prepare(_posting.state.cookie, doc, detail::LayoutOf(own),
+                            detail::BoundsOf(own), detail::FreqOf(own));
+          return out;
+        });
+    }
+    return *_ranks;
+  }
+
   detail::PostingClause _posting;
   Context _ctx;
   Root::ptr _exact;
+  std::unique_ptr<RankSource> _ranks;
 };
 
 class AllCount : public Root {

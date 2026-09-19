@@ -78,6 +78,10 @@ struct Api {
     return ctx.table;
   }
 
+  static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
+    return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
+  }
+
   static Result MakeNegation(
     std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,

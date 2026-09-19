@@ -29,6 +29,7 @@ namespace irs::count {
 
 struct Context {
   detail::TableFilter* table = nullptr;
+  doc_id_t span = 0;
 };
 
 struct Root : memory::Managed {

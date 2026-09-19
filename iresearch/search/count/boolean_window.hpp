@@ -91,7 +91,8 @@ class BooleanWindow : public Root {
         _excludes.Remove(min, max, words);
       }
 
-      total += _table.CountAndClear(min, words, detail::kWindowWords);
+      total += _table.CountAndClear(
+        min, words, static_cast<uint32_t>(detail::WindowWords(min, max)));
 
       if (next >= end) {
         return total;

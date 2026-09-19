@@ -1819,7 +1819,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // Below a couple of thousand rows a part costs more than the distances
       // it saves.
       constexpr uint64_t kScanRowsPerPart = 1024;
-      if (rows && *rows >= 2 * kScanRowsPerPart) {
+      // And only where the parts can actually run at the same time. `spare` is
+      // this scan's share of the pool, so below a few cores each the parts do
+      // not run in parallel, they queue -- and the split is then pure
+      // coordination on top of the same work. Measured on wiki-v3-1024-1m with
+      // thirty-two clients on ninety-six threads, where a scan's share is
+      // three: splitting cost 24% on a tenth-selective term filter at k=1000
+      // and 52% on the same predicate from the columnstore.
+      constexpr uint32_t kMinSpareToSplit = 8;
+      if (rows && *rows >= 2 * kScanRowsPerPart && spare >= kMinSpareToSplit) {
         state->topk.parts = static_cast<uint32_t>(std::clamp<uint64_t>(
           std::min<uint64_t>(*rows / kScanRowsPerPart, spare), 1, 32));
       }

@@ -39,6 +39,10 @@
 
 namespace irs::count {
 
+inline doc_id_t FoldSpan(const Context& ctx, doc_id_t docs_count) noexcept {
+  return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
+}
+
 struct Api {
   using Result = Root::ptr;
   using Context = count::Context;
@@ -79,7 +83,7 @@ struct Api {
   }
 
   static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
-    return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
+    return FoldSpan(ctx, docs_count);
   }
 
   static Result MakeNegation(
@@ -118,6 +122,9 @@ Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
                                        const IndexInput& doc,
                                        doc_id_t docs_count,
                                        const Context& ctx) {
+  if (FoldSpan(ctx, docs_count) < docs_count) {
+    return {};
+  }
   return detail::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
                                          ctx.table);
 }

@@ -37,9 +37,10 @@ namespace irs::count {
 struct TermCounts : memory::Managed {
   using ptr = memory::managed_ptr<TermCounts>;
 
-  virtual uint64_t Count(const PostingMeta& term) = 0;
+  virtual uint64_t Count(const PostingMeta& term, doc_id_t min,
+                         doc_id_t max) = 0;
 
-  virtual bool Any(const PostingMeta& term) = 0;
+  virtual bool Any(const PostingMeta& term, doc_id_t min, doc_id_t max) = 0;
 };
 
 TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,

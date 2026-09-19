@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
@@ -40,12 +39,10 @@ namespace {
 class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           ColumnArgsFetcher& fetcher, irs::detail::DeadRuns* table,
-           const irs::detail::ScoreArgs& args)
+           ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
-      _fetcher{fetcher},
-      _table{table} {
+      _fetcher{fetcher} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
@@ -58,25 +55,30 @@ class HnswHits : public Root {
     });
   }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    const auto limit = std::min<uint32_t>(capacity, kScoreBlock);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,
+               score_t* IRS_RESTRICT scores) final {
     uint32_t n = 0;
-    while (_pos != _hits.size() && n != limit) {
-      const auto& hit = _hits[_pos++];
-      if (_table != nullptr && _table->Live(hit.doc) != hit.doc) {
-        continue;
+    for (;;) {
+      scores_size_t m = 0;
+      for (; _pos != _hits.size() && m != kScoreBlock; ++_pos) {
+        const auto& hit = _hits[_pos];
+        if (hit.doc >= max) {
+          break;
+        }
+        if (hit.doc < min) {
+          continue;
+        }
+        docs[n + m] = hit.doc;
+        _block[m] = hit.score;
+        ++m;
       }
-      docs[n] = hit.doc;
-      _block[n] = hit.score;
-      ++n;
+      if (m == 0) {
+        return n;
+      }
+      _fetcher.Fetch(std::span<const doc_id_t>{docs + n, m});
+      _score.Score(scores + n, m);
+      n += m;
     }
-    if (n == 0) {
-      return 0;
-    }
-    _fetcher.Fetch(std::span<const doc_id_t>{docs, n});
-    _score.Score(scores, static_cast<scores_size_t>(n));
-    return n;
   }
 
  private:
@@ -84,7 +86,6 @@ class HnswHits : public Root {
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  irs::detail::DeadRuns* _table;
   score_t _block[kScoreBlock];
   size_t _pos = 0;
 };
@@ -98,7 +99,7 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return memory::make_managed<HnswHits>(query.RunSearch(), query.Segment(),
-                                        ctx.fetcher, ctx.table, args);
+                                        ctx.fetcher, args);
 }
 
 }  // namespace irs::hits

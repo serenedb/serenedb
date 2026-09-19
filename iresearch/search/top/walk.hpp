@@ -41,10 +41,10 @@ class Walk : public Root {
     _score = _node.PrepareScore();
   }
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     scores_size_t batch = 0;
 
-    for (auto doc = _node.Next(); !doc_limits::eof(doc); doc = _node.Next()) {
+    for (auto doc = _node.Seek(min); doc < max; doc = _node.Next()) {
       _docs[batch] = doc;
       _node.FetchScoreArgs(batch);
       if (++batch == kScoreBlock) {
@@ -81,13 +81,13 @@ class ConstantWalk : public Root {
   explicit ConstantWalk(Table table, score_t score, Args&&... args)
     : _node{std::forward<Args>(args)...}, _score{score}, _admit{table} {}
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     std::fill_n(scores, kBatch, _score);
     scores_size_t batch = 0;
 
-    for (auto doc = _node.Next(); !doc_limits::eof(doc); doc = _node.Next()) {
+    for (auto doc = _node.Seek(min); doc < max; doc = _node.Next()) {
       docs[batch] = doc;
       if (++batch == kBatch) {
         _admit.AddDocs(collector, docs, kBatch, scores);

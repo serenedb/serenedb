@@ -57,6 +57,11 @@ class SourceColumns {
 };
 
 class ViewIndexSourceBase : public irs::IndexSource {
+ public:
+  std::span<const duckdb::idx_t> Survivors() const noexcept final {
+    return _survivor_idx;
+  }
+
  protected:
   explicit ViewIndexSourceBase(ViewFastPath fast_path)
     : _fast_path{std::move(fast_path)} {}

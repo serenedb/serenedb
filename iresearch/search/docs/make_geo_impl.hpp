@@ -29,12 +29,9 @@
 namespace irs::docs {
 
 template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
+Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context&) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  if (ctx.table != nullptr) {
-    return detail::MakeGeo<FilteredWalk, Root::ptr>(query, 0, ctx.table);
-  }
-  return detail::MakeGeo<PlainWalk, Root::ptr>(query, 0, utils::Empty{});
+  return detail::MakeGeo<Walk, Root::ptr>(query, 0);
 }
 
 }  // namespace irs::docs

@@ -33,25 +33,12 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-class HitBatcher : public irs::detail::DeadRuns {
+class HitBatcher {
  public:
-  irs::doc_id_t Live(irs::doc_id_t doc) final {
-    SDB_ASSERT(!_filters.Empty());
-    const auto dead = _filters.DeadUntil(doc - irs::doc_limits::min());
-    return dead == 0
-             ? doc
-             : irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead);
-  }
-
-  irs::detail::DeadRuns* Skipper() noexcept {
-    return _filters.Empty() ? nullptr : this;
-  }
-
   HitBatcher(std::span<const ColumnstoreProjection> projections,
              irs::field_id pk_field_id, bool track_scores);
 
@@ -70,6 +57,16 @@ class HitBatcher : public irs::detail::DeadRuns {
                     duckdb::ClientContext* context,
                     ColFilterStateCache* states = nullptr,
                     std::span<const ColFilterSpec> filters = {});
+
+  bool ResumeSegment(uint32_t seg_idx) noexcept {
+    if (_seg_idx != seg_idx || !_ctx || !Empty()) {
+      return false;
+    }
+    _group = 0;
+    _batch = 0;
+    _group_rg_end = 0;
+    return true;
+  }
 
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /
@@ -173,7 +170,9 @@ class HitBatcher : public irs::detail::DeadRuns {
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 
-  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docs;
+  irs::SlackBuf<irs::doc_id_t, STANDARD_VECTOR_SIZE,
+                irs::doc_limits::kDocsSlack>
+    _docs;
   // Score staging IS the output: the emitted batch's chunk References the
   // staged vector (no copy), so batches ping-pong between two cache-backed
   // buffers -- Compact() flips and carries the leftover tail across.

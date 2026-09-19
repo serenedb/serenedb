@@ -20,54 +20,60 @@
 
 #pragma once
 
-#include <bit>
 #include <cstdint>
 
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
-template<typename Table>
 class Emit {
  public:
-  explicit Emit(Table table) noexcept : _table{table} {}
-
-  IRS_FORCE_INLINE void Opened(doc_id_t base, uint64_t* words) noexcept {
+  IRS_FORCE_INLINE void Opened(doc_id_t base, doc_id_t max,
+                               uint64_t* words) noexcept {
     _words = words;
     _base = base;
     _word = 0;
+    _words_end = static_cast<uint32_t>(detail::WindowWords(base, max));
   }
 
-  IRS_FORCE_INLINE bool Skip(doc_id_t& min) const { return _table.Skip(min); }
+  IRS_FORCE_INLINE bool Pending() const noexcept { return _word != _words_end; }
 
-  IRS_FORCE_INLINE bool Drain(doc_id_t* IRS_RESTRICT out, uint32_t capacity,
-                              uint32_t& n) noexcept {
-    [[clang::code_align(64)]] for (; _word != detail::kWindowWords; ++_word) {
+  IRS_FORCE_INLINE void Drain(doc_id_t* IRS_RESTRICT out, uint32_t& n,
+                              doc_id_t end) noexcept {
+    const uint64_t avail = end > _base ? end - _base : 0;
+    const auto limit = static_cast<uint32_t>(
+      std::min<uint64_t>(_words_end, avail / detail::kWindowBits));
+    [[clang::code_align(64)]] for (; _word != limit; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;
       }
-      if (n + detail::kWindowBits > capacity) [[unlikely]] {
-        if (n + static_cast<uint32_t>(std::popcount(word)) > capacity) {
-          return false;
-        }
-      }
       _words[_word] = 0;
-      n = static_cast<uint32_t>(
-        MaterializeWord(_base + _word * detail::kWindowBits, word, out + n) -
-        out);
+      const auto base = _base + _word * detail::kWindowBits;
+      n = static_cast<uint32_t>(MaterializeWord(base, word, out + n) - out);
     }
-    return true;
+    if (_word == _words_end) {
+      return;
+    }
+    const auto tail = avail % detail::kWindowBits;
+    if (tail == 0) {
+      return;
+    }
+    const auto base = _base + _word * detail::kWindowBits;
+    auto word = _words[_word] & ((uint64_t{1} << tail) - 1);
+    if (word != 0) {
+      _words[_word] ^= word;
+      n = static_cast<uint32_t>(MaterializeWord(base, word, out + n) - out);
+    }
   }
 
  private:
   uint64_t* _words = nullptr;
-  uint32_t _word = detail::kWindowWords;
+  uint32_t _word = 0;
+  uint32_t _words_end = 0;
   doc_id_t _base = 0;
-  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

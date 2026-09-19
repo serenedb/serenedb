@@ -47,10 +47,10 @@ class Masked : public Root {
     _score = _node.PrepareScore();
   }
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     uint32_t batch = 0;
 
-    for (auto doc = _node.Next(); !doc_limits::eof(doc); doc = _node.Next()) {
+    for (auto doc = _node.Seek(min); doc < max; doc = _node.Next()) {
       if (_mask->contains(doc)) {
         continue;
       }

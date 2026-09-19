@@ -44,7 +44,7 @@ class Posting : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  using Block = TermBlock<InputType, Table>;
+  using Block = TermBlock<InputType>;
 
   template<typename ExcludesArgs>
   Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)
@@ -62,9 +62,13 @@ class Posting : public Root {
     _block.Prepare(meta, doc_in, segment, field, args, layout, bounds);
   }
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[Block::kFill + doc_limits::kDocsSlack];
     ABSL_CACHELINE_ALIGNED score_t scores[Block::kFill];
+    if (!_block.Start(min)) {
+      _admit.Flush(collector);
+      return;
+    }
     for (;;) {
       if constexpr (kTable) {
         const auto from = _block.Last() + doc_limits::min();
@@ -77,11 +81,32 @@ class Posting : public Root {
       if (len == 0) {
         break;
       }
+      const auto full = len;
+      auto* first = docs;
+      auto* first_score = scores;
+      if (*first < min) [[unlikely]] {
+        uint32_t below = 1;
+        while (below != len && docs[below] < min) {
+          ++below;
+        }
+        first += below;
+        first_score += below;
+        len -= below;
+      }
+      if (len != 0 && first[len - 1] >= max) [[unlikely]] {
+        do {
+          --len;
+        } while (len != 0 && first[len - 1] >= max);
+      }
+      const auto clipped = len;
       if constexpr (kExcludes) {
-        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+        len = irs::detail::ExcludeBlock(_excludes, first, first_score, len);
       }
       if (len != 0) {
-        _admit.AddDocs(collector, docs, len, scores);
+        _admit.AddDocs(collector, first, len, first_score);
+      }
+      if (clipped != full - static_cast<uint32_t>(first - docs)) {
+        break;
       }
     }
     _admit.Flush(collector);

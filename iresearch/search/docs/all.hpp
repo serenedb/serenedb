@@ -22,37 +22,26 @@
 
 #include <algorithm>
 
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
-template<typename Table>
 class All : public Root {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
+  explicit All(doc_id_t count) noexcept : _end{doc_limits::min() + count} {}
 
-  All(Table table, doc_id_t count) noexcept
-    : _end{doc_limits::min() + count}, _table{table} {}
-
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    if constexpr (kTable) {
-      _doc = std::min(_table.Live(_doc), _end);
-    }
-    const auto n = std::min<uint32_t>(capacity, _end - _doc);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
+    const auto stop = std::min(max, _end);
+    const auto n = min < stop ? static_cast<uint32_t>(stop - min) : 0;
     for (uint32_t i = 0; i != n; ++i) {
-      out[i] = _doc + i;
+      out[i] = min + i;
     }
-    _doc += n;
     return n;
   }
 
  private:
-  doc_id_t _doc = doc_limits::min();
   doc_id_t _end;
-  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

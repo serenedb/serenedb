@@ -50,6 +50,7 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 
+#include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
 #include "planning/iceberg_multi_file_list.hpp"
@@ -390,12 +391,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.supports_filters = true;
       return out;
     }
-    if (cat_type == "serenedb") {
-      const auto* sdb_entry =
-        dynamic_cast<const catalog::SereneDBTableEntry*>(&entry);
-      if (!sdb_entry) {
-        return std::nullopt;
-      }
+    if (cat_type == catalog::kSereneDBCatalogType) {
+      const auto* sdb_entry = &entry.Cast<catalog::SereneDBTableEntry>();
       // Views over a serenedb table ride the same rowid-keyed machinery as
       // views over an attached database.
       ViewFastPath out;

@@ -628,31 +628,27 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections: id, bo, pos                │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ TOP_N ────────────┴────────────────────╮
-│ Top: 3                                  │
-│ Order By: sdb_inverted_index_score DESC │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ IRESEARCH_SCAN ───┴────────────────────╮
-│ Index: offsets_test_idx                 │
-│ Lookup: table                           │
-│ Index Filter:                           │
-│ ╭─ Term ──────────────╮                 │
-│ │ Field: body(string) │                 │
-│ │ Value: fox          │                 │
-│ ╰─────────────────────╯                 │
-│ Score: bm25(k1=1.2, b=0.75)             │
-│ Top: 3                                  │
-│ Offsets: body                           │
-│ Projections:                            │
-│ id, sdb_inverted_index_offsets$<slt:ignore>
-│ sdb_inverted_index_score                │
-│ ~1 row                                  │
-╰─────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────╮
+│ Projections: id, bo, pos            │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ─┴──────────────────╮
+│ Index: offsets_test_idx             │
+│ Lookup: table                       │
+│ Index Filter:                       │
+│ ╭─ Term ──────────────╮             │
+│ │ Field: body(string) │             │
+│ │ Value: fox          │             │
+│ ╰─────────────────────╯             │
+│ Score: bm25(k1=1.2, b=0.75)         │
+│ Top: 3                              │
+│ Offsets: body                       │
+│ Projections:                        │
+│ id,                                 │
+│ sdb_inverted_index_offsets$<slt:ignore>
+│ sdb_inverted_index_score            │
+│ ~1 row                              │
+╰─────────────────────────────────────╯
 
 
 # --- Inline OFFSETS per FilterEntry variant (SearchScan path) ---

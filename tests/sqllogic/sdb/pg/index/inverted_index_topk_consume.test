@@ -1,0 +1,194 @@
+# An `ORDER BY <score> DESC LIMIT k` the scan can answer itself is taken into
+# the scan: no TOP_N above it, and the columns the operator would have kept are
+# pushed into the scan's own projection. The score then exists only for the
+# ordering the scan does internally and is never materialised -- which is what
+# the projection list in each plan below shows.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER);
+
+statement ok
+INSERT INTO tk VALUES
+  (1, 'fox', 'a', 10),
+  (2, 'fox fox', 'b', 20),
+  (3, 'fox fox fox', 'c', 30),
+  (4, 'fox fox fox fox', 'd', 40),
+  (5, 'dog', 'e', 50);
+
+statement ok
+CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n)
+    WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) tk;
+
+
+# The ordering key is not selected, so the scan projects the one column asked
+# for and the score never reaches the output.
+
+query
+EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
+        ORDER BY bm25(tk_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tk_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2                      │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+
+query
+SELECT id FROM tk_idx WHERE body @@ 'fox'
+ORDER BY bm25(tk_idx.tableoid) DESC, id LIMIT 2;
+----
+id
+4
+3
+
+
+# Selecting the score keeps it in the projection: it is output here, not just
+# an ordering key.
+
+query
+EXPLAIN SELECT id, bm25(tk_idx.tableoid) AS s FROM tk_idx WHERE body @@ 'fox'
+        ORDER BY s DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: tk_idx                          │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+# An offset the scan takes is reported beside the limit it was folded into.
+
+query
+EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
+        ORDER BY bm25(tk_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tk_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2, offset 1            │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+
+query
+SELECT id FROM tk_idx WHERE body @@ 'fox'
+ORDER BY bm25(tk_idx.tableoid) DESC, id LIMIT 2 OFFSET 1;
+----
+id
+3
+2
+
+
+# Several columns, and in an order that is not the index's: the scan emits them
+# as asked, so nothing above has to reorder.
+
+query
+EXPLAIN SELECT tag, id FROM tk_idx WHERE body @@ 'fox'
+        ORDER BY bm25(tk_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tk_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2                      │
+│ Projections: tag (i),       │
+│              id (l)         │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+
+query
+SELECT tag, id FROM tk_idx WHERE body @@ 'fox'
+ORDER BY bm25(tk_idx.tableoid) DESC, id LIMIT 2;
+----
+tag	id
+d	4
+c	3
+
+
+# Only a score the scan computes is taken this way. Ordering by a stored column
+# keeps the operator -- the scan claims its units in that order and takes the
+# threshold as a dynamic filter, but it is TOP_N that applies the limit.
+
+query
+EXPLAIN SELECT id FROM tk_idx ORDER BY n DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 2                           │
+│ Order By: #1 DESC                │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: tk_idx                    │
+│ Lookup: table                    │
+│ Projections: id (l), n (i)       │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (n > ?) │
+│ ~5 rows                          │
+╰──────────────────────────────────╯
+
+
+query
+SELECT id, n FROM tk_idx ORDER BY n DESC, id LIMIT 2;
+----
+id	n
+5	50
+4	40
+
+
+# Every row of the limit, ordered, with the score selected alongside: the values
+# are the same ones the TOP_N operator would have produced.
+
+query
+SELECT id, tag, round(bm25(tk_idx.tableoid)::NUMERIC, 4) AS s FROM tk_idx
+WHERE body @@ 'fox' ORDER BY s DESC, id;
+----
+id	tag	s
+4	d	0.244
+3	c	0.233
+2	b	0.212
+1	a	0.168

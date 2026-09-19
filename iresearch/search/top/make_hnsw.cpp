@@ -55,7 +55,8 @@ class HnswHits : public Root {
     });
   }
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
     for (size_t i = 0, total = _hits.size(); i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));

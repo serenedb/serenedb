@@ -39,8 +39,10 @@
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/top/root.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <memory>
@@ -213,7 +215,7 @@ size_t CompareWindowByWindow(tests::LeadCursor& reference_iter,
 // The batched emit plan against the same query's lead plan: same documents,
 // same order, whatever capacity the batches are drained at.
 size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
-                       uint32_t capacity) {
+                       uint32_t capacity, irs::doc_id_t docs_count) {
   std::vector<irs::doc_id_t> reference_docs;
   while (!irs::doc_limits::eof(reference_iter.Next())) {
     reference_docs.push_back(reference_iter.Value());
@@ -221,11 +223,10 @@ size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
 
   std::vector<irs::doc_id_t> test_docs;
   std::vector<irs::doc_id_t> buf(capacity + irs::doc_limits::kDocsSlack);
-  for (;;) {
-    const auto n = root.Run(buf.data(), capacity);
-    if (n == 0) {
-      break;
-    }
+  const auto end = irs::doc_limits::min() + docs_count;
+  for (auto min = irs::doc_limits::min(); min < end; min += capacity) {
+    const auto max = std::min<irs::doc_id_t>(min + capacity, end);
+    const auto n = root.Run(min, max, buf.data());
     test_docs.insert(test_docs.end(), buf.begin(), buf.begin() + n);
   }
 
@@ -298,7 +299,9 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
         CompareWindowByWindow(reference_iter, filler, max_doc, window_size);
 
       EXPECT_GT(total, 0u) << "query should have matches";
-      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
+      EXPECT_EQ(total,
+                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()))
+        << "total docs vs count mismatch";
     });
 }
 
@@ -321,10 +324,14 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
 
       const auto capacity = std::max<uint32_t>(
         static_cast<uint32_t>(window_size), irs::doc_limits::kMinCapacity);
-      auto total = CompareEmitDocs(reference_iter, *emit, capacity);
+      auto total =
+        CompareEmitDocs(reference_iter, *emit, capacity,
+                        static_cast<irs::doc_id_t>(segment.docs_count()));
 
       EXPECT_GT(total, 0u) << "query should have matches";
-      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
+      EXPECT_EQ(total,
+                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()))
+        << "total docs vs count mismatch";
     });
 }
 
@@ -675,6 +682,235 @@ constexpr std::string_view kQueries[] = {
 constexpr irs::doc_id_t kWindowSizes[] = {64, 128, 256, 4096};
 constexpr size_t kAdvanceSkips[] = {1, 5, 128};
 constexpr irs::doc_id_t kSeekSkips[] = {10, 100, 1000};
+
+struct ScoredPrepare {
+  irs::Filter::ptr filter;
+  irs::StatsArena stats;
+  std::optional<irs::PreparedCollector> collector;
+  std::vector<irs::QueryBuilder::ptr> queries;
+
+  ScoredPrepare(bench::Executor& executor, std::string_view query,
+                const irs::Scorer& scorer, const irs::DirectoryReader& reader)
+    : filter{executor.ParseFilter(query, true)},
+      stats{duckdb::Allocator::DefaultAllocator()} {
+    SDB_ASSERT(filter);
+    collector.emplace(*filter, scorer, stats, 1);
+    queries.reserve(reader.size());
+    for (const auto& sub : reader) {
+      queries.emplace_back(
+        filter->PrepareSegment(sub, {.collector = collector->Get()}));
+    }
+    collector->Finish();
+  }
+};
+
+std::vector<irs::doc_id_t> WindowBounds(irs::doc_id_t max_doc,
+                                        irs::doc_id_t window) {
+  std::vector<irs::doc_id_t> bounds;
+  for (auto at = irs::doc_limits::min(); at < max_doc; at += window) {
+    bounds.push_back(at);
+  }
+  bounds.push_back(max_doc);
+  return bounds;
+}
+
+void TestCountRangeMatchesWhole(const irs::DirectoryReader& reader,
+                                const std::vector<IteratorFactory>& factories,
+                                std::span<const irs::doc_id_t> window_sizes) {
+  ForEachCombination(reader, factories, window_sizes,
+                     [](const auto& /*reader*/, const auto& segment,
+                        const auto& factory, auto max_doc, auto window) {
+                       auto query = factory.prepare(segment);
+                       ASSERT_NE(nullptr, query);
+                       auto whole_plan = query->PlanCount({});
+                       ASSERT_NE(nullptr, whole_plan);
+                       const auto whole = whole_plan->Run(
+                         irs::doc_limits::min(), irs::doc_limits::eof());
+
+                       auto split_plan = query->PlanCount({});
+                       ASSERT_NE(nullptr, split_plan);
+                       uint64_t parts = 0;
+                       const auto bounds = WindowBounds(max_doc, window);
+                       for (size_t i = 1; i != bounds.size(); ++i) {
+                         parts += split_plan->Run(bounds[i - 1], bounds[i]);
+                       }
+                       EXPECT_EQ(whole, parts);
+                     });
+}
+
+void TestDocsRangeMatchesWhole(const irs::DirectoryReader& reader,
+                               const std::vector<IteratorFactory>& factories,
+                               std::span<const irs::doc_id_t> window_sizes) {
+  ForEachCombination(
+    reader, factories, window_sizes,
+    [](const auto& /*reader*/, const auto& segment, const auto& factory,
+       auto max_doc, auto window) {
+      auto query = factory.prepare(segment);
+      ASSERT_NE(nullptr, query);
+      const auto span = static_cast<size_t>(max_doc - irs::doc_limits::min()) +
+                        irs::doc_limits::kDocsSlack;
+
+      std::vector<irs::doc_id_t> whole(span);
+      auto whole_plan = query->PlanDocs({});
+      ASSERT_NE(nullptr, whole_plan);
+      whole.resize(
+        whole_plan->Run(irs::doc_limits::min(), max_doc, whole.data()));
+
+      std::vector<irs::doc_id_t> parts;
+      std::vector<irs::doc_id_t> buf(static_cast<size_t>(window) +
+                                     irs::doc_limits::kDocsSlack);
+      auto split_plan = query->PlanDocs({});
+      ASSERT_NE(nullptr, split_plan);
+      const auto bounds = WindowBounds(max_doc, window);
+      for (size_t i = 1; i != bounds.size(); ++i) {
+        const auto n = split_plan->Run(bounds[i - 1], bounds[i], buf.data());
+        ASSERT_LE(n, bounds[i] - bounds[i - 1]);
+        for (uint32_t d = 0; d != n; ++d) {
+          EXPECT_GE(buf[d], bounds[i - 1]);
+          EXPECT_LT(buf[d], bounds[i]);
+        }
+        parts.insert(parts.end(), buf.begin(), buf.begin() + n);
+      }
+      EXPECT_EQ(whole, parts);
+    });
+}
+
+void TestHitsRangeMatchesWhole(const irs::DirectoryReader& reader,
+                               const std::vector<IteratorFactory>& factories,
+                               std::span<const irs::doc_id_t> window_sizes,
+                               bench::Executor& executor,
+                               const irs::Scorer& scorer) {
+  for (const auto& factory : factories) {
+    SCOPED_TRACE(testing::Message() << "query=\"" << factory.name << "\"");
+    ScoredPrepare prepared{executor, factory.name, scorer, reader};
+
+    size_t segment_idx = 0;
+    for (const auto& segment : reader) {
+      SCOPED_TRACE(testing::Message() << "segment=" << segment_idx);
+      const auto& query = prepared.queries[segment_idx++];
+      if (!query) {
+        continue;
+      }
+      const auto max_doc = static_cast<irs::doc_id_t>(segment.docs_count() +
+                                                      irs::doc_limits::min());
+      const auto span = static_cast<size_t>(max_doc - irs::doc_limits::min()) +
+                        irs::doc_limits::kScoresSlack;
+
+      irs::ColumnArgsFetcher whole_fetcher;
+      auto whole_plan =
+        query->PlanScored({.scorer = scorer, .fetcher = whole_fetcher});
+      if (!whole_plan) {
+        continue;
+      }
+      std::vector<irs::doc_id_t> whole_docs(span);
+      std::vector<irs::score_t> whole_scores(span);
+      whole_docs.resize(whole_plan->Run(irs::doc_limits::min(), max_doc,
+                                        whole_docs.data(),
+                                        whole_scores.data()));
+      whole_scores.resize(whole_docs.size());
+
+      for (auto window : window_sizes) {
+        SCOPED_TRACE(testing::Message() << "window_size=" << window);
+        irs::ColumnArgsFetcher fetcher;
+        auto split_plan =
+          query->PlanScored({.scorer = scorer, .fetcher = fetcher});
+        ASSERT_NE(nullptr, split_plan);
+        std::vector<irs::doc_id_t> docs;
+        std::vector<irs::score_t> scores;
+        std::vector<irs::doc_id_t> doc_buf(static_cast<size_t>(window) +
+                                           irs::doc_limits::kDocsSlack);
+        std::vector<irs::score_t> score_buf(static_cast<size_t>(window) +
+                                            irs::doc_limits::kScoresSlack);
+        const auto bounds = WindowBounds(max_doc, window);
+        for (size_t i = 1; i != bounds.size(); ++i) {
+          const auto n = split_plan->Run(bounds[i - 1], bounds[i],
+                                         doc_buf.data(), score_buf.data());
+          ASSERT_LE(n, bounds[i] - bounds[i - 1]);
+          for (uint32_t d = 0; d != n; ++d) {
+            EXPECT_GE(doc_buf[d], bounds[i - 1]);
+            EXPECT_LT(doc_buf[d], bounds[i]);
+          }
+          docs.insert(docs.end(), doc_buf.begin(), doc_buf.begin() + n);
+          scores.insert(scores.end(), score_buf.begin(), score_buf.begin() + n);
+        }
+        EXPECT_EQ(whole_docs, docs);
+        ASSERT_EQ(whole_scores.size(), scores.size());
+        for (size_t i = 0; i != scores.size(); ++i) {
+          EXPECT_FLOAT_EQ(whole_scores[i], scores[i])
+            << "score[" << i << "] doc=" << docs[i];
+        }
+      }
+    }
+  }
+}
+
+void TestTopRangeMatchesWhole(const irs::DirectoryReader& reader,
+                              const std::vector<IteratorFactory>& factories,
+                              std::span<const irs::doc_id_t> window_sizes,
+                              bench::Executor& executor,
+                              const irs::Scorer& scorer) {
+  constexpr size_t kTopK = 100;
+  const auto drain = [](std::span<irs::ScoreDoc> hits, size_t accepted) {
+    std::vector<irs::ScoreDoc> out{hits.begin(), hits.begin() + accepted};
+    absl::c_sort(out, [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
+      return a.doc < b.doc;
+    });
+    return out;
+  };
+
+  for (const auto& factory : factories) {
+    SCOPED_TRACE(testing::Message() << "query=\"" << factory.name << "\"");
+    ScoredPrepare prepared{executor, factory.name, scorer, reader};
+
+    size_t segment_idx = 0;
+    for (const auto& segment : reader) {
+      SCOPED_TRACE(testing::Message() << "segment=" << segment_idx);
+      const auto& query = prepared.queries[segment_idx++];
+      if (!query) {
+        continue;
+      }
+      const auto max_doc = static_cast<irs::doc_id_t>(segment.docs_count() +
+                                                      irs::doc_limits::min());
+
+      irs::ColumnArgsFetcher whole_fetcher;
+      auto whole_plan = query->PlanTop({.scorer = scorer,
+                                        .fetcher = whole_fetcher,
+                                        .prune = false,
+                                        .k = kTopK});
+      if (!whole_plan) {
+        continue;
+      }
+      std::vector<irs::ScoreDoc> whole_hits(kTopK);
+      auto whole_threshold = std::numeric_limits<irs::score_t>::lowest();
+      irs::LoserScoreCollector whole_collector{whole_threshold, whole_hits};
+      whole_plan->Run(irs::doc_limits::min(), max_doc, whole_collector);
+      const auto whole_total = whole_collector.TotalMatches();
+      const auto whole = drain(whole_hits, whole_collector.AcceptedCount());
+
+      for (auto window : window_sizes) {
+        SCOPED_TRACE(testing::Message() << "window_size=" << window);
+        std::vector<irs::ScoreDoc> hits(kTopK);
+        auto threshold = std::numeric_limits<irs::score_t>::lowest();
+        irs::LoserScoreCollector collector{threshold, hits};
+        const auto bounds = WindowBounds(max_doc, window);
+        for (size_t i = 1; i != bounds.size(); ++i) {
+          irs::ColumnArgsFetcher fetcher;
+          auto split_plan = query->PlanTop(
+            {.scorer = scorer, .fetcher = fetcher, .prune = false, .k = kTopK});
+          ASSERT_NE(nullptr, split_plan);
+          split_plan->Run(bounds[i - 1], bounds[i], collector);
+        }
+        EXPECT_EQ(whole_total, collector.TotalMatches());
+        const auto split = drain(hits, collector.AcceptedCount());
+        ASSERT_EQ(whole.size(), split.size());
+        for (size_t i = 0; i != split.size(); ++i) {
+          EXPECT_EQ(whole[i].doc, split[i].doc) << "hit=" << i;
+          EXPECT_FLOAT_EQ(whole[i].score, split[i].score) << "hit=" << i;
+        }
+      }
+    }
+  }
+}
 
 std::vector<IteratorFactory> MakeFactories(bench::Executor& executor) {
   std::vector<IteratorFactory> factories;
@@ -1345,4 +1581,30 @@ TEST(LoadTestCommands, WhatIsNotACommand) {
                            "", "bogus", "docs_debug", "_hash"}) {
     EXPECT_EQ(bench::Kind::Unsupported, bench::ParseCommand(name).kind) << name;
   }
+}
+
+TEST_F(LoadTest, CountRangeMatchesWhole) {
+  auto factories = MakeFactories(*gExecutor);
+  TestCountRangeMatchesWhole(gExecutor->GetReader(), factories, kWindowSizes);
+}
+
+TEST_F(LoadTest, DocsRangeMatchesWhole) {
+  auto factories = MakeFactories(*gExecutor);
+  TestDocsRangeMatchesWhole(gExecutor->GetReader(), factories, kWindowSizes);
+}
+
+TEST_F(LoadTest, HitsRangeMatchesWhole) {
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  ASSERT_TRUE(scorer);
+  auto factories = MakeFactories(*gExecutor);
+  TestHitsRangeMatchesWhole(gExecutor->GetReader(), factories, kWindowSizes,
+                            *gExecutor, *scorer);
+}
+
+TEST_F(LoadTest, TopRangeMatchesWhole) {
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  ASSERT_TRUE(scorer);
+  auto factories = MakeFactories(*gExecutor);
+  TestTopRangeMatchesWhole(gExecutor->GetReader(), factories, kWindowSizes,
+                           *gExecutor, *scorer);
 }

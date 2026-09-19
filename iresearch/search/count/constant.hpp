@@ -30,7 +30,7 @@ class Constant : public Root {
  public:
   explicit Constant(uint64_t count) noexcept : _count{count} {}
 
-  uint64_t Run() final { return _count; }
+  uint64_t Run(doc_id_t, doc_id_t) final { return _count; }
 
  private:
   uint64_t _count;

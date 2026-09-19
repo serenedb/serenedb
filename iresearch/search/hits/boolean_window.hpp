@@ -28,7 +28,6 @@
 #include <utility>
 
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -38,7 +37,7 @@
 
 namespace irs::hits {
 
-template<typename Lead, typename Optional, typename Excludes, typename Table>
+template<typename Lead, typename Optional, typename Excludes>
 class BooleanWindow : public Root {
  public:
   static constexpr int kSparseWord = 32;
@@ -52,7 +51,7 @@ class BooleanWindow : public Root {
   static_assert(!kTally || !kExcludes);
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OptionalArgs&& optional, ExcludesArgs&& excludes,
                 score_t constant)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
@@ -60,100 +59,74 @@ class BooleanWindow : public Root {
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _constant{constant},
-      _table{table} {
+      _constant{constant} {
     std::fill_n(_window, irs::detail::kWindowDocs, _constant);
   }
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    SDB_ASSERT(capacity >= BitsRequired<uint64_t>());
+  uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out,
+               score_t* IRS_RESTRICT scores) final {
+    if (_next < begin) {
+      _next = begin;
+    }
     uint32_t n = 0;
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
-      for (; _word != irs::detail::kWindowWords; ++_word) {
-        auto word = _mask[_word];
+      const uint64_t avail = end > min ? end - min : 0;
+      const auto limit = static_cast<uint32_t>(
+        std::min<uint64_t>(_words_end, avail / BitsRequired<uint64_t>()));
+      for (; _word != limit; ++_word) {
+        const auto base = _word * BitsRequired<uint64_t>();
+        const auto word = _mask[_word];
         if (word == 0) {
           continue;
         }
-        if (n + BitsRequired<uint64_t>() > capacity) [[unlikely]] {
-          if (n + static_cast<uint32_t>(std::popcount(word)) > capacity) {
-            return n;
-          }
+        Emit(out, scores, n, window, min, base, word);
+      }
+      if (_word != _words_end) {
+        const auto tail = avail % BitsRequired<uint64_t>();
+        if (tail == 0) {
+          return n;
         }
-        _mask[_word] = 0;
         const auto base = _word * BitsRequired<uint64_t>();
-        if constexpr (kTally) {
-          auto* const counts = _optional.Counts() + base;
-          const auto min_match = _optional.MinMatch();
-          if (std::popcount(word) >= irs::detail::kDenseWord) {
-            const auto answer = irs::detail::TallyAnswer(counts, min_match);
-            std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
-            const auto first = n;
-            n = static_cast<uint32_t>(
-              MaterializeWord(min + static_cast<doc_id_t>(base), answer,
-                              out + n) -
-              out);
-            const auto padded = first + ((n - first + 7) & ~uint32_t{7});
-            for (auto i = first; i != padded; i += 8) {
-              for (uint32_t j = 0; j != 8; ++j) {
-                scores[i + j] = window[out[i + j] - min];
-              }
+        auto word = _mask[_word] & ((uint64_t{1} << tail) - 1);
+        if (word != 0) {
+          _mask[_word] ^= word;
+          auto* const counts = [&] {
+            if constexpr (kTally) {
+              return _optional.Counts() + base;
+            } else {
+              return static_cast<uint32_t*>(nullptr);
             }
-            std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
-            continue;
-          }
+          }();
           while (word != 0) {
             const auto bit = static_cast<uint32_t>(std::countr_zero(word));
             const auto offset = base + bit;
-            if (counts[bit] >= min_match) {
+            bool take = true;
+            if constexpr (kTally) {
+              take = counts[bit] >= _optional.MinMatch();
+              counts[bit] = 0;
+            }
+            if (take) {
               out[n] = min + static_cast<doc_id_t>(offset);
               scores[n] = _window[offset];
               ++n;
             }
-            counts[bit] = 0;
-            _window[offset] = _constant;
-            word = PopBit(word);
-          }
-          continue;
-        }
-        if (std::popcount(word) < kSparseWord) {
-          while (word != 0) {
-            const auto offset =
-              base + static_cast<uint32_t>(std::countr_zero(word));
-            out[n] = min + static_cast<doc_id_t>(offset);
-            scores[n] = _window[offset];
-            if constexpr (kResets) {
+            if constexpr (kTally || kResets) {
               _window[offset] = _constant;
             }
-            ++n;
             word = PopBit(word);
           }
-          continue;
         }
-        const auto first = n;
-        n = static_cast<uint32_t>(
-          MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) -
-          out);
-        const auto padded = first + ((n - first + 7) & ~uint32_t{7});
-        for (auto i = first; i != padded; i += 8) {
-          for (uint32_t j = 0; j != 8; ++j) {
-            scores[i + j] = window[out[i + j] - min];
-          }
-        }
-        if constexpr (kResets) {
-          std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
-        }
+        return n;
       }
       if (_spent) {
         return n;
       }
-      if (!_table.Skip(_next)) {
+      if (_next >= end) {
         return n;
       }
       _min = _next;
@@ -175,10 +148,89 @@ class BooleanWindow : public Root {
       _next = next;
       _spent = doc_limits::eof(next);
       _word = 0;
+      _words_end = static_cast<uint32_t>(irs::detail::WindowWords(_min, max));
     }
   }
 
  private:
+  IRS_FORCE_INLINE void Emit(doc_id_t* IRS_RESTRICT out,
+                             score_t* IRS_RESTRICT scores, uint32_t& n,
+                             const score_t* IRS_RESTRICT window, doc_id_t min,
+                             uint32_t base, uint64_t word) {
+    {
+      {
+        _mask[_word] = 0;
+        if constexpr (kTally) {
+          auto* const counts = _optional.Counts() + base;
+          const auto min_match = _optional.MinMatch();
+          if (std::popcount(word) >= irs::detail::kDenseWord) {
+            const auto answer = irs::detail::TallyAnswer(counts, min_match);
+            std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
+            const auto first = n;
+            n = static_cast<uint32_t>(
+              MaterializeWord(min + static_cast<doc_id_t>(base), answer,
+                              out + n) -
+              out);
+            const auto full = first + ((n - first) & ~uint32_t{7});
+            for (auto i = first; i != full; i += 8) {
+              for (uint32_t j = 0; j != 8; ++j) {
+                scores[i + j] = window[out[i + j] - min];
+              }
+            }
+            for (auto i = full; i != n; ++i) {
+              scores[i] = window[out[i] - min];
+            }
+            std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+            return;
+          }
+          while (word != 0) {
+            const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+            const auto offset = base + bit;
+            if (counts[bit] >= min_match) {
+              out[n] = min + static_cast<doc_id_t>(offset);
+              scores[n] = _window[offset];
+              ++n;
+            }
+            counts[bit] = 0;
+            _window[offset] = _constant;
+            word = PopBit(word);
+          }
+          return;
+        }
+        if (std::popcount(word) < kSparseWord) {
+          while (word != 0) {
+            const auto offset =
+              base + static_cast<uint32_t>(std::countr_zero(word));
+            out[n] = min + static_cast<doc_id_t>(offset);
+            scores[n] = _window[offset];
+            if constexpr (kResets) {
+              _window[offset] = _constant;
+            }
+            ++n;
+            word = PopBit(word);
+          }
+          return;
+        }
+        const auto first = n;
+        n = static_cast<uint32_t>(
+          MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) -
+          out);
+        const auto full = first + ((n - first) & ~uint32_t{7});
+        for (auto i = first; i != full; i += 8) {
+          for (uint32_t j = 0; j != 8; ++j) {
+            scores[i + j] = window[out[i + j] - min];
+          }
+        }
+        for (auto i = full; i != n; ++i) {
+          scores[i] = window[out[i] - min];
+        }
+        if constexpr (kResets) {
+          std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+        }
+      }
+    }
+  }
+
   ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs];
   [[no_unique_address]] Lead _lead;
@@ -186,10 +238,10 @@ class BooleanWindow : public Root {
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
-  uint32_t _word = irs::detail::kWindowWords;
+  uint32_t _word = 0;
+  uint32_t _words_end = 0;
   score_t _constant;
   bool _spent = false;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

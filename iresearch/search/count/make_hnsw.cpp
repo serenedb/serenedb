@@ -22,10 +22,26 @@
 #include "iresearch/search/queries/hnsw_query.hpp"
 
 namespace irs::count {
+namespace {
+
+class HnswCount : public Root {
+ public:
+  explicit HnswCount(uint64_t count) noexcept : _count{count} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
+    return _count;
+  }
+
+ private:
+  uint64_t _count;
+};
+
+}  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
   HnswRefuseFilter(ctx.table);
-  return MakeConstant(query.RunSearch().size());
+  return memory::make_managed<HnswCount>(query.RunSearch().size());
 }
 
 }  // namespace irs::count

@@ -1,5 +1,5 @@
 target_sources(
-    serene_connector
+    sereneserver
     PRIVATE
         iresearch_plan.cpp
         ts_dict_plan.cpp

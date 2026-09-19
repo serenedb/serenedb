@@ -1,0 +1,239 @@
+# A ts_dict scan over a segment with more than one row group splits it into
+# doc-range units: each worker counts every term inside its own range into a
+# shared per-term accumulator, and whoever finishes the segment's last range
+# walks the dictionary once more and emits the summed rows. Compacting 300k
+# rows into one segment makes three row groups of one segment, so
+# `sdb_scan_split = 'always'` exercises that two-pass protocol while `'never'`
+# keeps the single-unit path every small table takes. The two must agree term
+# for term and count for count, with deletions, a pushed-down index filter, a
+# column filter over an INCLUDE'd column, a term-level HAVING filter and the
+# NULL marker row all in play.
+
+hash-threshold 100
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tds_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE tds(id INTEGER PRIMARY KEY, g INTEGER NOT NULL, h INTEGER NOT NULL,
+                 cat VARCHAR, body VARCHAR, uniq VARCHAR)
+
+# `uniq` holds one term per row: every posting list is a single document, which
+# a doc range can only answer by bounds-checking the one document it holds
+# rather than by reading a list.
+statement ok
+INSERT INTO tds
+  SELECT i, i % 1000, i % 7,
+         CASE WHEN i % 17 = 0 THEN NULL ELSE 'c' || (i % 313) END,
+         'w' || (i % 977),
+         'u' || i
+  FROM range(300000) t(i)
+
+statement ok
+CREATE INDEX tds_idx ON tds USING inverted(g, cat tds_kw, body tds_kw,
+                                           uniq tds_kw)
+    INCLUDE (h) WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) tds
+
+statement ok
+VACUUM (COMPACT_TABLE) tds
+
+statement ok
+VACUUM (REFRESH_TABLE) tds
+
+statement ok
+DELETE FROM tds WHERE id % 31 = 0
+
+statement ok
+VACUUM (REFRESH_TABLE) tds
+
+query
+SELECT count(*) AS n FROM tds;
+----
+n
+290322
+
+
+# One segment, so a dictionary row per term and not one per segment.
+query
+SELECT count(*) AS rows FROM (SELECT unnest(ts_dict_agg(cat)) t FROM tds_idx) x;
+----
+rows
+313
+
+
+# One unit per segment: the counts every split unit has to add up to.
+
+statement ok
+SET sdb_scan_split = 'never'
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, min(t) AS mn, max(t) AS mx
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx) x;
+----
+terms	docs	mn	mx
+313	273244	c0	c99
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(body)) t, unnest(ts_dict_count(body)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs
+977	87098
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE h = 3) x;
+----
+terms	docs
+313	39034
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE g >= 500 AND h = 3) x;
+----
+terms	docs
+313	19517
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE cat LIKE 'c1%') x;
+----
+terms	docs
+111	96907
+
+
+query
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx FROM tds_idx;
+----
+cnt	mn	mx
+313	c0	c99
+
+
+query
+SELECT count(DISTINCT body) AS cnt, min(body) AS mn, max(body) AS mx
+FROM tds_idx WHERE g < 300;
+----
+cnt	mn	mx
+977	w0	w99
+
+
+# array_agg(DISTINCT) keeps the NULL marker, whose per-range count is summed
+# the same way a term's is.
+query
+SELECT len(a) AS n, (SELECT count(*) FROM unnest(a) u(v) WHERE v IS NULL) AS nulls
+FROM (SELECT array_agg(DISTINCT cat) a FROM tds_idx) x;
+----
+n	nulls
+314	1
+
+
+# Single-document terms: each one is either inside the claimed range or outside
+# it, so counting them is a bounds check and never a posting read. Filtered, so
+# the counts are document-dependent and the segment does split.
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, max(c) AS widest
+FROM (SELECT unnest(ts_dict_agg(uniq)) t, unnest(ts_dict_count(uniq)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs	widest
+87098	87098	1
+
+
+# Same answers when every row group is a unit of its own.
+
+statement ok
+SET sdb_scan_split = 'always'
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, min(t) AS mn, max(t) AS mx
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx) x;
+----
+terms	docs	mn	mx
+313	273244	c0	c99
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(body)) t, unnest(ts_dict_count(body)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs
+977	87098
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE h = 3) x;
+----
+terms	docs
+313	39034
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE g >= 500 AND h = 3) x;
+----
+terms	docs
+313	19517
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) c
+      FROM tds_idx WHERE cat LIKE 'c1%') x;
+----
+terms	docs
+111	96907
+
+
+query
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx FROM tds_idx;
+----
+cnt	mn	mx
+313	c0	c99
+
+
+query
+SELECT count(DISTINCT body) AS cnt, min(body) AS mn, max(body) AS mx
+FROM tds_idx WHERE g < 300;
+----
+cnt	mn	mx
+977	w0	w99
+
+
+query
+SELECT len(a) AS n, (SELECT count(*) FROM unnest(a) u(v) WHERE v IS NULL) AS nulls
+FROM (SELECT array_agg(DISTINCT cat) a FROM tds_idx) x;
+----
+n	nulls
+314	1
+
+
+query
+SELECT count(*) AS terms, sum(c)::BIGINT AS docs, max(c) AS widest
+FROM (SELECT unnest(ts_dict_agg(uniq)) t, unnest(ts_dict_count(uniq)) c
+      FROM tds_idx WHERE g < 300) x;
+----
+terms	docs	widest
+87098	87098	1

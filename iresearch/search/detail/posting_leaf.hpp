@@ -32,6 +32,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include <memory>
+
 #include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
@@ -235,25 +237,35 @@ class PostingLeaf {
     }
   }
 
+  IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
+
+  IRS_FORCE_INLINE SkipWalk<InputType>& Walk() noexcept { return _walk; }
+
   IRS_NO_INLINE void Land(doc_id_t min) {
-    const auto left = _walk.Seek(min, *_in);
+    auto& walk = Walk();
+    const auto left = walk.Seek(min, *_in);
     _left_in_leaf = 0;
     _left_in_list = left;
     if (left == 0) [[unlikely]] {
       _doc = doc_limits::eof();
       return;
     }
-    In().Seek(_walk.Landing().doc_ptr);
-    _last = _walk.Landing().doc;
+    In().Seek(walk.Landing().doc_ptr);
+    _last = walk.Landing().doc;
     if constexpr (Shape.cursor) {
-      _cursor.upper_bound = _walk.UpperBound();
+      _cursor.upper_bound = walk.UpperBound();
     }
   }
 
-  IRS_FORCE_INLINE void Start(doc_id_t min) {
-    if (min > doc_limits::min() && _last < min && _walk.Armed()) [[unlikely]] {
-      Land(min);
+  IRS_FORCE_INLINE bool Start(doc_id_t min, doc_id_t max) {
+    if (_doc >= max) {
+      return false;
     }
+    if (min > _last + doc_limits::kBlockSize && Armed()) [[unlikely]] {
+      Land(min);
+      return !doc_limits::eof(_doc);
+    }
+    return true;
   }
 
   IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
@@ -442,8 +454,9 @@ class PostingLeaf {
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target, Read&& read) {
     static_assert(Shape.cursor);
     const auto span = _last - _cursor.base;
-    const bool avoid_seek =
-      target - _last <= span || target <= _cursor.upper_bound;
+    const bool avoid_seek = target - _last <= span ||
+                            target <= _cursor.upper_bound ||
+                            target <= doc_limits::min();
 
     if (avoid_seek) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {

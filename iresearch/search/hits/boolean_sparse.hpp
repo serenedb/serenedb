@@ -69,9 +69,38 @@ class BooleanSparse : public Root {
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {
     uint32_t n = 0;
+    for (;;) {
+      while (_held != _batched) {
+        const auto doc = _batch[_held];
+        if (doc >= max) {
+          return n;
+        }
+        const auto score = _batch_scores[_held];
+        ++_held;
+        if (doc < min) [[unlikely]] {
+          continue;
+        }
+        out[n] = doc;
+        scores[n] = score;
+        ++n;
+      }
+      if (_spent) {
+        return n;
+      }
+      Gather(min);
+    }
+  }
+
+ private:
+  IRS_NO_INLINE void Gather(doc_id_t min) {
+    _held = 0;
+    _batched = 0;
+    auto doc = _pos;
+    if (!doc_limits::valid(doc) || doc < min) {
+      doc = _lead.Seek(min);
+    }
     uint32_t batch = 0;
-    auto doc = _lead.Seek(min);
-    while (doc < max) {
+    while (!doc_limits::eof(doc) && batch != kBatch) {
       if constexpr (kProbes) {
         if (const auto probe = _probes.Probe(doc); probe != doc) {
           doc = _lead.Seek(probe);
@@ -90,7 +119,7 @@ class BooleanSparse : public Root {
           continue;
         }
       }
-      out[n] = doc;
+      _batch[batch] = doc;
       _lead.FetchScoreArgs(batch);
       if constexpr (kProbes) {
         _probes.FetchScoreArgs(batch);
@@ -98,20 +127,22 @@ class BooleanSparse : public Root {
       if constexpr (kOptional) {
         _optional.FetchScoreArgs(batch);
       }
-      ++n;
-      if (++batch == kBatch) {
-        ScoreFull(out + n - batch, scores + n - batch);
-        batch = 0;
-      }
+      ++batch;
       doc = _lead.Next();
     }
-    if (batch != 0) {
-      Score(out + n - batch, scores + n - batch, batch);
+    _pos = doc;
+    _spent = doc_limits::eof(doc);
+    if (batch == 0) {
+      return;
     }
-    return n;
+    if (batch == kBatch) {
+      ScoreFull(_batch, _batch_scores);
+    } else {
+      Score(_batch, _batch_scores, batch);
+    }
+    _batched = batch;
   }
 
- private:
   ScoreFunction Compose(irs::detail::Scored score) {
     if constexpr (!kProbes && !kOptional) {
       return _lead.PrepareScore();
@@ -151,6 +182,12 @@ class BooleanSparse : public Root {
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   ScoreFunction _score;
+  ABSL_CACHELINE_ALIGNED doc_id_t _batch[kBatch];
+  ABSL_CACHELINE_ALIGNED score_t _batch_scores[kBatch];
+  uint32_t _batched = 0;
+  uint32_t _held = 0;
+  doc_id_t _pos = doc_limits::invalid();
+  bool _spent = false;
 };
 
 }  // namespace irs::hits

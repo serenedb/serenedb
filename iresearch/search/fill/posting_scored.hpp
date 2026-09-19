@@ -79,10 +79,9 @@ class PostingFillScored : public PostingLeaf<InputType, kWindowScoredShape> {
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT window) {
     SDB_ASSERT(min < max);
-    if (_doc >= max) {
+    if (!this->Start(min, max)) {
       return _doc;
     }
-    this->Start(min);
     const auto* const end = std::cend(_docs);
 
     if (_left_in_leaf != 0) {

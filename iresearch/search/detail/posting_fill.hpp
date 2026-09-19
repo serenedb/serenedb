@@ -108,10 +108,9 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                     Write&& write) {
     SDB_ASSERT(min < max);
 
-    if (_doc >= max) {
+    if (!this->Start(min, max)) {
       return _doc;
     }
-    this->Start(min);
 
     const auto* const end = std::cend(_docs);
     if (_left_in_leaf != 0) {

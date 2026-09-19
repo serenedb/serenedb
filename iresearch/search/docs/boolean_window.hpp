@@ -65,7 +65,10 @@ class BooleanWindow : public Root {
     }
     uint32_t n = 0;
     for (;;) {
-      _emit.Drain(out, n);
+      _emit.Drain(out, n, end);
+      if (_emit.Pending()) {
+        return n;
+      }
       if constexpr (kOptional) {
         if (_optional.Exhausted()) {
           _spent = true;
@@ -75,7 +78,7 @@ class BooleanWindow : public Root {
         return n;
       }
       SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
-      const doc_id_t max = std::min<doc_id_t>(_min + detail::kWindowDocs, end);
+      const doc_id_t max = _min + detail::kWindowDocs;
       auto* const words = _mask.data();
       doc_id_t next;
       if constexpr (kLead) {

@@ -66,10 +66,9 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts) {
     SDB_ASSERT(min < max);
 
-    if (_doc >= max) {
+    if (!this->Start(min, max)) {
       return _doc;
     }
-    this->Start(min);
 
     const auto* const end = std::cend(_docs);
     for (;;) {

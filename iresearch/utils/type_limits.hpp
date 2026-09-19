@@ -41,7 +41,7 @@ constexpr bool valid(uint64_t addr) noexcept { return invalid() != addr; }
 namespace doc_limits {
 
 constexpr doc_id_t eof() noexcept {
-  return std::numeric_limits<doc_id_t>::max();
+  return std::numeric_limits<int32_t>::max();
 }
 constexpr bool eof(doc_id_t id) noexcept { return eof() == id; }
 constexpr doc_id_t invalid() noexcept { return 0; }

@@ -106,10 +106,7 @@ class BooleanSparse : public Root {
         _optional.FetchScoreArgs(batch);
       }
       if (++batch == kBatch) {
-        _fetcher.FetchScoreBlock(
-          std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
-        _score.ScoreBlock(scores);
-        _admit.AddDocs(collector, docs, kBatch, scores);
+        FlushBatch(docs, scores, collector);
         batch = 0;
       }
       doc = _lead.Next();
@@ -120,6 +117,15 @@ class BooleanSparse : public Root {
       _admit.AddDocs(collector, docs, batch, scores);
     }
     _admit.Flush(collector);
+  }
+
+  IRS_NO_INLINE void FlushBatch(const doc_id_t* IRS_RESTRICT docs,
+                                score_t* IRS_RESTRICT scores,
+                                LoserScoreCollector& collector) {
+    _fetcher.FetchScoreBlock(
+      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
+    _score.ScoreBlock(scores);
+    _admit.AddDocs(collector, docs, kBatch, scores);
   }
 
  private:

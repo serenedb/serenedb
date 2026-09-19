@@ -49,10 +49,11 @@ class BooleanBitset : public Root {
     if (lo >= hi) {
       return 0;
     }
-    auto word = words[lo / kBits] & (~uint64_t{0} << (lo % kBits));
+    auto w = static_cast<uint32_t>(lo / kBits);
+    auto word = words[w] & (~uint64_t{0} << (lo % kBits));
     const auto last = static_cast<uint32_t>((hi - 1) / kBits);
     uint32_t n = 0;
-    for (auto w = static_cast<uint32_t>(lo / kBits);; word = words[++w]) {
+    for (;; word = words[++w]) {
       if (w == last) [[unlikely]] {
         if (const auto tail = hi % kBits; tail != 0) {
           word &= (uint64_t{1} << tail) - 1;

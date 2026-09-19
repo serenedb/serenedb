@@ -179,10 +179,8 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
       auto* const out = scores + emitted;
       auto kept = Fill(dest, out, len);
       if (kept != 0 && dest[0] < min) [[unlikely]] {
-        uint32_t below = 1;
-        while (below != kept && dest[below] < min) {
-          ++below;
-        }
+        const auto below = static_cast<uint32_t>(
+          std::lower_bound(dest, dest + kept, min) - dest);
         kept -= below;
         std::copy_n(dest + below, kept, dest);
         std::copy_n(out + below, kept, out);
@@ -191,10 +189,10 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
         emitted += kept;
         continue;
       }
-      auto stop = kept;
-      do {
-        --stop;
-      } while (stop != 0 && dest[stop - 1] >= max);
+      uint32_t stop = 0;
+      while (stop != kept && dest[stop] < max) {
+        ++stop;
+      }
       _len = kept - stop;
       _at = 0;
       std::copy_n(dest + stop, _len, _block.data());
@@ -235,17 +233,25 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
       do {
         ++first;
       } while (first != last && *first < min);
+      if (first == last) [[unlikely]] {
+        _at = _len;
+        return 0;
+      }
+      _at = static_cast<uint32_t>(first - begin);
     }
-    if (first != last && last[-1] >= max) [[unlikely]] {
-      do {
-        --last;
-      } while (last != first && last[-1] >= max);
+    if (*first >= max) [[unlikely]] {
+      return 0;
     }
-    const auto at = static_cast<uint32_t>(first - begin);
+    const auto* const src = _scores.data() + _at;
+    if (last[-1] >= max) [[unlikely]] {
+      const auto n = irs::detail::CopyBelow(first, last, max, docs, src, scores);
+      _at += n;
+      return n;
+    }
     const auto n = static_cast<uint32_t>(last - first);
     std::copy_n(first, n, docs);
-    std::copy_n(_scores.data() + at, n, scores);
-    _at = at + n;
+    std::copy_n(src, n, scores);
+    _at = _len;
     return n;
   }
 

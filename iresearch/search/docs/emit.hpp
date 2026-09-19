@@ -38,17 +38,34 @@ class Emit {
     _words_end = static_cast<uint32_t>(detail::WindowWords(base, max));
   }
 
-  IRS_FORCE_INLINE void Drain(doc_id_t* IRS_RESTRICT out,
-                              uint32_t& n) noexcept {
-    [[clang::code_align(64)]] for (; _word != _words_end; ++_word) {
+  IRS_FORCE_INLINE bool Pending() const noexcept { return _word != _words_end; }
+
+  IRS_FORCE_INLINE void Drain(doc_id_t* IRS_RESTRICT out, uint32_t& n,
+                              doc_id_t end) noexcept {
+    const uint64_t avail = end > _base ? end - _base : 0;
+    const auto limit = static_cast<uint32_t>(
+      std::min<uint64_t>(_words_end, avail / detail::kWindowBits));
+    [[clang::code_align(64)]] for (; _word != limit; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;
       }
       _words[_word] = 0;
-      n = static_cast<uint32_t>(
-        MaterializeWord(_base + _word * detail::kWindowBits, word, out + n) -
-        out);
+      const auto base = _base + _word * detail::kWindowBits;
+      n = static_cast<uint32_t>(MaterializeWord(base, word, out + n) - out);
+    }
+    if (_word == _words_end) {
+      return;
+    }
+    const auto tail = avail % detail::kWindowBits;
+    if (tail == 0) {
+      return;
+    }
+    const auto base = _base + _word * detail::kWindowBits;
+    auto word = _words[_word] & ((uint64_t{1} << tail) - 1);
+    if (word != 0) {
+      _words[_word] ^= word;
+      n = static_cast<uint32_t>(MaterializeWord(base, word, out + n) - out);
     }
   }
 

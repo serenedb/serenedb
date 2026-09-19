@@ -244,7 +244,8 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
     }
     const auto* const src = _scores.data() + _at;
     if (last[-1] >= max) [[unlikely]] {
-      const auto n = irs::detail::CopyBelow(first, last, max, docs, src, scores);
+      const auto n =
+        irs::detail::CopyBelow(first, last, max, docs, src, scores);
       _at += n;
       return n;
     }

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -32,8 +33,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
-#include <memory>
-
 #include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"

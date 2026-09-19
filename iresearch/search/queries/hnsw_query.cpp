@@ -769,9 +769,17 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   // The two-pass scan applies to a quantized index whose codes are long
   // enough for a quarter of one to be fewer cache lines (HnswScanWords).
   const bool prefix = _codebook != nullptr && _d >= 512;
+  // Whether to scan is decided on one thread's work, not on the cores the
+  // split might get. Dividing the scan's side by them assumes cores that are
+  // free, and under concurrent load they are not: every client already has
+  // one. Crediting two of them here chose a split scan over a walk that was
+  // three and a half times cheaper per query, and then ran it on a machine
+  // with nothing spare to run it on. How wide to split, once a scan is the
+  // answer, is still the caller's question and still uses `parallel`.
+  (void)parallel;
   if (_filter_mode != HnswFilterMode::Scan &&
       !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                      parallel, prefix)) {
+                      /*parallel=*/1, prefix)) {
     return std::nullopt;
   }
   return matches;

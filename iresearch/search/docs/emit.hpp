@@ -30,15 +30,17 @@ namespace irs::docs {
 
 class Emit {
  public:
-  IRS_FORCE_INLINE void Opened(doc_id_t base, uint64_t* words) noexcept {
+  IRS_FORCE_INLINE void Opened(doc_id_t base, doc_id_t max,
+                               uint64_t* words) noexcept {
     _words = words;
     _base = base;
     _word = 0;
+    _words_end = static_cast<uint32_t>(detail::WindowWords(base, max));
   }
 
   IRS_FORCE_INLINE void Drain(doc_id_t* IRS_RESTRICT out,
                               uint32_t& n) noexcept {
-    [[clang::code_align(64)]] for (; _word != detail::kWindowWords; ++_word) {
+    [[clang::code_align(64)]] for (; _word != _words_end; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;
@@ -52,7 +54,8 @@ class Emit {
 
  private:
   uint64_t* _words = nullptr;
-  uint32_t _word = detail::kWindowWords;
+  uint32_t _word = 0;
+  uint32_t _words_end = 0;
   doc_id_t _base = 0;
 };
 

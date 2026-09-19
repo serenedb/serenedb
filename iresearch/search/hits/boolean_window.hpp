@@ -75,7 +75,7 @@ class BooleanWindow : public Root {
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
-      for (; _word != irs::detail::kWindowWords; ++_word) {
+      for (; _word != _words_end; ++_word) {
         auto word = _mask[_word];
         if (word == 0) {
           continue;
@@ -175,6 +175,7 @@ class BooleanWindow : public Root {
       _next = next;
       _spent = doc_limits::eof(next);
       _word = 0;
+      _words_end = static_cast<uint32_t>(irs::detail::WindowWords(_min, max));
     }
   }
 
@@ -186,7 +187,8 @@ class BooleanWindow : public Root {
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
-  uint32_t _word = irs::detail::kWindowWords;
+  uint32_t _word = 0;
+  uint32_t _words_end = 0;
   score_t _constant;
   bool _spent = false;
 };

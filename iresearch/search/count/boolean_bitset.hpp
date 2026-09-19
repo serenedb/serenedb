@@ -28,6 +28,7 @@
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/empty.hpp"
 
@@ -46,26 +47,46 @@ class BooleanBitset : public Root {
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     constexpr auto kMin = detail::BitsetStorage::kMin;
     constexpr auto kBits = detail::BitsetStorage::kBits;
-    auto set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-    const uint64_t total = uint64_t{set.WordCount()} * kBits;
-    const uint64_t lo = min - kMin;
-    const uint64_t hi =
-      std::min<uint64_t>(doc_limits::eof(max) ? total : max - kMin, total);
-    if (lo >= hi) {
-      return 0;
+    if constexpr (kTable) {
+      auto set = detail::BuildBitset(_buckets, *_doc, _docs_count);
+      const auto bits = uint64_t{set.WordCount()} * kBits;
+      const auto lo = uint64_t{min} - kMin;
+      const auto hi =
+        std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
+      if (lo >= hi) {
+        return 0;
+      }
+      auto* const words = set.Words();
+      const auto first = static_cast<uint32_t>(lo / kBits);
+      const auto last = static_cast<uint32_t>((hi - 1) / kBits);
+      words[first] &= ~uint64_t{0} << (lo % kBits);
+      if (const auto tail = hi % kBits; tail != 0) {
+        words[last] &= (uint64_t{1} << tail) - 1;
+      }
+      return _table.Count(kMin + first * kBits, words + first,
+                          last + 1 - first);
+    } else {
+      if (!_built) {
+        _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
+        _built = true;
+      }
+      const auto bits = uint64_t{_set.WordCount()} * kBits;
+      const auto lo = uint64_t{min} - kMin;
+      const auto hi =
+        std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
+      if (lo >= hi) {
+        return 0;
+      }
+      return detail::CountBitRange(_set.Words(), lo, hi);
     }
-    auto* const words = set.Words();
-    const auto first = static_cast<uint32_t>(lo / kBits);
-    const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-    words[first] &= ~uint64_t{0} << (lo % kBits);
-    if (const auto tail = hi % kBits; tail != 0) {
-      words[last] &= (uint64_t{1} << tail) - 1;
-    }
-    return _table.Count(kMin + first * kBits, words + first, last + 1 - first);
   }
 
  private:
+  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
+
   detail::BitsetBuckets _buckets;
+  [[no_unique_address]] utils::Need<!kTable, detail::BitsetStorage> _set;
+  [[no_unique_address]] utils::Need<!kTable, bool> _built{};
   const IndexInput* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;

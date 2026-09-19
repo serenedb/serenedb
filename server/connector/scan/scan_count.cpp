@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/make.hpp>
 
@@ -42,7 +43,11 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
     auto* table = BeginVerify(l.col_verify, sub, g, l);
     const auto range = g.RangeOf(unit);
-    auto plan = irs::count::MakeRoot(seg_query, {.table = table});
+    const auto stop = std::min<irs::doc_id_t>(
+      range.end,
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(sub.docs_count()));
+    auto plan = irs::count::MakeRoot(
+      seg_query, {.table = table, .span = stop - range.begin});
     EnsurePlanned(plan != nullptr);
     l.local_count += plan->Run(range.begin, range.end);
     if (FinishUnit(g, l)) {

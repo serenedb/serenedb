@@ -1,0 +1,144 @@
+# A segment under one row group is one unit, so an index of a few small segments
+# hands out fewer units than there are workers and the spare ones find nothing
+# to claim. That is the shape this covers: the claim plan may leave workers idle
+# but it may not lose or repeat a document, so the row set cannot move with the
+# number of workers.
+#
+# `threads` is instance-wide, hence the recovery subtree. Four segments are kept
+# (no COMPACT_TABLE) and they are deliberately uneven -- 90k, 20k, 8k, 2k -- so
+# the units are of unequal size as well as fewer than the workers.
+
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sc_en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+statement ok
+CREATE TABLE sc (id INT PRIMARY KEY, body TEXT, g INT, tag TEXT)
+
+
+statement ok
+CREATE INDEX sc_idx ON sc USING inverted (id, body sc_en) INCLUDE (g, tag)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+# Four refreshes of unequal size seal four segments of unequal size.
+statement ok
+INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
+       i % 997, 't' || (i % 31)
+FROM range(90000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sc
+
+statement ok
+INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
+       i % 997, 't' || (i % 31)
+FROM range(90000, 110000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sc
+
+statement ok
+INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
+       i % 997, 't' || (i % 31)
+FROM range(110000, 118000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sc
+
+statement ok
+INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
+       i % 997, 't' || (i % 31)
+FROM range(118000, 120000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sc
+
+
+# One worker takes every segment whole, so this is the reference row set.
+
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids, sum(g)::BIGINT AS gs,
+       sum(hash(tag))::HUGEINT AS tags
+FROM sc_idx;
+----
+n	ids	gs	tags
+120000	7199940000	59645340	1125555325021297682213777
+
+
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM sc_idx WHERE body @@ 'dog';
+----
+n	ids
+40000	2399940000
+
+
+# A filter on an INCLUDE-only column is verified per document against the
+# columnstore, so a unit carries its own verification state.
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM sc_idx WHERE g < 300;
+----
+n	ids
+36300	2176892850
+
+
+# Four segments against sixteen workers: twelve of them find nothing to claim
+# and go straight to exhausted; not a row may move.
+
+statement ok
+SET threads = 16
+
+
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids, sum(g)::BIGINT AS gs,
+       sum(hash(tag))::HUGEINT AS tags
+FROM sc_idx;
+----
+n	ids	gs	tags
+120000	7199940000	59645340	1125555325021297682213777
+
+
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM sc_idx WHERE body @@ 'dog';
+----
+n	ids
+40000	2399940000
+
+
+query
+SELECT count(*) AS n, sum(id)::BIGINT AS ids
+FROM sc_idx WHERE g < 300;
+----
+n	ids
+36300	2176892850
+
+
+# A projection that needs the lookup source runs over the same units, and the
+# rows it materialises are the same ones.
+
+query
+SELECT count(*) AS n, sum(length(body))::BIGINT AS body_len
+FROM sc_idx WHERE body @@ 'fox';
+----
+n	body_len
+120000	520000
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT count(*) AS n, sum(length(body))::BIGINT AS body_len
+FROM sc_idx WHERE body @@ 'fox';
+----
+n	body_len
+120000	520000

@@ -108,13 +108,18 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
         }
       }
       ReadLeaf(last);
-      auto* const first = std::end(_docs) - _left_in_leaf;
+      auto* first = std::end(_docs) - _left_in_leaf;
       auto* stop = std::end(_docs);
+      if (*first < min) [[unlikely]] {
+        do {
+          ++first;
+        } while (first != stop && *first < min);
+      }
       const bool straddles = _max_in_leaf >= max;
       if (straddles) [[unlikely]] {
-        do {
+        while (stop != first && stop[-1] >= max) {
           --stop;
-        } while (stop != first && stop[-1] >= max);
+        }
       }
       _left_in_leaf = 0;
       if (stop != first) {

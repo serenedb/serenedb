@@ -82,19 +82,30 @@ class Posting : public Root {
         break;
       }
       const auto full = len;
-      if (docs[len - 1] >= max) [[unlikely]] {
+      auto* first = docs;
+      auto* first_score = scores;
+      if (*first < min) [[unlikely]] {
+        uint32_t below = 1;
+        while (below != len && docs[below] < min) {
+          ++below;
+        }
+        first += below;
+        first_score += below;
+        len -= below;
+      }
+      if (len != 0 && first[len - 1] >= max) [[unlikely]] {
         do {
           --len;
-        } while (len != 0 && docs[len - 1] >= max);
+        } while (len != 0 && first[len - 1] >= max);
       }
       const auto clipped = len;
       if constexpr (kExcludes) {
-        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+        len = irs::detail::ExcludeBlock(_excludes, first, first_score, len);
       }
       if (len != 0) {
-        _admit.AddDocs(collector, docs, len, scores);
+        _admit.AddDocs(collector, first, len, first_score);
       }
-      if (clipped != full) {
+      if (clipped != full - static_cast<uint32_t>(first - docs)) {
         break;
       }
     }

@@ -74,18 +74,27 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
       auto* const dest = out + emitted;
       ReadDocs(dest, len);
       SkipFreqs(len);
-      if (dest[len - 1] < max) [[likely]] {
-        emitted += len;
+      auto keep = len;
+      if (dest[0] < min) [[unlikely]] {
+        uint32_t below = 1;
+        while (below != len && dest[below] < min) {
+          ++below;
+        }
+        keep = len - below;
+        std::copy_n(dest + below, keep, dest);
+      }
+      if (keep == 0 || dest[keep - 1] < max) [[likely]] {
+        emitted += keep;
         continue;
       }
-      auto* stop = dest + len;
+      auto stop = keep;
       do {
         --stop;
-      } while (stop != dest && stop[-1] >= max);
-      _len = len - static_cast<uint32_t>(stop - dest);
+      } while (stop != 0 && dest[stop - 1] >= max);
+      _len = keep - stop;
       _at = 0;
-      std::copy_n(stop, _len, _block.data());
-      return emitted + static_cast<uint32_t>(stop - dest);
+      std::copy_n(dest + stop, _len, _block.data());
+      return emitted + stop;
     }
     return emitted;
   }

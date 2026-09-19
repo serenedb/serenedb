@@ -177,24 +177,29 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
       }
       auto* const dest = docs + emitted;
       auto* const out = scores + emitted;
-      const auto kept = Fill(dest, out, len);
-      if (kept == 0) [[unlikely]] {
-        continue;
+      auto kept = Fill(dest, out, len);
+      if (kept != 0 && dest[0] < min) [[unlikely]] {
+        uint32_t below = 1;
+        while (below != kept && dest[below] < min) {
+          ++below;
+        }
+        kept -= below;
+        std::copy_n(dest + below, kept, dest);
+        std::copy_n(out + below, kept, out);
       }
-      if (dest[kept - 1] < max) [[likely]] {
+      if (kept == 0 || dest[kept - 1] < max) [[likely]] {
         emitted += kept;
         continue;
       }
-      auto* stop = dest + kept;
+      auto stop = kept;
       do {
         --stop;
-      } while (stop != dest && stop[-1] >= max);
-      const auto keep = static_cast<uint32_t>(stop - dest);
-      _len = kept - keep;
+      } while (stop != 0 && dest[stop - 1] >= max);
+      _len = kept - stop;
       _at = 0;
-      std::copy_n(stop, _len, _block.data());
-      std::copy_n(out + keep, _len, _scores.data());
-      return emitted + keep;
+      std::copy_n(dest + stop, _len, _block.data());
+      std::copy_n(out + stop, _len, _scores.data());
+      return emitted + stop;
     }
     return emitted;
   }

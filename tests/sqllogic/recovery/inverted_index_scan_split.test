@@ -6,8 +6,8 @@
 # because `threads` is instance-wide.
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY sp_en
-  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+CREATE TEXT SEARCH DICTIONARY sp_en AS split_text_csv(' ')
+  WITH (frequency, position)
 
 
 statement ok

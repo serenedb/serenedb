@@ -181,7 +181,7 @@ size_t CountMatches(const irs::DirectoryReader& reader,
     if (!plan) {
       continue;
     }
-    count += plan->Run();
+    count += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
   }
   return count;
 }

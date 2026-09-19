@@ -7,8 +7,8 @@
 hash-threshold 100
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY tk_d(
-    template = 'delimiter', delimiter = ' ', frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
+  WITH (frequency, position);
 
 statement ok
 CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER);

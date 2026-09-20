@@ -138,16 +138,64 @@ class RawVectorReader {
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
-      const size_t run = ConsecutiveRunLength(docs, i);
-      const auto* base = Read(docs[i], run);
-      for (size_t k = 0; k < run; ++k) {
-        out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+      size_t run = ConsecutiveRunLength(docs, i);
+      while (run != 0) {
+        size_t got = 0;
+        const auto* base = ReadSome(docs[i], run, got);
+        SDB_ASSERT(got != 0 && got <= run);
+        for (size_t k = 0; k < got; ++k) {
+          out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+        }
+        i += got;
+        run -= got;
       }
-      i += run;
     }
   }
 
  private:
+  // The rows of a run that one stable window can serve, and how many that was.
+  //
+  // A data block holds a few thousand floats, so a run of rows is spread over
+  // several of them: asking for the whole run at once fails the in-place read
+  // every time and falls back to copying the lot through the columnstore. On a
+  // brute-force scan that copy was 17% of the server's CPU and doubled the
+  // memory traffic -- the vectors were read once into a buffer and once again
+  // to score. Stopping at the window edge keeps the pointer.
+  const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    const auto* child = _column->Child();
+    SDB_ASSERT(child != nullptr);
+    const uint64_t elem =
+      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
+    _win = child->Locate(elem, _win);
+    const auto& window = _win;
+    const auto& meta = child->DataBlocks()[window.block];
+    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
+        elem >= window.begin && elem < window.end) {
+      // Whole rows only: a block boundary that falls inside a row leaves none,
+      // and that row goes the slow way so the next one can start clean.
+      const auto fit = static_cast<size_t>((window.end - elem) / _d);
+      if (fit != 0) {
+        got = std::min(count, fit);
+        const size_t bytes = got * _d * sizeof(float);
+        const uint64_t offset =
+          meta.file_offset + (elem - window.begin) * sizeof(float);
+        if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+          return reinterpret_cast<const byte_type*>(p);
+        }
+        _buf.resize(bytes);
+        _read_ctx.Read(offset,
+                       reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
+                       bytes);
+        return _buf.data();
+      }
+      got = 1;
+      return reinterpret_cast<const byte_type*>(_vreader.ReadDocBatch(first, 1));
+    }
+    got = count;
+    return reinterpret_cast<const byte_type*>(
+      _vreader.ReadDocBatch(first, count));
+  }
+
   const byte_type* Read(doc_id_t first, size_t count) {
     const auto* child = _column->Child();
     SDB_ASSERT(child != nullptr);

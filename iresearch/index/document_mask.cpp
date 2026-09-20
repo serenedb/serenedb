@@ -85,44 +85,30 @@ roaring::Roaring DocumentMask::Compress() const {
   return out;
 }
 
-void DocumentMaskBuilder::Add(std::span<const doc_id_t> docs) {
+void DocumentMask::Add(std::span<const doc_id_t> docs) {
   SDB_ASSERT(std::ranges::all_of(docs, doc_limits::valid));
   for (const auto doc : docs) {
-    roaring::api::bitset_set(&_mask._bits, doc - DocumentMask::kBase);
+    roaring::api::bitset_set(&_bits, doc - kBase);
   }
 }
 
-void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
+void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
   SDB_ASSERT(doc_limits::valid(first));
   SDB_ASSERT(first <= last);
   for (auto doc = first; doc != last; ++doc) {
-    roaring::api::bitset_set(&_mask._bits, doc - DocumentMask::kBase);
+    roaring::api::bitset_set(&_bits, doc - kBase);
   }
 }
 
-void DocumentMaskBuilder::Truncate(doc_id_t first) noexcept {
+void DocumentMask::Truncate(doc_id_t first) noexcept {
   SDB_ASSERT(doc_limits::valid(first));
-  auto& bits = _mask._bits;
-  const size_t at = first - DocumentMask::kBase;
+  const size_t at = first - kBase;
   const size_t word = at / 64;
-  if (word >= bits.arraysize) {
+  if (word >= _bits.arraysize) {
     return;
   }
-  bits.array[word] &= (uint64_t{1} << (at % 64)) - 1;
-  std::fill(bits.array + word + 1, bits.array + bits.arraysize, 0);
-}
-
-void DocumentMaskBuilder::Merge(const DocumentMask& other) {
-  roaring::api::bitset_inplace_union(&_mask._bits, &other._bits);
-}
-
-void DocumentMaskBuilder::Clear() noexcept {
-  roaring::api::bitset_clear(&_mask._bits);
-}
-
-DocumentMask DocumentMaskBuilder::Build() && {
-  roaring::api::bitset_trim(&_mask._bits);
-  return std::move(_mask);
+  _bits.array[word] &= (uint64_t{1} << (at % 64)) - 1;
+  std::fill(_bits.array + word + 1, _bits.array + _bits.arraysize, 0);
 }
 
 }  // namespace irs

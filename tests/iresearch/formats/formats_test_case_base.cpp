@@ -960,9 +960,10 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.byte_size = 666;
     meta.version = 100;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMaskBuilder docs_mask;
+      irs::DocumentMask docs_mask;
       docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
-      return std::move(docs_mask).Build();
+      docs_mask.Trim();
+      return docs_mask;
     }());
     meta.files.emplace_back("file1");
     meta.files.emplace_back("index_file2");
@@ -1005,9 +1006,10 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.version = 100;
     meta.uncommitted_begin = 400;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMaskBuilder docs_mask;
+      irs::DocumentMask docs_mask;
       docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
-      return std::move(docs_mask).Build();
+      docs_mask.Trim();
+      return docs_mask;
     }());
     ASSERT_EQ(56, irs::RemovalCount(meta));
     meta.files.emplace_back("file1");

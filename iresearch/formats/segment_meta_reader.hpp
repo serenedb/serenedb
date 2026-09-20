@@ -59,7 +59,7 @@ inline std::pair<std::shared_ptr<DocumentMask>, uint64_t> ReadDocumentMask(
     return {};
   }
 
-  DocumentMaskBuilder builder;
+  DocumentMask builder;
   uint64_t bytes = 0;
 
   for (uint32_t i = 0; i < files; ++i) {
@@ -77,7 +77,8 @@ inline std::pair<std::shared_ptr<DocumentMask>, uint64_t> ReadDocumentMask(
     builder.Merge(DocumentMask::Read(blob.data(), blob.size()));
   }
 
-  auto docs_mask = std::make_shared<DocumentMask>(std::move(builder).Build());
+  builder.Trim();
+  auto docs_mask = std::make_shared<DocumentMask>(std::move(builder));
 
   if (docs_mask->Count() != count) [[unlikely]] {
     throw IndexError{absl::StrCat("Corrupted document mask, expected ", count,

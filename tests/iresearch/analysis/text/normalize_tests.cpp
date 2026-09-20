@@ -222,7 +222,6 @@ TEST(norm_stringzilla_test, classify_nfkc_and_strip_safe_conformance) {
 }
 
 TEST(norm_stringzilla_test, simd_backends_match_serial) {
-  const bool has_avx512 = irs::analysis::sz::HasAvx512();
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);
   ASSERT_FALSE(cases.empty());
@@ -246,11 +245,14 @@ TEST(norm_stringzilla_test, simd_backends_match_serial) {
             EXPECT_TRUE(false) << name << " diverges, line: " << c.line;
           }
         };
+        check_backend(irs::analysis::sz::Norm, "native");
+#ifdef __x86_64__
         check_backend(sz_utf8_norm_haswell, "haswell");
-        if (has_avx512) {
+        if (irs::analysis::sz::HasAvx512()) {
           check_backend(sz_utf8_norm_skylake, "skylake");
           check_backend(sz_utf8_norm_icelake, "icelake");
         }
+#endif
       }
     }
     if (failures > 20) {

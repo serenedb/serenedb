@@ -33,8 +33,6 @@
 
 namespace irs {
 
-class DocumentMaskBuilder;
-
 class DocumentMask final {
  public:
   class Iterator final {
@@ -120,45 +118,30 @@ class DocumentMask final {
     return roaring::api::bitset_size_in_bytes(&_bits);
   }
 
- private:
-  friend class DocumentMaskBuilder;
-
-  static constexpr doc_id_t kBase = doc_limits::min();
-
-  void Assign(const roaring::api::bitset_t& other);
-
-  roaring::api::bitset_t _bits{};
-};
-
-class DocumentMaskBuilder final {
- public:
-  DocumentMaskBuilder() = default;
-  explicit DocumentMaskBuilder(const DocumentMask& mask) : _mask{mask} {}
-
-  const DocumentMask& View() const noexcept { return _mask; }
-
-  bool Contains(doc_id_t doc) const noexcept { return _mask.Contains(doc); }
-  size_t Count() const noexcept { return _mask.Count(); }
-  bool Empty() const noexcept { return _mask.Empty(); }
-  size_t ByteSize() const noexcept { return _mask.ByteSize(); }
-
   bool Add(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
-    const bool added = !_mask.Contains(doc);
-    roaring::api::bitset_set(&_mask._bits, doc - DocumentMask::kBase);
+    const bool added = !Contains(doc);
+    roaring::api::bitset_set(&_bits, doc - kBase);
     return added;
   }
 
   void Add(std::span<const doc_id_t> docs);
   void AddRange(doc_id_t first, doc_id_t last);
   void Truncate(doc_id_t first) noexcept;
-  void Merge(const DocumentMask& other);
-  void Clear() noexcept;
-  DocumentMask Build() &&;
+  void Merge(const DocumentMask& other) {
+    roaring::api::bitset_inplace_union(&_bits, &other._bits);
+  }
+
+  void Clear() noexcept { roaring::api::bitset_clear(&_bits); }
+  void Trim() noexcept { roaring::api::bitset_trim(&_bits); }
 
  private:
-  DocumentMask _mask;
+  static constexpr doc_id_t kBase = doc_limits::min();
+
+  void Assign(const roaring::api::bitset_t& other);
+
+  roaring::api::bitset_t _bits{};
 };
 
 }  // namespace irs

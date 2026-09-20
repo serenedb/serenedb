@@ -127,9 +127,10 @@ const std::vector<doc_id_t>& Candidates(int64_t stride) {
 class RoaringMask {
  public:
   explicit RoaringMask(std::span<const doc_id_t> deleted) {
-    irs::DocumentMaskBuilder builder;
+    irs::DocumentMask builder;
     builder.Add(deleted);
-    _mask = std::move(builder).Build();
+    builder.Trim();
+    _mask = std::move(builder);
   }
 
   irs::probe::DocsMask Probes() const noexcept {
@@ -508,17 +509,19 @@ void BmMergeRoaring(benchmark::State& state) {
   std::vector<irs::DocumentMask> links;
   links.reserve(kChainLinks);
   for (const auto& part : parts) {
-    irs::DocumentMaskBuilder builder;
+    irs::DocumentMask builder;
     builder.Add(part);
-    links.emplace_back(std::move(builder).Build());
+    builder.Trim();
+    links.emplace_back(std::move(builder));
   }
 
   for (auto _ : state) {
-    irs::DocumentMaskBuilder builder;
+    irs::DocumentMask builder;
     for (const auto& link : links) {
       builder.Merge(link);
     }
-    const auto mask = std::move(builder).Build();
+    builder.Trim();
+    const auto mask = std::move(builder);
     benchmark::DoNotOptimize(mask.Count());
   }
 }
@@ -854,9 +857,10 @@ BENCHMARK(BmScanTailAsBound);
 
 void BmScanTailAsBits(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMaskBuilder builder;
+    irs::DocumentMask builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    return std::move(builder).Build();
+    builder.Trim();
+    return builder;
   }();
 
   for (auto _ : state) {
@@ -874,9 +878,10 @@ BENCHMARK(BmScanTailAsBits);
 
 void BmScanTailAsBitsIterator(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMaskBuilder builder;
+    irs::DocumentMask builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    return std::move(builder).Build();
+    builder.Trim();
+    return builder;
   }();
 
   for (auto _ : state) {

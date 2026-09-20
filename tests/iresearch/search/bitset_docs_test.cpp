@@ -746,9 +746,10 @@ TEST(lazy_bitset_test, drops_a_masked_tail) {
   const std::vector<irs::doc_id_t> docs{3, 64, 4999, kTail, 5001, 9000};
 
   const auto removals = [] {
-    irs::DocumentMaskBuilder mask;
+    irs::DocumentMask mask;
     mask.Add(64);
-    return std::move(mask).Build();
+    mask.Trim();
+    return mask;
   }();
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
@@ -791,11 +792,12 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
 namespace {
 
 irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
-  irs::DocumentMaskBuilder mask;
+  irs::DocumentMask mask;
   for (auto doc : docs) {
     mask.Add(doc);
   }
-  return std::move(mask).Build();
+  mask.Trim();
+  return mask;
 }
 
 irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,

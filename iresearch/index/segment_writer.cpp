@@ -113,8 +113,7 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-void SegmentWriter::flush(IndexSegment& segment,
-                          DocumentMaskBuilder& docs_mask) {
+void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask) {
   auto& meta = segment.meta;
 
   FlushState state{

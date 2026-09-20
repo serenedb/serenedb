@@ -21,12 +21,12 @@ set(iresearch-tests_sources
     ./analysis/union_tokenizer_tests.cpp
     ./analysis/text_tokenizer_tests.cpp
     ./analysis/text/case_tests.cpp
-    #    ./analysis/text/normalize_tests.cpp
+    ./analysis/text/normalize_tests.cpp
     ./analysis/text/stem_cache_tests.cpp
     ./analysis/text/string_table_tests.cpp
     ./analysis/resources_tests.cpp
     ./analysis/shared_object_cache_tests.cpp
-    #    ./analysis/text/sentence_tests.cpp
+    ./analysis/text/sentence_tests.cpp
     ./analysis/text/words_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
     ./analysis/geo_tokenizer_tests.cpp

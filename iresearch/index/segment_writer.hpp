@@ -122,7 +122,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   DocContexts& docs_context() noexcept { return _docs_context; }
 
-  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
+  void flush(IndexSegment& segment, DocumentMask& docs_mask);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
@@ -219,7 +219,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   DocContexts _docs_context;
-  DocumentMaskBuilder _docs_mask;
+  DocumentMask _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;

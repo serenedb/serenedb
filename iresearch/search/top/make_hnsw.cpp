@@ -93,7 +93,11 @@ class HnswHits : public Root {
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
   auto hits = query.RunSearch(ctx.table, ctx.part, ctx.parts);
   if (hits.empty()) {
-    return {};
+    // Nothing matched -- a part of a split scan whose doc range holds no row
+    // the predicate admits, or a search that found none. That is an answer,
+    // not a missing plan, and null here would be read as the latter and
+    // fail the query.
+    return MakeEmpty();
   }
   // A table that folded into the search has been applied; one that did not
   // (a predicate on the score) narrows the hits.

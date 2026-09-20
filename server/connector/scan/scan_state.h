@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
 #include <atomic>
@@ -85,6 +86,11 @@ struct ScanUnit {
   bool whole = true;
 };
 
+struct ScanOrderKey {
+  uint32_t id = 0;
+  duckdb::Value value;
+};
+
 struct SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
@@ -108,6 +114,10 @@ struct SegmentWork {
   bool live = false;
   std::atomic_uint64_t rgs{0};
   std::atomic_uint32_t done_rgs{0};
+  std::vector<ScanUnit> ordered_units;
+  std::vector<duckdb::Value> ordered_keys;
+  uint32_t ordered_next = 0;
+  bool ordered_built = false;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
 };
@@ -228,11 +238,12 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   uint32_t live_segments = 0;
   std::atomic_uint32_t next_segment{0};
   std::atomic_uint32_t next_steal{0};
-  std::vector<ScanUnit> ordered_units;
-  std::atomic_uint32_t next_ordered_unit{0};
+  bool ordered = false;
+  absl::Mutex ordered_mutex;
+  std::vector<ScanOrderKey> ordered_heap;
   std::atomic_uint32_t done_segments{0};
 
-  bool Ordered() const noexcept { return !ordered_units.empty(); }
+  bool Ordered() const noexcept { return ordered; }
 
   struct TsDictCounts {
     std::unique_ptr<std::atomic_uint64_t[]> slots;

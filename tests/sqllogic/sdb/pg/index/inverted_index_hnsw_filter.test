@@ -177,3 +177,58 @@ SELECT count(*) FROM hnsw_f_idx
 ----
 count
 5
+
+
+# An attribute that runs in blocks.
+#
+# A language, a tenant, a day: the admitted rows sit together in doc order
+# rather than spread over the segment, which is the shape a scan split by doc
+# range handles worst -- one part is handed every matching row and the rest
+# none. This table is well under the size at which a scan splits, so it covers
+# the answer, not the split; wiki-v3-1024 in vectorbench is where the split
+# itself is exercised.
+statement ok
+CREATE TABLE hnsw_blocks (pk INTEGER PRIMARY KEY, emb FLOAT[8], zone VARCHAR);
+
+statement ok
+CREATE INDEX hnsw_blocks_idx ON hnsw_blocks
+  USING inverted(pk, zone, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hnsw_blocks SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i < 8000 THEN 'front' ELSE 'back' END FROM range(40000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_blocks;
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'front'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+99
+
+
+# The mirror case: the admitted block sits at the end, so it is the early
+# parts that come back empty.
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'back'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+8000
+8001
+8002
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+statement ok
+DROP TABLE hnsw_blocks;

@@ -21,9 +21,11 @@
 #include "iresearch/search/queries/hnsw_query.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <numeric>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -512,6 +514,55 @@ void HnswScanPrefix(std::span<const uint32_t> rows, Dist& dist, uint32_t ef,
   }
 }
 
+// The doc range holding one part's share of a folded set's rows.
+//
+// Splitting by doc id assumes the predicate is spread evenly over the segment.
+// An attribute that runs in blocks -- a language, a tenant, a day -- breaks
+// that: one part is handed every matching row and the rest none, so the split
+// costs coordination and buys no parallelism, and the query still waits on the
+// one worker doing all the work. The set is folded before the parts run, so
+// the boundaries can be read off it instead.
+inline std::pair<doc_id_t, doc_id_t> HnswPartRange(
+  std::span<const uint64_t> words, uint32_t part, uint32_t parts,
+  doc_id_t docs_count) {
+  constexpr auto kBits = detail::LazyBitset::kBits;
+  constexpr auto kMin = detail::LazyBitset::kMin;
+  const auto end = static_cast<doc_id_t>(kMin + docs_count);
+  uint64_t total = 0;
+  for (const auto w : words) {
+    total += static_cast<uint64_t>(std::popcount(w));
+  }
+  if (total == 0) {
+    return {end, end};
+  }
+  // The first word past the `want`-th set bit. Consecutive parts ask for
+  // consecutive `want`s, so they share a boundary exactly and together cover
+  // every word.
+  const auto boundary = [&](uint64_t want) -> size_t {
+    if (want == 0) {
+      return 0;
+    }
+    uint64_t seen = 0;
+    for (size_t i = 0; i < words.size(); ++i) {
+      seen += static_cast<uint64_t>(std::popcount(words[i]));
+      if (seen >= want) {
+        return i + 1;
+      }
+    }
+    return words.size();
+  };
+  const auto lo = boundary(total * part / parts);
+  const auto hi =
+    part + 1 == parts ? words.size() : boundary(total * (part + 1) / parts);
+  const auto doc = [&](size_t word) {
+    // Clamped before the narrowing: a segment whose last word sits past the
+    // doc id range would otherwise wrap into a doc near the start.
+    const auto at = uint64_t{kMin} + uint64_t{word} * kBits;
+    return static_cast<doc_id_t>(std::min<uint64_t>(end, at));
+  };
+  return {doc(lo), doc(hi)};
+}
+
 // Top-`ef` over the docs a folded set names within [first, last): the same
 // scan, reading bits that are already there rather than filling them.
 template<typename Dist>
@@ -617,8 +668,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   const auto last =
     doc_limits::min() + std::min<doc_id_t>(docs_count, per * (part + 1));
   if (parts > 1) {
-    HnswScanWords(FoldOnce(table, docs_count), graph, dist, _ef, scratch, first,
-                  last);
+    const auto words = FoldOnce(table, docs_count);
+    const auto [begin, stop] = HnswPartRange(words, part, parts, docs_count);
+    HnswScanWords(words, graph, dist, _ef, scratch, begin, stop);
     return;
   }
   // Which plan answers this decides how the set is built, so the count comes first and costs

@@ -42,15 +42,7 @@ class BitsetStorage {
     return doc - (doc - kMin) % kWindowDocs;
   }
 
-  struct NoInit {};
-
   BitsetStorage() = default;
-
-  BitsetStorage(doc_id_t docs_count, NoInit)
-    : _end{kMin + docs_count},
-      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
-      _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique_for_overwrite<uint64_t[]>(_alloc + 1)} {}
 
   explicit BitsetStorage(doc_id_t docs_count)
     : _end{kMin + docs_count},

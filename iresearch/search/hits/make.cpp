@@ -28,6 +28,7 @@
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
@@ -141,6 +142,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
+  const detail::FoldReachScope reach{ctx.span};
   auto plan = query.PlanScored(ctx);
   const auto* const docs_mask = query.Segment().docs_mask();
   if (docs_mask == nullptr || !plan) [[likely]] {

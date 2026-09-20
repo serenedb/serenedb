@@ -29,6 +29,7 @@
 
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
@@ -245,7 +246,7 @@ inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
 
 inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
                      doc_id_t docs_count) noexcept {
-  if (!faster) {
+  if (!faster || !FoldReachesSegment(docs_count)) {
     return false;
   }
   if constexpr (kFoldOnlyWhenSmaller) {

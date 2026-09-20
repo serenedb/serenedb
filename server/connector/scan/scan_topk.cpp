@@ -79,7 +79,8 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   }
   auto& collector = *l.collector;
   collector.SetSegment(unit.seg);
-  if (l.root_seg != unit.seg) {
+  const auto range = g.RangeOf(unit);
+  if (l.root_seg != unit.seg || range.begin < l.root_end) {
     const auto& seg = (*g.reader)[unit.seg];
     l.score_fetcher.Clear();
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
@@ -92,14 +93,17 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
        .fetcher = l.score_fetcher,
        .table = table,
        .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
-       .k = static_cast<uint32_t>(l.hit_slice.size())});
+       .k = static_cast<uint32_t>(l.hit_slice.size()),
+       .span = unit.whole || unit.rg_begin == 0
+                 ? irs::doc_id_t{0}
+                 : static_cast<irs::doc_id_t>(g.rg_size)});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;
   }
-  const auto range = g.RangeOf(unit);
   irs::utils::downCast<irs::top::Root>(l.root.get())
     ->Run(range.begin, range.end, collector);
+  l.root_end = range.end;
 }
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {

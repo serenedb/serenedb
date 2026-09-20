@@ -20,34 +20,29 @@
 
 #pragma once
 
-#include <cstdint>
-#include <utility>
+#include "iresearch/utils/type_limits.hpp"
 
-#include "iresearch/search/count/root.hpp"
-#include "iresearch/utils/assert.hpp"
+namespace irs::detail {
 
-namespace irs::count {
+inline thread_local doc_id_t gFoldReach = 0;
 
-class Subtract : public Root {
+class FoldReachScope {
  public:
-  Subtract(Root::ptr total, Root::ptr excluded, bool partial) noexcept
-    : _total{std::move(total)},
-      _excluded{std::move(excluded)},
-      _partial{partial} {}
-
-  uint64_t Run(doc_id_t min, doc_id_t max) final {
-    const auto total = _total->Run(min, max);
-    const auto excluded = _excluded->Run(min, max);
-    SDB_ASSERT(_partial || excluded <= total);
-    return total - excluded;
+  explicit FoldReachScope(doc_id_t reach) noexcept : _saved{gFoldReach} {
+    gFoldReach = reach;
   }
 
-  uint64_t Finish() final { return _total->Finish() - _excluded->Finish(); }
+  FoldReachScope(const FoldReachScope&) = delete;
+  FoldReachScope& operator=(const FoldReachScope&) = delete;
+
+  ~FoldReachScope() { gFoldReach = _saved; }
 
  private:
-  Root::ptr _total;
-  Root::ptr _excluded;
-  bool _partial;
+  doc_id_t _saved;
 };
 
-}  // namespace irs::count
+inline bool FoldReachesSegment(doc_id_t docs_count) noexcept {
+  return gFoldReach == 0 || gFoldReach >= docs_count;
+}
+
+}  // namespace irs::detail

@@ -112,6 +112,7 @@ struct TsDictLocalState : public ScanLocalState {
   const FieldState* _emit_fields = nullptr;
   uint32_t _seg_idx = 0;
   uint32_t _bound_seg = std::numeric_limits<uint32_t>::max();
+  irs::doc_id_t _bound_end = 0;
   bool _segment_live = false;
   uint32_t _term_ordinal = 0;
   bool _from_counts = false;
@@ -419,7 +420,7 @@ ScanGlobalState::TsDictCounts* TsDictLocalState::CountsFor(
 void TsDictLocalState::StartUnit(ScanGlobalState& g) {
   _g = &g;
   _range = g.RangeOf(unit);
-  const bool resume = _bound_seg == unit.seg;
+  const bool resume = _bound_seg == unit.seg && _range.begin >= _bound_end;
   _seg_idx = unit.seg;
   emitting = false;
   if (resume) {
@@ -428,6 +429,7 @@ void TsDictLocalState::StartUnit(ScanGlobalState& g) {
     StartSegment((*g.reader)[unit.seg], unit.seg, g);
     _bound_seg = unit.seg;
   }
+  _bound_end = _range.end;
   _emit_fields = _next_field;
   counting = !unit.whole && count_mode != CountMode::Meta &&
              _emit_fields != nullptr && _seg_idx < g.ts_dict_counts.size() &&

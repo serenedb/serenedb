@@ -75,7 +75,8 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
                "a scan that emits a score has a scorer to compute it with");
     l.score_fetcher.Clear();
     auto root = irs::hits::MakeRoot(
-      seg_query, {.scorer = *g.scorer_obj, .fetcher = l.score_fetcher});
+      seg_query,
+      {.scorer = *g.scorer_obj, .fetcher = l.score_fetcher, .span = span});
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   } else {

@@ -30,12 +30,15 @@ namespace irs::count {
 struct Context {
   detail::TableFilter* table = nullptr;
   doc_id_t span = 0;
+  bool partial = false;
 };
 
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint64_t Run(doc_id_t min, doc_id_t max) = 0;
+
+  virtual uint64_t Finish() { return 0; }
 };
 
 }  // namespace irs::count

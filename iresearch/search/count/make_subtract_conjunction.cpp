@@ -47,7 +47,7 @@ Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
   return memory::make_managed<Subtract>(
     MakeSum(MakeTermCount(terms.front(), ctx),
             MakeTermCount(terms.back(), ctx)),
-    std::move(disjunction));
+    std::move(disjunction), ctx.partial);
 }
 
 }  // namespace irs::count

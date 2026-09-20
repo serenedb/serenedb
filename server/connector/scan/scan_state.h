@@ -94,9 +94,19 @@ struct SegmentWork {
   static constexpr uint8_t kPreparing = 1;
   static constexpr uint8_t kReady = 2;
 
+  static constexpr uint64_t Pack(uint32_t front, uint32_t back) noexcept {
+    return (uint64_t{back} << 32) | front;
+  }
+  static constexpr uint32_t Front(uint64_t packed) noexcept {
+    return static_cast<uint32_t>(packed);
+  }
+  static constexpr uint32_t Back(uint64_t packed) noexcept {
+    return static_cast<uint32_t>(packed >> 32);
+  }
+
   uint32_t rg_count = 0;
   bool live = false;
-  std::atomic_uint32_t next_rg{0};
+  std::atomic_uint64_t rgs{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
@@ -289,6 +299,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
+  bool owner = false;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
@@ -315,6 +326,7 @@ struct CountLocalState : public ScanLocalState {
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
+  irs::doc_id_t root_end = 0;
 };
 
 struct ColScanLocalState : public ScanLocalState {
@@ -346,6 +358,7 @@ struct TopKLocalState : public ScanLocalState, FetchLocalState {
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
+  irs::doc_id_t root_end = 0;
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;

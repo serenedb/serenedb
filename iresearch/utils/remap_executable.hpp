@@ -20,34 +20,17 @@
 
 #pragma once
 
-#include <cstdint>
-#include <utility>
+#include <cstddef>
+#include <string>
 
-#include "iresearch/search/count/root.hpp"
-#include "iresearch/utils/assert.hpp"
+namespace irs {
 
-namespace irs::count {
-
-class Subtract : public Root {
- public:
-  Subtract(Root::ptr total, Root::ptr excluded, bool partial) noexcept
-    : _total{std::move(total)},
-      _excluded{std::move(excluded)},
-      _partial{partial} {}
-
-  uint64_t Run(doc_id_t min, doc_id_t max) final {
-    const auto total = _total->Run(min, max);
-    const auto excluded = _excluded->Run(min, max);
-    SDB_ASSERT(_partial || excluded <= total);
-    return total - excluded;
-  }
-
-  uint64_t Finish() final { return _total->Finish() - _excluded->Finish(); }
-
- private:
-  Root::ptr _total;
-  Root::ptr _excluded;
-  bool _partial;
+struct ExecutableRemap {
+  size_t remapped = 0;
+  size_t populated = 0;
+  std::string skipped;
 };
 
-}  // namespace irs::count
+ExecutableRemap RemapExecutable();
+
+}  // namespace irs

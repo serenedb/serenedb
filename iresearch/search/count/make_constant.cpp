@@ -111,17 +111,41 @@ class TermCount : public Root {
     : _posting{posting}, _ctx{ctx} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    const auto count = _posting.state.cookie.docs_count;
-    const bool from_start = min == doc_limits::min();
-    const bool to_end = doc_limits::eof(max);
-    if (from_start && to_end) {
-      return count;
-    }
     if (_ctx.table != nullptr) {
       if (!_exact) {
         _exact = MakeTermWalk(_posting, _ctx);
       }
       return _exact->Run(min, max);
+    }
+    if (!_ctx.partial) {
+      return Count(min, max);
+    }
+    if (_pending_end == min) {
+      _pending_end = max;
+      return 0;
+    }
+    const auto flushed = Finish();
+    _pending_begin = min;
+    _pending_end = max;
+    return flushed;
+  }
+
+  uint64_t Finish() final {
+    if (_pending_begin == _pending_end) {
+      return 0;
+    }
+    const auto count = Count(_pending_begin, _pending_end);
+    _pending_begin = _pending_end = doc_limits::invalid();
+    return count;
+  }
+
+ private:
+  uint64_t Count(doc_id_t min, doc_id_t max) {
+    const auto count = _posting.state.cookie.docs_count;
+    const bool from_start = min == doc_limits::min();
+    const bool to_end = doc_limits::eof(max);
+    if (from_start && to_end) {
+      return count;
     }
     const auto above = from_start ? count : Rank(min);
     const auto below = to_end ? 0 : Rank(max);
@@ -129,7 +153,6 @@ class TermCount : public Root {
     return above - below;
   }
 
- private:
   uint64_t Rank(doc_id_t doc) {
     if (doc != _rank_doc) {
       _rank_doc = doc;
@@ -170,6 +193,8 @@ class TermCount : public Root {
   std::unique_ptr<RankSource> _ranks;
   doc_id_t _rank_doc = doc_limits::invalid();
   uint64_t _rank = 0;
+  doc_id_t _pending_begin = doc_limits::invalid();
+  doc_id_t _pending_end = doc_limits::invalid();
 };
 
 class AllCount : public Root {
@@ -194,6 +219,8 @@ class Sum : public Root {
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     return _lhs->Run(min, max) + _rhs->Run(min, max);
   }
+
+  uint64_t Finish() final { return _lhs->Finish() + _rhs->Finish(); }
 
  private:
   Root::ptr _lhs;

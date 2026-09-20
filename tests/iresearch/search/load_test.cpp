@@ -881,7 +881,8 @@ void TestTopRangeMatchesWhole(const irs::DirectoryReader& reader,
         continue;
       }
       std::vector<irs::ScoreDoc> whole_hits(kTopK);
-      auto whole_threshold = std::numeric_limits<irs::score_t>::lowest();
+      std::atomic<irs::score_t> whole_threshold{
+        std::numeric_limits<irs::score_t>::lowest()};
       irs::LoserScoreCollector whole_collector{whole_threshold, whole_hits};
       whole_plan->Run(irs::doc_limits::min(), max_doc, whole_collector);
       const auto whole_total = whole_collector.TotalMatches();
@@ -890,7 +891,8 @@ void TestTopRangeMatchesWhole(const irs::DirectoryReader& reader,
       for (auto window : window_sizes) {
         SCOPED_TRACE(testing::Message() << "window_size=" << window);
         std::vector<irs::ScoreDoc> hits(kTopK);
-        auto threshold = std::numeric_limits<irs::score_t>::lowest();
+        std::atomic<irs::score_t> threshold{
+          std::numeric_limits<irs::score_t>::lowest()};
         irs::LoserScoreCollector collector{threshold, hits};
         const auto bounds = WindowBounds(max_doc, window);
         for (size_t i = 1; i != bounds.size(); ++i) {

@@ -58,16 +58,8 @@ class HitBatcher {
                     ColFilterStateCache* states = nullptr,
                     std::span<const ColFilterSpec> filters = {});
 
-  bool ResumeSegment(uint32_t seg_idx) noexcept {
-    if (_seg_idx != seg_idx || !_ctx || Ready()) {
-      return false;
-    }
-    if (Empty()) {
-      _group = 0;
-      _batch = 0;
-    }
-    _group_rg_end = 0;
-    return true;
+  bool Bound(uint32_t seg_idx) const noexcept {
+    return _bound && _seg_idx == seg_idx;
   }
 
   duckdb::idx_t OpenWindow(uint64_t row);
@@ -208,6 +200,7 @@ class HitBatcher {
   Pending _ready = Pending::None;
   bool _compact = false;
   bool _compact_dense = false;
+  bool _bound = false;
 };
 
 }  // namespace irs

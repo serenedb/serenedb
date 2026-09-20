@@ -69,8 +69,8 @@ struct Api {
     return nullptr;
   }
 
-  static doc_id_t BitsetSpan(const Context&, doc_id_t docs_count) noexcept {
-    return docs_count;
+  static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
+    return FoldSpan(ctx, docs_count);
   }
 
   static Result MakeNegation(

@@ -67,6 +67,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   SDB_ASSERT(filters.empty() || states != nullptr,
              "bound filters need the worker's state cache");
   _seg_idx = seg_idx;
+  _bound = true;
   _len = 0;
   _group = 0;
   _batch = 0;

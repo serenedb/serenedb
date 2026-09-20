@@ -578,21 +578,24 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_order",
       {
         LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its units in: 'size' is "
-        "smallest segment first; 'order' is best-first by the ORDER BY "
-        "column's row-group statistics when the query has a scan order (and "
-        "'size' otherwise); 'auto' (default) is 'order' under a scan order "
-        "and 'size' otherwise.",
+        "The order an inverted-index scan claims its units in: "
+        "'smallest_first' and 'largest_first' order segments by live "
+        "document count; 'order' is best-first by the ORDER BY column's "
+        "row-group statistics when the query has a scan order (and "
+        "'smallest_first' otherwise); 'auto' (default) is 'order' under a "
+        "scan order and 'smallest_first' otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
           if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "size") &&
+              !absl::EqualsIgnoreCase(mode, "smallest_first") &&
+              !absl::EqualsIgnoreCase(mode, "largest_first") &&
               !absl::EqualsIgnoreCase(mode, "order")) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
               ERR_MSG("invalid value for parameter \"sdb_scan_order\": \"",
-                      mode, "\" (auto, size or order)"));
+                      mode,
+                      "\" (auto, smallest_first, largest_first or order)"));
           }
         },
       },

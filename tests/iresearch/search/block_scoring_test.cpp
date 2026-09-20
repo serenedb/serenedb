@@ -424,7 +424,8 @@ TEST(LoserScoreCollectorPredicate, FiltersAndPreservesThreshold) {
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> hits(kTopK);
-  irs::score_t threshold = std::numeric_limits<irs::score_t>::lowest();
+  std::atomic<irs::score_t> threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector(threshold, std::span{hits});
 
   for (irs::doc_id_t doc = 1; doc <= 20; ++doc) {
@@ -455,7 +456,8 @@ TEST(LoserScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> hits(kTopK);
-  irs::score_t threshold = std::numeric_limits<irs::score_t>::lowest();
+  std::atomic<irs::score_t> threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector(threshold, std::span{hits});
 
   // A batch of survivors spanning more than kScoreBlock (32) docs in a single

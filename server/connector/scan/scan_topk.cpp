@@ -74,41 +74,32 @@ void RerankHits(ScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
 
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
-  const auto& seg = (*g.reader)[unit.seg];
-  l.Classify(g, unit.seg);
-  if (l.seg_cls.segment_dead) {
-    return;
-  }
   if (!l.collector) {
-    l.collector.emplace(l.local_threshold, l.hit_slice);
+    l.collector.emplace(g.topk.global_kth_score, l.hit_slice);
   }
   auto& collector = *l.collector;
-  l.score_fetcher.Clear();
   collector.SetSegment(unit.seg);
-  collector.RaiseScoreThreshold(
-    g.topk.global_kth_score.load(std::memory_order_relaxed));
-
-  const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
-  auto* table = BeginVerify(l.col_verify, seg, g, l);
-
-  SDB_ENSURE(g.scorer_obj != nullptr,
-             "a scan that ranks by score has a scorer to rank with");
-  auto plan = irs::top::MakeRoot(
-    seg_query,
-    {.scorer = *g.scorer_obj,
-     .fetcher = l.score_fetcher,
-     .table = table,
-     .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
-     .k = static_cast<uint32_t>(l.hit_slice.size())});
-  EnsurePlanned(plan != nullptr);
-  const auto range = g.RangeOf(unit);
-  plan->Run(range.begin, range.end, collector);
-
-  const irs::score_t kth = l.local_threshold;
-  auto cur = g.topk.global_kth_score.load(std::memory_order_relaxed);
-  while (kth > cur && !g.topk.global_kth_score.compare_exchange_weak(
-                        cur, kth, std::memory_order_relaxed)) {
+  if (l.root_seg != unit.seg) {
+    const auto& seg = (*g.reader)[unit.seg];
+    l.score_fetcher.Clear();
+    const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+    auto* table = BeginVerify(l.col_verify, seg, g, l);
+    SDB_ENSURE(g.scorer_obj != nullptr,
+               "a scan that ranks by score has a scorer to rank with");
+    auto plan = irs::top::MakeRoot(
+      seg_query,
+      {.scorer = *g.scorer_obj,
+       .fetcher = l.score_fetcher,
+       .table = table,
+       .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
+       .k = static_cast<uint32_t>(l.hit_slice.size())});
+    EnsurePlanned(plan != nullptr);
+    l.root = std::move(plan);
+    l.root_seg = unit.seg;
   }
+  const auto range = g.RangeOf(unit);
+  irs::utils::downCast<irs::top::Root>(l.root.get())
+    ->Run(range.begin, range.end, collector);
 }
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
@@ -198,6 +189,7 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     tmp.Reset();
     return;
   }
+  SDB_ASSERT(appended + count <= capacity);
   CopyFetched(g, tmp, into, count, appended);
   if (g.needs_lookup) {
     SDB_ASSERT(l.pk_column != nullptr);
@@ -237,7 +229,7 @@ void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
   auto& batcher = *l.hit_batcher;
   const std::span<const irs::ScoreDoc> hits{t.answer.data() + fu.first,
                                             fu.count};
-  if (!batcher.ResumeSegment(fu.seg)) {
+  if (!batcher.Bound(fu.seg)) {
     batcher.BeginSegment(fu.seg, (*g.reader)[fu.seg].GetColReader(),
                          g.client_context);
   }
@@ -408,10 +400,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
   }
   if (!l.published) {
     uint32_t finished = 0;
-    while (!l.units_exhausted) {
-      if (!ClaimUnit(g, l)) {
-        break;
-      }
+    while (NextLiveUnit(g, l)) {
       CollectUnit(g, l);
       finished += static_cast<uint32_t>(FinishUnit(g, l));
     }
@@ -420,10 +409,14 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     if (finished != 0) {
       FinishSegments(g, finished);
     }
+    t.published.fetch_add(1, std::memory_order_acq_rel);
   }
   if (!t.merge_barrier.Released()) {
-    if (g.done_segments.load(std::memory_order_acquire) == g.live_segments &&
-        !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
+    const bool collected =
+      g.done_segments.load(std::memory_order_acquire) == g.live_segments &&
+      t.published.load(std::memory_order_acquire) ==
+        g.worker_count.load(std::memory_order_acquire);
+    if (collected && !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
       Merge(g);
       t.merge_barrier.Release(input);
     } else {

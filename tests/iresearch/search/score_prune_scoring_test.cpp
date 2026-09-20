@@ -128,7 +128,8 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   irs::ColFilterStateCache filter_states;
   auto& score_state = filter_states.State(ctx, score_filter);
 
-  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::lowest();
+  std::atomic<irs::score_t> score_threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{score_threshold, hits};
   irs::ColumnArgsFetcher fetcher;
 

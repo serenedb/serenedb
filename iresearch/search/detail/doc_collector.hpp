@@ -60,7 +60,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   }
   collector_tree.Finish();
 
-  score_t score_threshold = std::numeric_limits<score_t>::lowest();
+  std::atomic<score_t> score_threshold{std::numeric_limits<score_t>::lowest()};
   LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;

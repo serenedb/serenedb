@@ -47,36 +47,37 @@ class BooleanBitset : public Root {
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     constexpr auto kMin = detail::BitsetStorage::kMin;
     constexpr auto kBits = detail::BitsetStorage::kBits;
+    if (!_built) {
+      _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
+      _built = true;
+    }
+    const auto bits = uint64_t{_set.WordCount()} * kBits;
+    const auto lo = uint64_t{min} - kMin;
+    const auto hi =
+      std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
+    if (lo >= hi) {
+      return 0;
+    }
     if constexpr (kTable) {
-      auto set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-      const auto bits = uint64_t{set.WordCount()} * kBits;
-      const auto lo = uint64_t{min} - kMin;
-      const auto hi =
-        std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
-      if (lo >= hi) {
-        return 0;
-      }
-      auto* const words = set.Words();
+      auto* const words = _set.Words();
       const auto first = static_cast<uint32_t>(lo / kBits);
       const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-      words[first] &= ~uint64_t{0} << (lo % kBits);
-      if (const auto tail = hi % kBits; tail != 0) {
-        words[last] &= (uint64_t{1} << tail) - 1;
+      const auto head = ~uint64_t{0} << (lo % kBits);
+      const auto tail = hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1
+                                        : ~uint64_t{0};
+      if (first == last) {
+        uint64_t edge = words[first] & head & tail;
+        return _table.Count(kMin + first * kBits, &edge, 1);
       }
-      return _table.Count(kMin + first * kBits, words + first,
-                          last + 1 - first);
+      uint64_t edge = words[first] & head;
+      auto total = _table.Count(kMin + first * kBits, &edge, 1);
+      if (last - first > 1) {
+        total += _table.Count(kMin + (first + 1) * kBits, words + first + 1,
+                              last - first - 1);
+      }
+      edge = words[last] & tail;
+      return total + _table.Count(kMin + last * kBits, &edge, 1);
     } else {
-      if (!_built) {
-        _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-        _built = true;
-      }
-      const auto bits = uint64_t{_set.WordCount()} * kBits;
-      const auto lo = uint64_t{min} - kMin;
-      const auto hi =
-        std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
-      if (lo >= hi) {
-        return 0;
-      }
       return detail::CountBitRange(_set.Words(), lo, hi);
     }
   }
@@ -85,8 +86,8 @@ class BooleanBitset : public Root {
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
 
   detail::BitsetBuckets _buckets;
-  [[no_unique_address]] utils::Need<!kTable, detail::BitsetStorage> _set;
-  [[no_unique_address]] utils::Need<!kTable, bool> _built{};
+  detail::BitsetStorage _set;
+  bool _built = false;
   const IndexInput* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;

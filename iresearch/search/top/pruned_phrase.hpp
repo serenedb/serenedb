@@ -61,7 +61,7 @@ class PrunedPhrase : public Root {
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    for (auto doc = _slots.Next(min - 1); doc < max; doc = _slots.Next(doc)) {
+    for (auto doc = _slots.Seek(min); doc < max; doc = _slots.Next(doc)) {
       _freq = _slots.FreqBound();
       _fetcher.Fetch(doc);
       auto score = _score.Score();

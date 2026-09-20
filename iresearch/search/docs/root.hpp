@@ -25,7 +25,9 @@
 
 namespace irs::docs {
 
-struct Context {};
+struct Context {
+  doc_id_t span = 0;
+};
 
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;

@@ -98,8 +98,9 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
       GetIndexedRelationId(),
       [&] { return relation->GetSearchData()->GetDirectoryReader(); });
     data->relation.kind = connector::ScanEntryKind::SearchTableIndex;
-    data->relation.row_group_size = relation->SearchOptions().row_group_size;
-    data->score.prune = relation->SearchOptions().topk_scorer;
+    auto options = relation->SearchOptions();
+    data->relation.row_group_size = options.row_group_size;
+    data->score.prune = std::move(options.topk_scorer);
     data->lookup.label = "search";
     data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);

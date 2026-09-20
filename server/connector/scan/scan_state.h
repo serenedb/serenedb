@@ -73,7 +73,8 @@ enum class SplitMode : uint8_t {
 };
 
 enum class OrderMode : uint8_t {
-  Size,
+  SmallestFirst,
+  LargestFirst,
   Order,
 };
 
@@ -203,10 +204,11 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   ScanShape shape = ScanShape::Stream;
   SplitMode split = SplitMode::Tail;
-  OrderMode order = OrderMode::Size;
+  OrderMode order = OrderMode::SmallestFirst;
   uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
+  uint32_t unit_rgs = 1;
   uint64_t rg_size = 0;
   std::atomic_uint32_t worker_count{0};
 
@@ -247,6 +249,7 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
     uint32_t pool = 0;
     std::vector<irs::ScoreDoc> hits;
     std::unique_ptr<std::atomic_uint32_t[]> accepted;
+    std::atomic_uint32_t published{0};
     ScanBarrier merge_barrier;
     std::atomic_bool merge_taken{false};
 
@@ -289,6 +292,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
+  uint64_t whole_units = 0;
+  uint64_t rg_units = 0;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };
@@ -310,7 +315,6 @@ struct CountLocalState : public ScanLocalState {
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_at = 0;
 };
 
 struct ColScanLocalState : public ScanLocalState {
@@ -326,22 +330,22 @@ struct ColScanLocalState : public ScanLocalState {
 
 struct StreamLocalState : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
+  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
   uint64_t next_row = 0;
   uint64_t stop_row = 0;
-  bool root_exhausted = true;
-  bool defer_flush = false;
-  bool needs_start = false;
-  irs::score_t prune_threshold = std::numeric_limits<irs::score_t>::lowest();
+  bool unit_done = true;
+  bool started = false;
 };
 
 struct TopKLocalState : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
-  irs::score_t local_threshold = std::numeric_limits<irs::score_t>::lowest();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;
   ColFilterVerify col_verify;
+  irs::memory::managed_ptr<irs::memory::Managed> root;
+  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;

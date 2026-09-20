@@ -82,7 +82,7 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
       _skip.Reader().Threshold() = collector.ScoreThreshold();
     };
 
-    if (_left_in_list == 0) {
+    if (_left_in_list == 0 && _left_in_leaf == 0) {
       if (doc_limits::valid(_doc) && _doc >= min && _doc < max) {
         Emit(std::end(_docs) - 1, 1, emit);
       }
@@ -90,26 +90,35 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
       _admit.Flush(collector);
       return;
     }
-    *(std::end(_docs) - 1) = min - 1;
-    while (_left_in_list != 0) {
-      auto last = *(std::end(_docs) - 1);
-      if (last >= max) {
-        break;
-      }
-      if (last + 1 > _skip.Reader().UpperBound()) {
-        _left_in_list = _skip.Seek(last + 1);
-        auto& state = _skip.Reader().State();
-        if (state.doc_ptr != 0) [[likely]] {
-          In().Seek(state.doc_ptr);
-        }
-        last = state.doc;
+    auto* const end = std::end(_docs);
+    if (_left_in_leaf == 0 && !doc_limits::valid(_max_in_leaf)) {
+      *(end - 1) = doc_limits::min() - 1;
+    }
+    for (;;) {
+      if (_left_in_leaf == 0) {
         if (_left_in_list == 0) {
           break;
         }
+        auto last = *(end - 1);
+        const auto target = std::max<doc_id_t>(last + 1, min);
+        if (target >= max) {
+          break;
+        }
+        if (target > _skip.Reader().UpperBound()) {
+          _left_in_list = _skip.Seek(target);
+          auto& state = _skip.Reader().State();
+          if (state.doc_ptr != 0) [[likely]] {
+            In().Seek(state.doc_ptr);
+          }
+          last = state.doc;
+          if (_left_in_list == 0) {
+            break;
+          }
+        }
+        ReadLeaf(last);
       }
-      ReadLeaf(last);
-      auto* first = std::end(_docs) - _left_in_leaf;
-      auto* stop = std::end(_docs);
+      auto* first = end - _left_in_leaf;
+      auto* stop = end;
       if (*first < min) [[unlikely]] {
         do {
           ++first;
@@ -121,7 +130,7 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
           --stop;
         }
       }
-      _left_in_leaf = 0;
+      _left_in_leaf = static_cast<uint32_t>(end - stop);
       if (stop != first) {
         Emit(first, static_cast<uint32_t>(stop - first), emit);
       }

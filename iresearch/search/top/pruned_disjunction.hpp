@@ -74,12 +74,6 @@ class PrunedDisjunction : public Root {
     _collector = &collector;
     doc_id_t window_min = begin;
 
-    _num_candidates = 0;
-    _num_outer_windows = 0;
-    _min_window_size = 1;
-    _promote_ticks = 0;
-    _exhaustive_windows = kExhaustiveWindowsMin;
-
   outer:
     while (window_min < max) {
       doc_id_t window_max = ComputeOuterWindow(window_min);

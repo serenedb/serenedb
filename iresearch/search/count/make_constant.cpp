@@ -123,14 +123,21 @@ class TermCount : public Root {
       }
       return _exact->Run(min, max);
     }
-    auto& ranks = Source();
-    const auto above = from_start ? count : ranks.AtLeast(min);
-    const auto below = to_end ? 0 : ranks.AtLeast(max);
+    const auto above = from_start ? count : Rank(min);
+    const auto below = to_end ? 0 : Rank(max);
     SDB_ASSERT(above >= below);
     return above - below;
   }
 
  private:
+  uint64_t Rank(doc_id_t doc) {
+    if (doc != _rank_doc) {
+      _rank_doc = doc;
+      _rank = Source().AtLeast(doc);
+    }
+    return _rank;
+  }
+
   struct RankSource {
     virtual ~RankSource() = default;
     virtual uint64_t AtLeast(doc_id_t doc) = 0;
@@ -161,6 +168,8 @@ class TermCount : public Root {
   Context _ctx;
   Root::ptr _exact;
   std::unique_ptr<RankSource> _ranks;
+  doc_id_t _rank_doc = doc_limits::invalid();
+  uint64_t _rank = 0;
 };
 
 class AllCount : public Root {

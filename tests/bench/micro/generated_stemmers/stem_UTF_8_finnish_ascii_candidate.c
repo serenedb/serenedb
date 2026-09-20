@@ -1,6 +1,6 @@
 /* Generated from finnish.sbl by Snowball 3.1.1 - https://snowballstem.org/ */
 
-#include "stem_UTF_8_finnish_candidate.h"
+#include "stem_UTF_8_finnish_ascii_candidate.h"
 
 #include <stddef.h>
 
@@ -21,24 +21,6 @@ typedef struct SN_local SN_local;
 #define SNOWBALL_UNUSED
 #endif
 
-static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
-    if (c + 1 >= limit) return 0;
-    int lead = p[c];
-    int tail = p[c + 1];
-    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
-    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
-    return 2;
-}
-
-static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
-    if (c - limit < 2) return 0;
-    int lead = p[c - 2];
-    int tail = p[c - 1];
-    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
-    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
-    return 2;
-}
-
 static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
     return ch >= min && ch <= max &&
            (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
@@ -49,10 +31,6 @@ static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsig
         if (z->c >= z->l) return -1;
         int ch = z->p[z->c];
         int width = 1;
-        if (ch >= 0x80) {
-            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
-            if (!width) return in_grouping_U(z, s, min, max, repeat);
-        }
         if (!snowball_grouping_contains(s, min, max, ch)) return width;
         z->c += width;
     } while (repeat);
@@ -64,10 +42,6 @@ static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const uns
         if (z->c <= z->lb) return -1;
         int ch = z->p[z->c - 1];
         int width = 1;
-        if (ch >= 0x80) {
-            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
-            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
-        }
         if (!snowball_grouping_contains(s, min, max, ch)) return width;
         z->c -= width;
     } while (repeat);
@@ -79,10 +53,6 @@ static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsi
         if (z->c >= z->l) return -1;
         int ch = z->p[z->c];
         int width = 1;
-        if (ch >= 0x80) {
-            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
-            if (!width) return out_grouping_U(z, s, min, max, repeat);
-        }
         if (snowball_grouping_contains(s, min, max, ch)) return width;
         z->c += width;
     } while (repeat);
@@ -94,10 +64,6 @@ static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const un
         if (z->c <= z->lb) return -1;
         int ch = z->p[z->c - 1];
         int width = 1;
-        if (ch >= 0x80) {
-            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
-            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
-        }
         if (snowball_grouping_contains(s, min, max, ch)) return width;
         z->c -= width;
     } while (repeat);
@@ -105,52 +71,13 @@ static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const un
 }
 
 static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
-    if (n == 1) {
-        if (c >= limit) return -1;
-        int lead = p[c];
-        if (lead < 0x80) return c + 1;
-        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
-        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
-        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
-        return skip_utf8(p, c, limit, 1);
-    }
-    for (; n > 0; --n) {
-        if (c >= limit) return -1;
-        int b = p[c++];
-        if (b >= 0xC0) {
-            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
-        }
-    }
-    return c;
+    (void)p;
+    return n >= 0 && n <= limit - c ? c + n : -1;
 }
 
 static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
-    if (n == 1) {
-        if (c <= limit) return -1;
-        int tail = p[c - 1];
-        if (tail < 0x80) return c - 1;
-        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
-            int lead = p[c - 4];
-            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
-        }
-        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
-            int lead = p[c - 3];
-            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
-        }
-        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
-            int lead = p[c - 2];
-            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
-        }
-        return skip_b_utf8(p, c, limit, 1);
-    }
-    for (; n > 0; --n) {
-        if (c <= limit) return -1;
-        int b = p[--c];
-        if (b >= 0x80) {
-            while (c > limit && p[c] < 0xC0) --c;
-        }
-    }
-    return c;
+    (void)p;
+    return n >= 0 && n <= c - limit ? c - n : -1;
 }
 
 static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
@@ -175,7 +102,7 @@ static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern int candidate_finnish_UTF_8_stem(struct SN_env * z);
+extern int candidate_finnish_ascii_UTF_8_stem(struct SN_env * z);
 #ifdef __cplusplus
 }
 #endif
@@ -391,7 +318,7 @@ static int r_O_(struct SN_env * z) {
     return 1;
 }
 
-extern int candidate_finnish_UTF_8_stem(struct SN_env * z) {
+extern int candidate_finnish_ascii_UTF_8_stem(struct SN_env * z) {
     int among_var;
     int b_ending_removed;
     int i_p2;
@@ -1007,18 +934,18 @@ extern int candidate_finnish_UTF_8_stem(struct SN_env * z) {
     return 1;
 }
 
-extern struct SN_env * candidate_finnish_UTF_8_create_env(void) {
+extern struct SN_env * candidate_finnish_ascii_UTF_8_create_env(void) {
     struct SN_env * z = SN_new_env(sizeof(SN_local));
     if (z) {
         if ((((SN_local *)z)->s_x = create_s()) == NULL) {
-            candidate_finnish_UTF_8_close_env(z);
+            candidate_finnish_ascii_UTF_8_close_env(z);
             return NULL;
         }
     }
     return z;
 }
 
-extern void candidate_finnish_UTF_8_close_env(struct SN_env * z) {
+extern void candidate_finnish_ascii_UTF_8_close_env(struct SN_env * z) {
     if (!z) return;
     lose_s(((SN_local *)z)->s_x);
     SN_delete_env(z);

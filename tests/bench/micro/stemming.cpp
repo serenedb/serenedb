@@ -53,6 +53,7 @@
 #include <duckdb.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/analysis/text/classify/block_masks.hpp>
 #include <iresearch/analysis/text/dict/stem_cache.hpp>
 #include <iresearch/utils/snowball_stemmer.hpp>
 #include <map>
@@ -66,21 +67,29 @@
 #include <vector>
 
 #ifdef SERENEDB_STEMMER_GENERATED_C_CANDIDATE
+#include "runtime/snowball_runtime.h"
 extern "C" {
-#include "runtime/api.h"
 #include "stem_UTF_8_arabic_candidate.h"
+#include "stem_UTF_8_english_ascii_candidate.h"
 #include "stem_UTF_8_english_candidate.h"
+#include "stem_UTF_8_finnish_ascii_candidate.h"
 #include "stem_UTF_8_finnish_candidate.h"
+#include "stem_UTF_8_french_ascii_candidate.h"
 #include "stem_UTF_8_french_candidate.h"
 #include "stem_UTF_8_german_candidate.h"
 #include "stem_UTF_8_greek_candidate.h"
 #include "stem_UTF_8_hindi_candidate.h"
+#include "stem_UTF_8_hungarian_ascii_candidate.h"
 #include "stem_UTF_8_hungarian_candidate.h"
+#include "stem_UTF_8_italian_ascii_candidate.h"
 #include "stem_UTF_8_italian_candidate.h"
+#include "stem_UTF_8_polish_ascii_candidate.h"
 #include "stem_UTF_8_polish_candidate.h"
 #include "stem_UTF_8_russian_candidate.h"
+#include "stem_UTF_8_spanish_ascii_candidate.h"
 #include "stem_UTF_8_spanish_candidate.h"
 #include "stem_UTF_8_tamil_candidate.h"
+#include "stem_UTF_8_turkish_ascii_candidate.h"
 #include "stem_UTF_8_turkish_candidate.h"
 }
 #endif
@@ -547,9 +556,24 @@ class GeneratedCStemmer {
   GeneratedCStemmer& operator=(const GeneratedCStemmer&) = delete;
 
   std::string_view stem(std::string_view input) {
-    if (SN_set_current(env_, static_cast<int>(input.size()),
-                       reinterpret_cast<const symbol*>(input.data())) < 0 ||
-        Stem(env_) < 0) {
+    if (input.size() > static_cast<size_t>(INT_MAX)) {
+      throw std::runtime_error{"generated C stemmer input is too large"};
+    }
+    const auto size = static_cast<int>(input.size());
+    if (size > CAPACITY(env_->p)) {
+      if (SN_set_current(env_, size,
+                         reinterpret_cast<const symbol*>(input.data())) < 0) {
+        throw std::runtime_error{"generated C stemmer input copy failed"};
+      }
+    } else {
+      if (size) {
+        __builtin_memcpy(env_->p, input.data(), static_cast<size_t>(size));
+      }
+      SET_SIZE(env_->p, size);
+      env_->l = size;
+      env_->c = 0;
+    }
+    if (Stem(env_) < 0) {
       throw std::runtime_error{"generated C stemmer failed"};
     }
     return {reinterpret_cast<const char*>(env_->p),
@@ -575,6 +599,33 @@ void BmGeneratedCStem(benchmark::State& state, const Language* lang,
     for (const auto& word : words) {
       const auto stem = stemmer.stem(
         {word.GetData(), static_cast<size_t>(word.GetSize())});
+      benchmark::DoNotOptimize(stem);
+    }
+  }
+  Account(state, words);
+}
+
+template<CStemmerCreate AsciiCreate, CStemmerRun AsciiStem,
+         CStemmerCreate UnicodeCreate, CStemmerRun UnicodeStem>
+void BmGeneratedCDispatchedStem(benchmark::State& state, const Language* lang,
+                                Bucket bucket) {
+  const auto& corpus = GetCorpus(*lang);
+  const auto words = Select(corpus, bucket);
+  if (words.empty()) {
+    state.SkipWithError("empty corpus bucket");
+    return;
+  }
+
+  GeneratedCStemmer<AsciiCreate, AsciiStem> ascii;
+  GeneratedCStemmer<UnicodeCreate, UnicodeStem> unicode;
+  for (auto _ : state) {
+    for (const auto& word : words) {
+      const std::string_view input{
+        word.GetData(), static_cast<size_t>(word.GetSize())};
+      const auto stem = irs::analysis::classify::IsAsciiValue(
+                          input.data(), input.size())
+                          ? ascii.stem(input)
+                          : unicode.stem(input);
       benchmark::DoNotOptimize(stem);
     }
   }
@@ -612,6 +663,47 @@ bool RegisterGeneratedC(const Language& lang) {
   benchmark::RegisterBenchmark(
     "StemGeneratedC/" + std::string{lang.name} + "/All",
     BmGeneratedCStem<Create, Stem>, &lang, Bucket::All);
+  return true;
+}
+
+template<CStemmerCreate AsciiCreate, CStemmerRun AsciiStem,
+         CStemmerCreate UnicodeCreate, CStemmerRun UnicodeStem>
+bool RegisterGeneratedCDispatched(const Language& lang) {
+  const auto& corpus = GetCorpus(lang);
+  const auto reference = irs::make_stemmer_ptr(lang.algorithm, nullptr);
+  if (!reference) {
+    throw std::runtime_error{"missing reference stemmer for " +
+                             std::string{lang.name}};
+  }
+
+  GeneratedCStemmer<AsciiCreate, AsciiStem> ascii;
+  GeneratedCStemmer<UnicodeCreate, UnicodeStem> unicode;
+  for (const auto& word : corpus.all) {
+    const std::string_view input{word.GetData(),
+                                 static_cast<size_t>(word.GetSize())};
+    const auto expected = StemUncached(reference.get(), input);
+    const auto actual = irs::analysis::classify::IsAsciiValue(
+                          input.data(), input.size())
+                          ? ascii.stem(input)
+                          : unicode.stem(input);
+    if (!expected || *expected != actual) {
+      std::fprintf(stderr,
+                   "generated C candidate disabled for %.*s: mismatch on %.*s "
+                   "(reference: %.*s, candidate: %.*s)\n",
+                   static_cast<int>(lang.name.size()), lang.name.data(),
+                   static_cast<int>(input.size()), input.data(),
+                   expected ? static_cast<int>(expected->size()) : 7,
+                   expected ? expected->data() : "<error>",
+                   static_cast<int>(actual.size()), actual.data());
+      return false;
+    }
+  }
+
+  benchmark::RegisterBenchmark(
+    "StemGeneratedC/" + std::string{lang.name} + "/All",
+    BmGeneratedCDispatchedStem<AsciiCreate, AsciiStem, UnicodeCreate,
+                               UnicodeStem>,
+    &lang, Bucket::All);
   return true;
 }
 #endif
@@ -692,30 +784,46 @@ void Register() {
   }
 
 #ifdef SERENEDB_STEMMER_GENERATED_C_CANDIDATE
-  RegisterGeneratedC<candidate_english_UTF_8_create_env,
-                     candidate_english_UTF_8_stem>(kLanguages[0]);
+  RegisterGeneratedCDispatched<candidate_english_ascii_UTF_8_create_env,
+                               candidate_english_ascii_UTF_8_stem,
+                               candidate_english_UTF_8_create_env,
+                               candidate_english_UTF_8_stem>(kLanguages[0]);
   RegisterGeneratedC<candidate_german_UTF_8_create_env,
                      candidate_german_UTF_8_stem>(kLanguages[1]);
-  RegisterGeneratedC<candidate_french_UTF_8_create_env,
-                     candidate_french_UTF_8_stem>(kLanguages[2]);
-  RegisterGeneratedC<candidate_spanish_UTF_8_create_env,
-                     candidate_spanish_UTF_8_stem>(kLanguages[3]);
-  RegisterGeneratedC<candidate_italian_UTF_8_create_env,
-                     candidate_italian_UTF_8_stem>(kLanguages[4]);
-  RegisterGeneratedC<candidate_finnish_UTF_8_create_env,
-                     candidate_finnish_UTF_8_stem>(kLanguages[5]);
-  RegisterGeneratedC<candidate_hungarian_UTF_8_create_env,
-                     candidate_hungarian_UTF_8_stem>(kLanguages[6]);
-  RegisterGeneratedC<candidate_turkish_UTF_8_create_env,
-                     candidate_turkish_UTF_8_stem>(kLanguages[7]);
+  RegisterGeneratedCDispatched<candidate_french_ascii_UTF_8_create_env,
+                               candidate_french_ascii_UTF_8_stem,
+                               candidate_french_UTF_8_create_env,
+                               candidate_french_UTF_8_stem>(kLanguages[2]);
+  RegisterGeneratedCDispatched<candidate_spanish_ascii_UTF_8_create_env,
+                               candidate_spanish_ascii_UTF_8_stem,
+                               candidate_spanish_UTF_8_create_env,
+                               candidate_spanish_UTF_8_stem>(kLanguages[3]);
+  RegisterGeneratedCDispatched<candidate_italian_ascii_UTF_8_create_env,
+                               candidate_italian_ascii_UTF_8_stem,
+                               candidate_italian_UTF_8_create_env,
+                               candidate_italian_UTF_8_stem>(kLanguages[4]);
+  RegisterGeneratedCDispatched<candidate_finnish_ascii_UTF_8_create_env,
+                               candidate_finnish_ascii_UTF_8_stem,
+                               candidate_finnish_UTF_8_create_env,
+                               candidate_finnish_UTF_8_stem>(kLanguages[5]);
+  RegisterGeneratedCDispatched<candidate_hungarian_ascii_UTF_8_create_env,
+                               candidate_hungarian_ascii_UTF_8_stem,
+                               candidate_hungarian_UTF_8_create_env,
+                               candidate_hungarian_UTF_8_stem>(kLanguages[6]);
+  RegisterGeneratedCDispatched<candidate_turkish_ascii_UTF_8_create_env,
+                               candidate_turkish_ascii_UTF_8_stem,
+                               candidate_turkish_UTF_8_create_env,
+                               candidate_turkish_UTF_8_stem>(kLanguages[7]);
   RegisterGeneratedC<candidate_russian_UTF_8_create_env,
                      candidate_russian_UTF_8_stem>(kLanguages[8]);
   RegisterGeneratedC<candidate_greek_UTF_8_create_env,
                      candidate_greek_UTF_8_stem>(kLanguages[9]);
   RegisterGeneratedC<candidate_arabic_UTF_8_create_env,
                      candidate_arabic_UTF_8_stem>(kLanguages[10]);
-  RegisterGeneratedC<candidate_polish_UTF_8_create_env,
-                     candidate_polish_UTF_8_stem>(kLanguages[11]);
+  RegisterGeneratedCDispatched<candidate_polish_ascii_UTF_8_create_env,
+                               candidate_polish_ascii_UTF_8_stem,
+                               candidate_polish_UTF_8_create_env,
+                               candidate_polish_UTF_8_stem>(kLanguages[11]);
   RegisterGeneratedC<candidate_hindi_UTF_8_create_env,
                      candidate_hindi_UTF_8_stem>(kLanguages[12]);
   RegisterGeneratedC<candidate_tamil_UTF_8_create_env,

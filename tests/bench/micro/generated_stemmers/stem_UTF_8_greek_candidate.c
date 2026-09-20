@@ -6,6 +6,159 @@
 
 #include "runtime/snowball_runtime.h"
 
+typedef struct SN_env SN_env;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SNOWBALL_UNUSED __attribute__((unused))
+#else
+#define SNOWBALL_UNUSED
+#endif
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c + 1 >= limit) return 0;
+    int lead = p[c];
+    int tail = p[c + 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c - limit < 2) return 0;
+    int lead = p[c - 2];
+    int tail = p[c - 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
+    return ch >= min && ch <= max &&
+           (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return in_grouping_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return out_grouping_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c >= limit) return -1;
+        int lead = p[c];
+        if (lead < 0x80) return c + 1;
+        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
+        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
+        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
+        return skip_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c >= limit) return -1;
+        int b = p[c++];
+        if (b >= 0xC0) {
+            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c <= limit) return -1;
+        int tail = p[c - 1];
+        if (tail < 0x80) return c - 1;
+        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
+            int lead = p[c - 4];
+            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
+            int lead = p[c - 3];
+            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
+            int lead = p[c - 2];
+            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
+        }
+        return skip_b_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c <= limit) return -1;
+        int b = p[--c];
+        if (b >= 0x80) {
+            while (c > limit && p[c] < 0xC0) --c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
+    if (z->bra >= 0 && z->bra <= z->ket && z->ket == z->l && z->l <= SIZE(z->p)) {
+        SET_SIZE(z->p, z->bra);
+        z->l = z->bra;
+        if (z->c > z->bra) z->c = z->bra;
+        z->ket = z->bra;
+        return 0;
+    }
+    return slice_del(z);
+}
+
+#undef SNOWBALL_UNUSED
+
 #ifdef SNOWBALL_BIGENDIAN
 #define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
 #else
@@ -140,1792 +293,6 @@ static const symbol s_42[] = {
     0xCE, 0xB8, 0xCE, 0xB5, 0xCF, 0x83, 0xCF, 0x84
 };
 
-static const unsigned short a_0[] = {
-    0x0019 , 0xB082 , 0x0031 , 0x0000 , 0x0000 , 0x0000 , 0x0034 , 0x0000 ,
-    0x0037 , 0x003A , 0x003D , 0x0041 , 0x0044 , 0x0041 , 0x0048 , 0x004C ,
-    0x003A , 0x0034 , 0x004F , 0x0052 , 0x0055 , 0x0037 , 0x0058 , 0x003A ,
-    0x005B , 0x005E , 0x0061 , 0x0064 , 0x0067 , 0x006A , 0x006D , 0x0070 ,
-    0x0073 , 0x0076 , 0x0000 , 0x0079 , 0x007C , 0x007F , 0x0082 , 0x0085 ,
-    0x0088 , 0x004C , 0x005E , 0x007F , 0x0034 , 0x0037 , 0x003A , 0x005E ,
-    0x007F , 0x0000 , 0xCFCF , 0xFFEE , 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0xCECE , 0xFFFB , 0x0000 , 0xCECE , 0xFFF9 , 0x0000 , 0xCECF , 0xFFF7 ,
-    0xFFF9 , 0x0000 , 0xCFCF , 0xFFEC , 0x0000 , 0xCECF , 0xFFF1 , 0xFFF1 ,
-    0x0000 , 0xCECF , 0xFFEC , 0xFFE8 , 0x0000 , 0xCECE , 0xFFE8 , 0x0000 ,
-    0xCECE , 0xFFFE , 0x0000 , 0xCECE , 0xFFFD , 0x0000 , 0xCECE , 0xFFFC ,
-    0x0000 , 0xCECE , 0xFFFA , 0x0000 , 0xCECE , 0xFFF8 , 0x0000 , 0xCECE ,
-    0xFFF7 , 0x0000 , 0xCECE , 0xFFF6 , 0x0000 , 0xCECE , 0xFFF5 , 0x0000 ,
-    0xCECE , 0xFFF4 , 0x0000 , 0xCECE , 0xFFF3 , 0x0000 , 0xCECE , 0xFFF2 ,
-    0x0000 , 0xCECE , 0xFFF1 , 0x0000 , 0xCECE , 0xFFF0 , 0x0000 , 0xCECE ,
-    0xFFEF , 0x0000 , 0xCECE , 0xFFEE , 0x0000 , 0xCECE , 0xFFED , 0x0000 ,
-    0xCECE , 0xFFEC , 0x0000 , 0xCECE , 0xFFEB , 0x0000 , 0xCECE , 0xFFEA ,
-    0x0000 , 0xCECE , 0xFFE9
-};
-
-static const unsigned short a_1[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0113 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0179 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0219 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0222 , 0x0000 , 0xCFCF , 0x0040 ,
-    0x0000 , 0xBF89 , 0x0079 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x008C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00A8 , 0x0000 , 0xCFCF , 0x007C , 0x0000 , 0x8486 , 0x0080 , 0x0089 ,
-    0x0000 , 0x000B , 0xFFF6 , S(BACE), S(B1CE), S(B8CE), S(B5CE), S(83CF),
-    S(00CF), 0x0000 , 0xCFCF , 0xFFF7 , 0x0000 , 0xCECE , 0x008F , 0x0000 ,
-    0x81B5 , 0x0093 , 0x00A2 , 0x0000 , 0x0003 , 0x0098 , S(B5CE), S(00CF),
-    0x0000 , 0x8084 , 0x009C , 0x009F , 0x0000 , 0xCFCF , 0xFFF9 , 0x0000 ,
-    0xCFCF , 0xFFF8 , 0x0000 , 0x0005 , 0xFFFA , S(BACE), S(81CF), S(00CE),
-    0x0000 , 0xCECE , 0x00AB , 0x0000 , 0x84BD , 0x00AF , 0x010B , 0x0000 ,
-    0xCFCF , 0x00B2 , 0x0000 , 0xBF89 , 0x00EB , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00F2 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0102 , 0x0000 , 0xCFCF , 0x00EE , 0x0000 , 0x8486 ,
-    0x0080 , 0x0089 , 0x0000 , 0xCECE , 0x00F5 , 0x0000 , 0x81B5 , 0x00F9 ,
-    0x00A2 , 0x0000 , 0x0003 , 0x00FE , S(B5CE), S(00CF), 0x0000 , 0x8084 ,
-    0x009C , 0x009F , 0x0000 , 0x000B , 0xFFF5 , S(B3CE), S(B5CE), S(B3CE),
-    S(BFCE), S(BDCE), S(00CE), 0x0000 , 0x0009 , 0xFFF5 , S(B3CE), S(B5CE),
-    S(B3CE), S(BFCE), S(00CE), 0x0000 , 0x0007 , 0x011A , S(B3CE), S(B9CE),
-    S(BFCE), S(00CF), 0x0000 , 0xB1BF , 0x011E , 0x012D , 0x0000 , 0xCECE ,
-    0x0121 , 0x0000 , 0x86BA , 0x0125 , 0x0128 , 0x0000 , 0xCFCF , 0xFFFF ,
-    0x0000 , 0x0003 , 0xFFFE , S(83CF), S(00CE), 0x0000 , 0xCECE , 0x0130 ,
-    0x0000 , 0xBB83 , 0x016B , 0x016E , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0174 , 0x0000 , 0xCFCF , 0xFFFC , 0x0000 , 0x0005 ,
-    0xFFFB , S(84CF), S(B1CE), S(00CF), 0x0000 , 0x0003 , 0xFFFD , S(BFCE),
-    S(00CE), 0x0000 , 0xCECE , 0x017C , 0x0000 , 0x84B9 , 0x0180 , 0x01CB ,
-    0x0000 , 0xCFCF , 0x0183 , 0x0000 , 0xBF89 , 0x01BC , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01BF , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0102 , 0x0000 , 0xCFCF , 0x00EE , 0x0000 ,
-    0xCECE , 0x01C2 , 0x0000 , 0x81B5 , 0x01C6 , 0x00A2 , 0x0000 , 0x0003 ,
-    0x00FE , S(B5CE), S(00CF), 0x0000 , 0x0003 , 0x01D0 , S(B3CE), S(00CE),
-    0x0000 , 0xB1BF , 0x01D4 , 0x01DB , 0x0000 , 0xCECE , 0x01D7 , 0x0000 ,
-    0x86BA , 0x0125 , 0x0128 , 0x0000 , 0xCECE , 0x01DE , 0x0000 , 0xBB83 ,
-    0x016B , 0x016E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0174 , 0x0000 , 0x000B , 0xFFF9 , S(80CF), S(B5CE), S(81CF), S(B1CE),
-    S(84CF), S(00CE), 0x0000 , 0x0003 , 0x0227 , S(89CF), S(00CE), 0x0000 ,
-    0x84B9 , 0x022B , 0x026E , 0x0000 , 0xCFCF , 0x022E , 0x0000 , 0xBF89 ,
-    0x01BC , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0267 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0102 , 0x0000 ,
-    0xCECE , 0x026A , 0x0000 , 0x81B5 , 0x01C6 , 0x00A2 , 0x0000 , 0x0003 ,
-    0x0273 , S(B3CE), S(00CE), 0x0000 , 0xB1BF , 0x0277 , 0x027A , 0x0000 ,
-    0xCECE , 0x01D7 , 0x0000 , 0xCECE , 0x01DE
-};
-
-static const unsigned short a_2[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x004A , 0x0000 , 0x0000 , 0x0000 , 0x0112 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0118 , 0x00BC , 0x0000 , 0x0000 , 0x0149 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0150 , 0x0159 , 0x00BC , 0x00BC , 0x0163 ,
-    0x0000 , 0x016A , 0x0000 , 0xCFCF , 0x0045 , 0x0002 , 0x0004 , 0xFFFE ,
-    S(B9CE), S(BCCE), 0x0000 , 0xCFCF , 0x004D , 0x0002 , 0xBF80 , 0x008F ,
-    0x0096 , 0x0000 , 0x0000 , 0x0000 , 0x009B , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00AF , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00BF , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00C4 , 0x0000 ,
-    0xCFCF , 0x0092 , 0x0002 , 0x0002 , 0xFFFE , S(BCCE), 0x0000 , 0x0003 ,
-    0xFFFE , S(B1CE), S(00CF), 0x0000 , 0xCFCF , 0x009E , 0x0000 , 0xBABB ,
-    0x00A2 , 0x00A9 , 0x0000 , 0x0007 , 0xFFFE , S(B3CE), S(BBCE), S(85CF),
-    S(00CE), 0x0000 , 0x0005 , 0xFFFE , S(80CF), S(BFCE), S(00CE), 0x0000 ,
-    0xCECE , 0x00B2 , 0x0000 , 0x80BC , 0x00B6 , 0x00BC , 0x0000 , 0x0005 ,
-    0xFFFE , S(B1CE), S(BCCE), S(00CF), 0x0000 , 0xCECE , 0xFFFE , 0x0000 ,
-    0x0003 , 0xFFFE , S(B3CE), S(00CE), 0x0000 , 0xCECE , 0x00C7 , 0x0000 ,
-    0xBA81 , 0x0103 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x010B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00A2 , 0x0000 , 0x0009 , 0xFFFE , S(80CF), S(B9CE),
-    S(80CF), S(B5CE), S(00CF), 0x0000 , 0x0007 , 0xFFFE , S(B2CE), S(BFCE),
-    S(BBCE), S(00CE), 0x0000 , 0x0005 , 0xFFFE , S(BBCE), S(BFCE), S(00CF),
-    0x0000 , 0x0003 , 0x011D , S(80CF), S(00CE), 0x0001 , 0xBCB1 , 0x012B ,
-    0x0000 , 0x0000 , 0x0000 , 0x0132 , 0x0000 , 0x0000 , 0x0000 , 0x0135 ,
-    0x0000 , 0x0000 , 0x013C , 0x0000 , 0x0007 , 0xFFFF , S(BECE), S(B1CE),
-    S(BDCE), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0007 , 0xFFFF ,
-    S(80CF), S(B5CE), S(81CF), S(00CE), 0x0000 , 0xCECE , 0x013F , 0x0000 ,
-    0xB1B5 , 0x0143 , 0x0132 , 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(BDCE),
-    S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B4CE), S(B1CE), S(BDCE), S(00CE),
-    0x0000 , 0x000B , 0xFFFE , S(B2CE), S(B1CE), S(B8CE), S(85CF), S(81CF),
-    S(00CE), 0x0000 , 0x0005 , 0x015F , S(B1CE), S(81CF), S(00CE), 0x0000 ,
-    0xB2BC , 0x00BC , 0x00BC , 0x0000 , 0x0007 , 0xFFFE , S(BACE), S(BFCE),
-    S(81CF), S(00CE), 0x0000 , 0x0007 , 0x0171 , S(B1CE), S(B8CE), S(81CF),
-    S(00CE), 0x0001 , 0x0006 , 0xFFFF , S(83CF), S(85CF), S(BDCE)
-};
-
-static const unsigned short a_3[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0051 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0044 , 0x0000 , 0x0000 , 0x0000 , 0x0057 , 0x0000 , 0x0000 , 0x0000 ,
-    0x004A , 0x0000 , 0x0000 , 0x0000 , 0x00B7 , 0x0000 , 0xCFCF , 0x0040 ,
-    0x0000 , 0xB5B9 , 0x0044 , 0x004A , 0x0000 , 0x0005 , 0xFFFF , S(B9CE),
-    S(B6CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(B6CE), S(B5CE),
-    S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(B9CE), S(B6CE), S(00CF), 0x0000 ,
-    0xCECE , 0x005A , 0x0000 , 0xBD84 , 0x0096 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x009D , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A2 , 0x00B0 , 0x0000 , 0xCFCF ,
-    0x0099 , 0x0000 , 0xB1B5 , 0x0044 , 0x0044 , 0x0000 , 0x0003 , 0xFFFF ,
-    S(B9CE), S(00CE), 0x0000 , 0xCECE , 0x00A5 , 0x0000 , 0x85B1 , 0x00A9 ,
-    0x0044 , 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(B6CE), S(BFCE), S(00CF),
-    0x0000 , 0xCECE , 0x00B3 , 0x0000 , 0x85B1 , 0x00A9 , 0x0044 , 0x0000 ,
-    0xCECE , 0x00B3
-};
-
-static const unsigned short a_4[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x003D , 0x0040 ,
-    0x0045 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x004A , 0x0000 , 0x0054 , 0x0000 , 0x0059 , 0x0000 , 0xCFCF , 0xFFFF ,
-    0x0000 , 0x0003 , 0xFFFF , S(85CF), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(B6CE), S(00CF), 0x0000 , 0xCECE , 0x004D , 0x0000 , 0xB2BB , 0x0051 ,
-    0x0051 , 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(B1CE),
-    S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CE)
-};
-
-static const unsigned short a_5[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0046 , 0x0000 , 0x0000 , 0x0000 , 0x004E , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x009D , 0x0000 , 0x000B , 0xFFFF ,
-    S(89CF), S(B8CE), S(B7CE), S(BACE), S(B5CE), S(00CF), 0x0000 , 0x0009 ,
-    0xFFFF , S(89CF), S(B8CE), S(B7CE), S(BACE), S(00CE), 0x0000 , 0xCECE ,
-    0x0051 , 0x0000 , 0xBD84 , 0x008D , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0096 , 0x0000 , 0x009D , 0x009D , 0x0000 , 0x000B , 0xFFFF ,
-    S(89CF), S(B8CE), S(B7CE), S(BACE), S(B1CE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(89CF), S(B8CE), S(B7CE), S(00CE), 0x0000 , 0x000B , 0xFFFF ,
-    S(89CF), S(B8CE), S(B7CE), S(BACE), S(B1CE), S(00CE)
-};
-
-static const unsigned short a_6[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x0045 , 0x0000 , 0x0000 , 0x004B , 0x0000 ,
-    0x0056 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0065 , 0x0000 , 0x0000 , 0x0000 , 0x00AE ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0106 , 0x0000 , 0x0163 , 0x0177 ,
-    0x0000 , 0x017C , 0x0000 , 0xCFCF , 0xFFFE , 0x0000 , 0x0005 , 0xFFFE ,
-    S(BBCE), S(B1CE), S(00CF), 0x0000 , 0x000F , 0xFFFE , S(B4CE), S(B7CE),
-    S(BCCE), S(BFCE), S(BACE), S(81CF), S(B1CE), S(00CF), 0x0000 , 0x0003 ,
-    0x005B , S(B1CE), S(00CF), 0x0002 , 0x000E , 0xFFFE , S(B3CE), S(B9CE),
-    S(B3CE), S(B1CE), S(BDCE), S(84CF), S(BFCE), 0x0000 , 0xCECE , 0x0068 ,
-    0x0000 , 0x8087 , 0x006C , 0x00A6 , 0x0000 , 0xCFCF , 0x006F , 0x0000 ,
-    0xBFB1 , 0x0080 , 0x0000 , 0x0000 , 0x0000 , 0x0087 , 0x0000 , 0x0000 ,
-    0x0000 , 0x008A , 0x0000 , 0x0000 , 0x0091 , 0x0000 , 0x0000 , 0x009E ,
-    0x0000 , 0x0007 , 0xFFFF , S(BECE), S(B1CE), S(BDCE), S(00CE), 0x0000 ,
-    0xCECE , 0xFFFF , 0x0000 , 0x0007 , 0xFFFF , S(80CF), S(B5CE), S(81CF),
-    S(00CE), 0x0000 , 0xCECE , 0x0094 , 0x0000 , 0xB1B5 , 0x0098 , 0x0087 ,
-    0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(BDCE), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(87CF), S(B1CE), S(81CF), S(84CF), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(B5CE), S(BECE), S(B1CE), S(81CF), S(00CF), 0x0000 , 0xCECE ,
-    0x00B1 , 0x0000 , 0xBD80 , 0x00F1 , 0x0000 , 0x0000 , 0x00FE , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0103 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0106 , 0x010B , 0x0000 ,
-    0x015D , 0x0000 , 0xCFCF , 0x00F4 , 0x0001 , 0x0002 , 0x00F8 , S(B5CE),
-    0x0001 , 0x0006 , 0xFFFF , S(BCCE), S(B5CE), S(84CF), 0x0000 , 0x0003 ,
-    0xFFFF , S(B5CE), S(00CF), 0x0000 , 0xCECE , 0xFFFE , 0x0000 , 0x0003 ,
-    0xFFFE , S(B3CE), S(00CE), 0x0000 , 0x0003 , 0x0110 , S(BACE), S(00CE),
-    0x0001 , 0xBF89 , 0x0149 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x014F , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0157 , 0x0000 , 0x0005 , 0xFFFF , S(B5CE), S(83CF), S(00CF), 0x0000 ,
-    0xCECE , 0x0152 , 0x0001 , 0x0004 , 0xFFFF , S(B1CE), S(80CF), 0x0000 ,
-    0x0005 , 0xFFFF , S(B1CE), S(80CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(B4CE), S(B1CE), S(00CE), 0x0000 , 0xCECE , 0x0166 , 0x0002 , 0xB1BF ,
-    0x016A , 0x0172 , 0x0000 , 0x0009 , 0xFFFE , S(80CF), S(BFCE), S(85CF),
-    S(BACE), S(00CE), 0x0000 , 0x0003 , 0xFFFE , S(BACE), S(00CE), 0x0000 ,
-    0x0003 , 0xFFFE , S(B1CE), S(00CE), 0x0000 , 0xCECE , 0x017F , 0x0000 ,
-    0x81BB , 0x0183 , 0x018F , 0x0000 , 0x0005 , 0x0189 , S(B1CE), S(B8CE),
-    S(00CF), 0x0001 , 0x0006 , 0xFFFF , S(83CF), S(85CF), S(BDCE), 0x0000 ,
-    0x0003 , 0xFFFE , S(BFCE), S(00CE)
-};
-
-static const unsigned short a_7[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0044 , 0x0000 , 0x0000 , 0x0000 , 0x004A , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0096 , 0x0000 , 0x0007 , 0xFFFF ,
-    S(B9CE), S(83CF), S(B5CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B9CE),
-    S(83CF), S(00CE), 0x0000 , 0xCECE , 0x004D , 0x0000 , 0xBD83 , 0x008A ,
-    0x008F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0096 , 0x0096 , 0x0000 , 0x0003 , 0xFFFF , S(B9CE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(B9CE), S(83CF), S(B1CE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(B9CE), S(83CF), S(B1CE), S(00CE)
-};
-
-static const unsigned short a_8[] = {
-    0x0000 , 0xBFB1 , 0x0011 , 0x0000 , 0x0000 , 0x0000 , 0x005A , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0107 , 0x0000 , 0xCECE , 0x0014 , 0x0000 , 0x8087 , 0x0018 , 0x0052 ,
-    0x0000 , 0xCFCF , 0x001B , 0x0000 , 0xBFB1 , 0x002C , 0x0000 , 0x0000 ,
-    0x0000 , 0x0033 , 0x0000 , 0x0000 , 0x0000 , 0x0036 , 0x0000 , 0x0000 ,
-    0x003D , 0x0000 , 0x0000 , 0x004A , 0x0000 , 0x0007 , 0xFFFF , S(BECE),
-    S(B1CE), S(BDCE), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0007 ,
-    0xFFFF , S(80CF), S(B5CE), S(81CF), S(00CE), 0x0000 , 0xCECE , 0x0040 ,
-    0x0000 , 0xB1B5 , 0x0044 , 0x0033 , 0x0000 , 0x0005 , 0xFFFF , S(B1CE),
-    S(BDCE), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(87CF), S(B1CE), S(81CF),
-    S(84CF), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(B5CE), S(BECE), S(B1CE),
-    S(81CF), S(00CF), 0x0000 , 0xCECE , 0x005D , 0x0000 , 0xBD80 , 0x009D ,
-    0x0000 , 0x0000 , 0x00AA , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00AF , 0x0000 , 0x0101 , 0x0000 , 0xCFCF , 0x00A0 ,
-    0x0001 , 0x0002 , 0x00A4 , S(B5CE), 0x0001 , 0x0006 , 0xFFFF , S(BCCE),
-    S(B5CE), S(84CF), 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CF), 0x0000 ,
-    0x0003 , 0x00B4 , S(BACE), S(00CE), 0x0001 , 0xBF89 , 0x00ED , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00F3 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00FB , 0x0000 , 0x0005 , 0xFFFF ,
-    S(B5CE), S(83CF), S(00CF), 0x0000 , 0xCECE , 0x00F6 , 0x0001 , 0x0004 ,
-    0xFFFF , S(B1CE), S(80CF), 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(80CF),
-    S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(B4CE), S(B1CE), S(00CE), 0x0000 ,
-    0x0007 , 0x010E , S(B1CE), S(B8CE), S(81CF), S(00CE), 0x0001 , 0x0006 ,
-    0xFFFF , S(83CF), S(85CF), S(BDCE)
-};
-
-static const unsigned short a_9[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0045 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x004B , 0x0000 , 0x0000 , 0x0000 ,
-    0x0099 , 0x0000 , 0x0000 , 0x0000 , 0x0091 , 0x0000 , 0x0009 , 0xFFFF ,
-    S(B9CE), S(83CF), S(B5CE), S(B9CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF ,
-    S(B9CE), S(83CF), S(00CF), 0x0000 , 0xCECE , 0x004E , 0x0000 , 0xBD84 ,
-    0x008A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0091 , 0x0091 , 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(83CF), S(B5CE),
-    S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(B9CE), S(83CF), S(BFCE), S(85CF),
-    S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(83CF), S(B5CE), S(00CE)
-};
-
-static const unsigned short a_10[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x008C , 0x0000 , 0x0000 , 0x00DE , 0x0000 ,
-    0x0000 , 0x00EF , 0x00FE , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0103 , 0x0000 , 0x0116 , 0x0127 , 0x012C ,
-    0x0000 , 0x0000 , 0x018C , 0x0000 , 0x0198 , 0x01A6 , 0x01B7 , 0x01BF ,
-    0x0000 , 0x01C5 , 0x0000 , 0xCFCF , 0x0045 , 0x0002 , 0xBC85 , 0x007F ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0084 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0087 , 0x0000 ,
-    0x0003 , 0xFFFE , S(B5CE), S(00CF), 0x0000 , 0xCECE , 0xFFFE , 0x0000 ,
-    0x0003 , 0xFFFE , S(B5CE), S(00CE), 0x0000 , 0xCFCF , 0x008F , 0x0000 ,
-    0xBF85 , 0x00CC , 0x0000 , 0x00D1 , 0x0000 , 0x00D4 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0084 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x00D9 , 0x0000 , 0x0003 , 0xFFFE , S(B3CE),
-    S(00CF), 0x0000 , 0xCFCF , 0xFFFE , 0x0000 , 0x0003 , 0xFFFE , S(87CF),
-    S(00CF), 0x0000 , 0x0003 , 0xFFFE , S(B1CE), S(00CE), 0x0000 , 0xCFCF ,
-    0x00E1 , 0x0000 , 0x87BA , 0x00E5 , 0x00EC , 0x0000 , 0xCFCF , 0x00E8 ,
-    0x0002 , 0x0002 , 0xFFFE , S(B1CE), 0x0000 , 0xCECE , 0x00E8 , 0x0000 ,
-    0xCFCF , 0x00F2 , 0x0000 , 0x83B1 , 0x00F6 , 0x00F9 , 0x0000 , 0xCFCF ,
-    0x00E8 , 0x0000 , 0x0003 , 0xFFFE , S(84CF), S(00CE), 0x0000 , 0x0003 ,
-    0xFFFE , S(85CF), S(00CF), 0x0000 , 0xCECE , 0x0106 , 0x0000 , 0x8486 ,
-    0x010A , 0x010F , 0x0000 , 0x0003 , 0xFFFE , S(B1CE), S(00CF), 0x0000 ,
-    0xCFCF , 0x0112 , 0x0002 , 0x0002 , 0xFFFE , S(B7CE), 0x0000 , 0xCECE ,
-    0x0119 , 0x0000 , 0x85B5 , 0x011D , 0x0122 , 0x0000 , 0x0003 , 0xFFFE ,
-    S(BBCE), S(00CF), 0x0000 , 0x0003 , 0xFFFE , S(BCCE), S(00CE), 0x0000 ,
-    0x0003 , 0xFFFE , S(B7CE), S(00CE), 0x0000 , 0xCECE , 0x012F , 0x0000 ,
-    0xBD83 , 0x016C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0173 , 0x0000 , 0x0186 , 0x0000 , 0xCFCF , 0x016F , 0x0001 ,
-    0x0002 , 0xFFFF , S(B1CE), 0x0000 , 0xCECE , 0x0176 , 0x0000 , 0x80BA ,
-    0x017A , 0x017D , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0xCECE , 0x0180 ,
-    0x0001 , 0x0006 , 0xFFFF , S(B5CE), S(83CF), S(89CF), 0x0000 , 0x0005 ,
-    0xFFFF , S(B4CE), S(B1CE), S(00CE), 0x0000 , 0xCECE , 0x018F , 0x0000 ,
-    0x87B1 , 0x007F , 0x0193 , 0x0000 , 0x0003 , 0xFFFE , S(BACE), S(00CE),
-    0x0000 , 0xCECE , 0x019B , 0x0000 , 0x83B1 , 0x00D1 , 0x019F , 0x0000 ,
-    0xCECE , 0x01A2 , 0x0000 , 0xBABC , 0x0084 , 0x0084 , 0x0000 , 0xCECE ,
-    0x01A9 , 0x0000 , 0x85B9 , 0x01AD , 0x01B2 , 0x0000 , 0x0003 , 0xFFFE ,
-    S(BACE), S(00CF), 0x0000 , 0x0003 , 0xFFFE , S(86CF), S(00CE), 0x0000 ,
-    0xCECE , 0x01BA , 0x0002 , 0x0004 , 0xFFFE , S(B3CE), S(B5CE), 0x0000 ,
-    0x0005 , 0xFFFE , S(B1CE), S(87CF), S(00CE), 0x0000 , 0x000D , 0xFFFF ,
-    S(83CF), S(85CF), S(BDCE), S(B1CE), S(B8CE), S(81CF), S(00CE)
-};
-
-static const unsigned short a_11[] = {
-    0x0000 , 0xBF83 , 0x003F , 0x0000 , 0x007F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0087 , 0x0000 , 0x0000 , 0x0000 , 0x0087 , 0x0000 , 0x0087 , 0x0000 ,
-    0x008E , 0x0000 , 0x0000 , 0x0000 , 0x0096 , 0x0000 , 0x0087 , 0x0000 ,
-    0xCFCF , 0x0042 , 0x0000 , 0xBF85 , 0x007F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0087 , 0x0000 , 0x0087 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0087 , 0x0000 ,
-    0x0009 , 0xFFFF , S(B9CE), S(83CF), S(84CF), S(BFCE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(B9CE), S(83CF), S(84CF), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(B9CE), S(83CF), S(84CF), S(BFCE), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(B9CE), S(83CF), S(84CF), S(89CF), S(00CE)
-};
-
-static const unsigned short a_12[] = {
-    0x0000 , 0x0002 , 0x0004 , S(B5CE), 0x0000 , 0xBD83 , 0x0041 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0057 , 0x0000 ,
-    0x006B , 0x0000 , 0xCFCF , 0x0044 , 0x0001 , 0xB1BF , 0x0048 , 0x004F ,
-    0x0000 , 0x0007 , 0xFFFF , S(BCCE), S(B5CE), S(84CF), S(00CE), 0x0000 ,
-    0x0009 , 0xFFFF , S(BCCE), S(B9CE), S(BACE), S(81CF), S(00CE), 0x0000 ,
-    0x0003 , 0x005C , S(BACE), S(00CE), 0x0000 , 0xB3BF , 0x0060 , 0x0065 ,
-    0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(B1CE), S(80CF), S(00CE), 0x0000 , 0x0005 , 0x0071 , S(B4CE), S(B1CE),
-    S(00CE), 0x0002 , 0x0008 , 0xFFFE , S(B1CE), S(BDCE), S(84CF), S(B9CE)
-};
-
-static const unsigned short a_13[] = {
-    0x0000 , 0xBABD , 0x0004 , 0x00B6 , 0x0000 , 0x0003 , 0x0009 , S(B9CE),
-    S(00CE), 0x0000 , 0xBD80 , 0x0049 , 0x0000 , 0x0000 , 0x0000 , 0x004F ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A9 ,
-    0x00B0 , 0x0000 , 0x0005 , 0xFFF9 , S(84CF), S(BFCE), S(00CF), 0x0000 ,
-    0xCFCF , 0x0052 , 0x0000 , 0xBA80 , 0x008F , 0x0000 , 0x0000 , 0x0096 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A1 , 0x0000 ,
-    0x0007 , 0xFFFA , S(83CF), S(BACE), S(B5CE), S(00CF), 0x0000 , 0x0007 ,
-    0x009D , S(B3CE), S(BDCE), S(89CF), S(00CF), 0x0003 , 0x0002 , 0xFFFF ,
-    S(B1CE), 0x0000 , 0x0009 , 0xFFFB , S(B5CE), S(BACE), S(BBCE), S(B5CE),
-    S(00CE), 0x0000 , 0x0007 , 0xFFFE , S(B1CE), S(84CF), S(BFCE), S(00CE),
-    0x0000 , 0x0005 , 0xFFFC , S(B5CE), S(B8CE), S(00CE), 0x0000 , 0x0003 ,
-    0x00BB , S(B9CE), S(00CE), 0x0000 , 0x8184 , 0x00BF , 0x00D7 , 0x0000 ,
-    0xCFCF , 0x00C2 , 0x0000 , 0x84B4 , 0x00C6 , 0x00CD , 0x0000 , 0x0007 ,
-    0xFFF6 , S(B8CE), S(B5CE), S(B1CE), S(00CF), 0x0000 , 0x000D , 0xFFF8 ,
-    S(B1CE), S(BBCE), S(B5CE), S(BECE), S(B1CE), S(BDCE), S(00CE), 0x0000 ,
-    0x000B , 0xFFF7 , S(B2CE), S(85CF), S(B6CE), S(B1CE), S(BDCE), S(00CF)
-};
-
-static const unsigned short a_14[] = {
-    0x0000 , 0xBF83 , 0x003F , 0x0000 , 0x0046 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0055 , 0x0000 , 0x0000 , 0x0000 , 0x005D , 0x0000 , 0x004E , 0x0000 ,
-    0xCFCF , 0x0042 , 0x0000 , 0x85BF , 0x0046 , 0x004E , 0x0000 , 0x0009 ,
-    0xFFFF , S(B9CE), S(83CF), S(BCCE), S(BFCE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(B9CE), S(83CF), S(BCCE), S(00CE), 0x0000 , 0x0009 , 0xFFFF ,
-    S(B9CE), S(83CF), S(BCCE), S(BFCE), S(00CE), 0x0000 , 0x0009 , 0xFFFF ,
-    S(B9CE), S(83CF), S(BCCE), S(89CF), S(00CE)
-};
-
-static const unsigned short a_15[] = {
-    0x0000 , 0x8387 , 0x0004 , 0x0004 , 0x0000 , 0xCFCF , 0xFFFF
-};
-
-static const unsigned short a_16[] = {
-    0x0000 , 0xB1B9 , 0x0004 , 0x001A , 0x0000 , 0x0007 , 0x000B , S(B1CE),
-    S(BACE), S(B9CE), S(00CE), 0x0000 , 0x81B4 , 0x000F , 0x0014 , 0x0000 ,
-    0x0003 , 0xFFFF , S(B1CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(BFCE),
-    S(85CF), S(00CE), 0x0000 , 0x0005 , 0x0020 , S(B1CE), S(BACE), S(00CE),
-    0x0000 , 0x81B4 , 0x000F , 0x0014
-};
-
-static const unsigned short a_17[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x004B , 0x0000 , 0x008A , 0x009E , 0x00A6 ,
-    0x00AB , 0x00C0 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00C3 , 0x0000 , 0x00DE , 0x0000 ,
-    0x00E5 , 0x0000 , 0x0000 , 0x0000 , 0x00EC , 0x013A , 0x0198 , 0x01AC ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0002 , 0x000A , 0xFFFF , S(BACE), S(B1CE),
-    S(84CF), S(81CF), S(B1CE), 0x0000 , 0xCFCF , 0x004E , 0x0001 , 0xBFB2 ,
-    0x005E , 0x0000 , 0x0000 , 0x006F , 0x0000 , 0x0000 , 0x007F , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0085 , 0x0000 , 0xCECE ,
-    0x0061 , 0x0001 , 0xB1BC , 0x0065 , 0x006A , 0x0000 , 0x0003 , 0xFFFF ,
-    S(BBCE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 ,
-    0xCECE , 0x0072 , 0x0000 , 0x84BC , 0x0076 , 0x007C , 0x0000 , 0x0005 ,
-    0xFFFE , S(80CF), S(B1CE), S(00CF), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0x0005 , 0xFFFF , S(B1CE), S(BDCE), S(00CE), 0x0000 , 0x0003 , 0xFFFF ,
-    S(BACE), S(00CE), 0x0000 , 0xCFCF , 0x008D , 0x0001 , 0xB1BF , 0x0091 ,
-    0x0099 , 0x0000 , 0x0009 , 0xFFFF , S(BDCE), S(B1CE), S(B3CE), S(BACE),
-    S(00CE), 0x0000 , 0x0003 , 0xFFFE , S(84CF), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(BCCE), S(BFCE), S(85CF), S(83CF), S(00CF), 0x0000 , 0x0003 ,
-    0xFFFF , S(81CF), S(00CF), 0x0000 , 0xCFCF , 0x00AE , 0x0001 , 0x8385 ,
-    0x00B2 , 0x00BB , 0x0000 , 0xCFCF , 0x00B5 , 0x0001 , 0x0006 , 0xFFFF ,
-    S(B1CE), S(BBCE), S(B9CE), 0x0000 , 0x0003 , 0xFFFE , S(BDCE), S(00CF),
-    0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0xCECE , 0x00C6 , 0x0002 , 0xBCBF ,
-    0x00CA , 0x00D0 , 0x0000 , 0x0005 , 0xFFFF , S(B2CE), S(B1CE), S(00CE),
-    0x0000 , 0x0005 , 0x00D6 , S(83CF), S(BBCE), S(00CE), 0x0001 , 0x000A ,
-    0xFFFF , S(84CF), S(83CF), S(B5CE), S(87CF), S(BFCE), 0x0000 , 0x0007 ,
-    0xFFFE , S(BACE), S(B1CE), S(81CF), S(00CE), 0x0000 , 0xCECE , 0x00E8 ,
-    0x0002 , 0x0002 , 0xFFFF , S(84CF), 0x0000 , 0xCECE , 0x00EF , 0x0001 ,
-    0xBF83 , 0x00C0 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x012E ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0135 , 0x0000 , 0x0007 ,
-    0xFFFF , S(BACE), S(B1CE), S(80CF), S(00CE), 0x0000 , 0x0003 , 0xFFFF ,
-    S(83CF), S(00CE), 0x0000 , 0xCECE , 0x013D , 0x0000 , 0xBF80 , 0x00C0 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x017F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0186 , 0x0000 , 0x018D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0190 , 0x0000 ,
-    0xCFCF , 0x0182 , 0x0000 , 0x86BF , 0x00C0 , 0x0065 , 0x0000 , 0xCECE ,
-    0x0189 , 0x0000 , 0xB2BC , 0x018D , 0x007C , 0x0000 , 0xCECE , 0xFFFE ,
-    0x0000 , 0x0009 , 0xFFFE , S(84CF), S(81CF), S(B9CE), S(80CF), S(00CE),
-    0x0000 , 0xCECE , 0x019B , 0x0000 , 0x81B9 , 0x019F , 0x01A5 , 0x0000 ,
-    0x0005 , 0xFFFF , S(86CF), S(B1CE), S(00CF), 0x0000 , 0xCECE , 0x01A8 ,
-    0x0000 , 0xB1BB , 0x0085 , 0x0085 , 0x0000 , 0xCECE , 0x01AF , 0x0000 ,
-    0xBF85 , 0x01EC , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01F4 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0205 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0085 , 0x0000 , 0x0009 , 0xFFFE , S(BCCE),
-    S(B1CE), S(BACE), S(81CF), S(00CF), 0x0000 , 0xCECE , 0x01F7 , 0x0000 ,
-    0x80B9 , 0x01FB , 0x0200 , 0x0000 , 0x0003 , 0xFFFF , S(83CF), S(00CF),
-    0x0000 , 0x0003 , 0xFFFE , S(B3CE), S(00CE), 0x0000 , 0x000B , 0xFFFE ,
-    S(B7CE), S(B3CE), S(BFCE), S(85CF), S(BCCE), S(00CE)
-};
-
-static const unsigned short a_18[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x004B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0063 , 0x0000 , 0x0000 , 0x0000 , 0x0069 , 0x0000 , 0xCFCF , 0x0040 ,
-    0x0000 , 0xB1B5 , 0x0044 , 0x0044 , 0x0000 , 0x0007 , 0xFFFF , S(B9CE),
-    S(84CF), S(83CF), S(00CE), 0x0000 , 0xCECE , 0x004E , 0x0000 , 0x83B9 ,
-    0x0052 , 0x0058 , 0x0000 , 0x0005 , 0xFFFF , S(B9CE), S(84CF), S(00CF),
-    0x0000 , 0x0005 , 0x005E , S(B1CE), S(BACE), S(00CE), 0x0001 , 0x0004 ,
-    0xFFFF , S(B1CE), S(81CF), 0x0000 , 0x0005 , 0x005E , S(B1CE), S(BACE),
-    S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(B9CE), S(84CF), S(83CF), S(89CF),
-    S(00CE)
-};
-
-static const unsigned short a_19[] = {
-    0x0000 , 0xBF81 , 0x0041 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0046 , 0x0000 , 0x004C , 0x0000 ,
-    0x0053 , 0x0000 , 0x0003 , 0xFFFF , S(B9CE), S(00CF), 0x0000 , 0x0005 ,
-    0xFFFF , S(88CF), S(B1CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B1CE),
-    S(B9CE), S(86CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BFCE), S(BBCE),
-    S(00CE)
-};
-
-static const unsigned short a_20[] = {
-    0x0000 , 0xB5BD , 0x0004 , 0x0007 , 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0x0009 , 0xFFFF , S(80CF), S(B1CE), S(B9CE), S(87CF), S(00CE)
-};
-
-static const unsigned short a_21[] = {
-    0x0000 , 0xBFB1 , 0x0011 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0018 , 0x0000 ,
-    0x0011 , 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(B4CE), S(B9CE), S(00CE),
-    0x0000 , 0x0009 , 0xFFFF , S(B9CE), S(B4CE), S(B9CE), S(89CF), S(00CE)
-};
-
-static const unsigned short a_22[] = {
-    0x0000 , 0xBD81 , 0x003F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0042 , 0x0000 , 0x0047 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x004A , 0x005D , 0x0000 , 0x0064 , 0x0000 ,
-    0xCFCF , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(B9CE), S(00CE), 0x0000 ,
-    0xCECE , 0xFFFF , 0x0000 , 0xCECE , 0x004D , 0x0000 , 0x85B3 , 0x0051 ,
-    0x0056 , 0x0000 , 0x0003 , 0xFFFF , S(BBCE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(86CF), S(81CF), S(B1CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF ,
-    S(BFCE), S(B2CE), S(B5CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BCCE),
-    S(B7CE), S(00CE)
-};
-
-static const unsigned short a_23[] = {
-    0x0000 , 0xBF83 , 0x003F , 0x0000 , 0x003F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0047 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0047 , 0x0000 ,
-    0x0009 , 0xFFFF , S(B9CE), S(83CF), S(BACE), S(BFCE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(B9CE), S(83CF), S(BACE), S(00CE)
-};
-
-static const unsigned short a_24[] = {
-    0x0000 , 0x83BD , 0x0004 , 0x000B , 0x0000 , 0x0007 , 0xFFFF , S(B1CE),
-    S(B4CE), S(B5CE), S(00CF), 0x0000 , 0x0007 , 0xFFFF , S(B1CE), S(B4CE),
-    S(89CF), S(00CE)
-};
-
-static const unsigned short a_25[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0048 , 0x0000 , 0x0000 , 0x0067 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x006F , 0x0082 , 0x0000 , 0x0087 , 0x0087 ,
-    0x0000 , 0x0009 , 0xC001 , S(BCCE), S(80CF), S(B1CE), S(BCCE), S(00CF),
-    0x0000 , 0xCFCF , 0x004B , 0x0000 , 0x85B5 , 0x004F , 0x0054 , 0x0000 ,
-    0x0003 , 0xC001 , S(BACE), S(00CF), 0x0000 , 0xCECE , 0x0057 , 0x0000 ,
-    0x84B8 , 0x005B , 0x0061 , 0x0000 , 0x0005 , 0xC001 , S(80CF), S(B1CE),
-    S(00CF), 0x0000 , 0x0005 , 0xC001 , S(80CF), S(B5CE), S(00CE), 0x0000 ,
-    0x0009 , 0xC001 , S(BDCE), S(84CF), S(B1CE), S(BDCE), S(00CF), 0x0000 ,
-    0xCECE , 0x0072 , 0x0000 , 0xB3B5 , 0x0076 , 0x007D , 0x0000 , 0x0007 ,
-    0xC001 , S(B3CE), S(B9CE), S(B1CE), S(00CE), 0x0000 , 0x0003 , 0xC001 ,
-    S(B8CE), S(00CE), 0x0000 , 0x0003 , 0xC001 , S(BFCE), S(00CE), 0x0000 ,
-    0x0005 , 0xC001 , S(BCCE), S(B1CE), S(00CE)
-};
-
-static const unsigned short a_26[] = {
-    0x0000 , 0x83BD , 0x0004 , 0x000B , 0x0000 , 0x0007 , 0xFFFF , S(B5CE),
-    S(B4CE), S(B5CE), S(00CF), 0x0000 , 0x0007 , 0xFFFF , S(B5CE), S(B4CE),
-    S(89CF), S(00CE)
-};
-
-static const unsigned short a_27[] = {
-    0x0000 , 0x80BB , 0x0004 , 0x0062 , 0x0000 , 0xCFCF , 0x0007 , 0x0000 ,
-    0xBF83 , 0x0046 , 0x0000 , 0x004D , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0050 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 , 0x005A ,
-    0x0000 , 0x0000 , 0x005D , 0x0000 , 0x0000 , 0x005A , 0x0000 , 0x0007 ,
-    0xFFFF , S(BACE), S(81CF), S(B1CE), S(00CF), 0x0000 , 0xCFCF , 0xFFFF ,
-    0x0000 , 0x0003 , 0xFFFF , S(B4CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF ,
-    S(B3CE), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF ,
-    S(B5CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BCCE), S(B9CE), S(00CE)
-};
-
-static const unsigned short a_28[] = {
-    0x0000 , 0x83BD , 0x0004 , 0x000C , 0x0000 , 0x0009 , 0xFFFF , S(BFCE),
-    S(85CF), S(B4CE), S(B5CE), S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(BFCE),
-    S(85CF), S(B4CE), S(89CF), S(00CE)
-};
-
-static const unsigned short a_29[] = {
-    0x0000 , 0xBE80 , 0x0041 , 0x0046 , 0x0000 , 0x004B , 0x0000 , 0x0000 ,
-    0x0000 , 0x004E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0054 , 0x0000 , 0x005B ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0060 , 0x00A3 , 0x0000 , 0x00EB ,
-    0x00F0 , 0x0000 , 0x0003 , 0xFFFF , S(83CF), S(00CF), 0x0000 , 0x0003 ,
-    0xFFFF , S(86CF), S(00CF), 0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0x0005 ,
-    0xFFFF , S(BBCE), S(B9CE), S(00CF), 0x0000 , 0x0007 , 0xFFFF , S(84CF),
-    S(81CF), S(B1CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(86CF), S(00CE),
-    0x0000 , 0xCECE , 0x0063 , 0x0000 , 0xB181 , 0x0096 , 0x0000 , 0x004B ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x009B , 0x0000 , 0x0003 ,
-    0xFFFF , S(B1CE), S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(BACE), S(B1CE),
-    S(BBCE), S(B9CE), S(00CE), 0x0000 , 0xCECE , 0x00A6 , 0x0000 , 0xB585 ,
-    0x00D9 , 0x004B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00DF , 0x0000 , 0x0000 , 0x0000 ,
-    0x00E6 , 0x0000 , 0x0005 , 0xFFFF , S(BBCE), S(BFCE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(80CF), S(B5CE), S(84CF), S(00CE), 0x0000 , 0x0003 ,
-    0xFFFF , S(B2CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(87CF), S(00CE),
-    0x0000 , 0x0007 , 0xFFFF , S(80CF), S(BBCE), S(B5CE), S(00CE)
-};
-
-static const unsigned short a_30[] = {
-    0x0000 , 0x83BD , 0x0004 , 0x000A , 0x0000 , 0x0005 , 0xFFFF , S(B5CE),
-    S(89CF), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B5CE), S(89CF), S(00CE)
-};
-
-static const unsigned short a_31[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0043 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0049 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0050 , 0x0000 , 0x0000 , 0x0053 , 0x0000 , 0x0050 ,
-    0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0x0005 , 0xFFFF , S(80CF), S(B1CE),
-    S(00CF), 0x0000 , 0xCECE , 0x004C , 0x0001 , 0x0002 , 0xFFFF , S(B9CE),
-    0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0xCECE , 0x0056 , 0x0000 , 0xB1B5 ,
-    0x005A , 0x0050 , 0x0000 , 0x0003 , 0xFFFF , S(B3CE), S(00CE)
-};
-
-static const unsigned short a_32[] = {
-    0x0000 , 0xBD85 , 0x003B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0041 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0046 , 0x0000 , 0x0005 , 0xFFFF , S(B9CE), S(BFCE),
-    S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B9CE), S(00CE), 0x0000 , 0x0005 ,
-    0xFFFF , S(B9CE), S(89CF), S(00CE)
-};
-
-static const unsigned short a_33[] = {
-    0x0000 , 0xBF85 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0044 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x004A , 0x0000 , 0x0044 , 0x0000 , 0x0007 , 0xFFFF ,
-    S(B9CE), S(BACE), S(BFCE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B9CE),
-    S(BACE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(BACE), S(89CF),
-    S(00CE)
-};
-
-static const unsigned short a_34[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0047 , 0x0000 , 0x004D , 0x00B8 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0116 , 0x0000 ,
-    0x0000 , 0x0000 , 0x01CA , 0x0000 , 0x01D4 , 0x01DA , 0x0234 , 0x0247 ,
-    0x0000 , 0x0007 , 0xFFFF , S(BACE), S(B1CE), S(BBCE), S(00CF), 0x0000 ,
-    0x0005 , 0xFFFF , S(B3CE), S(B5CE), S(00CF), 0x0000 , 0xCFCF , 0x0050 ,
-    0x0000 , 0xBF84 , 0x008E , 0x00A8 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00AD ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00B2 , 0x0000 , 0xCFCF ,
-    0x0091 , 0x0000 , 0xB9B1 , 0x009C , 0x0000 , 0x0000 , 0x0000 , 0x00A3 ,
-    0x0000 , 0x0000 , 0x0000 , 0x00A3 , 0x0000 , 0x0007 , 0xFFFF , S(80CF),
-    S(BBCE), S(B9CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(80CF), S(00CE),
-    0x0000 , 0x0003 , 0xFFFF , S(86CF), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(87CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BCCE), S(80CF), S(00CE),
-    0x0000 , 0xCFCF , 0x00BB , 0x0000 , 0xBD81 , 0x00FA , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0100 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0109 , 0x0000 , 0x0000 ,
-    0x0000 , 0x010E , 0x0000 , 0x0005 , 0xFFFF , S(83CF), S(B5CE), S(00CF),
-    0x0000 , 0x000B , 0xFFFF , S(BCCE), S(80CF), S(B1CE), S(B3CE), S(B9CE),
-    S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(BDCE), S(00CE), 0x0000 , 0x0009 ,
-    0xFFFF , S(80CF), S(B9CE), S(BACE), S(B1CE), S(00CE), 0x0000 , 0xCECE ,
-    0x0119 , 0x0000 , 0xBF89 , 0x0152 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0158 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x016B , 0x0000 , 0x0000 , 0x0000 , 0x0172 ,
-    0x0000 , 0x0177 , 0x0000 , 0x0005 , 0xFFFF , S(B5CE), S(BECE), S(00CF),
-    0x0000 , 0xCECE , 0x015B , 0x0001 , 0x84BD , 0x015F , 0x0165 , 0x0000 ,
-    0x0005 , 0xFFFF , S(BACE), S(B1CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF ,
-    S(83CF), S(85CF), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B1CE), S(BDCE),
-    S(84CF), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CE), 0x0000 ,
-    0xCECE , 0x017A , 0x0000 , 0xBB80 , 0x01B8 , 0x0000 , 0x0000 , 0x0000 ,
-    0x01BD , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01C4 ,
-    0x0000 , 0x0003 , 0xFFFF , S(85CF), S(00CF), 0x0000 , 0x0007 , 0xFFFF ,
-    S(80CF), S(81CF), S(89CF), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(86CF),
-    S(85CF), S(00CE), 0x0000 , 0x0003 , 0x01CF , S(B7CE), S(00CE), 0x0001 ,
-    0x0004 , 0xFFFF , S(B1CE), S(BDCE), 0x0000 , 0x0005 , 0xFFFF , S(BECE),
-    S(B9CE), S(00CE), 0x0000 , 0xCECE , 0x01DD , 0x0000 , 0xBF85 , 0x021A ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0220 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x022B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00B2 , 0x0000 , 0x0005 , 0xFFFF , S(BCCE), S(BFCE), S(00CF),
-    0x0000 , 0xCECE , 0x0223 , 0x0001 , 0x000A , 0xFFFF , S(B1CE), S(BCCE),
-    S(BCCE), S(BFCE), S(87CF), 0x0000 , 0x000B , 0xFFFF , S(83CF), S(85CF),
-    S(BDCE), S(BFCE), S(BCCE), S(00CE), 0x0000 , 0xCECE , 0x0237 , 0x0000 ,
-    0x89B1 , 0x023B , 0x0241 , 0x0000 , 0x0005 , 0xFFFF , S(B2CE), S(81CF),
-    S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(84CF), S(83CF), S(00CE), 0x0000 ,
-    0xCECE , 0x024A , 0x0000 , 0xBFB1 , 0x025B , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x026C , 0x0000 , 0x0274 , 0x0000 ,
-    0x0000 , 0x0000 , 0x027D , 0x0000 , 0xCECE , 0x025E , 0x0000 , 0x80BC ,
-    0x0262 , 0x0267 , 0x0000 , 0x0003 , 0xFFFF , S(BCCE), S(00CF), 0x0000 ,
-    0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(BACE),
-    S(B1CE), S(BBCE), S(BBCE), S(00CE), 0x0000 , 0x000B , 0xFFFF , S(80CF),
-    S(BFCE), S(83CF), S(84CF), S(B5CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF ,
-    S(86CF), S(B9CE), S(BBCE), S(00CE)
-};
-
-static const unsigned short a_35[] = {
-    0x0000 , 0x0006 , 0x0006 , S(B1CE), S(BCCE), S(B5CE), 0x0000 , 0xBA83 ,
-    0x0040 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x004F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0054 ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0000 , 0x85B7 , 0x0047 , 0x004C , 0x0000 ,
-    0x0003 , 0xFFFF , S(BFCE), S(00CF), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0003 , 0x0059 , S(B7CE),
-    S(00CE), 0x0001 , 0x0004 , 0xFFFF , S(B7CE), S(B8CE)
-};
-
-static const unsigned short a_36[] = {
-    0x0000 , 0xBB80 , 0x003E , 0x0045 , 0x0000 , 0x0000 , 0x004C , 0x0000 ,
-    0x0000 , 0x005F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0067 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x006E , 0x0000 , 0x0088 , 0x008F , 0x0000 , 0x0007 ,
-    0xFFFF , S(B1CE), S(BDCE), S(B1CE), S(00CF), 0x0000 , 0x0007 , 0xFFFF ,
-    S(80CF), S(B9CE), S(BACE), S(00CF), 0x0000 , 0xCFCF , 0x004F , 0x0000 ,
-    0x83BF , 0x0053 , 0x005A , 0x0000 , 0x0007 , 0xFFFF , S(B1CE), S(80CF),
-    S(BFCE), S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(80CF), S(00CE), 0x0000 ,
-    0xCFCF , 0x0062 , 0x0001 , 0x0004 , 0xFFFF , S(83CF), S(B9CE), 0x0000 ,
-    0x0007 , 0xFFFF , S(B2CE), S(BFCE), S(85CF), S(00CE), 0x0000 , 0xCECE ,
-    0x0071 , 0x0000 , 0xB5BF , 0x0075 , 0x0082 , 0x0000 , 0xCECE , 0x0078 ,
-    0x0000 , 0x80BE , 0x007C , 0x007F , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 ,
-    0xCECE , 0xFFFF , 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(80CF), S(00CE),
-    0x0000 , 0x0007 , 0xFFFF , S(B1CE), S(80CF), S(BFCE), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(BFCE), S(85CF), S(00CE)
-};
-
-static const unsigned short a_37[] = {
-    0x0000 , 0x8183 , 0x0004 , 0x0004 , 0x0000 , 0x0003 , 0xFFFF , S(84CF),
-    S(00CF)
-};
-
-static const unsigned short a_38[] = {
-    0x0000 , 0x0006 , 0x0006 , S(B1CE), S(BDCE), S(B5CE), 0x0000 , 0xBA83 ,
-    0x0040 , 0x004F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0069 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x006E ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0000 , 0x85B7 , 0x0047 , 0x004C , 0x0000 ,
-    0x0003 , 0xFFFF , S(BFCE), S(00CF), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0xCFCF , 0x0052 , 0x0000 , 0xBDBF , 0x0056 , 0x0066 , 0x0000 , 0xCECE ,
-    0x0059 , 0x0000 , 0x85BF , 0x005D , 0x0066 , 0x0000 , 0x0003 , 0x0062 ,
-    S(BFCE), S(00CF), 0x0001 , 0x0002 , 0xFFFF , S(B9CE), 0x0000 , 0xCECE ,
-    0x0062 , 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0003 ,
-    0x0073 , S(B7CE), S(00CE), 0x0001 , 0x0004 , 0xFFFF , S(B7CE), S(B8CE)
-};
-
-static const unsigned short a_39[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x00EF , 0x0000 , 0x015A , 0x01B0 , 0x0000 ,
-    0x0236 , 0x02AC , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0358 , 0x037F , 0x0000 , 0x0000 ,
-    0x03F6 , 0x0000 , 0x0400 , 0x0000 , 0x0414 , 0x047C , 0x0541 , 0x05A1 ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0001 , 0xBF83 , 0x0082 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0085 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00DA , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0x0003 , 0x008A ,
-    S(B4CE), S(00CE), 0x0000 , 0xBF85 , 0x00C7 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00CE , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00D1 , 0x0000 ,
-    0x0007 , 0xFFFF , S(80CF), S(BFCE), S(BBCE), S(00CF), 0x0000 , 0xCECE ,
-    0xFFFF , 0x0000 , 0x000B , 0xFFFF , S(87CF), S(B1CE), S(BCCE), S(B7CE),
-    S(BBCE), S(00CE), 0x0000 , 0xCECE , 0x00DD , 0x0000 , 0x83BA , 0x00E1 ,
-    0x00E6 , 0x0000 , 0x0003 , 0xFFFF , S(84CF), S(00CF), 0x0000 , 0xCECE ,
-    0x00E9 , 0x0001 , 0x0006 , 0xFFFF , S(85CF), S(80CF), S(BFCE), 0x0000 ,
-    0xCFCF , 0x00F2 , 0x0000 , 0xBF84 , 0x0130 , 0x0138 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x013D , 0x0000 , 0x014A ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0152 ,
-    0x0000 , 0x0009 , 0xFFFF , S(80CF), S(B5CE), S(81CF), S(B9CE), S(00CF),
-    0x0000 , 0x0003 , 0xFFFF , S(BFCE), S(00CF), 0x0000 , 0xCECE , 0x0140 ,
-    0x0001 , 0x84B3 , 0x0144 , 0x00CE , 0x0000 , 0x0005 , 0xFFFF , S(B2CE),
-    S(B5CE), S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(BBCE), S(BFCE), S(85CF),
-    S(B8CE), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(BACE), S(BFCE), S(81CF),
-    S(BCCE), S(00CE), 0x0000 , 0xCFCF , 0x015D , 0x0001 , 0xB984 , 0x0195 ,
-    0x019F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01A4 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01A9 , 0x0000 , 0x000D , 0xFFFF ,
-    S(83CF), S(B1CE), S(81CF), S(B1CE), S(BACE), S(B1CE), S(00CF), 0x0000 ,
-    0x0003 , 0xFFFF , S(B8CE), S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B2CE),
-    S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(80CF), S(BFCE), S(BBCE), S(00CE),
-    0x0000 , 0xCFCF , 0x01B3 , 0x0000 , 0xBD83 , 0x01F0 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x01F6 , 0x0000 , 0x0000 , 0x0000 , 0x0210 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0215 , 0x0000 , 0x021D , 0x0000 , 0x0224 ,
-    0x0000 , 0x0005 , 0xFFFF , S(BACE), S(B1CE), S(00CF), 0x0000 , 0xCECE ,
-    0x01F9 , 0x0000 , 0xB9BB , 0x01FD , 0x0202 , 0x0000 , 0x0003 , 0xFFFF ,
-    S(B4CE), S(00CE), 0x0000 , 0xCECE , 0x0205 , 0x0000 , 0x8081 , 0x0082 ,
-    0x0209 , 0x0000 , 0x0007 , 0xFFFF , S(84CF), S(83CF), S(B1CE), S(00CF),
-    0x0000 , 0x0003 , 0xFFFF , S(84CF), S(00CE), 0x0000 , 0x0009 , 0xFFFF ,
-    S(80CF), S(BFCE), S(85CF), S(81CF), S(00CE), 0x0000 , 0x0007 , 0xFFFF ,
-    S(83CF), S(BFCE), S(85CF), S(00CE), 0x0000 , 0xCECE , 0x0227 , 0x0000 ,
-    0x89B9 , 0x022B , 0x0230 , 0x0000 , 0x0003 , 0xFFFF , S(B6CE), S(00CF),
-    0x0000 , 0x0005 , 0xFFFF , S(BCCE), S(B1CE), S(00CE), 0x0000 , 0xCFCF ,
-    0x0239 , 0x0001 , 0xB781 , 0x0272 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x028E , 0x0000 , 0x0000 , 0x0000 , 0x0294 ,
-    0x0000 , 0x02A1 , 0x0000 , 0xCFCF , 0x0275 , 0x0000 , 0xB1BF , 0x0279 ,
-    0x00CE , 0x0000 , 0xCECE , 0x027C , 0x0000 , 0x84BB , 0x0280 , 0x0287 ,
-    0x0000 , 0x0007 , 0xFFFF , S(80CF), S(B5CE), S(BDCE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(BACE), S(BFCE), S(B9CE), S(00CE), 0x0000 , 0x0005 ,
-    0xFFFF , S(B4CE), S(B9CE), S(00CE), 0x0000 , 0x0005 , 0x029A , S(83CF),
-    S(84CF), S(00CE), 0x0001 , 0x0008 , 0xFFFF , S(86CF), S(89CF), S(84CF),
-    S(BFCE), 0x0000 , 0x0007 , 0x02A8 , S(80CF), S(B5CE), S(81CF), S(00CE),
-    0x0001 , 0x0002 , 0xFFFF , S(85CF), 0x0000 , 0xCFCF , 0x02AF , 0x0001 ,
-    0xB7B9 , 0x02B3 , 0x0353 , 0x0000 , 0x0003 , 0x02B8 , S(BCCE), S(00CE),
-    0x0000 , 0xBF85 , 0x00C7 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00CE , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x02F5 , 0x0000 , 0x0005 , 0x02FB ,
-    S(B2CE), S(B9CE), S(00CE), 0x0001 , 0x0002 , 0x02FF , S(BFCE), 0x0000 ,
-    0xBD81 , 0x033E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0345 , 0x0000 , 0x034C , 0x0000 , 0x0007 ,
-    0xFFFF , S(BCCE), S(B9CE), S(BACE), S(00CF), 0x0000 , 0x0007 , 0xFFFF ,
-    S(BCCE), S(B5CE), S(B3CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(BACE),
-    S(B1CE), S(80CF), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(BBCE), S(00CE),
-    0x0000 , 0xCECE , 0x035B , 0x0000 , 0xB1B9 , 0x035F , 0x036F , 0x0000 ,
-    0x0003 , 0x0364 , S(84CF), S(00CE), 0x0001 , 0xBDBF , 0x00CE , 0x0368 ,
-    0x0000 , 0x0007 , 0xFFFF , S(88CF), S(B7CE), S(BBCE), S(00CE), 0x0000 ,
-    0x0003 , 0x0374 , S(BBCE), S(00CE), 0x0001 , 0x0002 , 0x0378 , S(BACE),
-    0x0001 , 0x0008 , 0xFFFF , S(BECE), S(B7CE), S(81CF), S(BFCE), 0x0000 ,
-    0xCECE , 0x0382 , 0x0001 , 0xB981 , 0x03BD , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x03C7 , 0x0000 , 0x03CE , 0x0000 ,
-    0x03E5 , 0x0000 , 0x03EB , 0x0000 , 0x03F1 , 0x0000 , 0x0005 , 0x03C3 ,
-    S(BDCE), S(BFCE), S(00CF), 0x0000 , 0xB1B5 , 0x00CE , 0x00CE , 0x0000 ,
-    0xCECE , 0x03CA , 0x0001 , 0x8183 , 0x00E1 , 0x00E1 , 0x0000 , 0x0003 ,
-    0x03D3 , S(B9CE), S(00CE), 0x0000 , 0x83B8 , 0x03D7 , 0x03E0 , 0x0000 ,
-    0x0003 , 0x03DC , S(84CF), S(00CF), 0x0001 , 0x0002 , 0xFFFF , S(B1CE),
-    0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(83CF), S(84CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(80CF),
-    S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(83CF), S(00CE), 0x0000 , 0x000D ,
-    0xFFFF , S(BACE), S(B1CE), S(BBCE), S(80CF), S(BFCE), S(85CF), S(00CE),
-    0x0000 , 0xCECE , 0x0403 , 0x0001 , 0xB5B9 , 0x0407 , 0x040F , 0x0000 ,
-    0x0009 , 0xFFFF , S(BCCE), S(89CF), S(B1CE), S(BCCE), S(00CE), 0x0000 ,
-    0x0003 , 0x03DC , S(80CF), S(00CE), 0x0000 , 0xCECE , 0x0417 , 0x0000 ,
-    0xBB83 , 0x0452 , 0x0000 , 0x0458 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0460 , 0x0000 , 0x0000 , 0x0000 , 0x046D ,
-    0x0000 , 0x0475 , 0x0000 , 0x0005 , 0xFFFF , S(B2CE), S(B1CE), S(00CF),
-    0x0000 , 0x0009 , 0xFFFF , S(B2CE), S(81CF), S(B1CE), S(87CF), S(00CF),
-    0x0000 , 0xCECE , 0x0463 , 0x0000 , 0xB4BB , 0x00CE , 0x0467 , 0x0000 ,
-    0x0005 , 0xFFFF , S(80CF), S(B5CE), S(00CE), 0x0000 , 0xCECE , 0x0470 ,
-    0x0001 , 0x0004 , 0xFFFF , S(B1CE), S(BDCE), 0x0000 , 0x0007 , 0xFFFF ,
-    S(B2CE), S(BFCE), S(85CF), S(00CE), 0x0000 , 0xCECE , 0x047F , 0x0000 ,
-    0xBF80 , 0x04C1 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0138 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x04D5 , 0x0000 , 0x0000 , 0x0000 , 0x052B , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0539 , 0x0000 , 0xCFCF , 0x04C4 , 0x0001 , 0xB9BF , 0x01FD , 0x04C8 ,
-    0x0000 , 0xCECE , 0x04CB , 0x0000 , 0x87B1 , 0x04CF , 0x0353 , 0x0000 ,
-    0x0005 , 0xFFFF , S(88CF), S(85CF), S(00CF), 0x0000 , 0x0003 , 0x04DA ,
-    S(B3CE), S(00CE), 0x0001 , 0xBF85 , 0x0517 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x051E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0525 , 0x0000 ,
-    0x0007 , 0xFFFF , S(B2CE), S(B1CE), S(B8CE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(BACE), S(B1CE), S(84CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(BFCE), S(BBCE), S(00CE), 0x0000 , 0xCECE , 0x052E , 0x0000 , 0x84BC ,
-    0x0532 , 0x00CE , 0x0000 , 0x0007 , 0xFFFF , S(BACE), S(B1CE), S(83CF),
-    S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(80CF), S(BFCE), S(81CF), S(84CF),
-    S(00CE), 0x0000 , 0xCECE , 0x0544 , 0x0001 , 0xBB85 , 0x057D , 0x0000 ,
-    0x0586 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x058D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0597 , 0x0000 , 0x000B , 0xFFFF ,
-    S(B4CE), S(81CF), S(B1CE), S(B4CE), S(BFCE), S(00CF), 0x0000 , 0x0007 ,
-    0xFFFF , S(B2CE), S(81CF), S(B1CE), S(00CF), 0x0000 , 0x000D , 0xFFFF ,
-    S(BFCE), S(BBCE), S(B9CE), S(B3CE), S(BFCE), S(B4CE), S(00CE), 0x0000 ,
-    0x000D , 0xFFFF , S(BCCE), S(BFCE), S(85CF), S(83CF), S(BFCE), S(85CF),
-    S(00CE), 0x0000 , 0xCECE , 0x05A4 , 0x0001 , 0x000E , 0xFFFF , S(B1CE),
-    S(BCCE), S(B5CE), S(81CF), S(B9CE), S(BACE), S(B1CE)
-};
-
-static const unsigned short a_40[] = {
-    0x0000 , 0xBD81 , 0x003F , 0x0000 , 0x0000 , 0x00A0 , 0x0000 , 0x0000 ,
-    0x00A6 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00AB , 0x0000 , 0x0000 ,
-    0x0000 , 0x00B9 , 0x0000 , 0x015F , 0x0165 , 0x0000 , 0x0172 , 0x0000 ,
-    0xCFCF , 0x0042 , 0x0000 , 0xBF85 , 0x007F , 0x0000 , 0x0000 , 0x0000 ,
-    0x008C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0091 , 0x0089 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0096 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x009B , 0x0000 ,
-    0xCFCF , 0x0082 , 0x0000 , 0x80B5 , 0x0086 , 0x0089 , 0x0000 , 0xCFCF ,
-    0xFFFF , 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(87CF),
-    S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B2CE), S(00CE), 0x0000 , 0x0003 ,
-    0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(86CF), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(BDCE), S(B5CE), S(00CF), 0x0000 , 0x0003 ,
-    0xFFFF , S(83CF), S(00CF), 0x0000 , 0xCECE , 0x00AE , 0x0000 , 0xBDBF ,
-    0x00B2 , 0x0089 , 0x0000 , 0xCECE , 0x00B5 , 0x0000 , 0x85B5 , 0x00A6 ,
-    0x0089 , 0x0000 , 0xCECE , 0x00BC , 0x0000 , 0xBF81 , 0x00FD , 0x0000 ,
-    0x0086 , 0x0000 , 0x0104 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0109 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x014D , 0x0152 ,
-    0x0000 , 0x0000 , 0x0157 , 0x0000 , 0x015A , 0x0000 , 0x0007 , 0xFFFF ,
-    S(85CF), S(80CF), S(B5CE), S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B5CE),
-    S(00CF), 0x0000 , 0xCECE , 0x010C , 0x0000 , 0xBA81 , 0x0086 , 0x0000 ,
-    0x0000 , 0x0086 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0148 , 0x0089 ,
-    0x0000 , 0x0003 , 0xFFFF , S(B4CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF ,
-    S(84CF), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CE), 0x0000 ,
-    0xCECE , 0x00B5 , 0x0000 , 0x0003 , 0xFFFF , S(81CF), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(B1CE), S(81CF), S(00CE), 0x0000 , 0xCECE , 0x0168 ,
-    0x0000 , 0xB5BF , 0x016C , 0x0091 , 0x0000 , 0x0005 , 0xFFFF , S(89CF),
-    S(86CF), S(00CE), 0x0000 , 0xCECE , 0x0175 , 0x0000 , 0xBF85 , 0x00A6 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0096 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x01B2 , 0x0000 , 0xCECE , 0x01B5 , 0x0000 , 0x8081 , 0x0086 ,
-    0x0086
-};
-
-static const unsigned short a_41[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0052 , 0x0000 , 0x0000 , 0x0000 , 0x00B8 ,
-    0x00BB , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00CD , 0x00D3 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00DA , 0x0000 , 0x00DD , 0x00E9 , 0x00AD , 0x0138 ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0000 , 0x81BF , 0x0047 , 0x004D , 0x0000 ,
-    0x0005 , 0xFFFF , S(83CF), S(B5CE), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(BACE), S(00CE), 0x0000 , 0xCFCF , 0x0055 , 0x0000 , 0xBF81 , 0x0096 ,
-    0x0000 , 0x0000 , 0x009C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A1 ,
-    0x00A8 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00B2 , 0x0000 , 0x0005 ,
-    0xFFFF , S(B8CE), S(B1CE), S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(BDCE),
-    S(00CF), 0x0000 , 0xCECE , 0x00A4 , 0x0000 , 0xB2BD , 0x00A8 , 0x00AD ,
-    0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF ,
-    S(B5CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BCCE), S(80CF), S(00CE),
-    0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0xCFCF , 0x00BE , 0x0000 , 0x81B9 ,
-    0x00C2 , 0x00C8 , 0x0000 , 0x0005 , 0xFFFF , S(83CF), S(85CF), S(00CF),
-    0x0000 , 0x0003 , 0xFFFF , S(BDCE), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(80CF), S(B1CE), S(00CE), 0x0000 , 0xCECE , 0x00D6 , 0x0001 , 0x0002 ,
-    0xFFFF , S(B1CE), 0x0000 , 0xCECE , 0x00D6 , 0x0000 , 0xCECE , 0x00E0 ,
-    0x0000 , 0x83BF , 0x00B8 , 0x00E4 , 0x0000 , 0x0003 , 0xFFFF , S(84CF),
-    S(00CE), 0x0000 , 0xCECE , 0x00EC , 0x0000 , 0xB580 , 0x0124 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0129 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0132 , 0x0000 , 0x0003 , 0xFFFF , S(B1CE),
-    S(00CF), 0x0000 , 0x000B , 0xFFFF , S(80CF), S(B1CE), S(81CF), S(B1CE),
-    S(BACE), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(83CF), S(BACE), S(00CE),
-    0x0000 , 0xCECE , 0x013B , 0x0000 , 0xBFB1 , 0x014C , 0x0000 , 0x0000 ,
-    0x0000 , 0x014F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0154 , 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0x0003 , 0xFFFF , S(B2CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B2CE),
-    S(B1CE), S(81CF), S(00CE)
-};
-
-static const unsigned short a_42[] = {
-    0x0000 , 0x0008 , 0x0007 , S(BDCE), S(84CF), S(B1CE), S(83CF), 0x0000 ,
-    0x89BF , 0x000B , 0x000E , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 , 0xCECE ,
-    0xFFFF
-};
-
-static const unsigned short a_43[] = {
-    0x0000 , 0x000C , 0x0009 , S(BFCE), S(BCCE), S(B1CE), S(83CF), S(84CF),
-    S(B5CE), 0x0001 , 0x0002 , 0xFFFF , S(B9CE)
-};
-
-static const unsigned short a_44[] = {
-    0x0000 , 0x8086 , 0x0004 , 0x001F , 0x0000 , 0xCFCF , 0x0007 , 0x0001 ,
-    0xB1BC , 0x000B , 0x0015 , 0x0000 , 0xCECE , 0x000E , 0x0001 , 0x0008 ,
-    0xFFFF , S(B1CE), S(BACE), S(B1CE), S(84CF), 0x0000 , 0x0005 , 0x001B ,
-    S(83CF), S(85CF), S(00CE), 0x0001 , 0x0002 , 0xFFFF , S(B1CE), 0x0000 ,
-    0x000D , 0xFFFF , S(B1CE), S(BCCE), S(B5CE), S(84CF), S(B1CE), S(BCCE),
-    S(00CF)
-};
-
-static const unsigned short a_45[] = {
-    0x0000 , 0xBF81 , 0x0041 , 0x0000 , 0x0046 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x004C ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x004F , 0x004C , 0x0000 , 0x004C ,
-    0x0068 , 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CF), 0x0000 , 0x0005 ,
-    0xFFFF , S(BDCE), S(B9CE), S(00CF), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0xCECE , 0x0052 , 0x0000 , 0xB1B5 , 0x0056 , 0x0061 , 0x0000 , 0xCECE ,
-    0x0059 , 0x0001 , 0x000A , 0xFFFF , S(80CF), S(B1CE), S(81CF), S(B1CE),
-    S(BACE), 0x0000 , 0x0007 , 0xFFFF , S(B5CE), S(BACE), S(84CF), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(80CF), S(81CF), S(00CE)
-};
-
-static const unsigned short a_46[] = {
-    0x0000 , 0xB583 , 0x0035 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x003E , 0x0000 , 0x0000 , 0x0000 , 0x003E , 0x0000 , 0x000B , 0xFFFF ,
-    S(B7CE), S(B8CE), S(B7CE), S(BACE), S(B5CE), S(00CF), 0x0000 , 0x0009 ,
-    0xFFFF , S(B7CE), S(B8CE), S(B7CE), S(BACE), S(00CE)
-};
-
-static const unsigned short a_47[] = {
-    0x0000 , 0xBB86 , 0x0038 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x003D , 0x0000 , 0x0000 , 0x008F ,
-    0x0000 , 0x0003 , 0xFFFF , S(83CF), S(00CF), 0x0000 , 0xCECE , 0x0040 ,
-    0x0000 , 0xBF81 , 0x0081 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0087 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x008C , 0x0000 , 0x0005 , 0xFFFF , S(BDCE), S(B1CE), S(00CF), 0x0000 ,
-    0x0003 , 0xFFFF , S(80CF), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0xCECE , 0x0092 , 0x0000 , 0x8589 , 0x0096 , 0x009D , 0x0000 , 0x0007 ,
-    0xFFFF , S(83CF), S(BACE), S(BFCE), S(00CF), 0x0000 , 0x0005 , 0xFFFF ,
-    S(83CF), S(BACE), S(00CF)
-};
-
-static const unsigned short a_48[] = {
-    0x0000 , 0x0002 , 0x0004 , S(B8CE), 0x0001 , 0xBD83 , 0x0041 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0048 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x005E , 0x0000 , 0x0007 , 0xFFFF , S(80CF), S(81CF), S(BFCE), S(00CF),
-    0x0000 , 0xCECE , 0x004B , 0x0000 , 0x84B9 , 0x004F , 0x0059 , 0x0000 ,
-    0x000D , 0xFFFF , S(80CF), S(B1CE), S(81CF), S(B1CE), S(BACE), S(B1CE),
-    S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B4CE), S(00CE), 0x0000 , 0x0005 ,
-    0xFFFF , S(83CF), S(85CF), S(00CE)
-};
-
-static const unsigned short a_49[] = {
-    0x0000 , 0xB583 , 0x0035 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x003C , 0x0000 , 0x0000 , 0x0000 , 0x003C , 0x0000 , 0x0007 , 0xFFFF ,
-    S(B7CE), S(BACE), S(B5CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B7CE),
-    S(BACE), S(00CE)
-};
-
-static const unsigned short a_50[] = {
-    0x0000 , 0xBC80 , 0x003F , 0x0046 , 0x0000 , 0x0000 , 0x004E , 0x0000 ,
-    0x0000 , 0x0062 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0075 , 0x0086 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x008D , 0x00A2 , 0x0000 ,
-    0x0007 , 0xFFFF , S(B2CE), S(BBCE), S(B5CE), S(00CF), 0x0000 , 0x0009 ,
-    0xFFFF , S(80CF), S(BFCE), S(B4CE), S(B1CE), S(00CF), 0x0000 , 0xCFCF ,
-    0x0051 , 0x0000 , 0x89B1 , 0x0055 , 0x005B , 0x0000 , 0x0005 , 0xFFFF ,
-    S(80CF), S(81CF), S(00CF), 0x0000 , 0x0007 , 0xFFFF , S(BACE), S(85CF),
-    S(BCCE), S(00CE), 0x0000 , 0x0003 , 0x0067 , S(B1CE), S(00CF), 0x0000 ,
-    0x84BB , 0x006B , 0x0072 , 0x0000 , 0x0007 , 0xFFFF , S(80CF), S(B1CE),
-    S(BDCE), S(00CF), 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0xCECE , 0x0078 ,
-    0x0000 , 0xB1B7 , 0x007C , 0x0081 , 0x0000 , 0x0003 , 0xFFFF , S(86CF),
-    S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(BBCE), S(00CE), 0x0000 , 0x0007 ,
-    0xFFFF , S(86CF), S(81CF), S(85CF), S(00CE), 0x0000 , 0xCECE , 0x0090 ,
-    0x0000 , 0xB9BB , 0x0094 , 0x009C , 0x0000 , 0x0009 , 0xFFFF , S(BCCE),
-    S(B1CE), S(BDCE), S(84CF), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(BCCE),
-    S(B1CE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(BFCE), S(00CE)
-};
-
-static const unsigned short a_51[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0048 , 0x0000 , 0x0000 , 0x0060 , 0x0066 ,
-    0x0000 , 0x007F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0085 , 0x0000 , 0x0000 , 0x008B , 0x00AB ,
-    0x00BA , 0x0000 , 0x00D0 , 0x0000 , 0x00D6 , 0x00B2 , 0x00F5 , 0x0102 ,
-    0x0000 , 0x0009 , 0xFFFF , S(B5CE), S(BACE), S(BBCE), S(B9CE), S(00CF),
-    0x0000 , 0xCFCF , 0x004B , 0x0001 , 0x81B5 , 0x004F , 0x0056 , 0x0000 ,
-    0x0007 , 0xFFFF , S(B1CE), S(BDCE), S(B1CE), S(00CF), 0x0000 , 0x000D ,
-    0xFFFF , S(B5CE), S(BDCE), S(B4CE), S(B9CE), S(B1CE), S(86CF), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(80CF), S(B1CE), S(00CF), 0x0000 , 0x0005 ,
-    0x006C , S(81CF), S(B5CE), S(00CF), 0x0000 , 0xB1B5 , 0x0070 , 0x0077 ,
-    0x0000 , 0x0007 , 0xFFFF , S(BACE), S(B1CE), S(B8CE), S(00CE), 0x0000 ,
-    0x0009 , 0xFFFF , S(B4CE), S(B5CE), S(85CF), S(84CF), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(BBCE), S(B5CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF ,
-    S(84CF), S(83CF), S(00CE), 0x0000 , 0xCECE , 0x008E , 0x0000 , 0xB9B1 ,
-    0x0099 , 0x0000 , 0x0000 , 0x0000 , 0x009E , 0x0000 , 0x0000 , 0x0000 ,
-    0x00A3 , 0x0000 , 0x0003 , 0xFFFF , S(87CF), S(00CE), 0x0000 , 0x0003 ,
-    0xFFFF , S(BCCE), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(BBCE), S(B1CE),
-    S(BCCE), S(80CF), S(00CE), 0x0000 , 0xCECE , 0x00AE , 0x0000 , 0xB4BB ,
-    0x00B2 , 0x00B5 , 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF ,
-    S(80CF), S(00CE), 0x0000 , 0xCECE , 0x00BD , 0x0000 , 0xB1BF , 0x00C1 ,
-    0x00C8 , 0x0000 , 0x0007 , 0xFFFF , S(BCCE), S(B5CE), S(83CF), S(00CE),
-    0x0000 , 0x0009 , 0xFFFF , S(B4CE), S(B5CE), S(83CF), S(80CF), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(B9CE), S(00CE), 0x0000 , 0xCECE ,
-    0x00D9 , 0x0000 , 0xB7B1 , 0x00E2 , 0x0000 , 0x00EA , 0x0000 , 0x0000 ,
-    0x0000 , 0x00EF , 0x0000 , 0x0009 , 0xFFFF , S(86CF), S(B1CE), S(81CF),
-    S(BCCE), S(00CE), 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(B1CE), S(BDCE), S(00CE), 0x0000 , 0xCECE , 0x00F8 ,
-    0x0001 , 0xB1BF , 0x00B2 , 0x00FC , 0x0000 , 0x0005 , 0xFFFF , S(B2CE),
-    S(81CF), S(00CE), 0x0000 , 0x000D , 0xFFFF , S(85CF), S(80CF), S(BFCE),
-    S(84CF), S(B5CE), S(B9CE), S(00CE)
-};
-
-static const unsigned short a_52[] = {
-    0x0000 , 0xB583 , 0x0035 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x003D , 0x0000 , 0x0000 , 0x0000 , 0x003D , 0x0000 , 0x0009 , 0xFFFF ,
-    S(BFCE), S(85CF), S(83CF), S(B5CE), S(00CF), 0x0000 , 0x0007 , 0xFFFF ,
-    S(BFCE), S(85CF), S(83CF), S(00CE)
-};
-
-static const unsigned short a_53[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0045 , 0x0000 , 0x0000 , 0x004F , 0x0000 ,
-    0x0056 , 0x0064 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0070 , 0x0000 , 0x007F ,
-    0x0000 , 0x0003 , 0xFFFF , S(81CF), S(00CF), 0x0000 , 0xCFCF , 0x0048 ,
-    0x0000 , 0x8086 , 0x004C , 0x004C , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 ,
-    0x0007 , 0xFFFF , S(87CF), S(BFCE), S(81CF), S(00CF), 0x0000 , 0xCFCF ,
-    0x0059 , 0x0000 , 0x83BF , 0x004C , 0x005D , 0x0000 , 0xCECE , 0x0060 ,
-    0x0001 , 0x0002 , 0xC001 , S(88CF), 0x0000 , 0x0005 , 0x006A , S(BBCE),
-    S(BFCE), S(00CF), 0x0001 , 0x0006 , 0xC001 , S(BDCE), S(B1CE), S(85CF),
-    0x0000 , 0xCECE , 0x0073 , 0x0000 , 0xB5BB , 0x0077 , 0x007C , 0x0000 ,
-    0x0003 , 0xFFFF , S(80CF), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 ,
-    0x0007 , 0xFFFF , S(83CF), S(BCCE), S(B7CE), S(00CE)
-};
-
-static const unsigned short a_54[] = {
-    0x0000 , 0xBD80 , 0x0040 , 0x0115 , 0x0000 , 0x0000 , 0x016E , 0x022B ,
-    0x0231 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0286 , 0x0000 , 0x028F , 0x0298 , 0x02A2 ,
-    0x0000 , 0xCFCF , 0x0043 , 0x0001 , 0xBF83 , 0x0082 , 0x0000 , 0x0087 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x008D , 0x0000 , 0x0000 , 0x009F , 0x0000 ,
-    0x0000 , 0x00A5 , 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CF), 0x0000 ,
-    0x0005 , 0xFFFF , S(B1CE), S(BDCE), S(00CF), 0x0000 , 0xCECE , 0x0090 ,
-    0x0000 , 0x84B5 , 0x0094 , 0x009A , 0x0000 , 0x0005 , 0xFFFF , S(B1CE),
-    S(81CF), S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(83CF), S(85CF), S(00CE), 0x0000 , 0xCECE , 0x00A8 ,
-    0x0000 , 0xBB80 , 0x00E6 , 0x00EF , 0x0000 , 0x00F7 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00FE ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0103 , 0x0000 , 0x000B ,
-    0xFFFF , S(80CF), S(81CF), S(BFCE), S(83CF), S(89CF), S(00CF), 0x0000 ,
-    0x0009 , 0xFFFF , S(83CF), S(B9CE), S(B4CE), S(B7CE), S(00CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(B4CE), S(81CF), S(BFCE), S(00CF), 0x0000 , 0x0003 ,
-    0xFFFF , S(BDCE), S(00CE), 0x0000 , 0xCECE , 0x0106 , 0x0000 , 0xB1BF ,
-    0x010A , 0x0112 , 0x0000 , 0x0009 , 0xFFFF , S(BACE), S(81CF), S(BFCE),
-    S(BACE), S(00CE), 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0xCFCF , 0x0118 ,
-    0x0001 , 0xB584 , 0x014C , 0x014F , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0154 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0168 , 0x0000 , 0xCFCF , 0xFFFF , 0x0000 ,
-    0x0003 , 0xFFFF , S(BFCE), S(00CF), 0x0000 , 0xCECE , 0x0157 , 0x0000 ,
-    0x8087 , 0x015B , 0x0161 , 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(83CF),
-    S(00CF), 0x0000 , 0xCFCF , 0x0164 , 0x0001 , 0x0002 , 0xFFFF , S(B1CE),
-    0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(80CF), S(00CE), 0x0000 , 0xCFCF ,
-    0x0171 , 0x0001 , 0xBF83 , 0x01B0 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0208 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x020E , 0x0000 , 0x0000 , 0x0000 , 0x009F , 0x0000 , 0x0214 ,
-    0x0000 , 0xCFCF , 0x01B3 , 0x0000 , 0xBF85 , 0x0087 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x01F0 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01F6 ,
-    0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(B2CE), S(00CE), 0x0000 , 0xCECE ,
-    0x01F9 , 0x0000 , 0x81BC , 0x01FD , 0x0202 , 0x0000 , 0x0003 , 0xFFFF ,
-    S(80CF), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(B9CE), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(B4CE), S(B9CE), S(00CE), 0x0000 , 0x0005 ,
-    0xFFFF , S(B5CE), S(80CF), S(00CE), 0x0000 , 0xCECE , 0x0217 , 0x0000 ,
-    0x80BC , 0x021B , 0x0222 , 0x0000 , 0xCFCF , 0x021E , 0x0000 , 0x85B1 ,
-    0x014C , 0x0112 , 0x0000 , 0x0003 , 0x0227 , S(BFCE), S(00CE), 0x0001 ,
-    0x0002 , 0xFFFF , S(BDCE), 0x0000 , 0x0005 , 0xFFFF , S(BDCE), S(B1CE),
-    S(00CF), 0x0000 , 0xCFCF , 0x0234 , 0x0000 , 0xBC85 , 0x026E , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0112 , 0x0000 , 0x0000 , 0x0000 , 0x0275 , 0x0000 ,
-    0x027A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0280 , 0x0000 , 0x0007 ,
-    0xFFFF , S(80CF), S(BFCE), S(BBCE), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(BECE), S(00CE), 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(B4CE), S(00CE),
-    0x0000 , 0x0005 , 0xFFFF , S(80CF), S(B1CE), S(00CE), 0x0000 , 0x000B ,
-    0xFFFF , S(B1CE), S(BCCE), S(B1CE), S(BBCE), S(BBCE), S(00CE), 0x0000 ,
-    0xCECE , 0x0292 , 0x0001 , 0x0006 , 0xFFFF , S(B1CE), S(BCCE), S(B1CE),
-    0x0000 , 0xCECE , 0x029B , 0x0001 , 0x0008 , 0xFFFF , S(BFCE), S(85CF),
-    S(BBCE), S(B1CE), 0x0000 , 0x0003 , 0x02A7 , S(B5CE), S(00CE), 0x0001 ,
-    0x0008 , 0xFFFF , S(B4CE), S(B5CE), S(81CF), S(B2CE)
-};
-
-static const unsigned short a_55[] = {
-    0x0000 , 0xB583 , 0x0035 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x003C , 0x0000 , 0x0000 , 0x0000 , 0x003C , 0x0000 , 0x0007 , 0xFFFF ,
-    S(B1CE), S(B3CE), S(B5CE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B1CE),
-    S(B3CE), S(00CE)
-};
-
-static const unsigned short a_56[] = {
-    0x0000 , 0xB585 , 0x0033 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x003A , 0x0000 ,
-    0x0000 , 0x0000 , 0x003A , 0x0000 , 0x0007 , 0xFFFF , S(B7CE), S(83CF),
-    S(BFCE), S(00CF), 0x0000 , 0x0005 , 0xFFFF , S(B7CE), S(83CF), S(00CE)
-};
-
-static const unsigned short a_57[] = {
-    0x0000 , 0x0002 , 0x0004 , S(BDCE), 0x0001 , 0xB1BF , 0x0008 , 0x001D ,
-    0x0000 , 0xCECE , 0x000B , 0x0000 , 0x84BA , 0x000F , 0x0015 , 0x0000 ,
-    0x0005 , 0xFFFF , S(B5CE), S(80CF), S(00CF), 0x0000 , 0x0009 , 0xFFFF ,
-    S(B4CE), S(89CF), S(B4CE), S(B5CE), S(00CE), 0x0000 , 0xCECE , 0x0020 ,
-    0x0000 , 0xBC83 , 0x005C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0063 , 0x006B , 0x0000 , 0x0007 , 0xFFFF , S(87CF),
-    S(B5CE), S(81CF), S(00CF), 0x0000 , 0x0009 , 0xFFFF , S(BCCE), S(B5CE),
-    S(B3CE), S(B1CE), S(00CE), 0x0000 , 0x0007 , 0xFFFF , S(B5CE), S(81CF),
-    S(B7CE), S(00CE)
-};
-
-static const unsigned short a_58[] = {
-    0x0000 , 0xBD81 , 0x003F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0099 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x00A2 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00AB , 0x0000 , 0x00B1 , 0x0000 ,
-    0x0003 , 0x0044 , S(87CF), S(00CF), 0x0001 , 0xBF83 , 0x0083 , 0x0000 ,
-    0x0089 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x008E , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0091 , 0x0000 , 0x0005 , 0xFFFF , S(B4CE), S(85CF),
-    S(00CF), 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CF), 0x0000 , 0xCECE ,
-    0xFFFF , 0x0000 , 0x0009 , 0xFFFF , S(BACE), S(BFCE), S(B9CE), S(BDCE),
-    S(00CE), 0x0000 , 0x000B , 0xFFFF , S(80CF), S(B1CE), S(BBCE), S(B9CE),
-    S(BCCE), S(00CF), 0x0000 , 0x0003 , 0x00A7 , S(83CF), S(00CE), 0x0001 ,
-    0x0002 , 0xFFFF , S(B1CE), 0x0000 , 0x0005 , 0xFFFF , S(B1CE), S(80CF),
-    S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(B1CE), S(B5CE), S(B9CE), S(BCCE),
-    S(00CE)
-};
-
-static const unsigned short a_59[] = {
-    0x0000 , 0x0008 , 0x0007 , S(BFCE), S(85CF), S(BDCE), S(B5CE), 0x0001 ,
-    0x83B8 , 0x000B , 0x0010 , 0x0000 , 0x0003 , 0xFFFF , S(B7CE), S(00CF),
-    0x0000 , 0x0003 , 0xFFFF , S(B7CE), S(00CE)
-};
-
-static const unsigned short a_60[] = {
-    0x0000 , 0xBD81 , 0x003F , 0x0000 , 0x0042 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x005D , 0x0000 , 0x0000 , 0x0000 , 0x0063 , 0x0000 ,
-    0xCFCF , 0xFFFF , 0x0000 , 0x000B , 0x004B , S(BFCE), S(BCCE), S(BFCE),
-    S(85CF), S(84CF), S(00CF), 0x0000 , 0xB2BA , 0x004F , 0x0057 , 0x0000 ,
-    0x0009 , 0xFFFF , S(83CF), S(84CF), S(81CF), S(B1CE), S(00CE), 0x0000 ,
-    0x0005 , 0xFFFF , S(BACE), S(B1CE), S(00CE), 0x0000 , 0x0005 , 0xFFFF ,
-    S(83CF), S(80CF), S(00CE), 0x0000 , 0xCECE , 0x0066 , 0x0001 , 0x0006 ,
-    0xFFFF , S(B5CE), S(BECE), S(89CF)
-};
-
-static const unsigned short a_61[] = {
-    0x0000 , 0x0008 , 0x0007 , S(BFCE), S(85CF), S(BCCE), S(B5CE), 0x0001 ,
-    0x83B8 , 0x000B , 0x0010 , 0x0000 , 0x0003 , 0xFFFF , S(B7CE), S(00CF),
-    0x0000 , 0x0003 , 0xFFFF , S(B7CE), S(00CE)
-};
-
-static const unsigned short a_62[] = {
-    0x0000 , 0xBB83 , 0x003B , 0x0000 , 0x0000 , 0x0056 , 0x0056 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0059 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x005E , 0x0000 , 0x0007 , 0x0042 , S(83CF), S(BFCE),
-    S(85CF), S(00CF), 0x0000 , 0xB1BF , 0x0046 , 0x004F , 0x0000 , 0xCECE ,
-    0x0049 , 0x0001 , 0x0006 , 0xFFFF , S(80CF), S(B1CE), S(81CF), 0x0000 ,
-    0x0007 , 0xFFFF , S(B1CE), S(BBCE), S(BBCE), S(00CE), 0x0000 , 0xCFCF ,
-    0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(B1CE), S(00CE), 0x0000 , 0x000B ,
-    0xFFFF , S(89CF), S(81CF), S(B9CE), S(BFCE), S(80CF), S(00CE)
-};
-
-static const unsigned short a_63[] = {
-    0x0000 , 0xBD83 , 0x003D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0045 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x004C , 0x0000 , 0x0009 , 0xFFFF ,
-    S(BCCE), S(B1CE), S(84CF), S(BFCE), S(00CF), 0x0000 , 0x0007 , 0xFFFF ,
-    S(BCCE), S(B1CE), S(84CF), S(00CE), 0x0000 , 0x0009 , 0xFFFF , S(BCCE),
-    S(B1CE), S(84CF), S(89CF), S(00CE)
-};
-
-static const unsigned short a_64[] = {
-    0x0000 , 0xBF83 , 0x003F , 0x0000 , 0x00A4 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00A7 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00E2 , 0x0000 , 0x0000 , 0x0000 , 0x0108 , 0x0000 , 0x0086 , 0x0000 ,
-    0x01C4 , 0x0000 , 0x0000 , 0x0000 , 0x027A , 0x0000 , 0x0086 , 0x0000 ,
-    0xCFCF , 0x0042 , 0x0000 , 0xBF85 , 0x007F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0086 , 0x0000 , 0x0000 , 0x0000 , 0x0089 , 0x0000 , 0x0086 , 0x0000 ,
-    0x009A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0086 , 0x0000 ,
-    0xCFCF , 0x0082 , 0x0001 , 0x0002 , 0xFFFF , S(BFCE), 0x0000 , 0xCECE ,
-    0xFFFF , 0x0000 , 0xCECE , 0x008C , 0x0001 , 0x83B4 , 0x0090 , 0x0095 ,
-    0x0000 , 0x0003 , 0xFFFF , S(B7CE), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(B7CE), S(00CE), 0x0000 , 0x0003 , 0x009F , S(B5CE), S(00CE), 0x0001 ,
-    0x0004 , 0xFFFF , S(B7CE), S(B8CE), 0x0000 , 0xCFCF , 0x0082 , 0x0000 ,
-    0xCFCF , 0x00AA , 0x0001 , 0xB883 , 0x0090 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0086 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0095 , 0x0000 , 0xCECE , 0x00E5 , 0x0001 , 0xBCBD , 0x00E9 ,
-    0x00F0 , 0x0000 , 0x0007 , 0xFFFF , S(B9CE), S(BFCE), S(85CF), S(00CE),
-    0x0000 , 0x0005 , 0x00F6 , S(BFCE), S(85CF), S(00CE), 0x0000 , 0x83BC ,
-    0x00FA , 0x0103 , 0x0000 , 0x0003 , 0x00FF , S(BFCE), S(00CF), 0x0001 ,
-    0x0002 , 0xFFFF , S(B9CE), 0x0000 , 0x0003 , 0x00FF , S(BFCE), S(00CE),
-    0x0000 , 0xCECE , 0x010B , 0x0001 , 0x0002 , 0x010F , S(84CF), 0x0000 ,
-    0xB983 , 0x0148 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x016C ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01BF ,
-    0x0000 , 0x0003 , 0x014D , S(B1CE), S(00CF), 0x0000 , 0x83BC , 0x0151 ,
-    0x0160 , 0x0000 , 0xCFCF , 0x0154 , 0x0000 , 0xB5BF , 0x0158 , 0x015D ,
-    0x0000 , 0x0003 , 0xFFFF , S(B9CE), S(00CE), 0x0000 , 0xCECE , 0x00FF ,
-    0x0000 , 0xCECE , 0x0163 , 0x0000 , 0x85B5 , 0x0167 , 0x0158 , 0x0000 ,
-    0x0003 , 0x00FF , S(BFCE), S(00CF), 0x0000 , 0xCECE , 0x016F , 0x0000 ,
-    0xBA83 , 0x01A9 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x01B5 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x01BA , 0x0000 , 0xCFCF , 0x01AC , 0x0000 , 0x85B7 , 0x01B0 , 0x0086 ,
-    0x0000 , 0x0003 , 0xFFFF , S(BFCE), S(00CF), 0x0000 , 0x0003 , 0xFFFF ,
-    S(B1CE), S(00CE), 0x0000 , 0x0003 , 0x009F , S(B7CE), S(00CE), 0x0000 ,
-    0x0003 , 0x009F , S(B5CE), S(00CE), 0x0000 , 0xCECE , 0x01C7 , 0x0001 ,
-    0xBFB1 , 0x01D8 , 0x0000 , 0x0000 , 0x0000 , 0x0277 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0086 ,
-    0x0000 , 0xCECE , 0x01DB , 0x0000 , 0xBC83 , 0x0217 , 0x021E , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0237 , 0x0000 ,
-    0xCFCF , 0x021A , 0x0000 , 0xB1B5 , 0x0086 , 0x015D , 0x0000 , 0xCFCF ,
-    0x0221 , 0x0000 , 0xBDB1 , 0x0086 , 0x0000 , 0x0000 , 0x0000 , 0x015D ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0230 ,
-    0x0000 , 0xCECE , 0x0233 , 0x0000 , 0x85BF , 0x0167 , 0x0086 , 0x0000 ,
-    0xCECE , 0x023A , 0x0000 , 0xBF85 , 0x01B0 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0086 , 0x0000 , 0x0000 , 0x0000 , 0x0158 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0086 , 0x0000 ,
-    0xCECE , 0x00AA , 0x0000 , 0xCECE , 0x027D , 0x0000 , 0xB185 , 0x02AC ,
-    0x0000 , 0x0000 , 0x0000 , 0x02F4 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x02FC , 0x0000 , 0x0003 , 0x02B1 , S(BFCE),
-    S(00CF), 0x0001 , 0xBC83 , 0x02ED , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0095 , 0x0000 , 0x0000 , 0x0000 , 0x0103 , 0x0000 , 0xCFCF , 0x02F0 ,
-    0x0000 , 0xB7BF , 0x0086 , 0x015D , 0x0000 , 0xCFCF , 0x02F7 , 0x0001 ,
-    0x0004 , 0xFFFF , S(B7CE), S(B4CE), 0x0000 , 0xCECE , 0x02FF , 0x0001 ,
-    0xBA83 , 0x0339 , 0x034B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x01B5 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x01BA , 0x0000 , 0xCFCF , 0x033C , 0x0000 , 0x85B7 , 0x0340 , 0x0086 ,
-    0x0000 , 0x0003 , 0x0345 , S(BFCE), S(00CF), 0x0001 , 0x0006 , 0x00FF ,
-    S(BFCE), S(BDCE), S(84CF), 0x0000 , 0xCFCF , 0x034E , 0x0000 , 0xBF83 ,
-    0x038D , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0396 , 0x0000 , 0x015D , 0x0000 , 0x0003 , 0x0392 ,
-    S(B1CE), S(00CF), 0x0000 , 0x83BC , 0x0167 , 0x0103 , 0x0000 , 0xCECE ,
-    0x0399 , 0x0000 , 0x85BF , 0x0167 , 0x015D
-};
-
-static const unsigned short a_65[] = {
-    0x0000 , 0x8184 , 0x0004 , 0x0054 , 0x0000 , 0x0005 , 0x000A , S(84CF),
-    S(B5CE), S(00CF), 0x0000 , 0xBF83 , 0x0049 , 0x0000 , 0x004E , 0x0000 ,
-    0x0000 , 0x0000 , 0x004E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0051 , 0x0000 , 0x0003 , 0xFFFF , S(B5CE), S(00CF), 0x0000 , 0xCFCF ,
-    0xFFFF , 0x0000 , 0xCECE , 0xFFFF , 0x0000 , 0x0005 , 0x005A , S(84CF),
-    S(B1CE), S(00CF), 0x0000 , 0xBF83 , 0x0049 , 0x0000 , 0x004E , 0x0000 ,
-    0x0000 , 0x0000 , 0x004E , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0051
-};
-
 static const unsigned char g_v[] = { 81, 65, 16, 1 };
 
 static const unsigned char g_v2[] = { 81, 65, 0, 1 };
@@ -1939,7 +306,143 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         while (1) {
             int v_2 = z->l - z->c;
             z->ket = z->c;
-            among_var = find_among_b(z, a_0);
+            {
+                int c_among = z->c;
+                among_var = 25;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x82:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 18; z->c = c_among - 2; break; }
+                            break;
+                        case 0x86:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0x88:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 5; z->c = c_among - 2; break; }
+                            break;
+                        case 0x89:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 7; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8A:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 9; z->c = c_among - 2; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 7; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8B:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8C:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 15; z->c = c_among - 2; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 15; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8D:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8E:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 24; z->c = c_among - 2; break; }
+                            break;
+                        case 0x8F:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 24; z->c = c_among - 2; break; }
+                            break;
+                        case 0x90:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 7; z->c = c_among - 2; break; }
+                            break;
+                        case 0x91:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0x92:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                            break;
+                        case 0x93:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 3; z->c = c_among - 2; break; }
+                            break;
+                        case 0x94:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 4; z->c = c_among - 2; break; }
+                            break;
+                        case 0x95:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 5; z->c = c_among - 2; break; }
+                            break;
+                        case 0x96:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 6; z->c = c_among - 2; break; }
+                            break;
+                        case 0x97:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 7; z->c = c_among - 2; break; }
+                            break;
+                        case 0x98:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 8; z->c = c_among - 2; break; }
+                            break;
+                        case 0x99:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 9; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9A:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 10; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9B:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 11; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9C:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 12; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9D:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 13; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9E:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 14; z->c = c_among - 2; break; }
+                            break;
+                        case 0x9F:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 15; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA0:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 16; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA1:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 17; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA3:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 18; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA4:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 19; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA5:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA6:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 21; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA7:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 22; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA8:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 23; z->c = c_among - 2; break; }
+                            break;
+                        case 0xA9:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 24; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAA:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 9; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAB:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAC:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAD:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 5; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAE:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 7; z->c = c_among - 2; break; }
+                            break;
+                        case 0xAF:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 9; z->c = c_among - 2; break; }
+                            break;
+                        case 0xB0:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 20; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
             z->bra = z->c;
             switch (among_var) {
                 case 1:
@@ -2088,7 +591,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
                     break;
                 case 25:
                     {
-                        int ret = skip_b_utf8(z->p, z->c, z->lb, 1);
+                        int ret = snowball_skip_b_utf8(z->p, z->c, z->lb, 1);
                         if (ret < 0) goto lab1;
                         z->c = ret;
                     }
@@ -2106,7 +609,64 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_3 = z->l - z->c;
         z->ket = z->c;
-        among_var = find_among_b(z, a_1);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 20 && __builtin_memcmp(z->p + c_among - 20, "\316\272\316\261\316\270\316\265\317\203\317\204\317\211\317\204\316\277\317", 19) == 0) { among_var = 10; z->c = c_among - 20; break; }
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\263\316\265\316\263\316\277\316\275\316\277\317\204\316\277\317", 17) == 0) { among_var = 11; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\272\316\261\316\270\316\265\317\203\317\204\317\211\317", 15) == 0) { among_var = 10; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\265\317\201\316\261\317\204\316\277\317", 13) == 0) { among_var = 7; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\204\316\265\317\201\316\261\317\204\316\277\317", 13) == 0) { among_var = 8; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\317\201\316\265\316\261\317\204\316\277\317", 13) == 0) { among_var = 6; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\263\316\265\316\263\316\277\316\275\316\277\317", 13) == 0) { among_var = 11; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\265\317\201\316\261\317", 9) == 0) { among_var = 7; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\204\316\265\317\201\316\261\317", 9) == 0) { among_var = 8; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\272\317\201\316\265\316\261\317", 9) == 0) { among_var = 6; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\317\211\317\204\316\277\317", 9) == 0) { among_var = 9; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\317\211\317", 5) == 0) { among_var = 9; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 20 && __builtin_memcmp(z->p + c_among - 20, "\316\272\316\261\316\270\316\265\317\203\317\204\317\211\317\204\317\211\316", 19) == 0) { among_var = 10; z->c = c_among - 20; break; }
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\263\316\265\316\263\316\277\316\275\316\277\317\204\317\211\316", 17) == 0) { among_var = 11; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\204\316\261\317\204\316\277\316\263\316\271\317\211\316", 15) == 0) { among_var = 5; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\265\317\201\316\261\317\204\317\211\316", 13) == 0) { among_var = 7; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\204\316\265\317\201\316\261\317\204\317\211\316", 13) == 0) { among_var = 8; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\317\201\316\265\316\261\317\204\317\211\316", 13) == 0) { among_var = 6; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\316\272\316\261\316\263\316\271\317\211\316", 13) == 0) { among_var = 2; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\316\273\316\277\316\263\316\271\317\211\316", 13) == 0) { among_var = 3; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\206\316\261\316\263\316\271\317\211\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\203\316\277\316\263\316\271\317\211\316", 11) == 0) { among_var = 4; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\317\211\317\204\317\211\316", 9) == 0) { among_var = 9; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\272\316\261\316\270\316\265\317\203\317\204\317\211\317\204\316", 17) == 0) { among_var = 10; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\263\316\265\316\263\316\277\316\275\316\277\317\204\316", 15) == 0) { among_var = 11; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\204\316\261\317\204\316\277\316\263\316\271\316", 13) == 0) { among_var = 5; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\261\317\204\316", 11) == 0) { among_var = 7; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\204\316\265\317\201\316\261\317\204\316", 11) == 0) { among_var = 8; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\317\201\316\265\316\261\317\204\316", 11) == 0) { among_var = 6; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\203\316\272\316\261\316\263\316\271\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\316\273\316\277\316\263\316\271\316", 11) == 0) { among_var = 3; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\316\261\316\263\316\271\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\203\316\277\316\263\316\271\316", 9) == 0) { among_var = 4; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\206\317\211\317\204\316", 7) == 0) { among_var = 9; z->c = c_among - 8; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\204\316\261\317\204\316\277\316\263\316\271\316\277\317", 15) == 0) { among_var = 5; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\316\272\316\261\316\263\316\271\316\277\317", 13) == 0) { among_var = 2; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\316\273\316\277\316\263\316\271\316\277\317", 13) == 0) { among_var = 3; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\206\316\261\316\263\316\271\316\277\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\203\316\277\316\263\316\271\316\277\317", 11) == 0) { among_var = 4; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB7:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\261\317\204\316", 11) == 0) { among_var = 7; z->c = c_among - 12; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab2;
         z->bra = z->c;
         switch (among_var) {
@@ -2184,16 +744,112 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_4 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_3)) goto lab3;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\266\316\277\317\205\316\274\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\266\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\261\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\265\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\261\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\266\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\265\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\266\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\266\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\266\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\266\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x89:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\266\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\266\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab3;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        among_var = find_among_b(z, a_2);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x81:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\271\317\200\316\265\317\201\316\277\317", 13) == 0) { among_var = 2; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\263\316\273\317\205\316\272\317\205\317", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\262\316\277\316\273\316\262\316\277\317", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\263\316\273\317\205\316\272\316\277\317", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\277\316\273\317\205\317", 9) == 0) { among_var = 2; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\274\317\200\316\261\317", 9) == 0) { among_var = 2; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\317\200\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\201\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\261\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\272\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\317\205\316\275\316\261\316\270\317\201\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\270\317\201\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\276\316\261\316\275\316\261\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\271\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\275\316\261\316\274\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\274\317\200\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\262\316\261\316\270\317\205\317\201\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\261\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\316\261\317\201\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\316\261\317\201\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\277\317\201\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\274\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\277\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab3;
         if (z->c > z->lb) goto lab3;
         switch (among_var) {
@@ -2216,16 +872,69 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_5 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_5)) goto lab4;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\211\316\270\316\267\316\272\316\261\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\211\316\270\316\267\316\272\316\261\316\274\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\211\316\270\316\267\316\272\316\261\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\211\316\270\316\267\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\211\316\270\316\267\316\272\316\265\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\211\316\270\316\267\316\272\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\211\316\270\316\267\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab4;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_4)) goto lab4;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x88:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\205\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x89:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\266\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\262\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\273\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab4;
         if (z->c > z->lb) goto lab4;
         {
             int ret = slice_from_s(z, 4, s_23);
@@ -2251,16 +960,98 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_7;
             z->ket = z->c;
         } while (0);
-        if (!find_among_b(z, a_7)) goto lab5;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\261\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\261\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab5;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        among_var = find_among_b(z, a_6);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x86:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\263\316\271\316\263\316\261\316\275\317\204\316\277\316\261\317", 17) == 0) { among_var = 2; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0x84:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\264\316\267\316\274\316\277\316\272\317\201\316\261\317", 15) == 0) { among_var = 2; z->c = c_among - 16; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\207\316\261\317\201\317\204\316\277\317\200\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\276\316\261\316\275\316\261\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\271\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\275\316\261\316\274\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\316\276\316\261\317\201\317\207\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\274\317\200\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\317\205\316\275\316\261\316\270\317\201\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\270\317\201\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\316\273\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\316\265\317\204\316\265\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\317\203\317\211\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\200\316\265\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\200\316\277\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\272\316\273\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\261\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\272\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\263\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\277\317\205\316\272\316\261\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\277\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\261\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\263\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab5;
         if (z->c > z->lb) goto lab5;
         switch (among_var) {
@@ -2283,17 +1074,74 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_8 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_9)) goto lab7;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\317\203\316\277\317\205\316\274\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\317\203\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\265\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\265\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x89:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\317\203\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab7;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (z->c - 3 <= z->lb || z->p[z->c - 1] >> 5 != 5 || !((-2145255424 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab7;
-        if (!find_among_b(z, a_8)) goto lab7;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB1:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\207\316\261\317\201\317\204\316\277\317\200\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\276\316\261\316\275\316\261\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\271\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\275\316\261\316\274\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\316\276\316\261\317\201\317\207\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\274\317\200\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\317\205\316\275\316\261\316\270\317\201\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\270\317\201\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\316\265\317\204\316\265\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\317\203\317\211\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\200\316\265\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\200\316\277\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\272\316\273\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\261\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab7;
         if (z->c > z->lb) goto lab7;
         {
             int ret = slice_from_s(z, 2, s_8);
@@ -2305,16 +1153,128 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_9 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_11)) goto lab8;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\317\203\317\204\316\277\317\205\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\316\267\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\316\277\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\317\204\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB7:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab8;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        among_var = find_among_b(z, a_10);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBF:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\317\205\316\275\316\261\316\270\317\201\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\317\203\317\211\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\261\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\205\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\274\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\317\205\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\207\317\211\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\277\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\207\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0x84:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\207\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\272\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\207\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\272\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\203\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\261\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\204\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\317\206\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\206\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB3:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\317\205\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\265\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\207\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\261\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\261\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\261\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\317\205\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\316\271\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\265\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\207\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        break;
+                    case 0x88:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\205\317", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB4:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\267\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab8;
         if (z->c > z->lb) goto lab8;
         switch (among_var) {
@@ -2337,10 +1297,34 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_10 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_14)) goto lab9;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\317\203\316\274\316\277\317\205\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\274\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\274\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\274\316\277\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\274\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\274\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab9;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2348,8 +1332,23 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_11 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (z->c - 3 <= z->lb || z->p[z->c - 1] != 181) goto lab10;
-            among_var = find_among_b(z, a_12);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB5:
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\261\316\275\317\204\316\271\316\264\316\261\316\275\316", 15) == 0) { among_var = 2; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\274\316\271\316\272\317\201\316\277\317\203\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\316\265\317\204\316\261\317\203\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\200\316\277\316\272\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\316\263\316\272\316\273\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\261\316\275\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) goto lab10;
             if (z->c > z->lb) goto lab10;
             switch (among_var) {
@@ -2370,8 +1369,28 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         lab10:
             z->c = z->l - v_11;
             z->ket = z->c;
-            if (z->c - 9 <= z->lb || (z->p[z->c - 1] != 186 && z->p[z->c - 1] != 189)) goto lab9;
-            among_var = find_among_b(z, a_13);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xBD:
+                            if (c_among - z->lb >= 20 && __builtin_memcmp(z->p + c_among - 20, "\316\261\316\273\316\265\316\276\316\261\316\275\316\264\317\201\316\271\316", 19) == 0) { among_var = 8; z->c = c_among - 20; break; }
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\262\317\205\316\266\316\261\316\275\317\204\316\271\316", 15) == 0) { among_var = 9; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\270\316\265\316\261\317\204\317\201\316\271\316", 13) == 0) { among_var = 10; z->c = c_among - 14; break; }
+                            break;
+                        case 0xBA:
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\261\316\263\316\275\317\211\317\203\317\204\316\271\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\265\316\272\316\273\316\265\316\272\317\204\316\271\316", 15) == 0) { among_var = 5; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\316\272\316\265\317\200\317\204\316\271\316", 13) == 0) { among_var = 6; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\263\316\275\317\211\317\203\317\204\316\271\316", 13) == 0) { among_var = 3; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\204\316\277\316\274\316\271\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\204\316\277\317\200\316\271\316", 9) == 0) { among_var = 7; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\316\270\316\275\316\271\316", 9) == 0) { among_var = 4; z->c = c_among - 10; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) goto lab9;
             z->bra = z->c;
             switch (among_var) {
@@ -2443,18 +1462,46 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_12 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 9 <= z->lb || (z->p[z->c - 1] != 177 && z->p[z->c - 1] != 185)) goto lab11;
-        if (!find_among_b(z, a_16)) goto lab11;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB1:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\317\205\316\264\316\261\316\272\316\271\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\201\316\261\316\272\316\271\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\316\264\316\261\316\272\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\201\316\261\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab11;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (z->c - 1 <= z->lb || (z->p[z->c - 1] != 131 && z->p[z->c - 1] != 135)) goto lab11;
-        if (!find_among_b(z, a_15)) goto lab11;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab11;
         if (z->c > z->lb) goto lab11;
         {
             int ret = slice_from_s(z, 8, s_37);
@@ -2466,10 +1513,34 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_13 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_18)) goto lab12;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB1:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\201\316\261\316\272\316\271\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\204\317\203\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\272\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\204\317\203\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\204\317\203\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\201\316\261\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\204\317\203\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab12;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2477,7 +1548,88 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_14 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            among_var = find_among_b(z, a_17);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB2:
+                            if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\317\204\317\203\316\265\317\207\316\277\317\203\316\273\316\277\316", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\316\261\316\274\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\273\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                            break;
+                        case 0xBD:
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\267\316\263\316\277\317\205\316\274\316\265\316", 13) == 0) { among_var = 2; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\316\261\316\272\317\201\317\205\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\200\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\263\316\271\316\261\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x80:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\316\261\317\204\317\201\316\261\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                            break;
+                        case 0x83:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\275\316\261\316\263\316\272\316\261\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\277\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0xBB:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\204\317\201\316\271\317\200\316\277\316", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\273\316\277\317\205\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\261\316", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\263\316", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                            break;
+                        case 0x81:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\261\317\204\316\265\317", 9) == 0) { among_var = 2; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\273\316\261\316\262\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\274\316\262\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\316\270\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\262\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0x84:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\316\277\317\205\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0x86:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\273\316\271\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\317\205\317", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0xBA:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\272\316\261\317\200\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\203\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0xB4:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\261\317\201\316", 7) == 0) { among_var = 2; z->c = c_among - 8; break; }
+                            break;
+                        case 0xBC:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\206\316\261\317\201\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\261\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\273\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0x85:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\201\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0xB6:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\204\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                            break;
+                        case 0x87:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) goto lab13;
             if (z->c > z->lb) goto lab13;
             switch (among_var) {
@@ -2511,11 +1663,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_15 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || z->p[z->c - 1] >> 5 != 5 || !((-1610481664 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab14;
-        if (!find_among_b(z, a_21)) goto lab14;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\264\316\271\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\264\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\264\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab14;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2523,7 +1691,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_16 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (!find_among_b(z, a_19)) goto lab15;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xBD:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\271\317\206\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0xBB:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\210\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBF:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x81:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab15;
             if (z->c > z->lb) goto lab15;
             {
                 int ret = slice_from_s(z, 4, s_41);
@@ -2534,8 +1722,21 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_16;
             z->ket = z->c;
             z->bra = z->c;
-            if (z->c - 1 <= z->lb || (z->p[z->c - 1] != 181 && z->p[z->c - 1] != 189)) goto lab14;
-            if (!find_among_b(z, a_20)) goto lab14;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xBD:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\261\316\271\317\207\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xB5:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab14;
             {
                 int ret = slice_from_s(z, 4, s_41);
                 if (ret < 0) return ret;
@@ -2547,16 +1748,63 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_17 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_23)) goto lab16;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\272\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\317\203\316\272\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\272\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\317\203\316\272\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab16;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_22)) goto lab16;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBA:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\317\201\316\261\316\263\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\316\262\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\267\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB4:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab16;
         if (z->c > z->lb) goto lab16;
         {
             int ret = slice_from_s(z, 6, s_42);
@@ -2568,16 +1816,61 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_18 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || (z->p[z->c - 1] != 131 && z->p[z->c - 1] != 189)) goto lab17;
-        if (!find_among_b(z, a_24)) goto lab17;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\264\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\264\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab17;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         {
             int v_19 = z->l - z->c;
-            if (!find_among_b(z, a_25)) goto lab18;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x80:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\317\200\316\261\316\274\317", 9) == 0) { among_var = -1; z->c = c_among - 10; break; }
+                            break;
+                        case 0x81:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\261\317\204\316\265\317", 9) == 0) { among_var = -1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\265\316\270\316\265\317", 9) == 0) { among_var = -1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\317\205\317", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x84:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\275\317\204\316\261\316\275\317", 9) == 0) { among_var = -1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xB9:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\263\316\271\316\261\316\263\316", 9) == 0) { among_var = -1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\270\316\265\316", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBC:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\261\316", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBD:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\261\316", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBA:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\316", 3) == 0) { among_var = -1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab18;
             goto lab17;
         lab18:
             z->c = z->l - v_19;
@@ -2594,17 +1887,49 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_20 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || (z->p[z->c - 1] != 131 && z->p[z->c - 1] != 189)) goto lab19;
-        if (!find_among_b(z, a_26)) goto lab19;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\264\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\264\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab19;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         z->ket = z->c;
         z->bra = z->c;
-        if (z->c - 3 <= z->lb || (z->p[z->c - 1] != 128 && z->p[z->c - 1] != 187)) goto lab19;
-        if (!find_among_b(z, a_27)) goto lab19;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x80:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\272\317\201\316\261\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\264\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\267\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\274\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\205\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab19;
         {
             int ret = slice_from_s(z, 4, s_44);
             if (ret < 0) return ret;
@@ -2615,16 +1940,72 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_21 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 9 <= z->lb || (z->p[z->c - 1] != 131 && z->p[z->c - 1] != 189)) goto lab20;
-        if (!find_among_b(z, a_28)) goto lab20;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\316\264\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\316\264\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab20;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_29)) goto lab20;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBA:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\316\261\316\273\316\271\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\201\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\265\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\273\316\277\317\205\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\206\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB3:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\204\317\201\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBE:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\273\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\206\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\206\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\207\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab20;
         {
             int ret = slice_from_s(z, 6, s_45);
             if (ret < 0) return ret;
@@ -2635,17 +2016,58 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_22 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 5 <= z->lb || (z->p[z->c - 1] != 131 && z->p[z->c - 1] != 189)) goto lab21;
-        if (!find_among_b(z, a_30)) goto lab21;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\211\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\211\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab21;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_31)) goto lab21;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x81:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB4:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab21;
         if (z->c > z->lb) goto lab21;
         {
             int ret = slice_from_s(z, 2, s_4);
@@ -2657,16 +2079,33 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_23 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_32)) goto lab22;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x85:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\317\211\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab22;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (in_grouping_b_U(z, g_v, 945, 969, 0)) goto lab22;
+        if (snowball_in_grouping_b_U(z, g_v, 945, 969, 0)) goto lab22;
         {
             int ret = slice_from_s(z, 2, s_8);
             if (ret < 0) return ret;
@@ -2677,10 +2116,30 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_24 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_33)) goto lab23;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x85:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\272\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\271\316\272\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\271\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab23;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2688,7 +2147,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_25 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (in_grouping_b_U(z, g_v, 945, 969, 0)) goto lab24;
+            if (snowball_in_grouping_b_U(z, g_v, 945, 969, 0)) goto lab24;
             {
                 int ret = slice_from_s(z, 4, s_46);
                 if (ret < 0) return ret;
@@ -2699,7 +2158,71 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->ket = z->c;
         } while (0);
         z->bra = z->c;
-        if (!find_among_b(z, a_34)) goto lab23;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x84:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\274\317\200\316\261\316\263\316\271\316\261\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\271\316\272\316\261\316\275\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\265\317\201\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\261\316\274\316\274\316\277\317\207\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\317\205\316\275\316\277\316\274\316\267\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\316\277\317\205\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\317\200\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\277\317\203\317\204\316\265\316\273\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\316\261\316\273\316\273\316\271\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\316\271\316\273\316\277\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\317\200\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\274\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\273\316\271\316\261\317\204\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\265\317\204\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\271\317\204\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\317\200\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\207\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB4:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\317\201\317\211\317\204\316\277\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\272\316\261\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\203\317\205\316\275\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\275\317\204\316\271\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\206\317\205\316\273\316\277\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\276\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\205\317\200\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\275\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\261\316\273\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\316\267\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\267\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\317\201\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\204\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\276\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab23;
         if (z->c > z->lb) goto lab23;
         {
             int ret = slice_from_s(z, 4, s_46);
@@ -2726,11 +2249,25 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         {
             int v_28 = z->l - z->c;
             z->ket = z->c;
-            if (z->c - 9 <= z->lb || z->p[z->c - 1] != 181) goto lab27;
-            if (!find_among_b(z, a_35)) goto lab27;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB5:
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\267\316\270\316\267\316\272\316\261\316\274\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\317\203\316\261\316\274\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\317\203\316\261\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\263\316\261\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\272\316\261\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab27;
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             b_test1 = 0;
@@ -2741,13 +2278,49 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         if (!(eq_s_b(z, 6, s_48))) goto lab25;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_36)) goto lab25;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x84:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\200\316\277\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\271\316\272\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\316\277\317\205\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\276\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\203\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab25;
         if (z->c > z->lb) goto lab25;
         {
             int ret = slice_from_s(z, 4, s_48);
@@ -2761,18 +2334,51 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         {
             int v_30 = z->l - z->c;
             z->ket = z->c;
-            if (z->c - 9 <= z->lb || z->p[z->c - 1] != 181) goto lab29;
-            if (!find_among_b(z, a_38)) goto lab29;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB5:
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\271\316\277\317\205\316\275\317\204\316\261\316\275\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\317\205\316\275\317\204\316\261\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\316\275\317\204\316\261\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\267\316\270\316\267\316\272\316\261\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\317\203\316\261\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\316\275\317\204\316\261\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\277\317\204\316\261\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\317\203\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\204\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\263\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\272\316\261\316\275\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab29;
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             b_test1 = 0;
             z->ket = z->c;
             z->bra = z->c;
-            if (z->c - 3 <= z->lb || (z->p[z->c - 1] != 129 && z->p[z->c - 1] != 131)) goto lab29;
-            if (!find_among_b(z, a_37)) goto lab29;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x81:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\204\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0x83:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\204\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab29;
             if (z->c > z->lb) goto lab29;
             {
                 int ret = slice_from_s(z, 8, s_49);
@@ -2785,7 +2391,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         if (!(eq_s_b(z, 6, s_50))) goto lab28;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2793,7 +2399,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_31 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (in_grouping_b_U(z, g_v2, 945, 969, 0)) goto lab30;
+            if (snowball_in_grouping_b_U(z, g_v2, 945, 969, 0)) goto lab30;
             {
                 int ret = slice_from_s(z, 4, s_50);
                 if (ret < 0) return ret;
@@ -2804,7 +2410,138 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->ket = z->c;
         } while (0);
         z->bra = z->c;
-        if (!find_among_b(z, a_39)) goto lab28;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x87:
+                        if (c_among - z->lb >= 22 && __builtin_memcmp(z->p + c_among - 22, "\316\274\316\271\316\272\317\201\316\277\316\262\316\271\316\277\316\274\316\267\317", 21) == 0) { among_var = 1; z->c = c_among - 22; break; }
+                        if (c_among - z->lb >= 22 && __builtin_memcmp(z->p + c_among - 22, "\316\274\316\265\316\263\316\273\316\277\316\262\316\271\316\277\316\274\316\267\317", 21) == 0) { among_var = 1; z->c = c_among - 22; break; }
+                        if (c_among - z->lb >= 22 && __builtin_memcmp(z->p + c_among - 22, "\316\272\316\261\317\200\316\275\316\277\316\262\316\271\316\277\316\274\316\267\317", 21) == 0) { among_var = 1; z->c = c_among - 22; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\277\316\273\317\205\316\274\316\267\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\262\316\271\316\277\316\274\316\267\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\274\316\267\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\317\207\316\261\316\274\316\267\316\273\316\277\316\264\316\261\317", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\277\316\273\317\205\316\264\316\261\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\205\317\200\316\277\316\272\316\277\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\264\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\204\317\203\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\203\316\261\317\201\316\261\316\272\316\261\317\204\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\277\316\273\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\270\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x86:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\206\317\211\317\204\316\277\317\203\317\204\316\265\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\265\316\275\317\204\316\261\317\201\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\316\277\316\271\316\273\316\261\317\201\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\205\317\200\316\265\317\201\316\267\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\265\317\201\316\267\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\204\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\201\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\276\316\267\317\201\316\277\316\272\316\273\316\271\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\210\316\267\316\273\316\277\317\204\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\275\317\204\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\273\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\277\316\273\316\271\316\263\316\277\316\264\316\261\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\274\316\277\317\205\317\203\316\277\317\205\316\273\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\264\317\201\316\261\316\264\316\277\317\205\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\262\317\201\316\261\317\207\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\261\316\274\316\265\317\201\316\271\316\272\316\261\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x84:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\204\317\203\316\261\317\201\316\273\316\261\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\277\317\205\317\201\316\271\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\203\316\277\317\205\316\273\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\316\261\316\271\316\275\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\272\316\261\317\203\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\273\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\266\317\211\316\275\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB6:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\316\261\316\273\317\200\316\277\317\205\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\262\316\261\316\270\317\205\316\263\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\316\261\317\204\316\261\316\263\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\210\317\205\317\207\316\277\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\316\273\316\277\316\263\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\316\261\317\203\317\204\316\265\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\277\317\201\317\204\316\277\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\273\316\261\316\277\317\200\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\317\200\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\265\317\201\316\271\317\204\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\273\316\277\317\205\316\270\316\267\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\272\316\277\317\201\316\274\316\277\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\262\316\265\317\204\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\263\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB3:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\317\204\317\203\316\271\316\263\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\275\316\277\317\201\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\316\275\316\277\317\201\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\204\317\203\316\271\316\263\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\270\316\271\316\263\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\204\317\201\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\204\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\204\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\267\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\203\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\317\211\316\261\316\274\316\265\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\262\317\201\316\261\317\207\317\205\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\265\316\273\316\265\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\262\316\277\317\205\316\273\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\316\261\317\203\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\316\271\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\264\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\271\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab28;
         if (z->c > z->lb) goto lab28;
         {
             int ret = slice_from_s(z, 4, s_50);
@@ -2821,7 +2558,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             if (!(eq_s_b(z, 10, s_6))) goto lab32;
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             b_test1 = 0;
@@ -2832,7 +2569,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         if (!(eq_s_b(z, 6, s_51))) goto lab31;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2840,7 +2577,7 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_34 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (in_grouping_b_U(z, g_v2, 945, 969, 0)) goto lab33;
+            if (snowball_in_grouping_b_U(z, g_v2, 945, 969, 0)) goto lab33;
             {
                 int ret = slice_from_s(z, 4, s_51);
                 if (ret < 0) return ret;
@@ -2850,7 +2587,62 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_34;
             z->ket = z->c;
             z->bra = z->c;
-            if (!find_among_b(z, a_40)) goto lab34;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB8:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\205\317\200\316\265\317\201\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\201\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\275\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\201\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0xB4:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\275\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0xBB:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\211\317\206\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x81:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\207\317\211\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\262\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0x84:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBA:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\201\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBD:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\203\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\201\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x87:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab34;
             {
                 int ret = slice_from_s(z, 4, s_51);
                 if (ret < 0) return ret;
@@ -2861,7 +2653,62 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->ket = z->c;
         } while (0);
         z->bra = z->c;
-        if (!find_among_b(z, a_41)) goto lab31;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBB:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\261\317\201\316\261\316\272\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\272\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\262\316\261\317\201\316\277\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\262\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x80:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\265\317\201\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\272\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\270\316\261\317\201\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\262\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\275\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\317\200\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\317\204\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\262\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x86:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\317\201\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB3:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBA:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\316\277\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB4:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB8:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab31;
         if (z->c > z->lb) goto lab31;
         {
             int ret = slice_from_s(z, 4, s_51);
@@ -2873,11 +2720,22 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_35 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 9 <= z->lb || z->p[z->c - 1] != 131) goto lab35;
-        if (!find_among_b(z, a_42)) goto lab35;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\211\316\275\317\204\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\316\275\317\204\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab35;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2908,17 +2766,29 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_37 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 11 <= z->lb || z->p[z->c - 1] != 181) goto lab37;
-        if (!find_among_b(z, a_43)) goto lab37;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\316\274\316\261\317\203\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\316\274\316\261\317\203\317\204\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab37;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!(eq_s_b(z, 4, s_53))) goto lab37;
+        if (z->c - z->lb < 4 || __builtin_memcmp(z->p + z->c - 4, s_53, 4) != 0) goto lab37;
+        z->c -= 4;
         if (z->c > z->lb) goto lab37;
         {
             int ret = slice_from_s(z, 10, s_54);
@@ -2935,14 +2805,31 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             if (!(eq_s_b(z, 10, s_55))) goto lab39;
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             b_test1 = 0;
             z->ket = z->c;
             z->bra = z->c;
-            if (z->c - 1 <= z->lb || (z->p[z->c - 1] != 128 && z->p[z->c - 1] != 134)) goto lab39;
-            if (!find_among_b(z, a_44)) goto lab39;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x86:
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\261\316\274\316\265\317\204\316\261\316\274\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            break;
+                        case 0x80:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\272\316\261\317\204\316\261\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\203\317\205\316\274\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\274\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab39;
             if (z->c > z->lb) goto lab39;
             {
                 int ret = slice_from_s(z, 8, s_55);
@@ -2955,13 +2842,44 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         if (!(eq_s_b(z, 8, s_56))) goto lab38;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_45)) goto lab38;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBB:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\200\316\261\317\201\316\261\316\272\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\316\272\317\204\316\265\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\317\201\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB6:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBC:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBE:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab38;
         if (z->c > z->lb) goto lab38;
         {
             int ret = slice_from_s(z, 8, s_55);
@@ -2975,10 +2893,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         {
             int v_41 = z->l - z->c;
             z->ket = z->c;
-            if (!find_among_b(z, a_46)) goto lab41;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x83:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\316\270\316\267\316\272\316\265\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            break;
+                        case 0xB1:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\270\316\267\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xB5:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\270\316\267\316\272\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab41;
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             b_test1 = 0;
@@ -2986,10 +2921,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_41;
         }
         z->ket = z->c;
-        if (!find_among_b(z, a_49)) goto lab40;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\316\272\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\316\272\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab40;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -2997,7 +2949,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_42 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (!find_among_b(z, a_47)) goto lab42;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xBB:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\203\316\272\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\272\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0xB8:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\275\316\261\317\201\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0x86:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab42;
             {
                 int ret = slice_from_s(z, 4, s_57);
                 if (ret < 0) return ret;
@@ -3007,8 +2979,22 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_42;
             z->ket = z->c;
             z->bra = z->c;
-            if (z->c - 1 <= z->lb || z->p[z->c - 1] != 184) goto lab40;
-            if (!find_among_b(z, a_48)) goto lab40;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0xB8:
+                            if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\317\200\316\261\317\201\316\261\316\272\316\261\317\204\316\261\316", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\317\201\316\277\317\203\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab40;
             if (z->c > z->lb) goto lab40;
             {
                 int ret = slice_from_s(z, 4, s_57);
@@ -3021,10 +3007,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_43 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_52)) goto lab43;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\317\203\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\205\317\203\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\205\317\203\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab43;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -3032,7 +3035,43 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             int v_44 = z->l - z->c;
             z->ket = z->c;
             z->bra = z->c;
-            if (!find_among_b(z, a_50)) goto lab44;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x87:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\261\316\275\317\204\316\261\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBB:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\274\316\261\316\275\317\204\316\271\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\316\261\316\273\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0x81:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\277\316\264\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0x84:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\272\317\205\316\274\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\317\201\317\211\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0x80:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\316\273\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0xB4:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\206\317\201\317\205\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                        case 0xB3:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\206\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\267\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBC:
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab44;
             {
                 int ret = slice_from_s(z, 6, s_58);
                 if (ret < 0) return ret;
@@ -3042,7 +3081,68 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
             z->c = z->l - v_44;
             z->ket = z->c;
             z->bra = z->c;
-            if (!find_among_b(z, a_51)) goto lab43;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x81:
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\265\316\275\316\264\316\271\316\261\317\206\316\265\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\275\316\261\317\201\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0x85:
+                            if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\264\316\265\317\205\317\204\316\265\317\201\316\265\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\316\261\316\270\316\261\317\201\316\265\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            break;
+                        case 0xBD:
+                            if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\205\317\200\316\277\317\204\316\265\316\271\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                            break;
+                        case 0xB4:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\273\316\261\316\274\317\200\316\271\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\207\316\261\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\274\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xB6:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\264\316\265\317\203\317\200\316\277\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\316\265\317\203\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xBA:
+                            if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\206\316\261\317\201\316\274\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\316\267\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\263\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x80:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\316\272\316\273\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xBC:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\262\317\201\316\277\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                        case 0x84:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0x87:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xB1:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\204\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xB5:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\273\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\264\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                            break;
+                        case 0xB8:
+                            if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\271\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                            break;
+                        case 0xBB:
+                            if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab43;
             if (z->c > z->lb) goto lab43;
             {
                 int ret = slice_from_s(z, 6, s_58);
@@ -3055,17 +3155,49 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_45 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_56)) goto lab45;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x85:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\317\203\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab45;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (z->c - 1 <= z->lb || z->p[z->c - 1] != 189) goto lab45;
-        if (!find_among_b(z, a_57)) goto lab45;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBD:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\264\317\211\316\264\316\265\316\272\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\274\316\265\316\263\316\261\316\273\316\277\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\207\316\265\317\201\317\203\316\277\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\265\317\201\316\267\316\274\316\277\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\317\200\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab45;
         if (z->c > z->lb) goto lab45;
         {
             int ret = slice_from_s(z, 4, s_6);
@@ -3077,10 +3209,27 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_46 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_55)) goto lab46;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\263\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\263\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\263\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab46;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
@@ -3100,7 +3249,40 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
                 int v_48 = z->l - z->c;
                 z->ket = z->c;
                 z->bra = z->c;
-                among_var = find_among_b(z, a_53);
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x87:
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\275\316\261\317\205\316\273\316\277\317", 11) == 0) { among_var = -1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\273\316\277\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                break;
+                            case 0x84:
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\207\316\277\317\201\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                break;
+                            case 0xBD:
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\316\274\316\267\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                break;
+                            case 0x86:
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\210\316\277\317", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0xBB:
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\200\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\273\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0x80:
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\201\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0x81:
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\200\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\206\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                        }
+                    }
+                }
                 if (!among_var) goto lab48;
                 switch (among_var) {
                     case 1:
@@ -3115,7 +3297,77 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
                 z->c = z->l - v_48;
                 z->ket = z->c;
                 z->bra = z->c;
-                if (!find_among_b(z, a_54)) goto lab46;
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x80:
+                                if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\200\317\201\316\277\317\203\317\211\317\200\316\277\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                                if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\272\317\201\316\277\316\272\316\261\316\273\316\277\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                                if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\317\203\316\271\316\264\316\267\317\201\316\277\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\264\317\201\316\277\317\203\316\277\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\201\317\204\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\275\317\205\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\265\316\271\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\274\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\275\316\265\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\316\273\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\203\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                break;
+                            case 0x84:
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\271\316\274\316\277\317\203\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\275\317\205\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\262\316\261\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\317\201\316\277\317\203\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\275\316\277\316\274\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\264\316\271\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\317\200\316\271\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\203\317\205\316\275\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\205\317\200\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\316\274\316\277\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                break;
+                            case 0xB9:
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\261\316\274\316\261\316\273\316\273\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                break;
+                            case 0xBD:
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\264\316\265\317\201\316\262\316\265\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0x81:
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\203\317\200\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\207\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\200\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\207\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\204\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                break;
+                            case 0x86:
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\317\200\316\277\316\273\317\205\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\264\316\267\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\200\316\261\316\274\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\276\316\265\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0xBC:
+                                if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\316\273\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                                if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                break;
+                            case 0xBB:
+                                if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\274\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                                if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                break;
+                            case 0x85:
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\275\316\261\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                break;
+                        }
+                    }
+                }
+                if (!among_var) goto lab46;
                 if (z->c > z->lb) goto lab46;
                 {
                     int ret = slice_from_s(z, 4, s_0);
@@ -3132,13 +3384,41 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         if (!(eq_s_b(z, 8, s_60))) goto lab49;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_58)) goto lab49;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x81:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\272\316\277\316\271\316\275\316\277\317\207\317", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\264\317\205\317\203\317\207\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\317\205\317\207\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\207\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\207\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x88:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\200\316\261\316\273\316\271\316\274\317", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\265\316\271\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\203\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\203\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab49;
         if (z->c > z->lb) goto lab49;
         {
             int ret = slice_from_s(z, 6, s_60);
@@ -3150,17 +3430,51 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_50 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || z->p[z->c - 1] != 181) goto lab50;
-        if (!find_among_b(z, a_59)) goto lab50;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\317\203\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\316\270\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\205\316\275\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab50;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_60)) goto lab50;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 22 && __builtin_memcmp(z->p + c_among - 22, "\317\203\317\204\317\201\316\261\316\262\316\277\316\274\316\277\317\205\317\204\317", 21) == 0) { among_var = 1; z->c = c_among - 22; break; }
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\272\316\261\316\272\316\277\316\274\316\277\317\205\317\204\317", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                        break;
+                    case 0xBD:
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\276\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\317\203\317\200\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab50;
         if (z->c > z->lb) goto lab50;
         {
             int ret = slice_from_s(z, 6, s_61);
@@ -3172,17 +3486,54 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_51 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || z->p[z->c - 1] != 181) goto lab51;
-        if (!find_among_b(z, a_61)) goto lab51;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xB5:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\317\203\316\277\317\205\316\274\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\316\270\316\277\317\205\316\274\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\205\316\274\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab51;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         b_test1 = 0;
         z->ket = z->c;
         z->bra = z->c;
-        if (!find_among_b(z, a_62)) goto lab51;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x83:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\317\200\316\261\317\201\316\261\317\203\316\277\317\205\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\261\316\273\316\273\316\277\317\203\316\277\317\205\317", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\317\203\316\277\317\205\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        break;
+                    case 0xBB:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\317\211\317\201\316\271\316\277\317\200\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB6:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x86:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x87:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab51;
         if (z->c > z->lb) goto lab51;
         {
             int ret = slice_from_s(z, 6, s_62);
@@ -3196,7 +3547,24 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         {
             int v_53 = z->l - z->c;
             z->ket = z->c;
-            if (!find_among_b(z, a_63)) goto lab53;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x83:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\316\261\317\204\316\277\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xBD:
+                            if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\274\316\261\317\204\317\211\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                            break;
+                        case 0xB1:
+                            if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\274\316\261\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab53;
             z->bra = z->c;
             {
                 int ret = slice_from_s(z, 4, s_11);
@@ -3207,10 +3575,120 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
         }
         if (!b_test1) goto lab52;
         z->ket = z->c;
-        if (!find_among_b(z, a_64)) goto lab52;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBD:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\316\271\316\277\316\275\317\204\316\277\317\205\317\203\316\261\316", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\277\316\275\317\204\316\277\317\205\317\203\316\261\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\271\316\277\317\203\316\261\317\203\317\204\316\261\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\271\316\277\316\274\316\261\317\203\317\204\316\261\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\317\203\316\261\317\203\317\204\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\316\274\316\261\317\203\317\204\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\317\205\316\275\317\204\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\277\317\203\316\277\317\205\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\277\316\274\316\277\317\205\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\316\275\317\204\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\271\316\277\316\275\317\204\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\316\270\316\267\316\272\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\317\203\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\203\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\270\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\316\274\316\277\317\205\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\317\203\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\316\275\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\277\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\316\264\317\211\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\204\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\263\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\316\272\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\211\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 16 && __builtin_memcmp(z->p + c_among - 16, "\316\271\316\277\317\205\316\274\316\261\317\203\317\204\316", 15) == 0) { among_var = 1; z->c = c_among - 16; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\265\317\203\316\261\317\203\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\317\203\316\261\317\203\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\277\317\205\316\274\316\261\317\203\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\265\316\274\316\261\317\203\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\267\316\270\316\267\316\272\316\261\317\204\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\203\316\261\317\203\317\204\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\317\203\316\261\317\204\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\267\316\270\316\265\316\271\317\204\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\317\203\316\261\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\261\316\263\316\261\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\272\316\261\317\204\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\316\271\317\204\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB1:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\317\203\316\277\317\205\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\316\274\316\277\317\205\316\275\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\203\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\316\274\316\277\317\205\316\275\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\277\317\205\316\274\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB9:
+                        if (c_among - z->lb >= 14 && __builtin_memcmp(z->p + c_among - 14, "\316\271\316\277\317\205\316\275\317\204\316\261\316", 13) == 0) { among_var = 1; z->c = c_among - 14; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\316\277\317\205\316\275\317\204\316\261\316", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\265\317\203\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\265\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\316\275\317\204\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\277\317\205\316\274\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\271\316\265\316\274\316\261\316", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\317\203\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\317\204\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\265\317\204\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\261\316\274\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\316\274\316\261\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\317\203\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\316\270\316\265\316", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\261\316\265\316", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\316", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x83:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\267\316\270\316\265\316\271\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\317\203\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\267\316\264\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\277\317\205\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\265\316\271\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\317\205\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\265\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\267\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 0x89:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\317\203\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\316\267\316\270\317", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\261\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0x85:
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\316\277\317", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\317", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xB7:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\316", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab52;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
     lab52:
@@ -3219,11 +3697,30 @@ extern int candidate_greek_UTF_8_stem(struct SN_env * z) {
     {
         int v_54 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 7 <= z->lb || (z->p[z->c - 1] != 129 && z->p[z->c - 1] != 132)) goto lab54;
-        if (!find_among_b(z, a_65)) goto lab54;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x81:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\317\203\317\204\316\265\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\205\317\204\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\211\317\204\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\204\316\265\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                    case 0x84:
+                        if (c_among - z->lb >= 10 && __builtin_memcmp(z->p + c_among - 10, "\316\265\317\203\317\204\316\261\317", 9) == 0) { among_var = 1; z->c = c_among - 10; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\205\317\204\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\317\211\317\204\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        if (c_among - z->lb >= 8 && __builtin_memcmp(z->p + c_among - 8, "\316\277\317\204\316\261\317", 7) == 0) { among_var = 1; z->c = c_among - 8; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab54;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
     lab54:

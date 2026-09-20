@@ -6,6 +6,159 @@
 
 #include "runtime/snowball_runtime.h"
 
+typedef struct SN_env SN_env;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SNOWBALL_UNUSED __attribute__((unused))
+#else
+#define SNOWBALL_UNUSED
+#endif
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c + 1 >= limit) return 0;
+    int lead = p[c];
+    int tail = p[c + 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c - limit < 2) return 0;
+    int lead = p[c - 2];
+    int tail = p[c - 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
+    return ch >= min && ch <= max &&
+           (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return in_grouping_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return out_grouping_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c >= limit) return -1;
+        int lead = p[c];
+        if (lead < 0x80) return c + 1;
+        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
+        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
+        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
+        return skip_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c >= limit) return -1;
+        int b = p[c++];
+        if (b >= 0xC0) {
+            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c <= limit) return -1;
+        int tail = p[c - 1];
+        if (tail < 0x80) return c - 1;
+        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
+            int lead = p[c - 4];
+            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
+            int lead = p[c - 3];
+            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
+            int lead = p[c - 2];
+            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
+        }
+        return skip_b_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c <= limit) return -1;
+        int b = p[--c];
+        if (b >= 0x80) {
+            while (c > limit && p[c] < 0xC0) --c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
+    if (z->bra >= 0 && z->bra <= z->ket && z->ket == z->l && z->l <= SIZE(z->p)) {
+        SET_SIZE(z->p, z->bra);
+        z->l = z->bra;
+        if (z->c > z->bra) z->c = z->bra;
+        z->ket = z->bra;
+        return 0;
+    }
+    return slice_del(z);
+}
+
+#undef SNOWBALL_UNUSED
+
 #ifdef SNOWBALL_BIGENDIAN
 #define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
 #else
@@ -76,154 +229,31 @@ static const symbol s_46[] = { 0xD9, 0x84, 0xD8, 0xA3 };
 static const symbol s_47[] = { 0xD9, 0x84, 0xD8, 0xA5 };
 static const symbol s_48[] = { 0xD9, 0x84, 0xD8, 0xA2 };
 
-static const unsigned short a_0[] = {
-    0x0000 , 0xD9EF , 0x0004 , 0x0030 , 0x0000 , 0xA980 , 0xFFFF , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0xFFFF , 0xFFFF , 0xFFFF , 0xFFFF , 0xFFFF , 0xFFFF , 0xFFFF ,
-    0xFFFF , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0xFFFD ,
-    0xFFFC , 0xFFFB , 0xFFFA , 0xFFF9 , 0xFFF8 , 0xFFF7 , 0xFFF6 , 0xFFF5 ,
-    0x0000 , 0xBABB , 0x0034 , 0x0076 , 0x0000 , 0xBF80 , 0xFFF4 , 0xFFF0 ,
-    0xFFF0 , 0xFFF3 , 0xFFF3 , 0xFFEF , 0xFFEF , 0xFFF2 , 0xFFF2 , 0xFFF1 ,
-    0xFFF1 , 0xFFF1 , 0xFFF1 , 0xFFEE , 0xFFEE , 0xFFED , 0xFFED , 0xFFED ,
-    0xFFED , 0xFFEC , 0xFFEC , 0xFFEB , 0xFFEB , 0xFFEB , 0xFFEB , 0xFFEA ,
-    0xFFEA , 0xFFEA , 0xFFEA , 0xFFE9 , 0xFFE9 , 0xFFE9 , 0xFFE9 , 0xFFE8 ,
-    0xFFE8 , 0xFFE8 , 0xFFE8 , 0xFFE7 , 0xFFE7 , 0xFFE7 , 0xFFE7 , 0xFFE6 ,
-    0xFFE6 , 0xFFE5 , 0xFFE5 , 0xFFE4 , 0xFFE4 , 0xFFE3 , 0xFFE3 , 0xFFE2 ,
-    0xFFE2 , 0xFFE2 , 0xFFE2 , 0xFFE1 , 0xFFE1 , 0xFFE1 , 0xFFE1 , 0xFFE0 ,
-    0xFFE0 , 0xFFE0 , 0xFFE0 , 0xFFDF , 0xFFDF , 0xFFDF , 0x0000 , 0xBC80 ,
-    0xFFDF , 0xFFDE , 0xFFDE , 0xFFDE , 0xFFDE , 0xFFDD , 0xFFDD , 0xFFDD ,
-    0xFFDD , 0xFFDC , 0xFFDC , 0xFFDC , 0xFFDC , 0xFFDB , 0xFFDB , 0xFFDB ,
-    0xFFDB , 0xFFDA , 0xFFDA , 0xFFDA , 0xFFDA , 0xFFD9 , 0xFFD9 , 0xFFD9 ,
-    0xFFD9 , 0xFFD8 , 0xFFD8 , 0xFFD8 , 0xFFD8 , 0xFFD7 , 0xFFD7 , 0xFFD7 ,
-    0xFFD7 , 0xFFD6 , 0xFFD6 , 0xFFD6 , 0xFFD6 , 0xFFD5 , 0xFFD5 , 0xFFD5 ,
-    0xFFD5 , 0xFFD4 , 0xFFD4 , 0xFFD4 , 0xFFD4 , 0xFFD3 , 0xFFD3 , 0xFFD2 ,
-    0xFFD2 , 0xFFD1 , 0xFFD1 , 0xFFD1 , 0xFFD1 , 0xFFCD , 0xFFCD , 0xFFCF ,
-    0xFFCF , 0xFFCE , 0xFFCE , 0xFFD0 , 0xFFD0
-};
-
-static const unsigned short a_1[] = {
-    0x0000 , 0xA6A2 , 0x0007 , 0x0007 , 0x0007 , 0x0007 , 0x0007 , 0x0000 ,
-    0xD8D8 , 0xFFFF
-};
-
-static const unsigned short a_2[] = {
-    0x0000 , 0xD8D8 , 0x0003 , 0x0000 , 0xA6A2 , 0xFFFF , 0xFFFF , 0xFFFE ,
-    0xFFFF , 0xFFFD
-};
-
-static const unsigned short a_3[] = {
-    0x0000 , 0xD8D9 , 0x0004 , 0x0011 , 0x0000 , 0xA7A8 , 0x0008 , 0x000C ,
-    0x0000 , 0x0002 , 0xFFFE , S(84D9), 0x0000 , 0x0004 , 0xFFFF , S(A7D8),
-    S(84D9), 0x0000 , 0x8384 , 0x000C , 0x0008
-};
-
-static const unsigned short a_4[] = {
-    0x0000 , 0x0003 , 0x0005 , S(A3D8), S(00D8), 0x0000 , 0xA7A2 , 0xFFFE ,
-    0xFFFF , 0xFFFF , 0xFFFC , 0x0000 , 0xFFFD
-};
-
-static const unsigned short a_5[] = {
-    0x0000 , 0xD9D9 , 0x0003 , 0x0000 , 0x8188 , 0xFFFF , 0xFFFF
-};
-
-static const unsigned short a_6[] = {
-    0x0000 , 0xD8D9 , 0x0004 , 0x0011 , 0x0000 , 0xA7A8 , 0x0008 , 0x000C ,
-    0x0000 , 0x0002 , 0xFFFE , S(84D9), 0x0000 , 0x0004 , 0xFFFF , S(A7D8),
-    S(84D9), 0x0000 , 0x8384 , 0x000C , 0x0008
-};
-
-static const unsigned short a_7[] = {
-    0x0000 , 0xD8D9 , 0x0004 , 0x000E , 0x0000 , 0xA8A8 , 0x0007 , 0x0001 ,
-    0xD8D8 , 0x000A , 0x0000 , 0xA7A8 , 0xC001 , 0xFFFE , 0x0000 , 0x0003 ,
-    0xFFFD , S(D983), S(0083)
-};
-
-static const unsigned short a_8[] = {
-    0x0000 , 0x0002 , 0x0004 , S(B3D8), 0x0000 , 0xD8D9 , 0x0008 , 0x000C ,
-    0x0000 , 0xA3AA , 0xFFFC , 0xFFFE , 0x0000 , 0x868A , 0xFFFD , 0xFFFF
-};
-
-static const unsigned short a_9[] = {
-    0x0000 , 0xD8D9 , 0x0004 , 0x000A , 0x0000 , 0x0005 , 0xFFFF , S(D8AA),
-    S(D8B3), S(00AA), 0x0000 , 0x868A , 0x000E , 0x000E , 0x0000 , 0x0004 ,
-    0xFFFF , S(B3D8), S(AAD8)
-};
-
-static const unsigned short a_10[] = {
-    0x0000 , 0xA783 , 0x0027 , 0x0000 , 0x002A , 0x0034 , 0x0027 , 0x0000 ,
-    0x0000 , 0x0027 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0039 , 0x0000 ,
-    0xD9D9 , 0xFFFF , 0x0000 , 0xD9D9 , 0x002D , 0x0000 , 0x8387 , 0x0031 ,
-    0x0031 , 0x0000 , 0xD9D9 , 0xFFFE , 0x0000 , 0x0003 , 0xFFFE , S(87D9),
-    S(00D9), 0x0000 , 0xD8D8 , 0x003C , 0x0000 , 0x8785 , 0x0041 , 0x0031 ,
-    0x0031 , 0x0000 , 0xD9D9 , 0x0044 , 0x0000 , 0x8387 , 0x0048 , 0x0048 ,
-    0x0000 , 0xD9D9 , 0xFFFD
-};
-
-static const unsigned short a_11[] = {
-    0x0000 , 0xA788 , 0x0022 , 0x0000 , 0x0022 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0025 , 0x0000 , 0xD9D9 , 0xFFFF , 0x0000 , 0xD8D8 , 0xFFFF
-};
-
-static const unsigned short a_12[] = {
-    0x0000 , 0xA783 , 0x0027 , 0x0000 , 0x002A , 0x0034 , 0x0027 , 0x003B ,
-    0x0000 , 0x0041 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0046 , 0x0000 ,
-    0xD9D9 , 0xFFFF , 0x0000 , 0xD9D9 , 0x002D , 0x0000 , 0x8387 , 0x0031 ,
-    0x0031 , 0x0000 , 0xD9D9 , 0xFFFE , 0x0000 , 0xD9D9 , 0x0037 , 0x0000 ,
-    0x8387 , 0x0031 , 0x0031 , 0x0000 , 0x0005 , 0xFFFD , S(83D9), S(85D9),
-    S(00D9), 0x0000 , 0x0003 , 0xFFFE , S(86D9), S(00D9), 0x0000 , 0xD8D8 ,
-    0x0049 , 0x0000 , 0x8785 , 0x004E , 0x0031 , 0x0031 , 0x0000 , 0xD9D9 ,
-    0x0051 , 0x0000 , 0x8387 , 0x0055 , 0x0055 , 0x0000 , 0xD9D9 , 0xFFFD
-};
-
-static const unsigned short a_13[] = {
-    0x0000 , 0xAA86 , 0x0027 , 0x0000 , 0x0000 , 0x0000 , 0x0058 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x005B , 0x0000 , 0x0000 , 0x008E , 0x0000 ,
-    0xD9D9 , 0x002A , 0x0001 , 0xAA88 , 0x004F , 0x0000 , 0x004F , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0052 , 0x0000 , 0x0000 , 0x0055 , 0x0000 ,
-    0xD9D9 , 0xFFFD , 0x0000 , 0xD8D8 , 0xFFFD , 0x0000 , 0xD8D8 , 0xFFFE ,
-    0x0000 , 0xD9D9 , 0xFFFF , 0x0000 , 0xD8D8 , 0x005E , 0x0001 , 0xAA85 ,
-    0x0086 , 0x008B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 , 0x0003 ,
-    0xFFFD , S(AAD8), S(00D9), 0x0000 , 0xD9D9 , 0xFFFE , 0x0000 , 0xD8D8 ,
-    0xFFFF
-};
-
-static const unsigned short a_14[] = {
-    0x0000 , 0x85A7 , 0x0004 , 0x0009 , 0x0000 , 0x0003 , 0xFFFF , S(AAD8),
-    S(00D9), 0x0000 , 0x0003 , 0xFFFF , S(88D9), S(00D8)
-};
-
-static const unsigned short a_15[] = {
-    0x0000 , 0x0002 , 0x0004 , S(88D9), 0x0001 , 0x0004 , 0xFFFE , S(AAD8),
-    S(85D9)
-};
-
 static int r_Suffix_Noun_Step2a(struct SN_env * z) {
+    int among_var;
     z->ket = z->c;
-    if (!find_among_b(z, a_11)) return 0;
+    {
+        int c_among = z->c;
+        among_var = 0;
+        if (c_among > z->lb) {
+            switch (z->p[c_among - 1]) {
+                case 0x88:
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+                case 0x8A:
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+                case 0xA7:
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+            }
+        }
+    }
+    if (!among_var) return 0;
     z->bra = z->c;
     if (len_utf8(z->p) < 5) return 0;
     {
-        int ret = slice_del(z);
+        int ret = snowball_slice_del(z);
         if (ret < 0) return ret;
     }
     return 1;
@@ -231,11 +261,12 @@ static int r_Suffix_Noun_Step2a(struct SN_env * z) {
 
 static int r_Suffix_Noun_Step2b(struct SN_env * z) {
     z->ket = z->c;
-    if (!(eq_s_b(z, 4, s_0))) return 0;
+    if (z->c - z->lb < 4 || __builtin_memcmp(z->p + z->c - 4, s_0, 4) != 0) return 0;
+    z->c -= 4;
     z->bra = z->c;
     if (len_utf8(z->p) < 5) return 0;
     {
-        int ret = slice_del(z);
+        int ret = snowball_slice_del(z);
         if (ret < 0) return ret;
     }
     return 1;
@@ -243,11 +274,12 @@ static int r_Suffix_Noun_Step2b(struct SN_env * z) {
 
 static int r_Suffix_Noun_Step2c1(struct SN_env * z) {
     z->ket = z->c;
-    if (!(eq_s_b(z, 2, s_1))) return 0;
+    if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_1, 2) != 0) return 0;
+    z->c -= 2;
     z->bra = z->c;
     if (len_utf8(z->p) < 4) return 0;
     {
-        int ret = slice_del(z);
+        int ret = snowball_slice_del(z);
         if (ret < 0) return ret;
     }
     return 1;
@@ -256,28 +288,54 @@ static int r_Suffix_Noun_Step2c1(struct SN_env * z) {
 static int r_Suffix_Verb_Step2a(struct SN_env * z) {
     int among_var;
     z->ket = z->c;
-    among_var = find_among_b(z, a_13);
+    {
+        int c_among = z->c;
+        among_var = 0;
+        if (c_among > z->lb) {
+            switch (z->p[c_among - 1]) {
+                case 0xA7:
+                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\330\252\331\205\330", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\206\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\330\252\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+                case 0x86:
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\210\331", 3) == 0) { among_var = 3; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\212\331", 3) == 0) { among_var = 3; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\330\247\331", 3) == 0) { among_var = 3; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\330\252\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+                case 0x8A:
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+                case 0xAA:
+                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                    break;
+            }
+        }
+    }
     if (!among_var) return 0;
     z->bra = z->c;
     switch (among_var) {
         case 1:
             if (len_utf8(z->p) < 4) return 0;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
         case 2:
             if (len_utf8(z->p) < 5) return 0;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
         case 3:
             if (len_utf8(z->p) < 6) return 0;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
@@ -296,8 +354,22 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
     {
         int v_1 = z->c;
         z->bra = z->c;
-        if (z->c + 3 >= z->l || (z->p[z->c + 3] != 132 && z->p[z->c + 3] != 167)) goto lab0;
-        among_var = find_among(z, a_3);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among < z->l) {
+                switch (z->p[c_among]) {
+                    case 0xD8:
+                        if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250\330\247\331\204", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                        if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\247\331\204", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                        break;
+                    case 0xD9:
+                        if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\203\330\247\331\204", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                        if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\204\331\204", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab0;
         z->ket = z->c;
         switch (among_var) {
@@ -324,13 +396,168 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             do {
                 int v_4 = z->c;
                 z->bra = z->c;
-                among_var = find_among(z, a_0);
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among < z->l) {
+                        switch (z->p[c_among]) {
+                            case 0xEF:
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\200", 2) == 0) { among_var = 12; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\201", 2) == 0) { among_var = 16; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\202", 2) == 0) { among_var = 16; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\203", 2) == 0) { among_var = 13; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\204", 2) == 0) { among_var = 13; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\205", 2) == 0) { among_var = 17; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\206", 2) == 0) { among_var = 17; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\207", 2) == 0) { among_var = 14; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\210", 2) == 0) { among_var = 14; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\211", 2) == 0) { among_var = 15; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\212", 2) == 0) { among_var = 15; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\213", 2) == 0) { among_var = 15; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\214", 2) == 0) { among_var = 15; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\215", 2) == 0) { among_var = 18; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\216", 2) == 0) { among_var = 18; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\217", 2) == 0) { among_var = 19; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\220", 2) == 0) { among_var = 19; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\221", 2) == 0) { among_var = 19; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\222", 2) == 0) { among_var = 19; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\223", 2) == 0) { among_var = 20; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\224", 2) == 0) { among_var = 20; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\225", 2) == 0) { among_var = 21; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\226", 2) == 0) { among_var = 21; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\227", 2) == 0) { among_var = 21; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\230", 2) == 0) { among_var = 21; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\231", 2) == 0) { among_var = 22; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\232", 2) == 0) { among_var = 22; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\233", 2) == 0) { among_var = 22; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\234", 2) == 0) { among_var = 22; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\235", 2) == 0) { among_var = 23; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\236", 2) == 0) { among_var = 23; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\237", 2) == 0) { among_var = 23; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\240", 2) == 0) { among_var = 23; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\241", 2) == 0) { among_var = 24; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\242", 2) == 0) { among_var = 24; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\243", 2) == 0) { among_var = 24; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\244", 2) == 0) { among_var = 24; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\245", 2) == 0) { among_var = 25; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\246", 2) == 0) { among_var = 25; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\247", 2) == 0) { among_var = 25; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\250", 2) == 0) { among_var = 25; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\251", 2) == 0) { among_var = 26; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\252", 2) == 0) { among_var = 26; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\253", 2) == 0) { among_var = 27; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\254", 2) == 0) { among_var = 27; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\255", 2) == 0) { among_var = 28; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\256", 2) == 0) { among_var = 28; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\257", 2) == 0) { among_var = 29; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\260", 2) == 0) { among_var = 29; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\261", 2) == 0) { among_var = 30; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\262", 2) == 0) { among_var = 30; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\263", 2) == 0) { among_var = 30; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\264", 2) == 0) { among_var = 30; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\265", 2) == 0) { among_var = 31; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\266", 2) == 0) { among_var = 31; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\267", 2) == 0) { among_var = 31; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\270", 2) == 0) { among_var = 31; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\271", 2) == 0) { among_var = 32; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\272", 2) == 0) { among_var = 32; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\273", 2) == 0) { among_var = 32; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\274", 2) == 0) { among_var = 32; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\275", 2) == 0) { among_var = 33; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\276", 2) == 0) { among_var = 33; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\272\277", 2) == 0) { among_var = 33; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\200", 2) == 0) { among_var = 33; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\201", 2) == 0) { among_var = 34; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\202", 2) == 0) { among_var = 34; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\203", 2) == 0) { among_var = 34; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\204", 2) == 0) { among_var = 34; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\205", 2) == 0) { among_var = 35; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\206", 2) == 0) { among_var = 35; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\207", 2) == 0) { among_var = 35; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\210", 2) == 0) { among_var = 35; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\211", 2) == 0) { among_var = 36; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\212", 2) == 0) { among_var = 36; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\213", 2) == 0) { among_var = 36; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\214", 2) == 0) { among_var = 36; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\215", 2) == 0) { among_var = 37; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\216", 2) == 0) { among_var = 37; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\217", 2) == 0) { among_var = 37; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\220", 2) == 0) { among_var = 37; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\221", 2) == 0) { among_var = 38; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\222", 2) == 0) { among_var = 38; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\223", 2) == 0) { among_var = 38; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\224", 2) == 0) { among_var = 38; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\225", 2) == 0) { among_var = 39; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\226", 2) == 0) { among_var = 39; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\227", 2) == 0) { among_var = 39; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\230", 2) == 0) { among_var = 39; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\231", 2) == 0) { among_var = 40; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\232", 2) == 0) { among_var = 40; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\233", 2) == 0) { among_var = 40; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\234", 2) == 0) { among_var = 40; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\235", 2) == 0) { among_var = 41; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\236", 2) == 0) { among_var = 41; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\237", 2) == 0) { among_var = 41; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\240", 2) == 0) { among_var = 41; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\241", 2) == 0) { among_var = 42; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\242", 2) == 0) { among_var = 42; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\243", 2) == 0) { among_var = 42; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\244", 2) == 0) { among_var = 42; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\245", 2) == 0) { among_var = 43; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\246", 2) == 0) { among_var = 43; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\247", 2) == 0) { among_var = 43; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\250", 2) == 0) { among_var = 43; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\251", 2) == 0) { among_var = 44; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\252", 2) == 0) { among_var = 44; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\253", 2) == 0) { among_var = 44; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\254", 2) == 0) { among_var = 44; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\255", 2) == 0) { among_var = 45; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\256", 2) == 0) { among_var = 45; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\257", 2) == 0) { among_var = 46; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\260", 2) == 0) { among_var = 46; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\261", 2) == 0) { among_var = 47; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\262", 2) == 0) { among_var = 47; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\263", 2) == 0) { among_var = 47; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\264", 2) == 0) { among_var = 47; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\265", 2) == 0) { among_var = 51; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\266", 2) == 0) { among_var = 51; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\267", 2) == 0) { among_var = 49; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\270", 2) == 0) { among_var = 49; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\271", 2) == 0) { among_var = 50; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\272", 2) == 0) { among_var = 50; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\273", 2) == 0) { among_var = 48; z->c = c_among + 3; break; }
+                                if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\273\274", 2) == 0) { among_var = 48; z->c = c_among + 3; break; }
+                                break;
+                            case 0xD9:
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\200", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\213", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\214", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\215", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\216", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\217", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\220", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\221", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\222", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\240", 1) == 0) { among_var = 2; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\241", 1) == 0) { among_var = 3; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\242", 1) == 0) { among_var = 4; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243", 1) == 0) { among_var = 5; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\244", 1) == 0) { among_var = 6; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\245", 1) == 0) { among_var = 7; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\246", 1) == 0) { among_var = 8; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\247", 1) == 0) { among_var = 9; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250", 1) == 0) { among_var = 10; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\251", 1) == 0) { among_var = 11; z->c = c_among + 2; break; }
+                                break;
+                        }
+                    }
+                }
                 if (!among_var) goto lab4;
                 z->ket = z->c;
                 switch (among_var) {
                     case 1:
                         {
-                            int ret = slice_del(z);
+                            int ret = snowball_slice_del(z);
                             if (ret < 0) return ret;
                         }
                         break;
@@ -639,7 +866,7 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             lab4:
                 z->c = v_4;
                 {
-                    int ret = skip_utf8(z->p, z->c, z->l, 1);
+                    int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
                     if (ret < 0) goto lab3;
                     z->c = ret;
                 }
@@ -664,28 +891,61 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                     while (1) {
                         int v_9 = z->l - z->c;
                         z->ket = z->c;
-                        among_var = find_among_b(z, a_12);
+                        {
+                            int c_among = z->c;
+                            among_var = 0;
+                            if (c_among > z->lb) {
+                                switch (z->p[c_among - 1]) {
+                                    case 0x88:
+                                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\331\203\331\205\331", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                        break;
+                                    case 0xA7:
+                                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\331\203\331\205\330", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\331\207\331\205\330", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\206\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        break;
+                                    case 0x85:
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\203\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        break;
+                                    case 0x86:
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\203\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        break;
+                                    case 0x8A:
+                                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\206\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                        break;
+                                    case 0x83:
+                                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                        break;
+                                    case 0x87:
+                                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                        break;
+                                }
+                            }
+                        }
                         if (!among_var) goto lab8;
                         z->bra = z->c;
                         switch (among_var) {
                             case 1:
                                 if (len_utf8(z->p) < 4) goto lab8;
                                 {
-                                    int ret = slice_del(z);
+                                    int ret = snowball_slice_del(z);
                                     if (ret < 0) return ret;
                                 }
                                 break;
                             case 2:
                                 if (len_utf8(z->p) < 5) goto lab8;
                                 {
-                                    int ret = slice_del(z);
+                                    int ret = snowball_slice_del(z);
                                     if (ret < 0) return ret;
                                 }
                                 break;
                             case 3:
                                 if (len_utf8(z->p) < 6) goto lab8;
                                 {
-                                    int ret = slice_del(z);
+                                    int ret = snowball_slice_del(z);
                                     if (ret < 0) return ret;
                                 }
                                 break;
@@ -709,22 +969,32 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 lab9:
                     z->c = z->l - v_10;
                     z->ket = z->c;
-                    if (z->c - 1 <= z->lb || z->p[z->c - 1] != 136) goto lab10;
-                    among_var = find_among_b(z, a_15);
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x88:
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\330\252\331\205\331", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                    break;
+                            }
+                        }
+                    }
                     if (!among_var) goto lab10;
                     z->bra = z->c;
                     switch (among_var) {
                         case 1:
                             if (len_utf8(z->p) < 4) goto lab10;
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 2:
                             if (len_utf8(z->p) < 6) goto lab10;
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
@@ -733,7 +1003,7 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 lab10:
                     z->c = z->l - v_10;
                     {
-                        int ret = skip_b_utf8(z->p, z->c, z->lb, 1);
+                        int ret = snowball_skip_b_utf8(z->p, z->c, z->lb, 1);
                         if (ret < 0) goto lab7;
                         z->c = ret;
                     }
@@ -742,12 +1012,25 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             lab7:
                 z->c = z->l - v_7;
                 z->ket = z->c;
-                if (z->c - 3 <= z->lb || (z->p[z->c - 1] != 133 && z->p[z->c - 1] != 167)) goto lab11;
-                if (!find_among_b(z, a_14)) goto lab11;
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x85:
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\330\252\331", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                            case 0xA7:
+                                if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\210\330", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                break;
+                        }
+                    }
+                }
+                if (!among_var) goto lab11;
                 z->bra = z->c;
                 if (len_utf8(z->p) < 5) goto lab11;
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -768,11 +1051,12 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 do {
                     int v_12 = z->l - z->c;
                     z->ket = z->c;
-                    if (!(eq_s_b(z, 2, s_19))) goto lab14;
+                    if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_19, 2) != 0) goto lab14;
+                    z->c -= 2;
                     z->bra = z->c;
                     if (len_utf8(z->p) < 4) goto lab14;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                     break;
@@ -780,28 +1064,57 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                     z->c = z->l - v_12;
                     if (b_is_defined) goto lab15;
                     z->ket = z->c;
-                    among_var = find_among_b(z, a_10);
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0xA7:
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\331\203\331\205\330", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\331\207\331\205\330", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\206\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\330", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                    break;
+                                case 0x85:
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\203\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                    break;
+                                case 0x86:
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "\331\207\331", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                                    break;
+                                case 0x83:
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                    break;
+                                case 0x87:
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                    break;
+                                case 0x8A:
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\331", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                    break;
+                            }
+                        }
+                    }
                     if (!among_var) goto lab15;
                     z->bra = z->c;
                     switch (among_var) {
                         case 1:
                             if (len_utf8(z->p) < 4) goto lab15;
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 2:
                             if (len_utf8(z->p) < 5) goto lab15;
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 3:
                             if (len_utf8(z->p) < 6) goto lab15;
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
@@ -833,7 +1146,7 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                     lab18:
                         z->c = z->l - v_13;
                         {
-                            int ret = skip_b_utf8(z->p, z->c, z->lb, 1);
+                            int ret = snowball_skip_b_utf8(z->p, z->c, z->lb, 1);
                             if (ret < 0) goto lab15;
                             z->c = ret;
                         }
@@ -842,11 +1155,12 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 lab15:
                     z->c = z->l - v_12;
                     z->ket = z->c;
-                    if (!(eq_s_b(z, 2, s_41))) goto lab19;
+                    if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_41, 2) != 0) goto lab19;
+                    z->c -= 2;
                     z->bra = z->c;
                     if (len_utf8(z->p) < 6) goto lab19;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                     do {
@@ -895,18 +1209,20 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 ;
             }
             z->ket = z->c;
-            if (!(eq_s_b(z, 2, s_45))) goto lab12;
+            if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_45, 2) != 0) goto lab12;
+            z->c -= 2;
             z->bra = z->c;
             if (len_utf8(z->p) < 3) goto lab12;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
         lab12:
             z->c = z->l - v_6;
             z->ket = z->c;
-            if (!(eq_s_b(z, 2, s_44))) goto lab5;
+            if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_44, 2) != 0) goto lab5;
+            z->c -= 2;
             z->bra = z->c;
             {
                 int ret = slice_from_s(z, 2, s_45);
@@ -922,8 +1238,21 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
         {
             int v_16 = z->c;
             z->bra = z->c;
-            if (z->c + 3 >= z->l || z->p[z->c + 3] >> 5 != 5 || !((188 >> (z->p[z->c + 3] & 0x1f)) & 1)) { z->c = v_16; goto lab24; }
-            among_var = find_among(z, a_4);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xD8:
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243\330\242", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243\330\243", 3) == 0) { among_var = 1; z->c = c_among + 4; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243\330\244", 3) == 0) { among_var = 1; z->c = c_among + 4; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243\330\245", 3) == 0) { among_var = 4; z->c = c_among + 4; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243\330\247", 3) == 0) { among_var = 3; z->c = c_among + 4; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) { z->c = v_16; goto lab24; }
             z->ket = z->c;
             switch (among_var) {
@@ -962,15 +1291,27 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
         {
             int v_17 = z->c;
             z->bra = z->c;
-            if (z->c + 1 >= z->l || (z->p[z->c + 1] != 129 && z->p[z->c + 1] != 136)) { z->c = v_17; goto lab25; }
-            if (!find_among(z, a_5)) { z->c = v_17; goto lab25; }
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xD9:
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\201", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\210", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) { z->c = v_17; goto lab25; }
             z->ket = z->c;
             if (len_utf8(z->p) < 4) { z->c = v_17; goto lab25; }
-            if (!(eq_s(z, 2, s_0))) goto lab26;
+            if (z->l - z->c < 2 || __builtin_memcmp(z->p + z->c, s_0, 2) != 0) goto lab26;
+            z->c += 2;
             { z->c = v_17; goto lab25; }
         lab26:
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
         lab25:
@@ -979,22 +1320,36 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
         do {
             int v_18 = z->c;
             z->bra = z->c;
-            if (z->c + 3 >= z->l || (z->p[z->c + 3] != 132 && z->p[z->c + 3] != 167)) goto lab27;
-            among_var = find_among(z, a_6);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xD8:
+                            if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250\330\247\331\204", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\247\331\204", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                            break;
+                        case 0xD9:
+                            if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\203\330\247\331\204", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\204\331\204", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) goto lab27;
             z->ket = z->c;
             switch (among_var) {
                 case 1:
                     if (len_utf8(z->p) < 6) goto lab27;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                     break;
                 case 2:
                     if (len_utf8(z->p) < 5) goto lab27;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                     break;
@@ -1004,15 +1359,29 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             z->c = v_18;
             if (!b_is_noun) goto lab28;
             z->bra = z->c;
-            if (z->c + 1 >= z->l || (z->p[z->c + 1] != 168 && z->p[z->c + 1] != 131)) goto lab28;
-            among_var = find_among(z, a_7);
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xD8:
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250\330\247", 3) == 0) { among_var = -1; z->c = c_among + 4; break; }
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250\330\250", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\250", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                            break;
+                        case 0xD9:
+                            if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\203\331\203", 3) == 0) { among_var = 3; z->c = c_among + 4; break; }
+                            break;
+                    }
+                }
+            }
             if (!among_var) goto lab28;
             z->ket = z->c;
             switch (among_var) {
                 case 1:
                     if (len_utf8(z->p) < 4) goto lab28;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                     break;
@@ -1038,7 +1407,20 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             {
                 int v_19 = z->c;
                 z->bra = z->c;
-                among_var = find_among(z, a_8);
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among < z->l) {
+                        switch (z->p[c_among]) {
+                            case 0xD8:
+                                if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\263\330\243", 3) == 0) { among_var = 4; z->c = c_among + 4; break; }
+                                if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\263\330\252", 3) == 0) { among_var = 2; z->c = c_among + 4; break; }
+                                if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\263\331\206", 3) == 0) { among_var = 3; z->c = c_among + 4; break; }
+                                if (c_among + 4 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\263\331\212", 3) == 0) { among_var = 1; z->c = c_among + 4; break; }
+                                break;
+                        }
+                    }
+                }
                 if (!among_var) { z->c = v_19; goto lab29; }
                 z->ket = z->c;
                 switch (among_var) {
@@ -1075,8 +1457,22 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
                 ;
             }
             z->bra = z->c;
-            if (z->c + 5 >= z->l || z->p[z->c + 5] != 170) goto lab23;
-            if (!find_among(z, a_9)) goto lab23;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xD8:
+                            if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\252\330\263\330\252", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                            break;
+                        case 0xD9:
+                            if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\206\330\263\330\252", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                            if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\212\330\263\330\252", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab23;
             z->ket = z->c;
             if (len_utf8(z->p) < 5) goto lab23;
             b_is_verb = 1;
@@ -1093,8 +1489,30 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
         int v_20 = z->c;
         z->lb = z->c; z->c = z->l;
         z->ket = z->c;
-        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 5 || !((124 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab31;
-        if (!find_among_b(z, a_1)) goto lab31;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xA2:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xA3:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xA4:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xA5:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 0xA6:
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "\330", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab31;
         z->bra = z->c;
         {
             int ret = slice_from_s(z, 2, s_12);
@@ -1111,8 +1529,21 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             do {
                 int v_23 = z->c;
                 z->bra = z->c;
-                if (z->c + 1 >= z->l || z->p[z->c + 1] >> 5 != 5 || !((124 >> (z->p[z->c + 1] & 0x1f)) & 1)) goto lab34;
-                among_var = find_among(z, a_2);
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among < z->l) {
+                        switch (z->p[c_among]) {
+                            case 0xD8:
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\242", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\243", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\244", 1) == 0) { among_var = 2; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\245", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                                if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\246", 1) == 0) { among_var = 3; z->c = c_among + 2; break; }
+                                break;
+                        }
+                    }
+                }
                 if (!among_var) goto lab34;
                 z->ket = z->c;
                 switch (among_var) {
@@ -1139,7 +1570,7 @@ extern int candidate_arabic_UTF_8_stem(struct SN_env * z) {
             lab34:
                 z->c = v_23;
                 {
-                    int ret = skip_utf8(z->p, z->c, z->l, 1);
+                    int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
                     if (ret < 0) goto lab33;
                     z->c = ret;
                 }

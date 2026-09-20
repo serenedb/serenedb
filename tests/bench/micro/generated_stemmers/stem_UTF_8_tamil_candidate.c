@@ -6,12 +6,165 @@
 
 #include "runtime/snowball_runtime.h"
 
+typedef struct SN_env SN_env;
+
 struct SN_local {
     struct SN_env z;
     unsigned char b_found_vetrumai_urupu;
 };
 
 typedef struct SN_local SN_local;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SNOWBALL_UNUSED __attribute__((unused))
+#else
+#define SNOWBALL_UNUSED
+#endif
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c + 1 >= limit) return 0;
+    int lead = p[c];
+    int tail = p[c + 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c - limit < 2) return 0;
+    int lead = p[c - 2];
+    int tail = p[c - 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
+    return ch >= min && ch <= max &&
+           (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return in_grouping_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return out_grouping_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c >= limit) return -1;
+        int lead = p[c];
+        if (lead < 0x80) return c + 1;
+        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
+        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
+        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
+        return skip_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c >= limit) return -1;
+        int b = p[c++];
+        if (b >= 0xC0) {
+            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c <= limit) return -1;
+        int tail = p[c - 1];
+        if (tail < 0x80) return c - 1;
+        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
+            int lead = p[c - 4];
+            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
+            int lead = p[c - 3];
+            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
+            int lead = p[c - 2];
+            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
+        }
+        return skip_b_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c <= limit) return -1;
+        int b = p[--c];
+        if (b >= 0x80) {
+            while (c > limit && p[c] < 0xC0) --c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
+    if (z->bra >= 0 && z->bra <= z->ket && z->ket == z->l && z->l <= SIZE(z->p)) {
+        SET_SIZE(z->p, z->bra);
+        z->l = z->bra;
+        if (z->c > z->bra) z->c = z->bra;
+        z->ket = z->bra;
+        return 0;
+    }
+    return slice_del(z);
+}
+
+#undef SNOWBALL_UNUSED
 
 #ifdef SNOWBALL_BIGENDIAN
 #define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
@@ -56,324 +209,23 @@ static const symbol s_13[] = {
     0x8D
 };
 
-static const unsigned short a_0[] = {
-    0x0000 , 0x0005 , 0x0006 , S(AEE0), S(E0B5), S(00AF), 0x0000 , 0x8B81 ,
-    0xFFFD , 0xFFFC , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0xFFFE , 0xFFFF
-};
-
-static const unsigned short a_1[] = {
-    0x0000 , 0x0002 , 0x0004 , S(AEE0), 0x0000 , 0xB595 , 0xC001 , 0x0000 ,
-    0x0000 , 0x0000 , 0xC001 , 0xC001 , 0x0000 , 0x0000 , 0x0000 , 0xC001 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xC001 , 0x0000 , 0x0000 ,
-    0x0000 , 0xC001 , 0x0000 , 0xC001 , 0x0000 , 0x0000 , 0x0000 , 0xC001 ,
-    0xC001 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xC001
-};
-
-static const unsigned short a_2[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0042 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0046 , 0x0000 , 0x0002 , 0xC001 , S(AFE0), 0x0000 , 0x0002 ,
-    0xC001 , S(AEE0)
-};
-
-static const unsigned short a_3[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x0042 , 0x0042 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0042 , 0x0042 , 0x0042 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0046 , 0x0046 , 0x0000 , 0x0002 , 0xC001 , S(AFE0), 0x0000 , 0x0002 ,
-    0xC001 , S(AEE0)
-};
-
-static const unsigned short a_4[] = {
-    0x0002 , 0x888D , 0x0004 , 0x0004 , 0x0000 , 0x0002 , 0xFFFF , S(AFE0)
-};
-
-static const unsigned short a_5[] = {
-    0x0000 , 0xB581 , 0x0037 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x003D , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00D0 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x00BA , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00BA , 0x0000 ,
-    0x0005 , 0xFFF8 , S(AEE0), S(E0A9), S(00AF), 0x0000 , 0x0002 , 0x0041 ,
-    S(AFE0), 0x0000 , 0xB595 , 0x0064 , 0x0000 , 0x0000 , 0x0000 , 0x00A1 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A5 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00AC , 0x0000 , 0x0000 , 0x0000 , 0x00BA , 0x0000 ,
-    0x00BE , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00C5 , 0x0000 , 0x00C9 ,
-    0x0000 , 0x0000 , 0x0000 , 0x00BA , 0x0000 , 0x0002 , 0x0068 , S(AEE0),
-    0x0000 , 0x818D , 0x006C , 0x0070 , 0x0000 , 0x0002 , 0xFFF9 , S(AFE0),
-    0x0000 , 0x0002 , 0x0074 , S(AFE0), 0x0000 , 0xB195 , 0x0093 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0099 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x009D , 0x0000 , 0x0005 , 0xFFF9 , S(AFE0), S(E081),
-    S(00AE), 0x0000 , 0x0002 , 0xFFFD , S(AEE0), 0x0000 , 0x0002 , 0xFFFC ,
-    S(AEE0), 0x0000 , 0x0002 , 0xFFF7 , S(AEE0), 0x0000 , 0x0008 , 0xFFFB ,
-    S(AEE0), S(E09F), S(8DAF), S(AEE0), 0x0000 , 0x0005 , 0x00B2 , S(AFE0),
-    S(E08D), S(00AE), 0x0000 , 0xA4A8 , 0x00B6 , 0x00BA , 0x0000 , 0x0002 ,
-    0xFFFA , S(AEE0), 0x0000 , 0x0002 , 0xFFFF , S(AEE0), 0x0000 , 0x0008 ,
-    0xFFFD , S(AEE0), S(E09F), S(8DAF), S(AEE0), 0x0000 , 0x0002 , 0xFFFE ,
-    S(AEE0), 0x0000 , 0x0008 , 0xFFFC , S(AEE0), S(E0A9), S(8DAF), S(AEE0),
-    0x0000 , 0x0008 , 0xFFFF , S(AEE0), S(E0A8), S(8DAF), S(AEE0)
-};
-
-static const unsigned short a_6[] = {
-    0x0000 , 0xB195 , 0x001F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001F ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x001F , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001F ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001F , 0x0000 ,
-    0x0002 , 0xC001 , S(AEE0)
-};
-
-static const unsigned short a_7[] = {
-    0x0000 , 0xB59E , 0x001A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001A ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x001A , 0x001A , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x001A , 0x001A , 0x001A , 0x0000 , 0x001A , 0x001A ,
-    0x001A , 0x001A , 0x0000 , 0x0002 , 0xC001 , S(AEE0)
-};
-
-static const unsigned short a_8[] = {
-    0x0000 , 0xBF80 , 0x0042 , 0x0042 , 0x0042 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0042 , 0x0042 , 0x0042 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0042 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0046 , 0x0046 , 0x0000 , 0x0002 , 0xC001 , S(AFE0), 0x0000 , 0x0002 ,
-    0xC001 , S(AEE0)
-};
-
-static const unsigned short a_9[] = {
-    0x0000 , 0x0002 , 0x0004 , S(AEE0), 0x0000 , 0x8985 , 0xC001 , 0x0000 ,
-    0xC001 , 0x0000 , 0xC001
-};
-
-static const unsigned short a_10[] = {
-    0x0000 , 0x0009 , 0x0008 , S(AEE0), S(E095), S(B3AE), S(AFE0), S(008D),
-    0x0004 , 0x0003 , 0x000D , S(AFE0), S(008D), 0x0000 , 0xB199 , 0x0028 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x002E , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0032 ,
-    0x0000 , 0x0005 , 0xFFFF , S(AFE0), S(E081), S(00AE), 0x0000 , 0x0002 ,
-    0xFFFD , S(AEE0), 0x0000 , 0x0002 , 0xFFFE , S(AEE0)
-};
-
-static const unsigned short a_11[] = {
-    0x0000 , 0xBE87 , 0x003A , 0x0000 , 0x0000 , 0x0000 , 0x003A , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x003E , 0x0000 , 0x0002 , 0xC001 , S(AFE0), 0x0000 , 0x0002 ,
-    0xC001 , S(AEE0)
-};
-
-static const unsigned short a_12[] = {
-    0x0000 , 0x0003 , 0x0005 , S(AEE0), S(00BF), 0x0000 , 0xAAB5 , 0x0009 ,
-    0x0009 , 0x0000 , 0x0002 , 0xC001 , S(AEE0)
-};
-
-static const unsigned short a_13[] = {
-    0x0000 , 0xBF81 , 0x0041 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00BA , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00D1 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x013B , 0x0000 , 0x0000 , 0x0000 , 0x00A7 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0144 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x015E , 0x0000 , 0x0000 , 0x0182 , 0x0189 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0192 , 0x0000 , 0x0002 , 0x0045 , S(AFE0), 0x0000 , 0xB19F , 0x005A ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A7 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00B1 , 0x0000 , 0x0002 , 0x005E , S(AEE0), 0x0000 , 0xBF8D ,
-    0x0093 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x009D , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x00A1 , 0x0000 , 0x0005 , 0x0099 , S(AEE0), S(E09F),
-    S(00AF), 0x0000 , 0xAABF , 0x009D , 0x00A1 , 0x0000 , 0x0002 , 0xFFFD ,
-    S(AEE0), 0x0000 , 0x0005 , 0xFFFD , S(AEE0), S(E0B5), S(00AE), 0x0000 ,
-    0x000E , 0xFFFD , S(AEE0), S(E0AA), S(9FAE), S(AFE0), S(E08D), S(9FAE),
-    S(AEE0), 0x0000 , 0x000B , 0xFFFF , S(AFE0), S(E086), S(A9AE), S(AFE0),
-    S(E08D), S(00AE), 0x0000 , 0x0002 , 0x00BE , S(AFE0), 0x0000 , 0x9FB2 ,
-    0x00C2 , 0x00C8 , 0x0000 , 0x0005 , 0xFFFF , S(AFE0), S(E081), S(00AE),
-    0x0000 , 0x000B , 0xFFFF , S(AEE0), S(E0BF), S(B2AE), S(AFE0), S(E08D),
-    S(00AE), 0x0000 , 0x0002 , 0x00D5 , S(AFE0), 0x0000 , 0xA9AE , 0x00D9 ,
-    0x00E0 , 0x0000 , 0x0008 , 0xFFFF , S(AFE0), S(E081), S(9FAE), S(AEE0),
-    0x0000 , 0x0002 , 0x00E4 , S(AEE0), 0x0000 , 0xBE81 , 0x0124 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x012B , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0131 , 0x0000 , 0x0008 , 0xFFFF , S(AFE0),
-    S(E086), S(A9AE), S(AFE0), 0x0000 , 0x0005 , 0xFFFF , S(AEE0), S(E0BF),
-    S(00AE), 0x0000 , 0x000E , 0xFFFD , S(AFE0), S(E086), S(B2AE), S(AFE0),
-    S(E08D), S(B2AE), S(AEE0), 0x0000 , 0x000B , 0xFFFD , S(AEE0), S(E0AA),
-    S(9FAE), S(AFE0), S(E08D), S(00AE), 0x0000 , 0x0002 , 0x0148 , S(AEE0),
-    0x0000 , 0x86BE , 0x014C , 0x0150 , 0x0000 , 0x0002 , 0xFFFF , S(AFE0),
-    0x0000 , 0x0005 , 0x0156 , S(AEE0), S(E0A4), S(00AE), 0x0003 , 0x0009 ,
-    0xFFFD , S(AEE0), S(E0AA), S(9FAE), S(AEE0), S(00BF), 0x0000 , 0x0002 ,
-    0x0162 , S(AEE0), 0x0000 , 0x88BF , 0x0166 , 0x016D , 0x0000 , 0x0008 ,
-    0xFFFF , S(AFE0), S(E081), S(9FAE), S(AFE0), 0x0000 , 0x0002 , 0x0171 ,
-    S(AEE0), 0x0000 , 0x95B0 , 0x0175 , 0x017B , 0x0000 , 0x0005 , 0xFFFF ,
-    S(AEE0), S(E0BE), S(00AE), 0x0000 , 0x0008 , 0xFFFD , S(AEE0), S(E095),
-    S(81AF), S(AEE0), 0x0000 , 0x0008 , 0xFFFE , S(AEE0), S(E0B2), S(8DAF),
-    S(AEE0), 0x0000 , 0x000B , 0xFFFF , S(AFE0), S(E081), S(B3AE), S(AFE0),
-    S(E08D), S(00AE), 0x0000 , 0x0002 , 0x0196 , S(AEE0), 0x0000 , 0xB195 ,
-    0x0175 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x01B5 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01BB , 0x0000 , 0x0005 , 0xFFFD ,
-    S(AEE0), S(E0AA), S(00AE), 0x0000 , 0x0005 , 0x01C1 , S(AFE0), S(E08D),
-    S(00AE), 0x0000 , 0xA9B1 , 0x012B , 0x01B5
-};
-
-static const unsigned short a_14[] = {
-    0x0000 , 0x9F80 , 0x0022 , 0x0026 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0063 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0075 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0104 , 0x0000 , 0x0002 , 0xFFF9 , S(AFE0), 0x0000 , 0x0002 ,
-    0x002A , S(AFE0), 0x0000 , 0xB19F , 0x003F , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x004B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x005A , 0x0000 ,
-    0x0002 , 0x0043 , S(AEE0), 0x0000 , 0x8A8B , 0x0047 , 0x0047 , 0x0000 ,
-    0x0002 , 0xFFFE , S(AFE0), 0x0000 , 0x0002 , 0x004F , S(AEE0), 0x0006 ,
-    0x000F , 0xFFFE , S(AEE0), S(E0BF), S(B0AE), S(AFE0), S(E081), S(A8AE),
-    S(AFE0), S(008D), 0x0000 , 0x000B , 0xFFFE , S(AEE0), S(E0BF), S(A9AE),
-    S(AFE0), S(E08D), S(00AE), 0x0000 , 0x0002 , 0x0067 , S(AFE0), 0x0000 ,
-    0x9FA9 , 0x006B , 0x0071 , 0x0000 , 0x0005 , 0xFFFE , S(AFE0), S(E081),
-    S(00AE), 0x0000 , 0x0002 , 0xFFFF , S(AEE0), 0x0000 , 0x0002 , 0x0079 ,
-    S(AFE0), 0x0000 , 0xB4A3 , 0x008D , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0093 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A5 , 0x0000 ,
-    0x0000 , 0x00AC , 0x00B8 , 0x006B , 0x00FD , 0x0000 , 0x0005 , 0xFFFF ,
-    S(AEE0), S(E095), S(00AE), 0x0000 , 0x0002 , 0x0097 , S(AEE0), 0x0000 ,
-    0x81BF , 0x009B , 0x00A1 , 0x0000 , 0x0005 , 0xFFFF , S(AEE0), S(E0AE),
-    S(00AF), 0x0000 , 0x0002 , 0xFFFD , S(AEE0), 0x0000 , 0x0008 , 0xFFFC ,
-    S(AEE0), S(E0BF), S(9FAE), S(AEE0), 0x0000 , 0x0002 , 0x00B0 , S(AEE0),
-    0x0000 , 0x87BF , 0x009B , 0x00B4 , 0x0000 , 0x0002 , 0xFFFE , S(AEE0),
-    0x0000 , 0x0002 , 0x00BC , S(AEE0), 0x0005 , 0xBF87 , 0x009B , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00F7 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00B4 , 0x00B4 , 0x0000 ,
-    0x0005 , 0xFFFE , S(AEE0), S(E0BE), S(00AE), 0x0000 , 0x0008 , 0xFFFF ,
-    S(AEE0), S(E095), S(80AF), S(AEE0), 0x0000 , 0x0008 , 0xFFFE , S(AEE0),
-    S(E0B5), S(BFAE), S(AEE0)
-};
-
-static const unsigned short a_15[] = {
-    0x0000 , 0x9485 , 0x0012 , 0x0012 , 0x0012 , 0x0012 , 0x0012 , 0x0012 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0012 , 0x0012 , 0x0012 , 0x0000 , 0x0012 ,
-    0x0012 , 0x0012 , 0x0000 , 0x0002 , 0xC001 , S(AEE0)
-};
-
-static const unsigned short a_16[] = {
-    0x0000 , 0xBE81 , 0x0040 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x007A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0086 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0082 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0082 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0082 , 0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x015B ,
-    0x0000 , 0x0002 , 0x0044 , S(AFE0), 0x0000 , 0xB195 , 0x0063 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0067 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x006D , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0071 , 0x0000 , 0x0002 , 0xFFFA , S(AEE0), 0x0000 ,
-    0x0005 , 0xFFFF , S(AEE0), S(E0AA), S(00AE), 0x0000 , 0x0002 , 0xFFFD ,
-    S(AEE0), 0x0000 , 0x000B , 0xFFFF , S(AEE0), S(E0BF), S(B1AE), S(AFE0),
-    S(E08D), S(00AE), 0x0000 , 0x0002 , 0x007E , S(AFE0), 0x0000 , 0xA9B5 ,
-    0x0082 , 0x0082 , 0x0000 , 0x0002 , 0xFFFF , S(AEE0), 0x0000 , 0x0002 ,
-    0x008A , S(AFE0), 0x0000 , 0xB3A9 , 0x0097 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x00F4 , 0x015F , 0x0165 , 0x0000 , 0x0000 , 0x01CB , 0x0000 ,
-    0x0002 , 0x009B , S(AEE0), 0x0000 , 0xBF86 , 0x00D7 , 0x00DD , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0082 , 0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00E1 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00E5 , 0x00EE , 0x0000 ,
-    0x0005 , 0xFFFF , S(AEE0), S(E0A9), S(00AF), 0x0000 , 0x0002 , 0xFFFB ,
-    S(AFE0), 0x0000 , 0x0002 , 0xFFFE , S(AEE0), 0x0000 , 0x0002 , 0x00E9 ,
-    S(AEE0), 0x0004 , 0x0003 , 0xFFFF , S(AEE0), S(00A9), 0x0000 , 0x0005 ,
-    0xFFFF , S(AEE0), S(E0AE), S(00AE), 0x0000 , 0x0002 , 0x00F8 , S(AEE0),
-    0x0000 , 0xBE81 , 0x0138 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00DD ,
-    0x00DD , 0x0000 , 0x0000 , 0x0000 , 0x00DD , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0082 , 0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x015B ,
-    0x0000 , 0x0002 , 0x013C , S(AFE0), 0x0000 , 0xB195 , 0x0082 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x015B , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0082 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0082 , 0x0000 , 0x0002 , 0xFFFB , S(AEE0), 0x0000 ,
-    0x0005 , 0xFFFB , S(AEE0), S(E0BE), S(00AE), 0x0000 , 0x0002 , 0x0169 ,
-    S(AEE0), 0x0000 , 0xBF80 , 0x00DD , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0082 , 0x0082 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x01AB , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x01B1 , 0x01B9 , 0x0000 , 0x0005 , 0xFFFB , S(AFE0), S(E080),
-    S(00AE), 0x0000 , 0x0002 , 0x01B5 , S(AEE0), 0x0005 , 0xA9AE , 0x0082 ,
-    0x0082 , 0x0000 , 0x0002 , 0x01BD , S(AEE0), 0x0000 , 0x9FA9 , 0x01C1 ,
-    0x015B , 0x0000 , 0x000E , 0xFFFF , S(AEE0), S(E095), S(8AAF), S(AEE0),
-    S(E0A3), S(8DAF), S(AEE0), 0x0000 , 0x0002 , 0x01CF , S(AEE0), 0x0000 ,
-    0xBEA9 , 0x0082 , 0x0082 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0082 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x01E7 , 0x0000 ,
-    0x0002 , 0x01EB , S(AEE0), 0x0005 , 0x0003 , 0xFFFF , S(AEE0), S(00A9)
-};
-
-static const unsigned short a_17[] = {
-    0x0000 , 0x8DB1 , 0x0004 , 0x0029 , 0x0000 , 0x0005 , 0x000A , S(AEE0),
-    S(E0B1), S(00AF), 0x0000 , 0x8DBF , 0x000E , 0x0023 , 0x0000 , 0x0008 ,
-    0x0015 , S(AEE0), S(E0BF), S(A9AE), S(AFE0), 0x0000 , 0x95A8 , 0x0019 ,
-    0x001D , 0x0000 , 0x0002 , 0xC001 , S(AEE0), 0x0000 , 0x0005 , 0xC001 ,
-    S(AEE0), S(E0BE), S(00AE), 0x0000 , 0x0005 , 0xC001 , S(AEE0), S(E095),
-    S(00AE), 0x0000 , 0x0002 , 0x002D , S(AEE0), 0x0000 , 0x8DBF , 0x0031 ,
-    0x0023 , 0x0000 , 0x0008 , 0x0038 , S(AEE0), S(E0BF), S(A9AE), S(AFE0),
-    0x0000 , 0x95A8 , 0x0019 , 0x001D
-};
-
 static int r_fix_va_start(struct SN_env * z) {
     int among_var;
     z->bra = z->c;
-    if (z->c + 5 >= z->l || z->p[z->c + 5] >> 5 != 4 || !((3078 >> (z->p[z->c + 5] & 0x1f)) & 1)) return 0;
-    among_var = find_among(z, a_0);
+    {
+        int c_among = z->c;
+        among_var = 0;
+        if (c_among < z->l) {
+            switch (z->p[c_among]) {
+                case 0xE0:
+                    if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265\340\257\201", 5) == 0) { among_var = 3; z->c = c_among + 6; break; }
+                    if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265\340\257\202", 5) == 0) { among_var = 4; z->c = c_among + 6; break; }
+                    if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265\340\257\212", 5) == 0) { among_var = 2; z->c = c_among + 6; break; }
+                    if (c_among + 6 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265\340\257\213", 5) == 0) { among_var = 1; z->c = c_among + 6; break; }
+                    break;
+            }
+        }
+    }
     if (!among_var) return 0;
     z->ket = z->c;
     switch (among_var) {
@@ -432,24 +284,75 @@ static int r_fix_ending(struct SN_env * z) {
     do {
         int v_1 = z->l - z->c;
         z->ket = z->c;
-        among_var = find_among_b(z, a_5);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x8D:
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\257\201\340\256\225\340\257\215\340\256\225\340\257", 14) == 0) { among_var = 7; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\237\340\257\215\340\256\225\340\257", 11) == 0) { among_var = 3; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\261\340\257\215\340\256\225\340\257", 11) == 0) { among_var = 4; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\237\340\257\215\340\256\237\340\257", 11) == 0) { among_var = 5; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\244\340\257\215\340\256\244\340\257", 11) == 0) { among_var = 6; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\250\340\257\215\340\256\244\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\237\340\257\215\340\256\252\340\257", 11) == 0) { among_var = 3; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\257\215\340\256\261\340\257", 11) == 0) { among_var = 4; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\201\340\256\225\340\257", 8) == 0) { among_var = 7; z->c = c_among - 9; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\231\340\257", 5) == 0) { among_var = 9; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\250\340\257", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\257\340\257", 5) == 0) { among_var = 2; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\265\340\257", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0xA4:
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\250\340\257\215\340\256", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\251\340\257", 5) == 0) { among_var = 8; z->c = c_among - 6; break; }
+                        break;
+                    case 0xAF:
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                        break;
+                    case 0xB5:
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab0;
         z->bra = z->c;
         switch (among_var) {
             case 1:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 2:
                 {
                     int v_2 = z->l - z->c;
-                    if (!find_among_b(z, a_2)) goto lab0;
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x80:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x88:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBF:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) goto lab0;
                     z->c = z->l - v_2;
                 }
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -473,7 +376,8 @@ static int r_fix_ending(struct SN_env * z) {
                 break;
             case 6:
                 if (!((SN_local *)z)->b_found_vetrumai_urupu) goto lab0;
-                if (!(eq_s_b(z, 3, s_7))) goto lab1;
+                if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_7, 3) != 0) goto lab1;
+                z->c -= 3;
                 goto lab0;
             lab1:
                 {
@@ -490,23 +394,67 @@ static int r_fix_ending(struct SN_env * z) {
             case 8:
                 {
                     int v_3 = z->l - z->c;
-                    if (!find_among_b(z, a_3)) goto lab2;
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x80:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x81:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x82:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x86:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x87:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x88:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBE:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBF:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) goto lab2;
                     goto lab0;
                 lab2:
                     z->c = z->l - v_3;
                 }
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 9:
-                if (z->c - 2 <= z->lb || (z->p[z->c - 1] != 136 && z->p[z->c - 1] != 141)) among_var = 2; else
-                among_var = find_among_b(z, a_4);
+                {
+                    int c_among = z->c;
+                    among_var = 2;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x88:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x8D:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                break;
+                        }
+                    }
+                }
                 switch (among_var) {
                     case 1:
                         {
-                            int ret = slice_del(z);
+                            int ret = snowball_slice_del(z);
                             if (ret < 0) return ret;
                         }
                         break;
@@ -523,30 +471,126 @@ static int r_fix_ending(struct SN_env * z) {
     lab0:
         z->c = z->l - v_1;
         z->ket = z->c;
-        if (!(eq_s_b(z, 3, s_9))) return 0;
+        if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_9, 3) != 0) return 0;
+        z->c -= 3;
         do {
             int v_4 = z->l - z->c;
-            if (!find_among_b(z, a_6)) goto lab3;
+            {
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x95:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0x9A:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0x9F:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xA4:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xAA:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB1:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab3;
             {
                 int v_5 = z->l - z->c;
-                if (!(eq_s_b(z, 3, s_9))) { z->c = z->l - v_5; goto lab4; }
-                if (!find_among_b(z, a_6)) { z->c = z->l - v_5; goto lab4; }
+                if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_9, 3) != 0) { z->c = z->l - v_5; goto lab4; }
+                z->c -= 3;
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x95:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x9A:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x9F:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0xA4:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0xAA:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0xB1:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                        }
+                    }
+                }
+                if (!among_var) { z->c = z->l - v_5; goto lab4; }
             lab4:
                 ;
             }
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
         lab3:
             z->c = z->l - v_4;
-            if (!find_among_b(z, a_7)) goto lab5;
-            z->bra = z->c;
-            if (!(eq_s_b(z, 3, s_9))) goto lab5;
             {
-                int ret = slice_del(z);
+                int c_among = z->c;
+                among_var = 0;
+                if (c_among > z->lb) {
+                    switch (z->p[c_among - 1]) {
+                        case 0x9E:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xA3:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xA8:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xA9:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xAE:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xAF:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB0:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB2:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB3:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB4:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                        case 0xB5:
+                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                            break;
+                    }
+                }
+            }
+            if (!among_var) goto lab5;
+            z->bra = z->c;
+            if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_9, 3) != 0) goto lab5;
+            z->c -= 3;
+            {
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
             break;
@@ -554,12 +598,47 @@ static int r_fix_ending(struct SN_env * z) {
             z->c = z->l - v_4;
             {
                 int v_6 = z->l - z->c;
-                if (!find_among_b(z, a_8)) return 0;
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x80:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x81:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x82:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x86:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x87:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x88:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0x8D:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0xBE:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                            case 0xBF:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                break;
+                        }
+                    }
+                }
+                if (!among_var) return 0;
                 z->c = z->l - v_6;
             }
             z->bra = z->c;
             {
-                int ret = slice_del(z);
+                int ret = snowball_slice_del(z);
                 if (ret < 0) return ret;
             }
         } while (0);
@@ -584,12 +663,34 @@ extern int candidate_tamil_UTF_8_stem(struct SN_env * z) {
     {
         int v_2 = z->c;
         z->bra = z->c;
-        if (!(eq_s(z, 3, s_10))) goto lab0;
-        if (!find_among(z, a_1)) goto lab0;
-        if (!(eq_s(z, 3, s_9))) goto lab0;
+        if (z->l - z->c < 3 || __builtin_memcmp(z->p + z->c, s_10, 3) != 0) goto lab0;
+        z->c += 3;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among < z->l) {
+                switch (z->p[c_among]) {
+                    case 0xE0:
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\225", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\231", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\232", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\236", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\244", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\250", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\252", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\256", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\257", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab0;
+        if (z->l - z->c < 3 || __builtin_memcmp(z->p + z->c, s_9, 3) != 0) goto lab0;
+        z->c += 3;
         z->ket = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         {
@@ -606,13 +707,46 @@ extern int candidate_tamil_UTF_8_stem(struct SN_env * z) {
     {
         int v_4 = z->c;
         z->bra = z->c;
-        if (z->c + 2 >= z->l || z->p[z->c + 2] >> 5 != 4 || !((672 >> (z->p[z->c + 2] & 0x1f)) & 1)) goto lab1;
-        if (!find_among(z, a_9)) goto lab1;
-        if (!find_among(z, a_1)) goto lab1;
-        if (!(eq_s(z, 3, s_9))) goto lab1;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among < z->l) {
+                switch (z->p[c_among]) {
+                    case 0xE0:
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\205", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\207", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\211", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab1;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among < z->l) {
+                switch (z->p[c_among]) {
+                    case 0xE0:
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\225", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\231", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\232", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\236", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\244", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\250", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\252", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\256", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\257", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        if (c_among + 3 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\256\265", 2) == 0) { among_var = -1; z->c = c_among + 3; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab1;
+        if (z->l - z->c < 3 || __builtin_memcmp(z->p + z->c, s_9, 3) != 0) goto lab1;
+        z->c += 3;
         z->ket = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         {
@@ -631,7 +765,24 @@ extern int candidate_tamil_UTF_8_stem(struct SN_env * z) {
     {
         int v_6 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_11)) goto lab3;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x87:
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                        break;
+                    case 0x8B:
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                        break;
+                    case 0xBE:
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab3;
         z->bra = z->c;
         {
             int ret = slice_from_s(z, 3, s_9);
@@ -674,7 +825,60 @@ lab2:
         if (len_utf8(z->p) < 5) goto lab5;
         z->lb = z->c; z->c = z->l;
         z->ket = z->c;
-        among_var = find_among_b(z, a_13);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x8D:
+                        if (c_among - z->lb >= 21 && __builtin_memcmp(z->p + c_among - 21, "\340\257\206\340\256\262\340\257\215\340\256\262\340\256\276\340\256\256\340\257", 20) == 0) { among_var = 3; z->c = c_among - 21; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\257\206\340\256\251\340\257\201\340\256\256\340\257", 14) == 0) { among_var = 1; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\257\201\340\256\237\340\256\251\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\277\340\256\237\340\256\256\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0x81:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\256\265\340\256\277\340\256\237\340\257\215\340\256\237\340\257", 17) == 0) { among_var = 3; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\256\252\340\256\237\340\257\215\340\256\237\340\256\244\340\257", 17) == 0) { among_var = 3; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\252\340\256\237\340\257\215\340\256\237\340\257", 14) == 0) { among_var = 3; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\257\206\340\256\251\340\257\215\340\256\261\340\257", 14) == 0) { among_var = 1; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\265\340\256\277\340\256\237\340\257", 11) == 0) { among_var = 3; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\237\340\257", 8) == 0) { among_var = 3; z->c = c_among - 9; break; }
+                        break;
+                    case 0xA9:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\256\252\340\256\237\340\256\277\340\256\244\340\256\276\340\256", 17) == 0) { among_var = 3; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\244\340\256\276\340\256", 8) == 0) { among_var = 3; z->c = c_among - 9; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\257\206\340\256", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                        break;
+                    case 0x88:
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\277\340\256\262\340\257\215\340\256\262\340\257", 14) == 0) { among_var = 1; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\201\340\256\237\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                        break;
+                    case 0xA3:
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\252\340\256\237\340\257\215\340\256\237\340\256", 14) == 0) { among_var = 3; z->c = c_among - 15; break; }
+                        break;
+                    case 0xAF:
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\225\340\257\201\340\256\260\340\256\277\340\256", 14) == 0) { among_var = 3; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\257\201\340\256\237\340\257\210\340\256", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\276\340\256\225\340\256\277\340\256", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xBF:
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\277\340\256\251\340\257\215\340\256\261\340\256", 14) == 0) { among_var = 1; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\252\340\256\261\340\257\215\340\256\261\340\256", 14) == 0) { among_var = 3; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\225\340\256", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\237\340\256", 8) == 0) { among_var = 3; z->c = c_among - 9; break; }
+                        break;
+                    case 0x9F:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\252\340\256\237\340\257\215\340\256", 11) == 0) { among_var = 3; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB3:
+                        if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\257\201\340\256\263\340\257\215\340\256", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                        break;
+                    case 0xB2:
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\262\340\257\215\340\256", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab5;
         z->bra = z->c;
         switch (among_var) {
@@ -687,7 +891,39 @@ lab2:
             case 2:
                 {
                     int v_10 = z->l - z->c;
-                    if (!find_among_b(z, a_3)) goto lab6;
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x80:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x81:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x82:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x86:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x87:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x88:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBE:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBF:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) goto lab6;
                     goto lab5;
                 lab6:
                     z->c = z->l - v_10;
@@ -699,7 +935,7 @@ lab2:
                 break;
             case 3:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -722,14 +958,52 @@ lab2:
             {
                 int v_13 = z->l - z->c;
                 z->ket = z->c;
-                if (z->c - 2 <= z->lb || z->p[z->c - 1] >> 5 != 4 || !((-2147475197 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab8;
-                among_var = find_among_b(z, a_14);
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x81:
+                                if (c_among - z->lb >= 21 && __builtin_memcmp(z->p + c_among - 21, "\340\256\277\340\256\260\340\257\201\340\256\250\340\257\215\340\256\244\340\257", 20) == 0) { among_var = 2; z->c = c_among - 21; break; }
+                                if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\277\340\256\251\340\257\215\340\256\261\340\257", 14) == 0) { among_var = 2; z->c = c_among - 15; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\212\340\256\237\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\213\340\256\237\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\244\340\257", 5) == 0) { among_var = 6; z->c = c_among - 6; break; }
+                                break;
+                            case 0x8D:
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\256\340\257\201\340\256\251\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\277\340\256\237\340\256\256\340\257", 11) == 0) { among_var = 4; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\256\340\257\207\340\256\261\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\256\340\257\207\340\256\262\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\276\340\256\256\340\256\262\340\257", 11) == 0) { among_var = 2; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\225\340\257\200\340\256\264\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\225\340\256\243\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\277\340\256\251\340\257", 8) == 0) { among_var = 3; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\277\340\256\261\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\262\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\277\340\256\262\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\201\340\256\263\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\262\340\257", 5) == 0) { among_var = 5; z->c = c_among - 6; break; }
+                                break;
+                            case 0x88:
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\201\340\256\237\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\251\340\257", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                break;
+                            case 0x9F:
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\265\340\256\277\340\256", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                break;
+                            case 0x80:
+                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = 7; z->c = c_among - 3; break; }
+                                break;
+                        }
+                    }
+                }
                 if (!among_var) goto lab8;
                 z->bra = z->c;
                 switch (among_var) {
                     case 1:
                         {
-                            int ret = slice_del(z);
+                            int ret = snowball_slice_del(z);
                             if (ret < 0) return ret;
                         }
                         break;
@@ -740,7 +1014,8 @@ lab2:
                         }
                         break;
                     case 3:
-                        if (!(eq_s_b(z, 3, s_8))) goto lab9;
+                        if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_8, 3) != 0) goto lab9;
+                        z->c -= 3;
                         goto lab8;
                     lab9:
                         {
@@ -758,7 +1033,39 @@ lab2:
                     case 5:
                         {
                             int v_14 = z->l - z->c;
-                            if (!find_among_b(z, a_3)) goto lab10;
+                            {
+                                int c_among = z->c;
+                                among_var = 0;
+                                if (c_among > z->lb) {
+                                    switch (z->p[c_among - 1]) {
+                                        case 0x80:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x81:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x82:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x86:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x87:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x88:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0xBE:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0xBF:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                    }
+                                }
+                            }
+                            if (!among_var) goto lab10;
                             goto lab8;
                         lab10:
                             z->c = z->l - v_14;
@@ -771,13 +1078,45 @@ lab2:
                     case 6:
                         {
                             int v_15 = z->l - z->c;
-                            if (!find_among_b(z, a_3)) goto lab11;
+                            {
+                                int c_among = z->c;
+                                among_var = 0;
+                                if (c_among > z->lb) {
+                                    switch (z->p[c_among - 1]) {
+                                        case 0x80:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x81:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x82:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x86:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x87:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0x88:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0xBE:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                        case 0xBF:
+                                            if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                            break;
+                                    }
+                                }
+                            }
+                            if (!among_var) goto lab11;
                             goto lab8;
                         lab11:
                             z->c = z->l - v_15;
                         }
                         {
-                            int ret = slice_del(z);
+                            int ret = snowball_slice_del(z);
                             if (ret < 0) return ret;
                         }
                         break;
@@ -796,12 +1135,39 @@ lab2:
             {
                 int v_16 = z->l - z->c;
                 z->ket = z->c;
-                if (!(eq_s_b(z, 3, s_7))) goto lab7;
+                if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_7, 3) != 0) goto lab7;
+                z->c -= 3;
                 do {
                     int v_17 = z->l - z->c;
                     {
                         int v_18 = z->l - z->c;
-                        if (!find_among_b(z, a_6)) goto lab13;
+                        {
+                            int c_among = z->c;
+                            among_var = 0;
+                            if (c_among > z->lb) {
+                                switch (z->p[c_among - 1]) {
+                                    case 0x95:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0x9A:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0x9F:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xA4:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xAA:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xB1:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                }
+                            }
+                        }
+                        if (!among_var) goto lab13;
                         goto lab12;
                     lab13:
                         z->c = z->l - v_18;
@@ -811,8 +1177,35 @@ lab2:
                     z->c = z->l - v_17;
                     {
                         int v_19 = z->l - z->c;
-                        if (!find_among_b(z, a_6)) goto lab7;
-                        if (!(eq_s_b(z, 3, s_9))) goto lab7;
+                        {
+                            int c_among = z->c;
+                            among_var = 0;
+                            if (c_among > z->lb) {
+                                switch (z->p[c_among - 1]) {
+                                    case 0x95:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0x9A:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0x9F:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xA4:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xAA:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                    case 0xB1:
+                                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                        break;
+                                }
+                            }
+                        }
+                        if (!among_var) goto lab7;
+                        if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_9, 3) != 0) goto lab7;
+                        z->c -= 3;
                         z->c = z->l - v_19;
                     }
                 } while (0);
@@ -849,15 +1242,53 @@ lab2:
         int v_21 = z->c;
         z->lb = z->c; z->c = z->l;
         z->ket = z->c;
-        if (z->c - 8 <= z->lb || z->p[z->c - 1] != 141) goto lab15;
-        among_var = find_among_b(z, a_10);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0x8D:
+                        if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\257\201\340\256\231\340\257\215\340\256\225\340\256\263\340\257", 17) == 0) { among_var = 1; z->c = c_among - 18; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\237\340\257\215\340\256\225\340\256\263\340\257", 14) == 0) { among_var = 3; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\261\340\257\215\340\256\225\340\256\263\340\257", 14) == 0) { among_var = 2; z->c = c_among - 15; break; }
+                        if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\225\340\256\263\340\257", 8) == 0) { among_var = 4; z->c = c_among - 9; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab15;
         z->bra = z->c;
         switch (among_var) {
             case 1:
                 do {
                     int v_22 = z->l - z->c;
-                    if (!find_among_b(z, a_6)) goto lab16;
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x95:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x9A:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0x9F:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xA4:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xAA:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xB1:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) goto lab16;
                     {
                         int ret = slice_from_s(z, 9, s_13);
                         if (ret < 0) return ret;
@@ -885,7 +1316,7 @@ lab2:
                 break;
             case 4:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -899,11 +1330,22 @@ lab2:
         if (len_utf8(z->p) < 5) goto lab17;
         z->lb = z->c; z->c = z->l;
         z->ket = z->c;
-        if (z->c - 5 <= z->lb || z->p[z->c - 1] != 191) goto lab17;
-        if (!find_among_b(z, a_12)) goto lab17;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 0xBF:
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\252\340\256", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                        if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\265\340\256", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab17;
         z->bra = z->c;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
         z->c = z->lb;
@@ -922,45 +1364,192 @@ lab2:
                 {
                     int v_27 = z->l - z->c;
                     z->ket = z->c;
-                    among_var = find_among_b(z, a_16);
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 0x8D:
+                                    if (c_among - z->lb >= 24 && __builtin_memcmp(z->p + c_among - 24, "\340\256\225\340\257\212\340\256\243\340\257\215\340\256\237\340\256\277\340\256\260\340\257", 23) == 0) { among_var = 1; z->c = c_among - 24; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\257\206\340\256\251\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\256\276\340\256\251\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\256\340\256\277\340\256\251\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\225\340\257\201\340\256\256\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\237\340\257\201\340\256\256\340\257", 11) == 0) { among_var = 5; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\244\340\257\201\340\256\256\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\261\340\257\201\340\256\256\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\257\200\340\256\257\340\256\260\340\257", 11) == 0) { among_var = 5; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\256\276\340\256\260\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\256\340\256\276\340\256\260\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\256\277\340\256\260\340\257", 11) == 0) { among_var = 5; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\251\340\256\276\340\256\263\340\257", 11) == 0) { among_var = 1; z->c = c_among - 12; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\207\340\256\251\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\251\340\256\251\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\251\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\265\340\256\251\340\257", 8) == 0) { among_var = 2; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\251\340\257", 8) == 0) { among_var = 4; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\206\340\256\256\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\207\340\256\256\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\213\340\256\256\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\251\340\256\256\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\256\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\256\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\257\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\257\200\340\256\260\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\251\340\256\260\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\260\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\265\340\256\260\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\260\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\251\340\256\263\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\263\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\265\340\256\263\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\276\340\256\263\340\257", 8) == 0) { among_var = 5; z->c = c_among - 9; break; }
+                                    break;
+                                case 0x81:
+                                    if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\277\340\256\261\340\257\215\340\256\261\340\257", 14) == 0) { among_var = 1; z->c = c_among - 15; break; }
+                                    if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\252\340\256\237\340\257", 8) == 0) { among_var = 1; z->c = c_among - 9; break; }
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\225\340\257", 5) == 0) { among_var = 6; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\244\340\257", 5) == 0) { among_var = 3; z->c = c_among - 6; break; }
+                                    break;
+                                case 0x88:
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\251\340\257", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "\340\256\265\340\257", 5) == 0) { among_var = 1; z->c = c_among - 6; break; }
+                                    break;
+                                case 0x95:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xA4:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xA9:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xAA:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xAF:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                                    break;
+                                case 0xBE:
+                                    if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = 5; z->c = c_among - 3; break; }
+                                    break;
+                            }
+                        }
+                    }
                     if (!among_var) goto lab20;
                     z->bra = z->c;
                     switch (among_var) {
                         case 1:
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 2:
                             {
                                 int v_28 = z->l - z->c;
-                                if (z->c - 2 <= z->lb || z->p[z->c - 1] >> 5 != 4 || !((1951712 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab21;
-                                if (!find_among_b(z, a_15)) goto lab21;
+                                {
+                                    int c_among = z->c;
+                                    among_var = 0;
+                                    if (c_among > z->lb) {
+                                        switch (z->p[c_among - 1]) {
+                                            case 0x85:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x86:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x87:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x88:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x89:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x8A:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x8E:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x8F:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x90:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x92:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x93:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x94:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                        }
+                                    }
+                                }
+                                if (!among_var) goto lab21;
                                 goto lab20;
                             lab21:
                                 z->c = z->l - v_28;
                             }
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 3:
                             {
                                 int v_29 = z->l - z->c;
-                                if (!find_among_b(z, a_3)) goto lab22;
+                                {
+                                    int c_among = z->c;
+                                    among_var = 0;
+                                    if (c_among > z->lb) {
+                                        switch (z->p[c_among - 1]) {
+                                            case 0x80:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x81:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x82:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x86:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x87:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0x88:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\257", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0xBE:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                            case 0xBF:
+                                                if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "\340\256", 2) == 0) { among_var = -1; z->c = c_among - 3; break; }
+                                                break;
+                                        }
+                                    }
+                                }
+                                if (!among_var) goto lab22;
                                 goto lab20;
                             lab22:
                                 z->c = z->l - v_29;
                             }
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
                         case 4:
-                            if (!(eq_s_b(z, 3, s_14))) goto lab23;
+                            if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_14, 3) != 0) goto lab23;
+                            z->c -= 3;
                             goto lab20;
                         lab23:
                             {
@@ -977,11 +1566,12 @@ lab2:
                         case 6:
                             {
                                 int v_30 = z->l - z->c;
-                                if (!(eq_s_b(z, 3, s_9))) goto lab20;
+                                if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_9, 3) != 0) goto lab20;
+                                z->c -= 3;
                                 z->c = z->l - v_30;
                             }
                             {
-                                int ret = slice_del(z);
+                                int ret = snowball_slice_del(z);
                                 if (ret < 0) return ret;
                             }
                             break;
@@ -995,11 +1585,28 @@ lab2:
             {
                 int v_31 = z->l - z->c;
                 z->ket = z->c;
-                if (z->c - 8 <= z->lb || (z->p[z->c - 1] != 141 && z->p[z->c - 1] != 177)) goto lab24;
-                if (!find_among_b(z, a_17)) goto lab24;
+                {
+                    int c_among = z->c;
+                    among_var = 0;
+                    if (c_among > z->lb) {
+                        switch (z->p[c_among - 1]) {
+                            case 0x8D:
+                                if (c_among - z->lb >= 21 && __builtin_memcmp(z->p + c_among - 21, "\340\256\276\340\256\250\340\256\277\340\256\251\340\257\215\340\256\261\340\257", 20) == 0) { among_var = -1; z->c = c_among - 21; break; }
+                                if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\256\225\340\256\277\340\256\251\340\257\215\340\256\261\340\257", 17) == 0) { among_var = -1; z->c = c_among - 18; break; }
+                                if (c_among - z->lb >= 12 && __builtin_memcmp(z->p + c_among - 12, "\340\256\225\340\256\277\340\256\261\340\257", 11) == 0) { among_var = -1; z->c = c_among - 12; break; }
+                                break;
+                            case 0xB1:
+                                if (c_among - z->lb >= 18 && __builtin_memcmp(z->p + c_among - 18, "\340\256\276\340\256\250\340\256\277\340\256\251\340\257\215\340\256", 17) == 0) { among_var = -1; z->c = c_among - 18; break; }
+                                if (c_among - z->lb >= 15 && __builtin_memcmp(z->p + c_among - 15, "\340\256\225\340\256\277\340\256\251\340\257\215\340\256", 14) == 0) { among_var = -1; z->c = c_among - 15; break; }
+                                if (c_among - z->lb >= 9 && __builtin_memcmp(z->p + c_among - 9, "\340\256\225\340\256\277\340\256", 8) == 0) { among_var = -1; z->c = c_among - 9; break; }
+                                break;
+                        }
+                    }
+                }
+                if (!among_var) goto lab24;
                 z->bra = z->c;
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 b_found_a_match = 1;

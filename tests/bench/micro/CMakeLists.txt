@@ -85,6 +85,24 @@ foreach(LANGUAGE IN LISTS STEMMER_GENERATED_C_LANGUAGES)
         "${STEMMER_GENERATED_C_DIR}/stem_UTF_8_${LANGUAGE}_candidate.c"
     )
 endforeach()
+set(
+    STEMMER_GENERATED_C_ASCII_LANGUAGES
+    english
+    french
+    spanish
+    italian
+    finnish
+    hungarian
+    turkish
+    polish
+)
+foreach(LANGUAGE IN LISTS STEMMER_GENERATED_C_ASCII_LANGUAGES)
+    list(
+        APPEND
+        STEMMER_GENERATED_C_SOURCES
+        "${STEMMER_GENERATED_C_DIR}/stem_UTF_8_${LANGUAGE}_ascii_candidate.c"
+    )
+endforeach()
 target_sources(
     serenedb-bench-micro-stemming
     PRIVATE ${STEMMER_GENERATED_C_SOURCES}

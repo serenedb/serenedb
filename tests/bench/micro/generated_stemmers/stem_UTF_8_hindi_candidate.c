@@ -6,6 +6,159 @@
 
 #include "runtime/snowball_runtime.h"
 
+typedef struct SN_env SN_env;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SNOWBALL_UNUSED __attribute__((unused))
+#else
+#define SNOWBALL_UNUSED
+#endif
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c + 1 >= limit) return 0;
+    int lead = p[c];
+    int tail = p[c + 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c - limit < 2) return 0;
+    int lead = p[c - 2];
+    int tail = p[c - 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
+    return ch >= min && ch <= max &&
+           (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return in_grouping_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return out_grouping_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c >= limit) return -1;
+        int lead = p[c];
+        if (lead < 0x80) return c + 1;
+        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
+        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
+        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
+        return skip_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c >= limit) return -1;
+        int b = p[c++];
+        if (b >= 0xC0) {
+            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c <= limit) return -1;
+        int tail = p[c - 1];
+        if (tail < 0x80) return c - 1;
+        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
+            int lead = p[c - 4];
+            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
+            int lead = p[c - 3];
+            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
+            int lead = p[c - 2];
+            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
+        }
+        return skip_b_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c <= limit) return -1;
+        int b = p[--c];
+        if (b >= 0x80) {
+            while (c > limit && p[c] < 0xC0) --c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
+    if (z->bra >= 0 && z->bra <= z->ket && z->ket == z->l && z->l <= SIZE(z->p)) {
+        SET_SIZE(z->p, z->bra);
+        z->l = z->bra;
+        if (z->c > z->bra) z->c = z->bra;
+        z->ket = z->bra;
+        return 0;
+    }
+    return slice_del(z);
+}
+
+#undef SNOWBALL_UNUSED
+
 #ifdef SNOWBALL_BIGENDIAN
 #define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
 #else
@@ -26,13 +179,13 @@ static int r_CONSONANT(struct SN_env * z);
 static const unsigned char g_consonant[] = { 255, 255, 255, 255, 159, 0, 0, 0, 248, 7 };
 
 static int r_CONSONANT(struct SN_env * z) {
-    return !in_grouping_b_U(z, g_consonant, 2325, 2399, 0);
+    return !snowball_in_grouping_b_U(z, g_consonant, 2325, 2399, 0);
 }
 
 extern int candidate_hindi_UTF_8_stem(struct SN_env * z) {
     int among_var;
     {
-        int ret = skip_utf8(z->p, z->c, z->l, 1);
+        int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
         if (ret < 0) return 0;
         z->c = ret;
     }
@@ -2440,7 +2593,7 @@ extern int candidate_hindi_UTF_8_stem(struct SN_env * z) {
     }
     z->bra = z->c;
     {
-        int ret = slice_del(z);
+        int ret = snowball_slice_del(z);
         if (ret < 0) return ret;
     }
     z->c = z->lb;

@@ -12,8 +12,12 @@ and makes the baseline/candidate comparison happen in one process.
 The files were generated from their corresponding upstream Snowball `.sbl`
 rules using the experimental optimized C backend. Common generated-runtime
 fast paths apply to all languages; the predicate-aware reverse trie is selected
-only for Hindi and Polish. They are temporary evidence for the optimization
-work, not a substitute for the planned Serenedb-owned `.sbl` compiler.
+only for Hindi and Polish. Dedicated ASCII candidates are additionally used
+for English, French, Spanish, Italian, Finnish, Hungarian, Turkish and Polish,
+selected per input word. German deliberately uses only the optimized UTF-8
+candidate because full-corpus validation rejected its ASCII specialization.
+These files are temporary evidence for the optimization work, not a substitute
+for the planned Serenedb-owned `.sbl` compiler.
 
 The snapshot covers Arabic, English, Finnish, French, German, Greek, Hindi,
 Hungarian, Italian, Polish, Russian, Spanish, Tamil, and Turkish. It was

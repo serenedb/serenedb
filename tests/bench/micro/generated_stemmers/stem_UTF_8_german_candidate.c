@@ -6,6 +6,159 @@
 
 #include "runtime/snowball_runtime.h"
 
+typedef struct SN_env SN_env;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SNOWBALL_UNUSED __attribute__((unused))
+#else
+#define SNOWBALL_UNUSED
+#endif
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c + 1 >= limit) return 0;
+    int lead = p[c];
+    int tail = p[c + 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_decode_two_byte_b_utf8(const symbol * p, int c, int limit, int * ch) {
+    if (c - limit < 2) return 0;
+    int lead = p[c - 2];
+    int tail = p[c - 1];
+    if (lead < 0xC2 || lead > 0xDF || (tail & 0xC0) != 0x80) return 0;
+    *ch = ((lead & 0x1F) << 6) | (tail & 0x3F);
+    return 2;
+}
+
+static inline SNOWBALL_UNUSED int snowball_grouping_contains(const unsigned char * s, int min, int max, int ch) {
+    return ch >= min && ch <= max &&
+           (s[(ch - min) >> 3] & (1u << ((ch - min) & 7))) != 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return in_grouping_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_in_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return in_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (!snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c >= z->l) return -1;
+        int ch = z->p[z->c];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_utf8(z->p, z->c, z->l, &ch);
+            if (!width) return out_grouping_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c += width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_out_grouping_b_U(SN_env * z, const unsigned char * s, int min, int max, int repeat) {
+    do {
+        if (z->c <= z->lb) return -1;
+        int ch = z->p[z->c - 1];
+        int width = 1;
+        if (ch >= 0x80) {
+            width = snowball_decode_two_byte_b_utf8(z->p, z->c, z->lb, &ch);
+            if (!width) return out_grouping_b_U(z, s, min, max, repeat);
+        }
+        if (snowball_grouping_contains(s, min, max, ch)) return width;
+        z->c -= width;
+    } while (repeat);
+    return 0;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c >= limit) return -1;
+        int lead = p[c];
+        if (lead < 0x80) return c + 1;
+        if (lead >= 0xC2 && lead <= 0xDF && c + 1 < limit && (p[c + 1] & 0xC0) == 0x80) return c + 2;
+        if (lead >= 0xE0 && lead <= 0xEF && c + 2 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c + 1] >= 0xA0) && (lead != 0xED || p[c + 1] < 0xA0)) return c + 3;
+        if (lead >= 0xF0 && lead <= 0xF4 && c + 3 < limit && (p[c + 1] & 0xC0) == 0x80 && (p[c + 2] & 0xC0) == 0x80 && (p[c + 3] & 0xC0) == 0x80 && (lead != 0xF0 || p[c + 1] >= 0x90) && (lead != 0xF4 || p[c + 1] < 0x90)) return c + 4;
+        return skip_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c >= limit) return -1;
+        int b = p[c++];
+        if (b >= 0xC0) {
+            while (c < limit && p[c] >= 0x80 && p[c] < 0xC0) ++c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_skip_b_utf8(const symbol * p, int c, int limit, int n) {
+    if (n == 1) {
+        if (c <= limit) return -1;
+        int tail = p[c - 1];
+        if (tail < 0x80) return c - 1;
+        if ((tail & 0xC0) == 0x80 && c - limit >= 4) {
+            int lead = p[c - 4];
+            if (lead >= 0xF0 && lead <= 0xF4 && (p[c - 3] & 0xC0) == 0x80 && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xF0 || p[c - 3] >= 0x90) && (lead != 0xF4 || p[c - 3] < 0x90)) return c - 4;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 3) {
+            int lead = p[c - 3];
+            if (lead >= 0xE0 && lead <= 0xEF && (p[c - 2] & 0xC0) == 0x80 && (lead != 0xE0 || p[c - 2] >= 0xA0) && (lead != 0xED || p[c - 2] < 0xA0)) return c - 3;
+        }
+        if ((tail & 0xC0) == 0x80 && c - limit >= 2) {
+            int lead = p[c - 2];
+            if (lead >= 0xC2 && lead <= 0xDF) return c - 2;
+        }
+        return skip_b_utf8(p, c, limit, 1);
+    }
+    for (; n > 0; --n) {
+        if (c <= limit) return -1;
+        int b = p[--c];
+        if (b >= 0x80) {
+            while (c > limit && p[c] < 0xC0) --c;
+        }
+    }
+    return c;
+}
+
+static inline SNOWBALL_UNUSED int snowball_slice_del(SN_env * z) {
+    if (z->bra >= 0 && z->bra <= z->ket && z->ket == z->l && z->l <= SIZE(z->p)) {
+        SET_SIZE(z->p, z->bra);
+        z->l = z->bra;
+        if (z->c > z->bra) z->c = z->bra;
+        z->ket = z->bra;
+        return 0;
+    }
+    return slice_del(z);
+}
+
+#undef SNOWBALL_UNUSED
+
 #ifdef SNOWBALL_BIGENDIAN
 #define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
 #else
@@ -37,100 +190,6 @@ static const symbol s_9[] = { 'i', 'g' };
 static const symbol s_10[] = { 'e', 'r' };
 static const symbol s_11[] = { 'e', 'n', 'i', 's', 's', 'y', 's', 't' };
 
-static const unsigned short a_0[] = {
-    0x0005 , 0xC361 , 0x0065 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0068 , 0x0000 , 0x006B , 0x0000 , 0x0000 , 0x0000 , 0x006E , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0071 , 0x0000 , 0x6565 , 0xFFFE ,
-    0x0000 , 0x6565 , 0xFFFD , 0x0000 , 0x7575 , 0xC001 , 0x0000 , 0x6565 ,
-    0xFFFC , 0x0000 , 0x9F9F , 0xFFFF
-};
-
-static const unsigned short a_1[] = {
-    0x0005 , 0xC355 , 0xFFFE , 0x0000 , 0x0000 , 0x0000 , 0xFFFF , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0071 , 0x0000 , 0xBCA4 , 0xFFFD , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xFFFC , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0xFFFE
-};
-
-static const unsigned short a_2[] = {
-    0x0000 , 0x7365 , 0xFFFD , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0011 , 0x0014 , 0x0000 , 0x0000 , 0x0000 , 0x002E ,
-    0x0031 , 0x0000 , 0x6565 , 0xFFFF , 0x0000 , 0x7265 , 0x0024 , 0x0000 ,
-    0x0000 , 0x0000 , 0x002A , 0x0000 , 0x0000 , 0xFFFB , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x002E , 0x0003 , 0x0005 , 0xFFFE , S(7265),
-    S(6E69), S(006E), 0x0000 , 0x0002 , 0xFFFE , S(7265), 0x0000 , 0x6565 ,
-    0xFFFE , 0x0004 , 0x656E , 0xFFFD , 0x0035 , 0x0000 , 0x6C6C , 0xFFFB
-};
-
-static const unsigned short a_3[] = {
-    0x0000 , 0x726B , 0x000A , 0x0000 , 0x0000 , 0x000F , 0x0000 , 0x0000 ,
-    0x0000 , 0x0031 , 0x0000 , 0x0003 , 0xC001 , S(6974), S(0063), 0x0000 ,
-    0x7261 , 0x0023 , 0x0000 , 0x0000 , 0x0027 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x002C , 0x0000 , 0x0002 , 0xC001 , S(6C70), 0x0000 ,
-    0x0004 , 0xC001 , S(6567), S(726F), 0x0000 , 0x0004 , 0xC001 , S(6E69),
-    S(6574), 0x0000 , 0x7474 , 0xC001
-};
-
-static const unsigned short a_4[] = {
-    0x0000 , 0x746E , 0x0009 , 0x0000 , 0x0000 , 0x0000 , 0x0009 , 0x0000 ,
-    0x000C , 0x0000 , 0x6565 , 0xFFFF , 0x0000 , 0x6573 , 0xFFFD , 0x0010 ,
-    0x0002 , 0x6565 , 0xFFFF
-};
-
-static const unsigned short a_5[] = {
-    0x0000 , 0x6768 , 0x0004 , 0x0007 , 0x0000 , 0x6969 , 0xFFFF , 0x0000 ,
-    0x0003 , 0xFFFF , S(696C), S(0063)
-};
-
-static const unsigned short a_6[] = {
-    0x0000 , 0x7464 , 0x0013 , 0x0000 , 0x0000 , 0x0017 , 0x001E , 0x0000 ,
-    0x0000 , 0x0028 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x002B , 0x0000 , 0x0002 , 0xFFFF , S(6E65), 0x0000 ,
-    0x696E , 0xFFFE , 0x001B , 0x0000 , 0x7575 , 0xFFFF , 0x0000 , 0x6363 ,
-    0x0021 , 0x0000 , 0x6973 , 0x0025 , 0x0028 , 0x0000 , 0x6C6C , 0xFFFD ,
-    0x0000 , 0x6969 , 0xFFFE , 0x0000 , 0x0002 , 0x002F , S(6965), 0x0000 ,
-    0x686B , 0xFFFD , 0xFFFC
-};
-
-static const unsigned short a_7[] = {
-    0x0000 , 0x7327 , 0xFFFF , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x004F , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
-    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0054 , 0x0000 ,
-    0x0003 , 0xFFFF , S(7327), S(0063), 0x0000 , 0x2727 , 0xFFFF
-};
-
 static const unsigned char g_v[] = { 17, 65, 16, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 32, 8 };
 
 static const unsigned char g_et_ending[] = { 1, 128, 198, 227, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128 };
@@ -152,14 +211,14 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 int v_3 = z->c;
                 while (1) {
                     int v_4 = z->c;
-                    if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
+                    if (snowball_in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
                     z->bra = z->c;
                     do {
                         int v_5 = z->c;
                         if (z->c == z->l || z->p[z->c] != 'u') goto lab3;
                         z->c++;
                         z->ket = z->c;
-                        if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab3;
+                        if (snowball_in_grouping_U(z, g_v, 97, 252, 0)) goto lab3;
                         {
                             int ret = slice_from_s(z, 1, s_0);
                             if (ret < 0) return ret;
@@ -170,7 +229,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                         if (z->c == z->l || z->p[z->c] != 'y') goto lab2;
                         z->c++;
                         z->ket = z->c;
-                        if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
+                        if (snowball_in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
                         {
                             int ret = slice_from_s(z, 1, s_1);
                             if (ret < 0) return ret;
@@ -181,7 +240,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 lab2:
                     z->c = v_4;
                     {
-                        int ret = skip_utf8(z->p, z->c, z->l, 1);
+                        int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
                         if (ret < 0) goto lab1;
                         z->c = ret;
                     }
@@ -196,7 +255,29 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
         while (1) {
             int v_6 = z->c;
             z->bra = z->c;
-            among_var = find_among(z, a_0);
+            {
+                int c_among = z->c;
+                among_var = 5;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 'a':
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "e", 1) == 0) { among_var = 2; z->c = c_among + 2; break; }
+                            break;
+                        case 'o':
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "e", 1) == 0) { among_var = 3; z->c = c_among + 2; break; }
+                            break;
+                        case 'q':
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "u", 1) == 0) { among_var = -1; z->c = c_among + 2; break; }
+                            break;
+                        case 'u':
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "e", 1) == 0) { among_var = 4; z->c = c_among + 2; break; }
+                            break;
+                        case 0xC3:
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\237", 1) == 0) { among_var = 1; z->c = c_among + 2; break; }
+                            break;
+                    }
+                }
+            }
             z->ket = z->c;
             switch (among_var) {
                 case 1:
@@ -225,7 +306,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                     break;
                 case 5:
                     {
-                        int ret = skip_utf8(z->p, z->c, z->l, 1);
+                        int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
                         if (ret < 0) goto lab4;
                         z->c = ret;
                     }
@@ -245,7 +326,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
         {
             int v_8 = z->c;
             {
-                int ret = skip_utf8(z->p, z->c, z->l, 3);
+                int ret = snowball_skip_utf8(z->p, z->c, z->l, 3);
                 if (ret < 0) goto lab5;
                 z->c = ret;
             }
@@ -253,12 +334,12 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
             z->c = v_8;
         }
         {
-            int ret = out_grouping_U(z, g_v, 97, 252, 1);
+            int ret = snowball_out_grouping_U(z, g_v, 97, 252, 1);
             if (ret < 0) goto lab5;
             z->c += ret;
         }
         {
-            int ret = in_grouping_U(z, g_v, 97, 252, 1);
+            int ret = snowball_in_grouping_U(z, g_v, 97, 252, 1);
             if (ret < 0) goto lab5;
             z->c += ret;
         }
@@ -267,12 +348,12 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
         i_p1 = i_x;
     lab6:
         {
-            int ret = out_grouping_U(z, g_v, 97, 252, 1);
+            int ret = snowball_out_grouping_U(z, g_v, 97, 252, 1);
             if (ret < 0) goto lab5;
             z->c += ret;
         }
         {
-            int ret = in_grouping_U(z, g_v, 97, 252, 1);
+            int ret = snowball_in_grouping_U(z, g_v, 97, 252, 1);
             if (ret < 0) goto lab5;
             z->c += ret;
         }
@@ -284,30 +365,58 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
     {
         int v_9 = z->l - z->c;
         z->ket = z->c;
-        if (z->c <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((811040 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab8;
-        among_var = find_among_b(z, a_2);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 'n':
+                        if (c_among - z->lb >= 7 && __builtin_memcmp(z->p + c_among - 7, "erinne", 6) == 0) { among_var = 2; z->c = c_among - 7; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "eri", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "er", 2) == 0) { among_var = 2; z->c = c_among - 3; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 3; z->c = c_among - 2; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "l", 1) == 0) { among_var = 5; z->c = c_among - 2; break; }
+                        break;
+                    case 's':
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "ln", 2) == 0) { among_var = 5; z->c = c_among - 3; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 3; z->c = c_among - 2; break; }
+                        if (c_among - z->lb >= 1) { among_var = 4; z->c = c_among - 1; break; }
+                        break;
+                    case 'm':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 'r':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 'e':
+                        if (c_among - z->lb >= 1) { among_var = 3; z->c = c_among - 1; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab8;
         z->bra = z->c;
         if (i_p1 > z->c) goto lab8;
         switch (among_var) {
             case 1:
-                if (!(eq_s_b(z, 4, s_6))) goto lab9;
+                if (z->c - z->lb < 4 || __builtin_memcmp(z->p + z->c - 4, s_6, 4) != 0) goto lab9;
+                z->c -= 4;
                 goto lab8;
             lab9:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 2:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 3:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 {
@@ -316,9 +425,10 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                     if (z->c <= z->lb || z->p[z->c - 1] != 's') { z->c = z->l - v_10; goto lab10; }
                     z->c--;
                     z->bra = z->c;
-                    if (!(eq_s_b(z, 3, s_7))) { z->c = z->l - v_10; goto lab10; }
+                    if (z->c - z->lb < 3 || __builtin_memcmp(z->p + z->c - 3, s_7, 3) != 0) { z->c = z->l - v_10; goto lab10; }
+                    z->c -= 3;
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                 lab10:
@@ -326,9 +436,9 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 }
                 break;
             case 4:
-                if (in_grouping_b_U(z, g_s_ending, 98, 116, 0)) goto lab8;
+                if (snowball_in_grouping_b_U(z, g_s_ending, 98, 116, 0)) goto lab8;
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -345,46 +455,81 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
     {
         int v_11 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((1327104 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab11;
-        among_var = find_among_b(z, a_4);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 't':
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "es", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 3; z->c = c_among - 2; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "s", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 'n':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case 'r':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "e", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab11;
         z->bra = z->c;
         if (i_p1 > z->c) goto lab11;
         switch (among_var) {
             case 1:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 2:
-                if (in_grouping_b_U(z, g_st_ending, 98, 116, 0)) goto lab11;
+                if (snowball_in_grouping_b_U(z, g_st_ending, 98, 116, 0)) goto lab11;
                 {
-                    int ret = skip_b_utf8(z->p, z->c, z->lb, 3);
+                    int ret = snowball_skip_b_utf8(z->p, z->c, z->lb, 3);
                     if (ret < 0) goto lab11;
                     z->c = ret;
                 }
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 3:
                 {
                     int v_12 = z->l - z->c;
-                    if (in_grouping_b_U(z, g_et_ending, 85, 228, 0)) goto lab11;
+                    if (snowball_in_grouping_b_U(z, g_et_ending, 85, 228, 0)) goto lab11;
                     z->c = z->l - v_12;
                 }
                 {
                     int v_13 = z->l - z->c;
-                    if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((280576 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab12;
-                    if (!find_among_b(z, a_3)) goto lab12;
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 'n':
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "geord", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 6 && __builtin_memcmp(z->p + c_among - 6, "inter", 5) == 0) { among_var = -1; z->c = c_among - 6; break; }
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "pla", 3) == 0) { among_var = -1; z->c = c_among - 4; break; }
+                                    break;
+                                case 'k':
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "tic", 3) == 0) { among_var = -1; z->c = c_among - 4; break; }
+                                    break;
+                                case 'r':
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "t", 1) == 0) { among_var = -1; z->c = c_among - 2; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) goto lab12;
                     goto lab11;
                 lab12:
                     z->c = z->l - v_13;
                 }
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
@@ -395,21 +540,46 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
     {
         int v_14 = z->l - z->c;
         z->ket = z->c;
-        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((1051024 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab13;
-        among_var = find_among_b(z, a_6);
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 'h':
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "lic", 3) == 0) { among_var = 3; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "isc", 3) == 0) { among_var = 2; z->c = c_among - 4; break; }
+                        break;
+                    case 't':
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "hei", 3) == 0) { among_var = 3; z->c = c_among - 4; break; }
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "kei", 3) == 0) { among_var = 4; z->c = c_among - 4; break; }
+                        break;
+                    case 'd':
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "en", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                        break;
+                    case 'g':
+                        if (c_among - z->lb >= 3 && __builtin_memcmp(z->p + c_among - 3, "un", 2) == 0) { among_var = 1; z->c = c_among - 3; break; }
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "i", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                    case 'k':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "i", 1) == 0) { among_var = 2; z->c = c_among - 2; break; }
+                        break;
+                }
+            }
+        }
         if (!among_var) goto lab13;
         z->bra = z->c;
         if (i_p2 > z->c) goto lab13;
         switch (among_var) {
             case 1:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 {
                     int v_15 = z->l - z->c;
                     z->ket = z->c;
-                    if (!(eq_s_b(z, 2, s_9))) { z->c = z->l - v_15; goto lab14; }
+                    if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_9, 2) != 0) { z->c = z->l - v_15; goto lab14; }
+                    z->c -= 2;
                     z->bra = z->c;
                     if (z->c <= z->lb || z->p[z->c - 1] != 'e') goto lab15;
                     z->c--;
@@ -417,7 +587,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 lab15:
                     if (i_p2 > z->c) { z->c = z->l - v_15; goto lab14; }
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                 lab14:
@@ -430,28 +600,30 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 goto lab13;
             lab16:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 break;
             case 3:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 {
                     int v_16 = z->l - z->c;
                     z->ket = z->c;
                     do {
-                        if (!(eq_s_b(z, 2, s_10))) goto lab18;
+                        if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_10, 2) != 0) goto lab18;
+                        z->c -= 2;
                         break;
                     lab18:
-                        if (!(eq_s_b(z, 2, s_11))) { z->c = z->l - v_16; goto lab17; }
+                        if (z->c - z->lb < 2 || __builtin_memcmp(z->p + z->c - 2, s_11, 2) != 0) { z->c = z->l - v_16; goto lab17; }
+                        z->c -= 2;
                     } while (0);
                     z->bra = z->c;
                     if (i_p1 > z->c) { z->c = z->l - v_16; goto lab17; }
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                 lab17:
@@ -460,18 +632,31 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                 break;
             case 4:
                 {
-                    int ret = slice_del(z);
+                    int ret = snowball_slice_del(z);
                     if (ret < 0) return ret;
                 }
                 {
                     int v_17 = z->l - z->c;
                     z->ket = z->c;
-                    if (z->c - 1 <= z->lb || (z->p[z->c - 1] != 103 && z->p[z->c - 1] != 104)) { z->c = z->l - v_17; goto lab19; }
-                    if (!find_among_b(z, a_5)) { z->c = z->l - v_17; goto lab19; }
+                    {
+                        int c_among = z->c;
+                        among_var = 0;
+                        if (c_among > z->lb) {
+                            switch (z->p[c_among - 1]) {
+                                case 'h':
+                                    if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "lic", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                                    break;
+                                case 'g':
+                                    if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "i", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                                    break;
+                            }
+                        }
+                    }
+                    if (!among_var) { z->c = z->l - v_17; goto lab19; }
                     z->bra = z->c;
                     if (i_p2 > z->c) { z->c = z->l - v_17; goto lab19; }
                     {
-                        int ret = slice_del(z);
+                        int ret = snowball_slice_del(z);
                         if (ret < 0) return ret;
                     }
                 lab19:
@@ -485,16 +670,33 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
     {
         int v_18 = z->l - z->c;
         z->ket = z->c;
-        if (!find_among_b(z, a_7)) goto lab20;
+        {
+            int c_among = z->c;
+            among_var = 0;
+            if (c_among > z->lb) {
+                switch (z->p[c_among - 1]) {
+                    case 'h':
+                        if (c_among - z->lb >= 4 && __builtin_memcmp(z->p + c_among - 4, "'sc", 3) == 0) { among_var = 1; z->c = c_among - 4; break; }
+                        break;
+                    case 's':
+                        if (c_among - z->lb >= 2 && __builtin_memcmp(z->p + c_among - 2, "'", 1) == 0) { among_var = 1; z->c = c_among - 2; break; }
+                        break;
+                    case '\'':
+                        if (c_among - z->lb >= 1) { among_var = 1; z->c = c_among - 1; break; }
+                        break;
+                }
+            }
+        }
+        if (!among_var) goto lab20;
         z->bra = z->c;
         {
-            int ret = skip_b_utf8(z->p, z->c, z->lb, 1);
+            int ret = snowball_skip_b_utf8(z->p, z->c, z->lb, 1);
             if (ret < 0) goto lab20;
             z->c = ret;
         }
         if (z->c <= z->lb) goto lab20;
         {
-            int ret = slice_del(z);
+            int ret = snowball_slice_del(z);
             if (ret < 0) return ret;
         }
     lab20:
@@ -506,7 +708,25 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
         while (1) {
             int v_20 = z->c;
             z->bra = z->c;
-            among_var = find_among(z, a_1);
+            {
+                int c_among = z->c;
+                among_var = 5;
+                if (c_among < z->l) {
+                    switch (z->p[c_among]) {
+                        case 0xC3:
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\244", 1) == 0) { among_var = 3; z->c = c_among + 2; break; }
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\266", 1) == 0) { among_var = 4; z->c = c_among + 2; break; }
+                            if (c_among + 2 <= z->l && __builtin_memcmp(z->p + c_among + 1, "\274", 1) == 0) { among_var = 2; z->c = c_among + 2; break; }
+                            break;
+                        case 'U':
+                            if (c_among + 1 <= z->l) { among_var = 2; z->c = c_among + 1; break; }
+                            break;
+                        case 'Y':
+                            if (c_among + 1 <= z->l) { among_var = 1; z->c = c_among + 1; break; }
+                            break;
+                    }
+                }
+            }
             z->ket = z->c;
             switch (among_var) {
                 case 1:
@@ -535,7 +755,7 @@ extern int candidate_german_UTF_8_stem(struct SN_env * z) {
                     break;
                 case 5:
                     {
-                        int ret = skip_utf8(z->p, z->c, z->l, 1);
+                        int ret = snowball_skip_utf8(z->p, z->c, z->l, 1);
                         if (ret < 0) goto lab22;
                         z->c = ret;
                     }

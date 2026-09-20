@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       SERENEDB_VERSION_PATCH:
-        description: 'Version patch number (>0). Leave empty to auto-increment.'
+        description: 'Patch number N, or N.M for a hotfix on top of patch N (e.g. 1.1). Leave empty to auto-increment.'
         required: false
         type: string
         default: ''
@@ -69,9 +69,13 @@ jobs:
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
           if [[ -z "$PATCH" ]]; then
             LAST=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isDraft \
-              --jq "[.[] | select(.isDraft | not) | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
+              --jq "[.[] | select(.isDraft | not) | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0] | split(\".\")[0]] | map(tonumber) | max // 0" \
               2>/dev/null || echo "0")
             PATCH=$(( LAST + 1 ))
+          fi
+          if [[ ! "$PATCH" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ ]]; then
+            echo "SERENEDB_VERSION_PATCH must be N or N.M, both > 0, got '$PATCH'" >&2
+            exit 1
           fi
           echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
           echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
@@ -189,7 +193,10 @@ jobs:
         run: |
           bash packages/stamp_helm_version.bash "${DOCKER_TAG}"
           bash packages/build_helm.bash
-          cp "packages/helm/out/serenedb-${DOCKER_TAG}.tgz" release-packages/
+          CHART=$(find packages/helm/out -maxdepth 1 -name 'serenedb-*.tgz' | head -1)
+          [ -n "$CHART" ] || { echo "no packaged helm chart found" >&2; exit 1; }
+          cp "$CHART" release-packages/
+          echo "CHART_FILE=$(basename "$CHART")" >> $GITHUB_ENV
 
       - name: Setup QEMU
         if: steps.prepare.outputs.has_tarballs == 'true'
@@ -246,6 +253,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
+          CHART_FILE: ${{ env.CHART_FILE }}
         run: |
           TAG="v${DOCKER_TAG}"
           TITLE="SereneDB ${TAG}"
@@ -254,7 +262,7 @@ jobs:
           Helm chart:
           \`\`\`
           helm install mydb \\
-            https://github.com/${{ github.repository }}/releases/download/${TAG}/serenedb-${DOCKER_TAG}.tgz
+            https://github.com/${{ github.repository }}/releases/download/${TAG}/${CHART_FILE}
           \`\`\`"
 
           ASSETS=()

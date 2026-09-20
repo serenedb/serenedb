@@ -1,0 +1,87 @@
+# CREATE INDEX IF NOT EXISTS on an index that ALREADY EXISTS must not read the
+# base table. The operator decides in GetGlobalSinkState that there is no work
+# (created_id is unset, so gstate.created stays false), but Sink used to answer
+# NEED_MORE_INPUT for every chunk -- so the executor happily fed it the entire
+# table and each chunk was discarded. On a 1.2M-document RAGFlow corpus that
+# redundant statement read at ~4 GB/s for minutes while doing nothing, starving
+# concurrent ingest. Sink now returns FINISHED, which stops the pipeline.
+#
+# The residual scan is bounded by the chunks already in flight when FINISHED
+# propagates, NOT by the table size -- that is the property being asserted here.
+# threads=1 pins it to exactly one 2048-row chunk so the count is deterministic;
+# with the bug it was every row in the table. <slt:ignore> skips the volatile
+# optimizer-timing section and each operator's timing line.
+
+
+statement ok
+CREATE TABLE cinx_noscan(i INTEGER, t TEXT);
+
+
+statement ok
+INSERT INTO cinx_noscan SELECT s.i, 'doc ' || s.i FROM range(300000) s(i);
+
+
+statement ok
+CREATE INDEX cinx_noscan_idx ON cinx_noscan USING inverted (i);
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads=1;
+
+
+# The redundant create: one chunk, not 300,000 rows.
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_noscan_idx ON cinx_noscan USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ EXTENSION ───────────╮
+│ 1 row             0µs │
+╰───────────┒┎──────────╯
+╭─ TABLE_SCAN ──────────╮
+│ Table: cinx_noscan    │
+│ Type: Sequential Scan │
+│ 2,048 rows        0µs │
+╰───────────────────────╯
+
+
+# Tripling the table must NOT change that number: the bound is chunks in flight,
+# not rows in the table. This is the assertion that actually catches a regression
+# back to NEED_MORE_INPUT, because with the bug this figure tracks the row count.
+statement ok
+INSERT INTO cinx_noscan SELECT s.i, 'doc ' || s.i FROM range(300000, 900000) s(i);
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_noscan_idx ON cinx_noscan USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ EXTENSION ───────────╮
+│ 1 row             0µs │
+╰───────────┒┎──────────╯
+╭─ TABLE_SCAN ──────────╮
+│ Table: cinx_noscan    │
+│ Type: Sequential Scan │
+│ 2,048 rows        0µs │
+╰───────────────────────╯
+
+
+# Skipping the build must not have damaged the existing index: it still answers.
+query
+SELECT count(*) AS n FROM cinx_noscan WHERE i = 12345;
+----
+n
+1
+
+
+statement ok
+DROP TABLE cinx_noscan;

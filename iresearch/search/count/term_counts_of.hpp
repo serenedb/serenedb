@@ -21,8 +21,6 @@
 #pragma once
 
 #include <memory>
-#include <optional>
-#include <utility>
 #include <vector>
 
 #include "iresearch/search/count/term_counts.hpp"
@@ -59,24 +57,47 @@ class TermCountsOf : public TermCounts {
       const auto doc = doc_limits::min() + term.doc_delta;
       return doc >= min && doc < max && _set.Contains(doc);
     }
-    detail::PostingProbe<Input>* cached = nullptr;
-    if (ordinal != kNoOrdinal) {
-      if (_probes.size() <= ordinal) {
-        _probes.resize(ordinal + 1);
-      }
-      auto& slot = _probes[ordinal];
-      if (!slot) {
-        slot = std::make_unique<detail::PostingProbe<Input>>(term, *_doc,
-                                                             _layout, _bounds);
-      }
-      cached = slot.get();
+    if (ordinal == kNoOrdinal) {
+      detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+      return Scan(posting, min, max);
     }
-    std::optional<detail::PostingProbe<Input>> local;
-    if (cached == nullptr) {
-      local.emplace(term, *_doc, _layout, _bounds);
-      cached = &*local;
+    if (_probes.size() <= ordinal) {
+      _probes.resize(ordinal + 1);
     }
-    auto& posting = *cached;
+    auto& slot = _probes[ordinal];
+    if (!slot) {
+      slot = std::make_unique<detail::PostingProbe<Input>>(term, *_doc, _layout,
+                                                           _bounds);
+    }
+    return Scan(*slot, min, max);
+  }
+
+  bool Any(const PostingMeta& term) final {
+    SDB_ASSERT(term.docs_count != 0);
+    if (term.docs_count == 1) {
+      return _set.Contains(doc_limits::min() + term.doc_delta);
+    }
+    detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+    auto doc = doc_limits::min();
+    for (;;) {
+      doc = posting.Probe(doc);
+      if (doc_limits::eof(doc)) {
+        return false;
+      }
+      const auto next = _set.Probe(doc);
+      if (next == doc) {
+        return true;
+      }
+      if (doc_limits::eof(next)) {
+        return false;
+      }
+      doc = next;
+    }
+  }
+
+ private:
+  IRS_FORCE_INLINE bool Scan(detail::PostingProbe<Input>& posting, doc_id_t min,
+                             doc_id_t max) {
     auto doc = min;
     for (;;) {
       doc = posting.Probe(doc);
@@ -94,7 +115,6 @@ class TermCountsOf : public TermCounts {
     }
   }
 
- private:
   detail::LazyBitset& _set;
   std::vector<std::unique_ptr<detail::PostingProbe<Input>>> _probes;
   detail::PostingReader<Input> _reader;

@@ -65,9 +65,7 @@ class LazyBitset {
 
   LazyBitset(FillNode::ptr&& node, doc_id_t docs_count,
              const DocumentMask* removals)
-    : _set{docs_count, BitsetStorage::NoInit{}},
-      _node{std::move(node)},
-      _removals{removals} {
+    : _set{docs_count}, _node{std::move(node)}, _removals{removals} {
     SDB_ASSERT(_node);
   }
 
@@ -95,21 +93,13 @@ class LazyBitset {
     do {
       const auto min = _filled;
       const auto first = (min - kMin) / kBits;
-      std::fill_n(words + first, kWindowWords, uint64_t{0});
       const auto next = _node->FillOr(min, min + kWindowDocs, words + first);
       Drop(_removals, first, first + kWindowWords);
       if (next >= end) {
-        std::fill(words + first + kWindowWords, words + _set.Alloc(),
-                  uint64_t{0});
         _filled = end;
         break;
       }
-      const auto reached = min + kWindowDocs;
-      _filled = std::max(reached, BitsetStorage::WindowMin(next));
-      if (_filled > reached) {
-        std::fill(words + (reached - kMin) / kBits,
-                  words + (_filled - kMin) / kBits, uint64_t{0});
-      }
+      _filled = std::max(min + kWindowDocs, BitsetStorage::WindowMin(next));
     } while (_filled < upto);
     if (_filled >= end) {
       Finish();

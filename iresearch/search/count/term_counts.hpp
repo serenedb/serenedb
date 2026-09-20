@@ -45,6 +45,8 @@ struct TermCounts : memory::Managed {
 
   virtual bool Any(uint32_t ordinal, const PostingMeta& term, doc_id_t min,
                    doc_id_t max) = 0;
+
+  virtual bool Any(const PostingMeta& term) = 0;
 };
 
 TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,

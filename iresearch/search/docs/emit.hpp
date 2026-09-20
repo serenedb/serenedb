@@ -40,6 +40,28 @@ class Emit {
 
   IRS_FORCE_INLINE bool Pending() const noexcept { return _word != _words_end; }
 
+  IRS_FORCE_INLINE void SkipTo(doc_id_t begin) noexcept {
+    if (begin <= _base) {
+      return;
+    }
+    const uint64_t off = begin - _base;
+    const auto word = static_cast<uint32_t>(off / detail::kWindowBits);
+    if (word >= _words_end) {
+      for (; _word != _words_end; ++_word) {
+        _words[_word] = 0;
+      }
+      return;
+    }
+    for (; _word < word; ++_word) {
+      _words[_word] = 0;
+    }
+    if (_word == word) {
+      if (const auto bit = off % detail::kWindowBits; bit != 0) {
+        _words[word] &= ~((uint64_t{1} << bit) - 1);
+      }
+    }
+  }
+
   IRS_FORCE_INLINE void Drain(doc_id_t* IRS_RESTRICT out, uint32_t& n,
                               doc_id_t end) noexcept {
     const uint64_t avail = end > _base ? end - _base : 0;

@@ -60,6 +60,7 @@ class BooleanWindow : public Root {
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
   uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out) final {
+    _emit.SkipTo(begin);
     if (_min < begin) {
       _min = begin;
     }

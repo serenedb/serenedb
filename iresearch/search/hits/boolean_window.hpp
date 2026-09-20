@@ -68,6 +68,24 @@ class BooleanWindow : public Root {
 
   uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {
+    if (begin > _min) {
+      const uint64_t off = begin - _min;
+      const auto skip = static_cast<uint32_t>(off / BitsRequired<uint64_t>());
+      if (skip >= _words_end) {
+        for (; _word != _words_end; ++_word) {
+          _mask[_word] = 0;
+        }
+      } else {
+        for (; _word < skip; ++_word) {
+          _mask[_word] = 0;
+        }
+        if (_word == skip) {
+          if (const auto bit = off % BitsRequired<uint64_t>(); bit != 0) {
+            _mask[skip] &= ~((uint64_t{1} << bit) - 1);
+          }
+        }
+      }
+    }
     if (_next < begin) {
       _next = begin;
     }

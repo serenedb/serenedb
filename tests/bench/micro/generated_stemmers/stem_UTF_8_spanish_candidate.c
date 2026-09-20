@@ -1,0 +1,763 @@
+/* Generated from spanish.sbl by Snowball 3.1.1 - https://snowballstem.org/ */
+
+#include "stem_UTF_8_spanish_candidate.h"
+
+#include <stddef.h>
+
+#include "runtime/snowball_runtime.h"
+
+#ifdef SNOWBALL_BIGENDIAN
+#define S(W) ((0x##W & 0xff) << 8 | 0x##W >> 8)
+#else
+#define S(W) (0x##W)
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int candidate_spanish_UTF_8_stem(struct SN_env * z);
+#ifdef __cplusplus
+}
+#endif
+
+#define s_10 (s_0 + 4)
+#define s_3 (s_8 + 3)
+static const symbol s_0[] = { 'i', 'e', 'n', 'd', 'o' };
+static const symbol s_1[] = { 'a', 'n', 'd', 'o' };
+static const symbol s_2[] = { 'a', 'r' };
+static const symbol s_9[] = { 'a', 't' };
+static const symbol s_4[] = { 'i', 'r' };
+static const symbol s_5[] = { 'i', 'c' };
+static const symbol s_6[] = { 'l', 'o', 'g' };
+static const symbol s_7[] = { 'u' };
+static const symbol s_8[] = { 'e', 'n', 't', 'e', 'r' };
+
+static const unsigned short a_0[] = {
+    0x0006 , 0xC3C3 , 0x0003 , 0x0000 , 0xBAA1 , 0xFFFF , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0x0000 , 0x0000 ,
+    0x0000 , 0xFFFD , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xFFFC ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xFFFB
+};
+
+static const unsigned short a_1[] = {
+    0x0000 , 0x7361 , 0x0015 , 0x0000 , 0x0000 , 0x0000 , 0x001C , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0026 , 0x0000 , 0x0000 , 0x0000 , 0x0029 , 0x0000 , 0x6C6C , 0x0018 ,
+    0x3FFF , 0x0002 , 0xC001 , S(6573), 0x0000 , 0x736C , 0xC001 , 0xC001 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0xC001 , 0x0000 , 0x6C6C ,
+    0x0018 , 0x0000 , 0x6F61 , 0x0026 , 0x0000 , 0x0000 , 0x0000 , 0x003A ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x003D , 0x0000 , 0x6C6C , 0xC001 , 0x0000 , 0x6C6E , 0x0018 ,
+    0xC001
+};
+
+static const unsigned short a_2[] = {
+    0x0000 , 0x6F72 , 0x0004 , 0x005E , 0x0000 , 0x0002 , 0x0008 , S(646E),
+    0x0000 , 0xA961 , 0xFFFA , 0x0000 , 0x0000 , 0x0000 , 0x0053 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0057 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x005A , 0x0000 , 0x6979 , 0xFFFA , 0xFFF9 , 0x0000 ,
+    0xC3C3 , 0xFFFE , 0x0000 , 0x0002 , 0xFFFF , S(C369), 0x0000 , 0xAD61 ,
+    0xFFFA , 0x0000 , 0x0000 , 0x0000 , 0xFFFA , 0x0000 , 0x0000 , 0x0000 ,
+    0xFFFA , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x00AD , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x00B0 , 0x0000 , 0x0000 , 0x0000 , 0x00B3 , 0x0000 , 0xC3C3 , 0xFFFD ,
+    0x0000 , 0xC3C3 , 0xFFFC , 0x0000 , 0xC3C3 , 0xFFFB
+};
+
+static const unsigned short a_3[] = {
+    0x0000 , 0x7663 , 0x0016 , 0x0019 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x001C , 0x0000 , 0x0000 , 0x001F , 0x0000 , 0x6969 ,
+    0xC001 , 0x0000 , 0x6161 , 0xC001 , 0x0000 , 0x6F6F , 0xC001 , 0x0000 ,
+    0x6969 , 0xFFFF
+};
+
+static const unsigned short a_4[] = {
+    0x0000 , 0x6565 , 0x0003 , 0x0000 , 0x6C74 , 0x0007 , 0x000E , 0x0000 ,
+    0x6262 , 0x000A , 0x0000 , 0x6169 , 0xFFFF , 0xFFFF , 0x0000 , 0x0002 ,
+    0xFFFF , S(6E61)
+};
+
+static const unsigned short a_5[] = {
+    0x0000 , 0x7663 , 0x0016 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0019 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0016 , 0x0000 , 0x6969 ,
+    0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(6261), S(0069)
+};
+
+static const unsigned short a_6[] = {
+    0x0000 , 0x7361 , 0x0015 , 0x0000 , 0x0000 , 0x0085 , 0x008A , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00A2 ,
+    0x00B3 , 0x0000 , 0x0000 , 0x006D , 0x00CE , 0x0000 , 0xAD63 , 0x0062 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0065 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x006D , 0x0072 ,
+    0x0075 , 0x0000 , 0x0079 , 0x0000 , 0x0000 , 0x0000 , 0x007C , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0080 , 0x0000 , 0x6969 , 0xFFFF , 0x0000 , 0x0002 , 0x0069 ,
+    S(636E), 0x0000 , 0x6165 , 0xFFFE , 0xFFFB , 0x0000 , 0x0003 , 0xFFFE ,
+    S(6461), S(006F), 0x0000 , 0x6F6F , 0xFFFF , 0x0000 , 0x0002 , 0xFFFF ,
+    S(7369), 0x0000 , 0x6969 , 0xFFF7 , 0x0000 , 0x0002 , 0xFFFF , S(6E61),
+    0x0000 , 0x0004 , 0xFFFD , S(6F6C), S(C367), 0x0000 , 0x0003 , 0xFFF8 ,
+    S(6469), S(0061), 0x0000 , 0x6C74 , 0x008E , 0x0095 , 0x0000 , 0x6262 ,
+    0x0091 , 0x0000 , 0x6169 , 0xFFFF , 0xFFFF , 0x0000 , 0x6E6E , 0x0098 ,
+    0x0000 , 0x6165 , 0xFFFE , 0x009C , 0x0000 , 0x6D6D , 0x009F , 0x0007 ,
+    0x6161 , 0xFFFA , 0x0000 , 0x6FB3 , 0x00A6 , 0x00AE , 0x0000 , 0x0002 ,
+    0x00AA , S(6963), 0x0000 , 0x6175 , 0xFFFE , 0xFFFC , 0x0000 , 0x0003 ,
+    0x00AA , S(6963), S(00C3), 0x0000 , 0x7663 , 0x0062 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0075 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0072 , 0x00C9 , 0x0000 ,
+    0x0079 , 0x0000 , 0x0004 , 0x0091 , S(696D), S(6E65), 0x0000 , 0x6F61 ,
+    0x00DF , 0x0000 , 0x0000 , 0x0000 , 0x0130 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x014F , 0x0000 ,
+    0xAD63 , 0x0062 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x012C ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x006D , 0x0072 , 0x0075 , 0x0000 , 0x0079 , 0x0000 , 0x0000 , 0x0000 ,
+    0x007C , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0080 , 0x0000 , 0x0002 , 0x0069 , S(636E),
+    0x0000 , 0x7464 , 0x0085 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0143 , 0x0000 , 0x0146 , 0x0000 , 0x0000 , 0x0000 ,
+    0x006D , 0x0000 , 0x014B , 0x0000 , 0x6262 , 0x0091 , 0x0000 , 0x0003 ,
+    0x00AA , S(6963), S(006F), 0x0000 , 0x0002 , 0xFFFE , S(6E61), 0x0000 ,
+    0x7663 , 0x0062 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0075 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0072 , 0x00C9 , 0x0000 , 0x0079
+};
+
+static const unsigned short a_7[] = {
+    0x0000 , 0xB361 , 0x0055 , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0058 ,
+    0x006E , 0x0000 , 0x0000 , 0x0000 , 0x0077 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0091 , 0x0000 , 0x7979 , 0xFFFF ,
+    0x0000 , 0x6F61 , 0x0055 , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0069 , 0x0000 , 0x0003 , 0xFFFF , S(6579), S(0072), 0x0000 , 0x6479 ,
+    0x0072 , 0xFFFF , 0x0000 , 0x0003 , 0xFFFF , S(6579), S(006E), 0x0000 ,
+    0x6F61 , 0x0055 , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0088 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x008C ,
+    0x0000 , 0x0002 , 0xFFFF , S(6179), 0x0000 , 0x0003 , 0xFFFF , S(6179),
+    S(006D), 0x0000 , 0x0002 , 0xFFFF , S(C379)
+};
+
+static const unsigned short a_8[] = {
+    0x0000 , 0xB361 , 0x0055 , 0x0000 , 0x0000 , 0x00B7 , 0x00C2 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00CD ,
+    0x016E , 0x0000 , 0x0000 , 0x00B7 , 0x0181 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x016A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x016A , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x032C , 0x0000 , 0xAD62 , 0x00A3 ,
+    0x0000 , 0x00A6 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00AA ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x00B1 , 0x0000 , 0x6161 , 0xFFFE , 0x0000 , 0x6169 ,
+    0xFFFE , 0xFFFE , 0x0000 , 0x6165 , 0xFFFE , 0x00AE , 0x0000 , 0x6969 ,
+    0xFFFE , 0x0000 , 0xC3C3 , 0x00B4 , 0x0002 , 0x7272 , 0x00B7 , 0x0000 ,
+    0x6961 , 0xFFFE , 0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0x0000 , 0x0000 ,
+    0x0000 , 0xFFFE , 0x0000 , 0x7374 , 0x00C6 , 0x00CA , 0x0000 , 0x6165 ,
+    0xFFFE , 0x00AE , 0x0000 , 0x7373 , 0x00A6 , 0x0000 , 0xA161 , 0x0110 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0164 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0167 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x016A ,
+    0x0002 , 0xAD62 , 0x00A3 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x00C6 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x015E , 0x0000 , 0xC3C3 ,
+    0x0161 , 0x0002 , 0x7272 , 0x00B7 , 0x0001 , 0x7373 , 0x00C6 , 0x0000 ,
+    0x7272 , 0x00C6 , 0x0000 , 0x0002 , 0x00B7 , S(C372), 0x0000 , 0x6464 ,
+    0x0171 , 0x0000 , 0x6E61 , 0xFFFE , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x00C6 , 0x0000 , 0xAD61 , 0x01D0 , 0x0000 , 0x0000 , 0x0000 , 0x0164 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0221 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x02C7 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x016A , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x02BE ,
+    0x0002 , 0xAD62 , 0x00A3 , 0x0000 , 0x00A6 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x00C6 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x021E , 0x0000 , 0xC3C3 ,
+    0x0161 , 0x0000 , 0xA961 , 0x026C , 0x0000 , 0x0000 , 0x0000 , 0x02BA ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x02BE , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x02C1 , 0x0000 , 0xAD62 , 0x00A3 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x00C6 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x021E , 0x0000 , 0x7374 , 0x00C6 , 0x00CA , 0x0000 , 0xC3C3 ,
+    0xFFFE , 0x0000 , 0xC3C3 , 0x02C4 , 0x0001 , 0x7272 , 0x00B7 , 0x0000 ,
+    0x646D , 0x00A6 , 0x02CB , 0x0000 , 0x6961 , 0x02D6 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0330 , 0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0x0002 , 0xAD62 ,
+    0x0324 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0328 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x021E , 0x0000 , 0x0002 , 0xFFFE , S(A1C3),
+    0x0000 , 0xA1A9 , 0x02BE , 0x032C , 0x0000 , 0x0002 , 0xFFFE , S(C369),
+    0x0001 , 0x7273 , 0x00B7 , 0x0334 , 0x0000 , 0xA1A9 , 0x02BE , 0x032C
+};
+
+static const unsigned short a_9[] = {
+    0x0000 , 0xB361 , 0xFFFF , 0x0000 , 0x0000 , 0x0000 , 0xFFFE , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0xFFFF , 0x0000 , 0x0000 , 0x0000 , 0x0055 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0058 , 0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0000 ,
+    0x0000 , 0x0000 , 0x005B , 0x0000 , 0x0000 , 0x0000 , 0x0058 , 0x0000 ,
+    0x0000 , 0x0000 , 0x0000 , 0x0000 , 0x0058 , 0x0000 , 0x6F6F , 0xFFFF ,
+    0x0000 , 0xC3C3 , 0xFFFF , 0x0000 , 0xC3C3 , 0xFFFE
+};
+
+static const unsigned char g_v[] = { 17, 65, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17, 4, 10 };
+
+extern int candidate_spanish_UTF_8_stem(struct SN_env * z) {
+    int among_var;
+    int i_p2;
+    int i_p1;
+    int i_pV;
+    i_pV = z->l;
+    i_p1 = z->l;
+    i_p2 = z->l;
+    {
+        int v_1 = z->c;
+        do {
+            int v_2 = z->c;
+            if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
+            do {
+                int v_3 = z->c;
+                if (out_grouping_U(z, g_v, 97, 252, 0)) goto lab3;
+                {
+                    int ret = out_grouping_U(z, g_v, 97, 252, 1);
+                    if (ret < 0) goto lab3;
+                    z->c += ret;
+                }
+                break;
+            lab3:
+                z->c = v_3;
+                if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab2;
+                {
+                    int ret = in_grouping_U(z, g_v, 97, 252, 1);
+                    if (ret < 0) goto lab2;
+                    z->c += ret;
+                }
+            } while (0);
+            break;
+        lab2:
+            z->c = v_2;
+            if (out_grouping_U(z, g_v, 97, 252, 0)) goto lab1;
+            do {
+                int v_4 = z->c;
+                if (out_grouping_U(z, g_v, 97, 252, 0)) goto lab4;
+                {
+                    int ret = out_grouping_U(z, g_v, 97, 252, 1);
+                    if (ret < 0) goto lab4;
+                    z->c += ret;
+                }
+                break;
+            lab4:
+                z->c = v_4;
+                if (in_grouping_U(z, g_v, 97, 252, 0)) goto lab1;
+                {
+                    int ret = skip_utf8(z->p, z->c, z->l, 1);
+                    if (ret < 0) goto lab1;
+                    z->c = ret;
+                }
+            } while (0);
+        } while (0);
+        i_pV = z->c;
+    lab1:
+        z->c = v_1;
+    }
+    {
+        int v_5 = z->c;
+        {
+            int ret = out_grouping_U(z, g_v, 97, 252, 1);
+            if (ret < 0) goto lab5;
+            z->c += ret;
+        }
+        {
+            int ret = in_grouping_U(z, g_v, 97, 252, 1);
+            if (ret < 0) goto lab5;
+            z->c += ret;
+        }
+        i_p1 = z->c;
+        {
+            int ret = out_grouping_U(z, g_v, 97, 252, 1);
+            if (ret < 0) goto lab5;
+            z->c += ret;
+        }
+        {
+            int ret = in_grouping_U(z, g_v, 97, 252, 1);
+            if (ret < 0) goto lab5;
+            z->c += ret;
+        }
+        i_p2 = z->c;
+    lab5:
+        z->c = v_5;
+    }
+    z->lb = z->c; z->c = z->l;
+    {
+        int v_6 = z->l - z->c;
+        z->ket = z->c;
+        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((557090 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab6;
+        if (!find_among_b(z, a_1)) goto lab6;
+        z->bra = z->c;
+        if (z->c - 1 <= z->lb || (z->p[z->c - 1] != 111 && z->p[z->c - 1] != 114)) goto lab6;
+        among_var = find_among_b(z, a_2);
+        if (!among_var) goto lab6;
+        if (i_pV > z->c) goto lab6;
+        switch (among_var) {
+            case 1:
+                z->bra = z->c;
+                {
+                    int ret = slice_from_s(z, 5, s_0);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 2:
+                z->bra = z->c;
+                {
+                    int ret = slice_from_s(z, 4, s_1);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 3:
+                z->bra = z->c;
+                {
+                    int ret = slice_from_s(z, 2, s_2);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 4:
+                z->bra = z->c;
+                {
+                    int ret = slice_from_s(z, 2, s_3);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 5:
+                z->bra = z->c;
+                {
+                    int ret = slice_from_s(z, 2, s_4);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 6:
+                {
+                    int ret = slice_del(z);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 7:
+                if (z->c <= z->lb || z->p[z->c - 1] != 'u') goto lab6;
+                z->c--;
+                {
+                    int ret = slice_del(z);
+                    if (ret < 0) return ret;
+                }
+                break;
+        }
+    lab6:
+        z->c = z->l - v_6;
+    }
+    {
+        int v_7 = z->l - z->c;
+        do {
+            int v_8 = z->l - z->c;
+            z->ket = z->c;
+            if (z->c - 2 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((835634 >> (z->p[z->c - 1] & 0x1f)) & 1)) goto lab8;
+            among_var = find_among_b(z, a_6);
+            if (!among_var) goto lab8;
+            z->bra = z->c;
+            switch (among_var) {
+                case 1:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 2:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    {
+                        int v_9 = z->l - z->c;
+                        z->ket = z->c;
+                        if (!(eq_s_b(z, 2, s_5))) { z->c = z->l - v_9; goto lab9; }
+                        z->bra = z->c;
+                        if (i_p2 > z->c) { z->c = z->l - v_9; goto lab9; }
+                        {
+                            int ret = slice_del(z);
+                            if (ret < 0) return ret;
+                        }
+                    lab9:
+                        ;
+                    }
+                    break;
+                case 3:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_from_s(z, 3, s_6);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 4:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_from_s(z, 1, s_7);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 5:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_from_s(z, 4, s_8);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 6:
+                    if (i_p1 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    {
+                        int v_10 = z->l - z->c;
+                        z->ket = z->c;
+                        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((4718616 >> (z->p[z->c - 1] & 0x1f)) & 1)) { z->c = z->l - v_10; goto lab10; }
+                        among_var = find_among_b(z, a_3);
+                        if (!among_var) { z->c = z->l - v_10; goto lab10; }
+                        z->bra = z->c;
+                        if (i_p2 > z->c) { z->c = z->l - v_10; goto lab10; }
+                        {
+                            int ret = slice_del(z);
+                            if (ret < 0) return ret;
+                        }
+                        switch (among_var) {
+                            case 1:
+                                z->ket = z->c;
+                                if (!(eq_s_b(z, 2, s_9))) { z->c = z->l - v_10; goto lab10; }
+                                z->bra = z->c;
+                                if (i_p2 > z->c) { z->c = z->l - v_10; goto lab10; }
+                                {
+                                    int ret = slice_del(z);
+                                    if (ret < 0) return ret;
+                                }
+                                break;
+                        }
+                    lab10:
+                        ;
+                    }
+                    break;
+                case 7:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    {
+                        int v_11 = z->l - z->c;
+                        z->ket = z->c;
+                        if (z->c - 3 <= z->lb || z->p[z->c - 1] != 101) { z->c = z->l - v_11; goto lab11; }
+                        if (!find_among_b(z, a_4)) { z->c = z->l - v_11; goto lab11; }
+                        z->bra = z->c;
+                        if (i_p2 > z->c) { z->c = z->l - v_11; goto lab11; }
+                        {
+                            int ret = slice_del(z);
+                            if (ret < 0) return ret;
+                        }
+                    lab11:
+                        ;
+                    }
+                    break;
+                case 8:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    {
+                        int v_12 = z->l - z->c;
+                        z->ket = z->c;
+                        if (z->c - 1 <= z->lb || z->p[z->c - 1] >> 5 != 3 || !((4198408 >> (z->p[z->c - 1] & 0x1f)) & 1)) { z->c = z->l - v_12; goto lab12; }
+                        if (!find_among_b(z, a_5)) { z->c = z->l - v_12; goto lab12; }
+                        z->bra = z->c;
+                        if (i_p2 > z->c) { z->c = z->l - v_12; goto lab12; }
+                        {
+                            int ret = slice_del(z);
+                            if (ret < 0) return ret;
+                        }
+                    lab12:
+                        ;
+                    }
+                    break;
+                case 9:
+                    if (i_p2 > z->c) goto lab8;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    {
+                        int v_13 = z->l - z->c;
+                        z->ket = z->c;
+                        if (!(eq_s_b(z, 2, s_9))) { z->c = z->l - v_13; goto lab13; }
+                        z->bra = z->c;
+                        if (i_p2 > z->c) { z->c = z->l - v_13; goto lab13; }
+                        {
+                            int ret = slice_del(z);
+                            if (ret < 0) return ret;
+                        }
+                    lab13:
+                        ;
+                    }
+                    break;
+            }
+            break;
+        lab8:
+            z->c = z->l - v_8;
+            {
+                int v_14;
+                if (z->c < i_pV) goto lab14;
+                v_14 = z->lb; z->lb = i_pV;
+                z->ket = z->c;
+                if (!find_among_b(z, a_7)) { z->lb = v_14; goto lab14; }
+                z->bra = z->c;
+                z->lb = v_14;
+            }
+            if (z->c <= z->lb || z->p[z->c - 1] != 'u') goto lab14;
+            z->c--;
+            {
+                int ret = slice_del(z);
+                if (ret < 0) return ret;
+            }
+            break;
+        lab14:
+            z->c = z->l - v_8;
+            {
+                int v_15;
+                if (z->c < i_pV) goto lab7;
+                v_15 = z->lb; z->lb = i_pV;
+                z->ket = z->c;
+                among_var = find_among_b(z, a_8);
+                if (!among_var) { z->lb = v_15; goto lab7; }
+                z->bra = z->c;
+                z->lb = v_15;
+            }
+            switch (among_var) {
+                case 1:
+                    {
+                        int v_16 = z->l - z->c;
+                        if (z->c <= z->lb || z->p[z->c - 1] != 'u') { z->c = z->l - v_16; goto lab15; }
+                        z->c--;
+                        {
+                            int v_17 = z->l - z->c;
+                            if (z->c <= z->lb || z->p[z->c - 1] != 'g') { z->c = z->l - v_16; goto lab15; }
+                            z->c--;
+                            z->c = z->l - v_17;
+                        }
+                    lab15:
+                        ;
+                    }
+                    z->bra = z->c;
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 2:
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+            }
+        } while (0);
+    lab7:
+        z->c = z->l - v_7;
+    }
+    {
+        int v_18 = z->l - z->c;
+        z->ket = z->c;
+        among_var = find_among_b(z, a_9);
+        if (!among_var) goto lab16;
+        z->bra = z->c;
+        switch (among_var) {
+            case 1:
+                if (i_pV > z->c) goto lab16;
+                {
+                    int ret = slice_del(z);
+                    if (ret < 0) return ret;
+                }
+                break;
+            case 2:
+                if (i_pV > z->c) goto lab16;
+                {
+                    int ret = slice_del(z);
+                    if (ret < 0) return ret;
+                }
+                {
+                    int v_19 = z->l - z->c;
+                    z->ket = z->c;
+                    if (z->c <= z->lb || z->p[z->c - 1] != 'u') { z->c = z->l - v_19; goto lab17; }
+                    z->c--;
+                    z->bra = z->c;
+                    {
+                        int v_20 = z->l - z->c;
+                        if (z->c <= z->lb || z->p[z->c - 1] != 'g') { z->c = z->l - v_19; goto lab17; }
+                        z->c--;
+                        z->c = z->l - v_20;
+                    }
+                    if (i_pV > z->c) { z->c = z->l - v_19; goto lab17; }
+                    {
+                        int ret = slice_del(z);
+                        if (ret < 0) return ret;
+                    }
+                lab17:
+                    ;
+                }
+                break;
+        }
+    lab16:
+        z->c = z->l - v_18;
+    }
+    z->c = z->lb;
+    {
+        int v_21 = z->c;
+        while (1) {
+            int v_22 = z->c;
+            z->bra = z->c;
+            if (z->c + 1 >= z->l || z->p[z->c + 1] >> 5 != 5 || !((67641858 >> (z->p[z->c + 1] & 0x1f)) & 1)) among_var = 6; else
+            among_var = find_among(z, a_0);
+            z->ket = z->c;
+            switch (among_var) {
+                case 1:
+                    {
+                        int ret = slice_from_s(z, 1, s_1);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 2:
+                    {
+                        int ret = slice_from_s(z, 1, s_3);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 3:
+                    {
+                        int ret = slice_from_s(z, 1, s_0);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 4:
+                    {
+                        int ret = slice_from_s(z, 1, s_10);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 5:
+                    {
+                        int ret = slice_from_s(z, 1, s_7);
+                        if (ret < 0) return ret;
+                    }
+                    break;
+                case 6:
+                    {
+                        int ret = skip_utf8(z->p, z->c, z->l, 1);
+                        if (ret < 0) goto lab19;
+                        z->c = ret;
+                    }
+                    break;
+            }
+            continue;
+        lab19:
+            z->c = v_22;
+            break;
+        }
+        z->c = v_21;
+    }
+    return 1;
+}

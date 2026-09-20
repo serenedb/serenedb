@@ -57,6 +57,53 @@ add_bench(virtual_column_map)
 add_bench(tokenizer_fill)
 add_bench(stemming)
 
+# Benchmark-only generated C fixtures. Keep libstemmer_c unchanged: it is the
+# correctness oracle and performance baseline for these candidates.
+set(STEMMER_GENERATED_C_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_stemmers")
+set(
+    STEMMER_GENERATED_C_LANGUAGES
+    arabic
+    english
+    finnish
+    french
+    german
+    greek
+    hindi
+    hungarian
+    italian
+    polish
+    russian
+    spanish
+    tamil
+    turkish
+)
+set(STEMMER_GENERATED_C_SOURCES)
+foreach(LANGUAGE IN LISTS STEMMER_GENERATED_C_LANGUAGES)
+    list(
+        APPEND
+        STEMMER_GENERATED_C_SOURCES
+        "${STEMMER_GENERATED_C_DIR}/stem_UTF_8_${LANGUAGE}_candidate.c"
+    )
+endforeach()
+target_sources(
+    serenedb-bench-micro-stemming
+    PRIVATE ${STEMMER_GENERATED_C_SOURCES}
+)
+target_include_directories(
+    serenedb-bench-micro-stemming
+    PRIVATE
+        "${STEMMER_GENERATED_C_DIR}"
+        "${CMAKE_SOURCE_DIR}/third_party/libstemmer_c"
+)
+target_compile_definitions(
+    serenedb-bench-micro-stemming
+    PRIVATE SERENEDB_STEMMER_GENERATED_C_CANDIDATE=1
+)
+target_link_libraries(
+    serenedb-bench-micro-stemming
+    PRIVATE stemmer-static zlibstatic
+)
+
 if(ARCH_AMD64)
     add_bench(ci_lower)
     add_bench(ci_fold128)

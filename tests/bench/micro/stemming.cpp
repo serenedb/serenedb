@@ -41,12 +41,18 @@
 // between those two arms is the answer to "why is there a cache at all".
 
 #include <benchmark/benchmark.h>
+#include <zlib.h>
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <duckdb.hpp>
+#include <filesystem>
+#include <fstream>
 #include <iresearch/analysis/text/dict/stem_cache.hpp>
 #include <iresearch/utils/snowball_stemmer.hpp>
 #include <map>
@@ -54,9 +60,30 @@
 #include <numeric>
 #include <random>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#ifdef SERENEDB_STEMMER_GENERATED_C_CANDIDATE
+extern "C" {
+#include "runtime/api.h"
+#include "stem_UTF_8_arabic_candidate.h"
+#include "stem_UTF_8_english_candidate.h"
+#include "stem_UTF_8_finnish_candidate.h"
+#include "stem_UTF_8_french_candidate.h"
+#include "stem_UTF_8_german_candidate.h"
+#include "stem_UTF_8_greek_candidate.h"
+#include "stem_UTF_8_hindi_candidate.h"
+#include "stem_UTF_8_hungarian_candidate.h"
+#include "stem_UTF_8_italian_candidate.h"
+#include "stem_UTF_8_polish_candidate.h"
+#include "stem_UTF_8_russian_candidate.h"
+#include "stem_UTF_8_spanish_candidate.h"
+#include "stem_UTF_8_tamil_candidate.h"
+#include "stem_UTF_8_turkish_candidate.h"
+}
+#endif
 
 namespace {
 
@@ -235,19 +262,45 @@ constexpr std::string_view kArabic[] = {
   "بداية",  "بدايات",  "كبير",    "كبيرة",  "يكتبون",  "المدرسة", "المدينة",
   "الكتاب", "الكتب",   "والكتاب", "للكتاب", "بالكتاب", "في"};
 
+constexpr std::string_view kPolish[] = {
+  "dom", "domy", "domami", "książka", "książki", "człowiek",
+  "ludzie", "miasto", "miasta", "pracować", "praca", "język"};
+
+constexpr std::string_view kHindi[] = {
+  "किताब", "किताबें", "घर", "घरों", "आदमी", "शहर",
+  "काम", "करना", "भाषा", "दिन", "बच्चा", "बच्चों"};
+
+constexpr std::string_view kTamil[] = {
+  "புத்தகம்", "புத்தகங்கள்", "வீடு", "வீடுகள்", "மனிதன்", "நகரம்",
+  "வேலை", "மொழி", "நாள்", "குழந்தை", "குழந்தைகள்", "நேரம்"};
+
+enum class ScriptClass : uint8_t {
+  LatinOrMixed,
+  NonAscii,
+};
+
 struct Language {
   std::string_view name;
   const char* algorithm;
   std::span<const std::string_view> words;
+  ScriptClass script;
 };
 
 constexpr Language kLanguages[] = {
-  {"english", "english", kEnglish},       {"german", "german", kGerman},
-  {"french", "french", kFrench},          {"spanish", "spanish", kSpanish},
-  {"italian", "italian", kItalian},       {"finnish", "finnish", kFinnish},
-  {"hungarian", "hungarian", kHungarian}, {"turkish", "turkish", kTurkish},
-  {"russian", "russian", kRussian},       {"greek", "greek", kGreek},
-  {"arabic", "arabic", kArabic}};
+  {"english", "english", kEnglish, ScriptClass::LatinOrMixed},
+  {"german", "german", kGerman, ScriptClass::LatinOrMixed},
+  {"french", "french", kFrench, ScriptClass::LatinOrMixed},
+  {"spanish", "spanish", kSpanish, ScriptClass::LatinOrMixed},
+  {"italian", "italian", kItalian, ScriptClass::LatinOrMixed},
+  {"finnish", "finnish", kFinnish, ScriptClass::LatinOrMixed},
+  {"hungarian", "hungarian", kHungarian, ScriptClass::LatinOrMixed},
+  {"turkish", "turkish", kTurkish, ScriptClass::LatinOrMixed},
+  {"russian", "russian", kRussian, ScriptClass::NonAscii},
+  {"greek", "greek", kGreek, ScriptClass::NonAscii},
+  {"arabic", "arabic", kArabic, ScriptClass::NonAscii},
+  {"polish", "polish", kPolish, ScriptClass::LatinOrMixed},
+  {"hindi", "hindi", kHindi, ScriptClass::NonAscii},
+  {"tamil", "tamil", kTamil, ScriptClass::NonAscii}};
 
 enum class Bucket : uint8_t {
   All,
@@ -264,6 +317,8 @@ constexpr size_t kProbes = 4096;
 
 struct Corpus {
   bool available = false;
+  bool external = false;
+  std::string source;
   std::deque<std::string> pool;
   std::vector<duckdb::string_t> all;
   std::vector<duckdb::string_t> changed;
@@ -277,6 +332,101 @@ duckdb::string_t Handle(const std::string& word) {
   return duckdb::string_t{word.data(), static_cast<uint32_t>(word.size())};
 }
 
+size_t ExternalCorpusLimit() {
+  constexpr size_t kDefaultLimit = 50000;
+  const char* value = std::getenv("SERENEDB_STEMMER_CORPUS_LIMIT");
+  if (!value || !*value) {
+    return kDefaultLimit;
+  }
+  errno = 0;
+  char* end = nullptr;
+  const auto parsed = std::strtoull(value, &end, 10);
+  if (errno || end == value || *end != '\0') {
+    throw std::runtime_error{
+      "SERENEDB_STEMMER_CORPUS_LIMIT must be a non-negative integer"};
+  }
+  return static_cast<size_t>(parsed);
+}
+
+void AddCorpusWord(Corpus& corpus, std::string word, size_t limit) {
+  if (limit && corpus.pool.size() >= limit) {
+    return;
+  }
+  if (!word.empty() && word.back() == '\r') {
+    word.pop_back();
+  }
+  corpus.pool.emplace_back(std::move(word));
+}
+
+void LoadPlainCorpus(Corpus& corpus, const std::filesystem::path& path,
+                     size_t limit) {
+  std::ifstream input{path, std::ios::binary};
+  if (!input) {
+    throw std::runtime_error{"cannot open stemmer corpus: " + path.string()};
+  }
+  std::string word;
+  while ((!limit || corpus.pool.size() < limit) && std::getline(input, word)) {
+    AddCorpusWord(corpus, std::move(word), limit);
+  }
+}
+
+void LoadGzipCorpus(Corpus& corpus, const std::filesystem::path& path,
+                    size_t limit) {
+  gzFile input = gzopen(path.c_str(), "rb");
+  if (!input) {
+    throw std::runtime_error{"cannot open stemmer corpus: " + path.string()};
+  }
+  std::array<char, 8192> buffer{};
+  std::string word;
+  while (!limit || corpus.pool.size() < limit) {
+    const char* chunk = gzgets(input, buffer.data(), buffer.size());
+    if (!chunk) {
+      break;
+    }
+    word += chunk;
+    if (!word.empty() && word.back() == '\n') {
+      word.pop_back();
+      AddCorpusWord(corpus, std::move(word), limit);
+      word.clear();
+    }
+  }
+  if ((!limit || corpus.pool.size() < limit) && !word.empty()) {
+    AddCorpusWord(corpus, std::move(word), limit);
+  }
+  int error = Z_OK;
+  const char* message = gzerror(input, &error);
+  const std::string error_message = message ? message : "unknown error";
+  gzclose(input);
+  if (error != Z_OK && error != Z_STREAM_END) {
+    throw std::runtime_error{"error reading stemmer corpus " + path.string() +
+                             ": " + error_message};
+  }
+}
+
+bool LoadExternalCorpus(Corpus& corpus, const Language& lang) {
+  const char* root = std::getenv("SERENEDB_STEMMER_CORPUS_ROOT");
+  if (!root || !*root) {
+    return false;
+  }
+  const auto directory = std::filesystem::path{root} / lang.name;
+  const auto plain = directory / "voc.txt";
+  const auto gzip = directory / "voc.txt.gz";
+  const auto limit = ExternalCorpusLimit();
+  if (std::filesystem::exists(plain)) {
+    LoadPlainCorpus(corpus, plain, limit);
+    corpus.source = plain.string();
+  } else if (std::filesystem::exists(gzip)) {
+    LoadGzipCorpus(corpus, gzip, limit);
+    corpus.source = gzip.string();
+  } else {
+    throw std::runtime_error{
+      "external stemmer corpus is missing for " + std::string{lang.name} +
+      "; expected " + plain.string() + " or " + gzip.string()};
+  }
+  corpus.external = true;
+  return true;
+}
+
 const Corpus& GetCorpus(const Language& lang) {
   static std::map<std::string_view, std::unique_ptr<Corpus>> cache;
   const auto it = cache.find(lang.name);
@@ -285,8 +435,11 @@ const Corpus& GetCorpus(const Language& lang) {
   }
 
   auto corpus = std::make_unique<Corpus>();
-  for (const auto word : lang.words) {
-    corpus->pool.emplace_back(word);
+  if (!LoadExternalCorpus(*corpus, lang)) {
+    for (const auto word : lang.words) {
+      corpus->pool.emplace_back(word);
+    }
+    corpus->source = "built-in";
   }
 
   const auto stemmer = irs::make_stemmer_ptr(lang.algorithm, nullptr);
@@ -375,6 +528,94 @@ void BmStem(benchmark::State& state, const Language* lang, Bucket bucket) {
   Account(state, words);
 }
 
+#ifdef SERENEDB_STEMMER_GENERATED_C_CANDIDATE
+using CStemmerCreate = SN_env* (*)();
+using CStemmerRun = int (*)(SN_env*);
+
+template<CStemmerCreate Create, CStemmerRun Stem>
+class GeneratedCStemmer {
+ public:
+  GeneratedCStemmer() : env_{Create()} {
+    if (!env_) {
+      throw std::runtime_error{"failed to create generated C stemmer"};
+    }
+  }
+
+  ~GeneratedCStemmer() { SN_delete_env(env_); }
+
+  GeneratedCStemmer(const GeneratedCStemmer&) = delete;
+  GeneratedCStemmer& operator=(const GeneratedCStemmer&) = delete;
+
+  std::string_view stem(std::string_view input) {
+    if (SN_set_current(env_, static_cast<int>(input.size()),
+                       reinterpret_cast<const symbol*>(input.data())) < 0 ||
+        Stem(env_) < 0) {
+      throw std::runtime_error{"generated C stemmer failed"};
+    }
+    return {reinterpret_cast<const char*>(env_->p),
+            static_cast<size_t>(env_->l)};
+  }
+
+ private:
+  SN_env* env_;
+};
+
+template<CStemmerCreate Create, CStemmerRun Stem>
+void BmGeneratedCStem(benchmark::State& state, const Language* lang,
+                      Bucket bucket) {
+  const auto& corpus = GetCorpus(*lang);
+  const auto words = Select(corpus, bucket);
+  if (words.empty()) {
+    state.SkipWithError("empty corpus bucket");
+    return;
+  }
+
+  GeneratedCStemmer<Create, Stem> stemmer;
+  for (auto _ : state) {
+    for (const auto& word : words) {
+      const auto stem = stemmer.stem(
+        {word.GetData(), static_cast<size_t>(word.GetSize())});
+      benchmark::DoNotOptimize(stem);
+    }
+  }
+  Account(state, words);
+}
+
+template<CStemmerCreate Create, CStemmerRun Stem>
+bool RegisterGeneratedC(const Language& lang) {
+  const auto& corpus = GetCorpus(lang);
+  const auto reference = irs::make_stemmer_ptr(lang.algorithm, nullptr);
+  if (!reference) {
+    throw std::runtime_error{"missing reference stemmer for " +
+                             std::string{lang.name}};
+  }
+
+  GeneratedCStemmer<Create, Stem> candidate;
+  for (const auto& word : corpus.all) {
+    const std::string_view input{word.GetData(),
+                                 static_cast<size_t>(word.GetSize())};
+    const auto expected = StemUncached(reference.get(), input);
+    const auto actual = candidate.stem(input);
+    if (!expected || *expected != actual) {
+      std::fprintf(stderr,
+                   "generated C candidate disabled for %.*s: mismatch on %.*s "
+                   "(reference: %.*s, candidate: %.*s)\n",
+                   static_cast<int>(lang.name.size()), lang.name.data(),
+                   static_cast<int>(input.size()), input.data(),
+                   expected ? static_cast<int>(expected->size()) : 7,
+                   expected ? expected->data() : "<error>",
+                   static_cast<int>(actual.size()), actual.data());
+      return false;
+    }
+  }
+
+  benchmark::RegisterBenchmark(
+    "StemGeneratedC/" + std::string{lang.name} + "/All",
+    BmGeneratedCStem<Create, Stem>, &lang, Bucket::All);
+  return true;
+}
+#endif
+
 void BmZipfUncached(benchmark::State& state, const Language* lang) {
   const auto& corpus = GetCorpus(*lang);
   if (!corpus.available) {
@@ -412,6 +653,12 @@ void BmZipfCached(benchmark::State& state, const Language* lang) {
 }
 
 void PrintAlgorithms() {
+  if (const char* root = std::getenv("SERENEDB_STEMMER_CORPUS_ROOT")) {
+    std::printf(
+      "external corpus root: %s (limit: %zu words per language; 0 means "
+      "unlimited)\n\n",
+      root, ExternalCorpusLimit());
+  }
   std::printf("%-12s %-10s %6s %8s %10s %7s\n", "language", "algorithm",
               "words", "changed", "unchanged", "bytes");
   for (const auto& lang : kLanguages) {
@@ -443,6 +690,38 @@ void Register() {
     benchmark::RegisterBenchmark("Zipf/Cached/" + std::string{lang.name},
                                  BmZipfCached, &lang);
   }
+
+#ifdef SERENEDB_STEMMER_GENERATED_C_CANDIDATE
+  RegisterGeneratedC<candidate_english_UTF_8_create_env,
+                     candidate_english_UTF_8_stem>(kLanguages[0]);
+  RegisterGeneratedC<candidate_german_UTF_8_create_env,
+                     candidate_german_UTF_8_stem>(kLanguages[1]);
+  RegisterGeneratedC<candidate_french_UTF_8_create_env,
+                     candidate_french_UTF_8_stem>(kLanguages[2]);
+  RegisterGeneratedC<candidate_spanish_UTF_8_create_env,
+                     candidate_spanish_UTF_8_stem>(kLanguages[3]);
+  RegisterGeneratedC<candidate_italian_UTF_8_create_env,
+                     candidate_italian_UTF_8_stem>(kLanguages[4]);
+  RegisterGeneratedC<candidate_finnish_UTF_8_create_env,
+                     candidate_finnish_UTF_8_stem>(kLanguages[5]);
+  RegisterGeneratedC<candidate_hungarian_UTF_8_create_env,
+                     candidate_hungarian_UTF_8_stem>(kLanguages[6]);
+  RegisterGeneratedC<candidate_turkish_UTF_8_create_env,
+                     candidate_turkish_UTF_8_stem>(kLanguages[7]);
+  RegisterGeneratedC<candidate_russian_UTF_8_create_env,
+                     candidate_russian_UTF_8_stem>(kLanguages[8]);
+  RegisterGeneratedC<candidate_greek_UTF_8_create_env,
+                     candidate_greek_UTF_8_stem>(kLanguages[9]);
+  RegisterGeneratedC<candidate_arabic_UTF_8_create_env,
+                     candidate_arabic_UTF_8_stem>(kLanguages[10]);
+  RegisterGeneratedC<candidate_polish_UTF_8_create_env,
+                     candidate_polish_UTF_8_stem>(kLanguages[11]);
+  RegisterGeneratedC<candidate_hindi_UTF_8_create_env,
+                     candidate_hindi_UTF_8_stem>(kLanguages[12]);
+  RegisterGeneratedC<candidate_tamil_UTF_8_create_env,
+                     candidate_tamil_UTF_8_stem>(kLanguages[13]);
+#endif
+
 }
 
 }  // namespace

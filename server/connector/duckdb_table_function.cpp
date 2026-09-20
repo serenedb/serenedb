@@ -387,8 +387,8 @@ static duckdb::BindInfo SereneDBGetBindInfo(
 
 namespace {
 
-irs::DirectoryReader PinnedSearchReader(duckdb::ClientContext& context,
-                                        const catalog::SearchTableEntry& table) {
+irs::DirectoryReader PinnedSearchReader(
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& table) {
   const auto& store = table.Storage();
   auto* conn_ctx = GetSereneDBContextPtr(context);
   if (!conn_ctx) {

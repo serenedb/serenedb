@@ -90,9 +90,8 @@ void InitRowSource(duckdb::ClientContext& context,
   // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
   // by definition), read here so each rebuilt row keeps its identity.
   source.rowid_slot = target.column_ids.size();
-  source.projections.push_back(
-    irs::ColumnstoreProjection{.output_slot = source.rowid_slot,
-                               .column_id = term_dict::kPKFieldId});
+  source.projections.push_back(irs::ColumnstoreProjection{
+    .output_slot = source.rowid_slot, .column_id = term_dict::kPKFieldId});
   types.push_back(duckdb::LogicalType::BIGINT);
   source.chunk.Initialize(duckdb::Allocator::Get(context), types);
 }
@@ -225,9 +224,9 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
                                  static_cast<int64_t>(fed));
       }
       if (context.IsInterrupted()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                        ERR_MSG("canceled while rebuilding search table ",
-                                target.table_id));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_QUERY_CANCELED),
+          ERR_MSG("canceled while rebuilding search table ", target.table_id));
       }
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail

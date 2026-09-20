@@ -44,23 +44,24 @@ statement ok
 INSERT INTO cw VALUES (1, 'one'), (2, 'two');
 
 
-# The append happens in the commit, so a refused one is a commit that fails:
-# the transaction aborts with nothing durable behind it, the client gets a SQL
-# error, and the server is still there to serve the next statement.
+# A commit that fails: duckdb's debug_force_commit_failure throws after the undo
+# buffer is committed, RevertCommit undoes it, the transaction aborts with
+# nothing durable behind it, the client gets a SQL error, and the server is
+# still there to serve the next statement.
 connection after_create
 statement ok
-SET sdb_faults = 'fail_before_commit';
+SET debug_force_commit_failure = true;
 
 connection after_create
 statement error
 CREATE TABLE cw_refused (a INTEGER);
 ----
-db error: ERROR: Failed to commit: commit refused by fault point fail_before_commit
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
 
 
 connection after_create
 statement ok
-SET sdb_faults = '-fail_before_commit';
+SET debug_force_commit_failure = false;
 
 connection after_create
 query

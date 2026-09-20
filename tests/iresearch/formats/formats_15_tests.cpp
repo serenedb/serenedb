@@ -622,7 +622,8 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
   auto root = MakePruned(field, meta, scorer, fetcher, k);
   ASSERT_NE(nullptr, root);
 
-  std::atomic<irs::score_t> score_threshold{static_cast<irs::score_t>(threshold)};
+  std::atomic<irs::score_t> score_threshold{
+    static_cast<irs::score_t>(threshold)};
   std::vector<irs::ScoreDoc> hits(k);
   irs::LoserScoreCollector collector{score_threshold, hits};
   root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);

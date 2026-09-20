@@ -63,8 +63,8 @@ class BooleanBitset : public Root {
       const auto first = static_cast<uint32_t>(lo / kBits);
       const auto last = static_cast<uint32_t>((hi - 1) / kBits);
       const auto head = ~uint64_t{0} << (lo % kBits);
-      const auto tail = hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1
-                                        : ~uint64_t{0};
+      const auto tail =
+        hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1 : ~uint64_t{0};
       if (first == last) {
         uint64_t edge = words[first] & head & tail;
         return _table.Count(kMin + first * kBits, &edge, 1);

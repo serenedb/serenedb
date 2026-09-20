@@ -98,8 +98,8 @@ duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
 
 constexpr std::array<std::string_view, 3> kSplitModes{"tail", "always",
                                                       "never"};
-constexpr std::array<std::string_view, 3> kOrderModes{
-  "smallest_first", "largest_first", "order"};
+constexpr std::array<std::string_view, 3> kOrderModes{"smallest_first",
+                                                      "largest_first", "order"};
 
 std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
   static constinit SettingRef gSplit{"sdb_scan_split"};
@@ -113,10 +113,10 @@ std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
 OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered) {
   static constinit SettingRef gOrder{"sdb_scan_order"};
   const auto i = gOrder.Enum(context, kOrderModes);
-  const auto mode = i == kOrderModes.size()
-                      ? (scan_ordered ? OrderMode::Order
-                                      : OrderMode::SmallestFirst)
-                      : static_cast<OrderMode>(i);
+  const auto mode =
+    i == kOrderModes.size()
+      ? (scan_ordered ? OrderMode::Order : OrderMode::SmallestFirst)
+      : static_cast<OrderMode>(i);
   return mode == OrderMode::Order && !scan_ordered ? OrderMode::SmallestFirst
                                                    : mode;
 }
@@ -312,9 +312,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                                                    : 0;
       break;
   }
-  const bool constant_count =
-    g.shape == ScanShape::Count && g.col_filters.empty() &&
-    bind.search.filter && ConstantCount(*bind.search.filter);
+  const bool constant_count = g.shape == ScanShape::Count &&
+                              g.col_filters.empty() && bind.search.filter &&
+                              ConstantCount(*bind.search.filter);
   for (uint32_t i = 0; i != g.live_segments; ++i) {
     const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);

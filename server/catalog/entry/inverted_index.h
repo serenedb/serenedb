@@ -236,6 +236,11 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void OnDrop() override;
 
+  bool ScanColumnSegmentInfo(
+    const duckdb::QueryContext& context,
+    duckdb::ColumnSegmentInfoScanState& state,
+    duckdb::vector<duckdb::ColumnSegmentInfo>& result) const override;
+
   // Handed over once the storage is opened, which happens after the entry is
   // created. Every later version of the entry inherits it through Copy.
   void AdoptStorage(std::shared_ptr<search::InvertedIndexStorage> storage) {

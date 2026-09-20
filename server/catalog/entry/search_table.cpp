@@ -187,7 +187,7 @@ SearchTableEntry::SearchTableEntry(
   }
 }
 
-static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
+duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
   const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
   duckdb::column_t generated_pk) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;

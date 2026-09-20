@@ -32,11 +32,14 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/query_context.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -46,6 +49,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/primary_key.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -561,6 +565,42 @@ void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
     }
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
+}
+
+bool InvertedIndexEntry::ScanColumnSegmentInfo(
+  const duckdb::QueryContext& context,
+  duckdb::ColumnSegmentInfoScanState& state,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result) const {
+  auto client = context.GetClientContext();
+  if (!client) {
+    return false;
+  }
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName{catalog.GetName(), GetSchemaName(), GetTableName()}};
+  auto relation = duckdb::Catalog::GetEntry(
+    *client, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!relation) {
+    return false;
+  }
+  auto& table = relation->Cast<duckdb::TableCatalogEntry>();
+  if (_search_table) {
+    return table.ScanColumnSegmentInfo(context, state, result);
+  }
+  if (state.position++ != 0 || !_storage) {
+    return false;
+  }
+  const auto snapshot = _storage->GetInvertedIndexSnapshot();
+  if (!snapshot || !snapshot->reader) {
+    return false;
+  }
+  const auto keys = connector::primary_key::KeyColumns(table);
+  const auto key_column =
+    keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
+                 : table.GetColumns().LogicalToPhysical(keys.front()).index;
+  result =
+    SearchTableEntry::ColumnSegmentRows(snapshot->reader, table, key_column);
+  return true;
 }
 
 }  // namespace sdb::catalog

@@ -212,7 +212,7 @@ db error: ERROR: Could not rename "pudge_view" to "pudge": another entry with th
 statement error
 ALTER INDEX deadinside RENAME TO pudge;
 ----
-db error: ERROR: relation "pudge" already exists
+db error: ERROR: Could not rename "deadinside" to "pudge": another entry with this name already exists!
 
 
 statement error

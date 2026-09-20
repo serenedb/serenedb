@@ -29,6 +29,7 @@
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/table_column.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
 #include <string>
@@ -46,6 +47,11 @@ struct CreateTableInfo;
 struct BoundCreateTableInfo;
 
 }  // namespace duckdb
+namespace irs {
+
+class DirectoryReader;
+
+}  // namespace irs
 namespace sdb::search {
 
 class SearchTable;
@@ -108,6 +114,10 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     const duckdb::QueryContext& context,
     duckdb::ColumnSegmentInfoScanState& state,
     duckdb::vector<duckdb::ColumnSegmentInfo>& result) override;
+
+  static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
+    const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
+    duckdb::column_t generated_pk);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;

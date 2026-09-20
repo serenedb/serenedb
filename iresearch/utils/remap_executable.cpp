@@ -42,7 +42,8 @@
 #endif
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__SSE2__) && \
-  !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) &&  \
+  defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) &&                \
+  !defined(__SANITIZE_THREAD__) &&                                    \
   !IRS_REMAP_HAS_FEATURE(address_sanitizer) &&                        \
   !IRS_REMAP_HAS_FEATURE(thread_sanitizer) &&                         \
   !IRS_REMAP_HAS_FEATURE(memory_sanitizer)
@@ -63,17 +64,6 @@ namespace irs {
 namespace {
 
 #if defined(__linux__)
-
-bool SetAllocatorBackgroundThreads(bool enabled) {
-  if (JemallocControl == nullptr) {
-    return false;
-  }
-  bool previous = false;
-  size_t previous_size = sizeof(previous);
-  return JemallocControl("background_thread", &previous, &previous_size,
-                         &enabled, sizeof(enabled)) == 0 &&
-         previous;
-}
 
 struct Mapping {
   uintptr_t begin = 0;
@@ -121,17 +111,6 @@ std::vector<Mapping> ExecutableMappings() {
   return mappings;
 }
 
-size_t ThreadCount() {
-  size_t count = 0;
-  if (auto* dir = opendir("/proc/self/task"); dir != nullptr) {
-    while (const auto* entry = readdir(dir)) {
-      count += entry->d_name[0] != '.';
-    }
-    closedir(dir);
-  }
-  return count;
-}
-
 size_t Populate(const Mapping& mapping) {
   const auto size = mapping.end - mapping.begin;
   if (madvise(reinterpret_cast<void*>(mapping.begin), size,
@@ -144,6 +123,28 @@ size_t Populate(const Mapping& mapping) {
 #endif
 
 #if defined(IRS_REMAP_EXECUTABLE)
+
+bool SetAllocatorBackgroundThreads(bool enabled) {
+  if (JemallocControl == nullptr) {
+    return false;
+  }
+  bool previous = false;
+  size_t previous_size = sizeof(previous);
+  return JemallocControl("background_thread", &previous, &previous_size,
+                         &enabled, sizeof(enabled)) == 0 &&
+         previous;
+}
+
+size_t ThreadCount() {
+  size_t count = 0;
+  if (auto* dir = opendir("/proc/self/task"); dir != nullptr) {
+    while (const auto* entry = readdir(dir)) {
+      count += entry->d_name[0] != '.';
+    }
+    closedir(dir);
+  }
+  return count;
+}
 
 using RawSyscallFn = int64_t (*)(...);
 using RemapStep3Fn = void (*)(void*, size_t, size_t);

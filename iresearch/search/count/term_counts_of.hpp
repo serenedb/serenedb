@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
@@ -49,13 +52,31 @@ class TermCountsOf : public TermCounts {
     return sink.Total();
   }
 
-  bool Any(const PostingMeta& term, doc_id_t min, doc_id_t max) final {
+  bool Any(uint32_t ordinal, const PostingMeta& term, doc_id_t min,
+           doc_id_t max) final {
     SDB_ASSERT(term.docs_count != 0);
     if (term.docs_count == 1) {
       const auto doc = doc_limits::min() + term.doc_delta;
       return doc >= min && doc < max && _set.Contains(doc);
     }
-    detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+    detail::PostingProbe<Input>* cached = nullptr;
+    if (ordinal != kNoOrdinal) {
+      if (_probes.size() <= ordinal) {
+        _probes.resize(ordinal + 1);
+      }
+      auto& slot = _probes[ordinal];
+      if (!slot) {
+        slot = std::make_unique<detail::PostingProbe<Input>>(term, *_doc,
+                                                             _layout, _bounds);
+      }
+      cached = slot.get();
+    }
+    std::optional<detail::PostingProbe<Input>> local;
+    if (cached == nullptr) {
+      local.emplace(term, *_doc, _layout, _bounds);
+      cached = &*local;
+    }
+    auto& posting = *cached;
     auto doc = min;
     for (;;) {
       doc = posting.Probe(doc);
@@ -75,6 +96,7 @@ class TermCountsOf : public TermCounts {
 
  private:
   detail::LazyBitset& _set;
+  std::vector<std::unique_ptr<detail::PostingProbe<Input>>> _probes;
   detail::PostingReader<Input> _reader;
   const IndexInput* _doc;
   IndexFeatures _layout;

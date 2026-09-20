@@ -308,6 +308,9 @@ struct CountLocalState : public ScanLocalState {
   uint64_t local_count = 0;
   uint64_t local_emitted = 0;
   ColFilterVerify col_verify;
+  irs::memory::managed_ptr<irs::memory::Managed> root;
+  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
+  irs::doc_id_t root_at = 0;
 };
 
 struct ColScanLocalState : public ScanLocalState {
@@ -328,6 +331,8 @@ struct StreamLocalState : public ScanLocalState, FetchLocalState {
   uint64_t next_row = 0;
   uint64_t stop_row = 0;
   bool root_exhausted = true;
+  bool defer_flush = false;
+  bool needs_start = false;
   irs::score_t prune_threshold = std::numeric_limits<irs::score_t>::lowest();
 };
 

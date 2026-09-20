@@ -77,6 +77,8 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _score_filter = nullptr;
   _score_state = nullptr;
   _rg_col = nullptr;
+  _rg_cache_begin = 1;
+  _rg_cache_end = 0;
   if (col_reader == nullptr) {
     _ctx.reset();
     return;
@@ -156,10 +158,13 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _filters.FinishBind();
 }
 
-uint64_t HitBatcher::RgEndFor(uint64_t row) const noexcept {
-  return std::min(_rg_col != nullptr ? _rg_col->RowGroupEnd(row)
-                                     : std::numeric_limits<uint64_t>::max(),
-                  row + STANDARD_VECTOR_SIZE);
+uint64_t HitBatcher::RgEndFor(uint64_t row) noexcept {
+  if (row < _rg_cache_begin || row >= _rg_cache_end) {
+    _rg_cache_end = _rg_col != nullptr ? _rg_col->RowGroupEnd(row)
+                                       : std::numeric_limits<uint64_t>::max();
+    _rg_cache_begin = row;
+  }
+  return std::min(_rg_cache_end, row + STANDARD_VECTOR_SIZE);
 }
 
 bool HitBatcher::DrainCompact() {

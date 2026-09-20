@@ -61,7 +61,8 @@ struct TsDictLocalState : public ScanLocalState {
                     ScanGlobalState& g);
   duckdb::idx_t EmitChunk(ScanGlobalState& g, duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
-  uint32_t LiveDocs(irs::TermIterator& it, bool count_all);
+  uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
+                    uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
 
  private:
   bool NextField();
@@ -83,7 +84,8 @@ struct TsDictLocalState : public ScanLocalState {
   const irs::TermReader* _reader = nullptr;
   ColFilterVerify _col_verify;
   std::unique_ptr<irs::detail::LazyBitset> _live;
-  irs::count::TermCounts::ptr _term_counts;
+  irs::count::TermCounts* _term_counts = nullptr;
+  std::vector<irs::count::TermCounts::ptr> _term_counts_cache;
   irs::QueryBuilder::ptr _all_query;
   bool _null_pending = false;
   const FieldState* _field = nullptr;
@@ -109,6 +111,8 @@ struct TsDictLocalState : public ScanLocalState {
   const ScanGlobalState::TsDictCounts* _counts = nullptr;
   const FieldState* _emit_fields = nullptr;
   uint32_t _seg_idx = 0;
+  uint32_t _bound_seg = std::numeric_limits<uint32_t>::max();
+  bool _segment_live = false;
   uint32_t _term_ordinal = 0;
   bool _from_counts = false;
 };
@@ -265,9 +269,11 @@ struct TsDictEmitter {
 void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                                     ScanGlobalState& g) {
   _seg = &seg;
-  _term_counts.reset();
+  _term_counts = nullptr;
+  _term_counts_cache.clear();
   _live.reset();
   _all_query = {};
+  _segment_live = false;
   Classify(g, seg_idx);
   if (seg_cls.segment_dead) {
     _next_field = nullptr;
@@ -286,6 +292,7 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
     }
     count_mode = CountMode::Where;
   }
+  _segment_live = true;
   if (!_col_verify.Empty() && count_mode == CountMode::Meta) {
     count_mode = CountMode::Masked;
   }
@@ -295,14 +302,22 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
 }
 
 void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
-  _term_counts = {};
+  _term_counts = nullptr;
   if (count_mode == CountMode::Meta || !_col_verify.Empty()) {
     return;
   }
   if (irs::detail::DocOf(reader) == nullptr) {
     return;
   }
-  _term_counts = irs::count::MakeTermCounts(Live(), reader, reader.size());
+  const auto field = FieldIndex();
+  if (_term_counts_cache.size() <= field) {
+    _term_counts_cache.resize(fields.size());
+  }
+  auto& slot = _term_counts_cache[field];
+  if (!slot) {
+    slot = irs::count::MakeTermCounts(Live(), reader, reader.size());
+  }
+  _term_counts = slot.get();
 }
 
 irs::detail::LazyBitset& TsDictLocalState::Live() {
@@ -375,7 +390,8 @@ uint32_t TsDictLocalState::NullDocs(const irs::TermReader& reader,
       return count_all ? static_cast<uint32_t>(
                            counts->Count(term, _range.begin, _range.end))
                        : static_cast<uint32_t>(
-                           counts->Any(term, _range.begin, _range.end));
+                           counts->Any(irs::count::TermCounts::kNoOrdinal, term,
+                                       _range.begin, _range.end));
     }
   }
   return WalkLive(reader, *it, count_all);
@@ -398,9 +414,15 @@ ScanGlobalState::TsDictCounts* TsDictLocalState::CountsFor(
 void TsDictLocalState::StartUnit(ScanGlobalState& g) {
   _g = &g;
   _range = g.RangeOf(unit);
+  const bool resume = _bound_seg == unit.seg;
   _seg_idx = unit.seg;
   emitting = false;
-  StartSegment((*g.reader)[unit.seg], unit.seg, g);
+  if (resume) {
+    _next_field = _segment_live && !fields.empty() ? fields.data() : nullptr;
+  } else {
+    StartSegment((*g.reader)[unit.seg], unit.seg, g);
+    _bound_seg = unit.seg;
+  }
   _emit_fields = _next_field;
   counting = !unit.whole && count_mode != CountMode::Meta &&
              _emit_fields != nullptr && _seg_idx < g.ts_dict_counts.size() &&
@@ -411,6 +433,9 @@ void TsDictLocalState::StartUnit(ScanGlobalState& g) {
 }
 
 void TsDictLocalState::CountUnit(ScanGlobalState& g) {
+  if (_live) {
+    _live->SkipTo(_range.begin);
+  }
   while (NextField()) {
     auto* slot = CountsFor(g);
     if (slot == nullptr || !_cursor) {
@@ -420,15 +445,22 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
       _field->count_slot != duckdb::DConstants::INVALID_INDEX;
     uint32_t ordinal = 0;
     while (_cursor->next()) {
-      const auto live = LiveDocs(*_cursor, count_all);
-      if (live != 0 && ordinal < slot->terms) {
-        slot->Term(ordinal).fetch_add(live, std::memory_order_relaxed);
+      const bool known =
+        !count_all && ordinal < slot->terms &&
+        slot->Term(ordinal).load(std::memory_order_relaxed) != 0;
+      if (!known) {
+        const auto live = LiveDocs(*_cursor, count_all, ordinal);
+        if (live != 0 && ordinal < slot->terms) {
+          slot->Term(ordinal).fetch_add(live, std::memory_order_relaxed);
+        }
       }
       ++ordinal;
     }
     _cursor.reset();
     if (_null_pending) {
-      const auto* nulls = _seg->field(_field->null_field_id);
+      const bool known =
+        !count_all && slot->Nulls().load(std::memory_order_relaxed) != 0;
+      const auto* nulls = known ? nullptr : _seg->field(_field->null_field_id);
       if (nulls != nullptr) {
         slot->Nulls().fetch_add(NullDocs(*nulls, count_all),
                                 std::memory_order_relaxed);
@@ -445,7 +477,8 @@ void TsDictLocalState::BeginEmit(ScanGlobalState& g) {
   counting = false;
   _range = {};
   _live.reset();
-  _term_counts.reset();
+  _term_counts = nullptr;
+  _term_counts_cache.clear();
   _cursor.reset();
   _field = nullptr;
   _next_field = _emit_fields;
@@ -465,13 +498,14 @@ uint32_t TsDictLocalState::TermCount(irs::TermIterator& it, bool count_all) {
     _counts->Term(ordinal).load(std::memory_order_relaxed));
 }
 
-uint32_t TsDictLocalState::LiveDocs(irs::TermIterator& it, bool count_all) {
+uint32_t TsDictLocalState::LiveDocs(irs::TermIterator& it, bool count_all,
+                                    uint32_t ordinal) {
   if (_term_counts) {
     const auto& term = it.cookie();
     return count_all ? static_cast<uint32_t>(
                          _term_counts->Count(term, _range.begin, _range.end))
-                     : static_cast<uint32_t>(
-                         _term_counts->Any(term, _range.begin, _range.end));
+                     : static_cast<uint32_t>(_term_counts->Any(
+                         ordinal, term, _range.begin, _range.end));
   }
   SDB_ASSERT(_reader != nullptr);
   return WalkLive(*_reader, it, count_all);

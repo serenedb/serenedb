@@ -59,11 +59,13 @@ class HitBatcher {
                     std::span<const ColFilterSpec> filters = {});
 
   bool ResumeSegment(uint32_t seg_idx) noexcept {
-    if (_seg_idx != seg_idx || !_ctx || !Empty()) {
+    if (_seg_idx != seg_idx || !_ctx || Ready()) {
       return false;
     }
-    _group = 0;
-    _batch = 0;
+    if (Empty()) {
+      _group = 0;
+      _batch = 0;
+    }
     _group_rg_end = 0;
     return true;
   }
@@ -91,6 +93,8 @@ class HitBatcher {
   uint32_t Segment() const noexcept { return _seg_idx; }
 
   bool Ready() const noexcept { return _ready != Pending::None; }
+  duckdb::idx_t Len() const noexcept { return _len; }
+
   bool Empty() const noexcept {
     return _ready == Pending::None && _len == 0 && !_compact;
   }
@@ -159,7 +163,7 @@ class HitBatcher {
   }
   // Row-group window end for a group starting at `row`: the segment's row-group
   // boundary (if any) capped to a single output vector.
-  uint64_t RgEndFor(uint64_t row) const noexcept;
+  uint64_t RgEndFor(uint64_t row) noexcept;
 
   std::span<const ColumnstoreProjection> _projections;
   const irs::field_id _pk_field_id;
@@ -182,6 +186,8 @@ class HitBatcher {
   duckdb::idx_t _group = 0;
   duckdb::idx_t _batch = 0;
   uint64_t _group_rg_end = 0;
+  uint64_t _rg_cache_begin = 1;
+  uint64_t _rg_cache_end = 0;
 
   // Codec scans may zero-copy the output (e.g. FixedSizeScan SetData's the
   // vector straight at the pinned block), so every batch goes through

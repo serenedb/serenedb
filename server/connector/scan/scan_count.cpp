@@ -40,16 +40,22 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
       }
       continue;
     }
-    const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
-    auto* table = BeginVerify(l.col_verify, sub, g, l);
     const auto range = g.RangeOf(unit);
     const auto stop = std::min<irs::doc_id_t>(
       range.end,
       irs::doc_limits::min() + static_cast<irs::doc_id_t>(sub.docs_count()));
-    auto plan = irs::count::MakeRoot(
-      seg_query, {.table = table, .span = stop - range.begin});
-    EnsurePlanned(plan != nullptr);
-    l.local_count += plan->Run(range.begin, range.end);
+    if (!l.root || l.root_seg != unit.seg || range.begin < l.root_at) {
+      const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+      auto* table = BeginVerify(l.col_verify, sub, g, l);
+      auto plan = irs::count::MakeRoot(
+        seg_query, {.table = table, .span = stop - range.begin});
+      EnsurePlanned(plan != nullptr);
+      l.root = std::move(plan);
+      l.root_seg = unit.seg;
+    }
+    l.root_at = range.end;
+    l.local_count += irs::utils::downCast<irs::count::Root>(l.root.get())
+                       ->Run(range.begin, range.end);
     if (FinishUnit(g, l)) {
       FinishSegments(g, 1);
     }

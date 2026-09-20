@@ -34,7 +34,7 @@
 namespace sdb::connector {
 namespace {
 
-void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
+bool StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
@@ -49,9 +49,13 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const bool resume =
     l.hit_batcher->ResumeSegment(seg_idx) && l.root && first_row >= l.stop_row;
   if (!resume) {
+    if (!l.hit_batcher->Empty()) {
+      return false;
+    }
     l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                                 &l.filter_states, l.seg_cls.active);
   }
+  l.defer_flush = !l.unit.whole;
   const auto seg_rows = static_cast<uint64_t>(seg.docs_count());
   l.next_row = first_row;
   l.stop_row = l.unit.whole ? seg_rows
@@ -59,7 +63,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
                                 uint64_t{l.unit.rg_end} * g.rg_size, seg_rows);
   l.root_exhausted = false;
   if (resume) {
-    return;
+    return true;
   }
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
   l.scored = g.ScanScore();
@@ -76,6 +80,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   }
+  return true;
 }
 
 void Exhaust(StreamLocalState& l) { l.root_exhausted = true; }
@@ -84,7 +89,7 @@ void PushHits(StreamLocalState& l) {
   auto& batcher = *l.hit_batcher;
   for (;;) {
     if (l.root_exhausted) {
-      if (!batcher.Ready() && !batcher.Empty()) {
+      if (!l.defer_flush && !batcher.Ready() && !batcher.Empty()) {
         batcher.Finalize();
       }
       return;
@@ -167,14 +172,33 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         output.Reset();
         continue;
       }
+      if (l.needs_start) {
+        l.needs_start = false;
+        StartUnit(g, l);
+        continue;
+      }
       if (FinishUnit(g, l)) {
         FinishSegments(g, 1);
       }
     }
     if (!NextLiveUnit(g, l)) {
+      if (l.hit_batcher && !l.hit_batcher->Empty()) {
+        l.defer_flush = false;
+        const auto added = EmitChunk(ctx, g, l, output);
+        if (added != 0) {
+          const auto kept = FinalizeBatch(ctx, g, l, output, added);
+          if (kept != 0) {
+            output.SetChildCardinality(kept);
+            return;
+          }
+        }
+      }
       break;
     }
-    StartUnit(g, l);
+    if (!StartUnit(g, l)) {
+      l.defer_flush = false;
+      l.needs_start = true;
+    }
   }
   output.SetChildCardinality(0);
 }

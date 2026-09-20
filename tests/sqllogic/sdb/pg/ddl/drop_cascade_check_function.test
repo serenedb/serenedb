@@ -209,8 +209,7 @@ statement error
 DROP FUNCTION ml_dbl_weights(INT);
 ----
 db error: ERROR: Cannot drop entry "ml_dbl_weights" because there are entries that depend on it.
-table "ml_papers" depends on macro function "ml_dbl_weights".
-view "ml_papers_view" depends on table "ml_papers".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

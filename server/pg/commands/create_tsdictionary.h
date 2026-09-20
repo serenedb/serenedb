@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/named_parameter_map.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
 #include <vector>
@@ -30,17 +31,18 @@
 
 namespace sdb::pg {
 
-void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
-                     std::string_view schema, bool if_not_exists,
+void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
+                     bool if_not_exists,
                      const duckdb::named_parameter_map_t& features,
                      std::string_view spec);
 
 using TokenizerConfigs =
   std::vector<std::unique_ptr<irs::analysis::TokenizerConfig>>;
 
-irs::analysis::TokenizerConfig BuildStage(
-  duckdb::ClientContext& context, ObjectId db_id,
-  std::string_view current_schema, std::string_view type, Options options,
-  TokenizerConfigs children, std::string_view operation);
+irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
+                                          std::string_view type,
+                                          Options options,
+                                          TokenizerConfigs children,
+                                          std::string_view operation);
 
 }  // namespace sdb::pg

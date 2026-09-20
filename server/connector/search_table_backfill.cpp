@@ -45,11 +45,11 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "search/search_db_wal.h"
@@ -92,7 +92,7 @@ void InitRowSource(duckdb::ClientContext& context,
   source.rowid_slot = target.column_ids.size();
   source.projections.push_back(
     irs::ColumnstoreProjection{.output_slot = source.rowid_slot,
-                               .column_id = catalog::term_dict::kPKFieldId});
+                               .column_id = term_dict::kPKFieldId});
   types.push_back(duckdb::LogicalType::BIGINT);
   source.chunk.Initialize(duckdb::Allocator::Get(context), types);
 }
@@ -169,8 +169,7 @@ void StageDeletes(irs::IndexWriter::Transaction& trx,
   std::string key;
   for (const auto rowid : rowids) {
     key.clear();
-    catalog::duckdb_primary_key::AppendGenerated(key,
-                                                 static_cast<uint64_t>(rowid));
+    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
     remover.DeleteRowImpl(key);
   }
   remover.FinishImpl();
@@ -228,7 +227,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       if (context.IsInterrupted()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
                         ERR_MSG("canceled while rebuilding search table ",
-                                target.table_id.id()));
+                                target.table_id));
       }
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
@@ -268,7 +267,8 @@ void RebuildGroup(duckdb::ClientContext& context,
     // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
     // they must not share one with a concurrent writer.
     slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
-    slice->sink = MakeSearchTableInsertSink(slice->trx, shard, context);
+    slice->sink =
+      MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);
     InitRowSource(context, target, slice->source);
     slices.push_back(std::move(slice));
   }
@@ -332,7 +332,7 @@ void RebuildGroup(duckdb::ClientContext& context,
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
               "table ",
-              target.table_id.id()));
+              target.table_id));
   }
   Publish(shard);
 }
@@ -350,7 +350,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("an index build is already running on search "
                             "table ",
-                            target.table_id.id()));
+                            target.table_id));
   }
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
@@ -377,7 +377,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
                       ERR_MSG("canceled while waiting for compaction on "
                               "search table ",
-                              target.table_id.id()));
+                              target.table_id));
     }
     absl::SleepFor(kArmRetry);
   }

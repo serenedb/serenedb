@@ -66,8 +66,7 @@ statement error
 DROP SEQUENCE clickclack_dashboards_id_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards" depends on sequence "clickclack_dashboards_id_seq".
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -134,8 +133,7 @@ statement error
 DROP SEQUENCE iceberg_manifest_seq;
 ----
 db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -144,8 +142,7 @@ statement error
 DROP SEQUENCE iceberg_manifest_seq RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

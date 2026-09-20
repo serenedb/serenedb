@@ -23,7 +23,7 @@ control substitution on
 
 # Crash before the catalog log is flushed: neither half survives.
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 statement error connection closed
 CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
@@ -49,18 +49,18 @@ INSERT INTO cw VALUES (1, 'one'), (2, 'two');
 # error, and the server is still there to serve the next statement.
 connection after_create
 statement ok
-SET sdb_faults = 'catalog_append_fails';
+SET sdb_faults = 'fail_before_commit';
 
 connection after_create
 statement error
 CREATE TABLE cw_refused (a INTEGER);
 ----
-db error: ERROR: Failed to commit: catalog log: could not append the transaction
+db error: ERROR: Failed to commit: commit refused by fault point fail_before_commit
 
 
 connection after_create
 statement ok
-SET sdb_faults = '-catalog_append_fails';
+SET sdb_faults = '-fail_before_commit';
 
 connection after_create
 query
@@ -82,7 +82,7 @@ count
 # and the table is there, complete and usable.
 connection after_create
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_create
 statement error connection closed
@@ -124,7 +124,7 @@ INSERT INTO cw_wide VALUES (1, 'x', 'n1'), (2, 'yy', 'n2');
 
 connection after_gap_create
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_gap_create
 statement error connection closed
@@ -155,7 +155,7 @@ count
 # narrower, together.
 connection after_gap_add
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_gap_add
 statement error connection closed
@@ -192,7 +192,7 @@ INSERT INTO cw_using VALUES (1, 'xx'), (2, 'yyy');
 
 connection after_gap_drop_col
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_gap_drop_col
 statement error connection closed
@@ -233,7 +233,7 @@ DROP TABLE cw_wide;
 # reconcile.
 connection after_gap_using
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection after_gap_using
 statement error connection closed
@@ -313,15 +313,16 @@ DROP TABLE aw;
 # follows still has to land.
 connection after_failed_alter
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-connection after_failed_alter
-statement ok
 CREATE TABLE cw_pin (a INTEGER PRIMARY KEY, b TEXT);
 
 connection after_failed_alter
 statement ok
 INSERT INTO cw_pin VALUES (1, 'one'), (2, 'two');
+
+connection after_failed_alter
+statement ok
+CHECKPOINT;
+
 
 connection after_failed_alter
 statement ok
@@ -352,11 +353,12 @@ CREATE TABLE cw_gone (a INTEGER);
 
 connection after_compact_create
 statement ok
-SET sdb_faults = 'compact_inside_drop';
+DROP TABLE cw_gone;
 
 connection after_compact_create
 statement ok
-DROP TABLE cw_gone;
+CHECKPOINT;
+
 
 connection after_compact_create
 statement ok

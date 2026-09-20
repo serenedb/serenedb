@@ -1,0 +1,135 @@
+control substitution on
+
+# A search table with no PRIMARY KEY numbers its rows from a sequence it owns.
+# The sequence takes the first free <table>_pk_seq name, so a sequence a user
+# created under that name first stays theirs, and the table reaches its own
+# through the name it recorded at creation, not through the naming convention.
+
+statement ok
+CREATE SEQUENCE st_pk_seq;
+
+
+statement ok
+CREATE TABLE st(a INTEGER, txt TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO st VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st;
+
+
+query
+SELECT count(*) FROM st;
+----
+count
+2
+
+
+# The user's sequence never moved: the inserts drew from the table's own.
+query
+SELECT nextval('st_pk_seq');
+----
+nextval
+1
+
+
+# The table's sequence took the next free name and stays out of pg_class.
+query
+SELECT sequence_name FROM duckdb_sequences()
+WHERE database_name = current_database() AND sequence_name LIKE 'st_pk_seq%'
+ORDER BY sequence_name;
+----
+sequence_name
+st_pk_seq
+st_pk_seq1
+
+
+query
+SELECT relname FROM pg_class
+WHERE relkind = 'S' AND relname LIKE 'st_pk_seq%' ORDER BY relname;
+----
+relname
+st_pk_seq
+
+
+# The table owns it, so it cannot be dropped from under the table.
+statement error
+DROP SEQUENCE st_pk_seq1;
+----
+db error: ERROR: Cannot drop entry "st_pk_seq1" because there are entries that depend on it.
+table "st" depends on sequence "st_pk_seq1".
+Use DROP...CASCADE to drop all dependents.
+
+
+# A rewrite of the definition keeps the recorded name.
+statement ok
+COMMENT ON TABLE st IS 'search';
+
+
+statement ok
+INSERT INTO st VALUES (3, 'three');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The table came back bound to the same sequence and keeps numbering from it.
+connection after_crash
+statement ok
+INSERT INTO st VALUES (4, 'four');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) st;
+
+
+connection after_crash
+query
+SELECT count(*) FROM st;
+----
+count
+4
+
+
+connection after_crash
+query
+SELECT nextval('st_pk_seq');
+----
+nextval
+2
+
+
+# Dropping the table takes its own sequence with it and leaves the user's.
+connection after_crash
+statement ok
+DROP TABLE st;
+
+
+connection after_crash
+query
+SELECT sequence_name FROM duckdb_sequences()
+WHERE database_name = current_database() AND sequence_name LIKE 'st_pk_seq%';
+----
+sequence_name
+st_pk_seq
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE st_pk_seq;

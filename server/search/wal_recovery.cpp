@@ -20,207 +20,119 @@
 
 #include "search/wal_recovery.h"
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <chrono>
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/execution/index/bound_index.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/parallel/task_executor.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <iresearch/index/index_writer.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <limits>
 #include <memory>
-#include <ranges>
-#include <string>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/log/store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
 
 namespace sdb::search {
-namespace {
-
-// Collect the injected inverted indexes of one store table. The indexes were
-// injected bound when the store DataTable came alive during attach, so this
-// boot's WAL replay streamed the post-checkpoint delta straight into each
-// index's replay session; FinishReplay commits it into the iresearch storage.
-void CollectStoreTableReplays(duckdb::ClientContext& context,
-                              ObjectId database_id, ObjectId table_id,
-                              std::vector<duckdb::BoundIndex*>& out) {
-  auto& entry =
-    catalog::GetStoreTableEntry(context, database_id, table_id,
-                                duckdb::OnEntryNotFound::THROW_EXCEPTION)
-      ->Cast<duckdb::DuckTableEntry>();
-  for (auto& index :
-       entry.GetStorage().GetDataTableInfo()->GetIndexes().Indexes()) {
-    if (index.IsBound() &&
-        index.GetIndexType() == connector::InvertedStoreIndex::kTypeName) {
-      out.push_back(&index.Cast<duckdb::BoundIndex>());
-    }
-  }
-}
-
-struct FinishReplayTask final : duckdb::BaseExecutorTask {
-  FinishReplayTask(duckdb::TaskExecutor& executor_in,
-                   duckdb::BoundIndex& index_in,
-                   std::shared_ptr<InvertedIndexStorage> storage_in)
-    : BaseExecutorTask{executor_in},
-      index{index_in},
-      storage{std::move(storage_in)} {}
-
-  // Refresh right after this index's own replay rather than in a second stage:
-  // a refresh depends only on the index it belongs to, so a global barrier
-  // between the stages would make every index wait out the largest delta before
-  // any of them becomes searchable.
-  void ExecuteTask() override {
-    index.FinishReplay();
-    if (storage) {
-      storage->Refresh();
-    }
-  }
-
-  std::string TaskType() const override { return "InvertedFinishReplay"; }
-
-  duckdb::BoundIndex& index;
-  std::shared_ptr<InvertedIndexStorage> storage;
-};
-
-}  // namespace
 
 void InitInvertedIndexes() {
-  auto begin = std::chrono::steady_clock::now();
+  const auto begin = std::chrono::steady_clock::now();
+  std::vector<std::shared_ptr<InvertedIndexStorage>> recovering;
+  std::vector<std::shared_ptr<InvertedIndexStorage>> statics;
+  std::vector<duckdb::DuckTableEntry*> tables;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen_tables;
 
-  // Recovery is delta-based: the indexes were injected bound before any of
-  // their table's WAL operations replayed, so replay fed exactly the delta
-  // since the last checkpoint. No table rebuild -- recovery cost is O(WAL),
-  // not O(table).
-  std::vector<std::pair<ObjectId, ObjectId>> tables_to_finish;
-  irs::containers::FlatHashSet<ObjectId> seen_tables;
-  std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
-  std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
+  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *conn->context;
+  context.RunFunctionInTransaction([&] {
+    for (const auto& database :
+         duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+           .GetDatabases()) {
+      auto& catalog = database->GetCatalog();
+      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+        continue;
+      }
+      const auto transaction = catalog.GetCatalogTransaction(context);
+      catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
+        [&](duckdb::SchemaCatalogEntry& schema) {
+          schema.Scan(
+            duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+              auto* index = dynamic_cast<catalog::InvertedIndexEntry*>(&entry);
+              if (!index) {
+                return;
+              }
+              const auto& storage = index->Storage();
+              if (!storage) {
+                return;
+              }
+              TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
+              storage->StartTasks();
+              auto relation =
+                schema.GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
+                                index->GetTableName());
+              const bool table_backed =
+                relation &&
+                relation->type == duckdb::CatalogType::TABLE_ENTRY &&
+                relation->Cast<duckdb::TableCatalogEntry>().IsDuckTable();
+              if (!table_backed) {
+                statics.push_back(storage);
+                return;
+              }
+              storage->StartRecovery();
+              recovering.push_back(storage);
+              if (seen_tables.insert(relation->oid).second) {
+                tables.push_back(&relation->Cast<duckdb::DuckTableEntry>());
+              }
+            });
+        });
+    }
 
-  std::vector<ObjectId> database_ids;
-  catalog::VisitDatabases(nullptr,
-                          [&](const catalog::SereneDBDatabaseEntry& db) {
-                            database_ids.push_back(catalog::IdOf(db));
-                          });
-  for (const auto db_id : database_ids) {
-    struct RecoveringIndex {
-      std::shared_ptr<search::InvertedIndexStorage> storage;
-      ObjectId relation_id;
+    absl::Cleanup finish = [&] {
+      for (auto& storage : statics) {
+        storage->FinishCreation();
+      }
+      for (auto& storage : recovering) {
+        storage->FinishCreation();
+      }
     };
-    std::vector<RecoveringIndex> indexes;
-    for (const auto* index : catalog::DatabaseInvertedIndexes(nullptr, db_id)) {
-      auto inv_storage = index->GetInvertedData();
-      if (!inv_storage) {
-        // The only storage-less inverted index is one on a Search table: its
-        // terms live in the table's own store, so there is no separate delta
-        // to bind or recover here.
-        SDB_ASSERT([&] {
-          const auto* relation = catalog::FindIn<catalog::SereneDBTableEntry>(
-            nullptr, db_id, index->GetRelationId());
-          return relation != nullptr && relation->IsSearchTable();
-        }());
-        continue;
-      }
-      indexes.push_back({std::move(inv_storage), index->GetRelationId()});
-    }
-    for (auto& [inv_storage, relation_id] : indexes) {
-      SDB_ASSERT(inv_storage);
-      // Keep ordinals monotone across restarts.
-      TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
-      inv_storage->StartTasks();
 
-      // View-backed indexes are static -- the view body doesn't change at
-      // runtime, so the persisted index is already current. The relation is
-      // asked of its entry rather than of the snapshot: a view has never been
-      // in one, so a snapshot lookup can only ever answer for a table, and a
-      // miss would silently demote a live index to static.
-      const auto* relation = catalog::FindIn<catalog::SereneDBTableEntry>(
-        nullptr, db_id, relation_id);
-      if (relation == nullptr) {
-        static_storages.push_back(std::move(inv_storage));
-        continue;
-      }
-
-      inv_storage->StartRecovery();
-      recovering_storages.push_back(std::move(inv_storage));
-      const auto table_id = catalog::IdOf(*relation);
-      if (seen_tables.insert(table_id).second) {
-        tables_to_finish.emplace_back(db_id, table_id);
-      }
+    auto& search_path = *duckdb::ClientData::Get(context).catalog_search_path;
+    for (auto* table : tables) {
+      search_path.Set(duckdb::CatalogSearchEntry{table->catalog.GetName(),
+                                                 table->ParentSchemaName()},
+                      duckdb::CatalogSetPathType::SET_SCHEMA);
+      table->GetStorage().GetDataTableInfo()->BindIndexes(
+        context, connector::InvertedStoreIndex::kTypeName);
     }
-  }
-
-  irs::Finally finish_recovering = [&] noexcept {
-    for (auto& storage : static_storages) {
-      storage->FinishCreation();
+    search_path.Reset();
+    for (auto& storage : recovering) {
+      storage->Refresh();
     }
-    for (auto& storage : recovering_storages) {
-      storage->FinishCreation();
-    }
-  };
+  });
 
-  if (tables_to_finish.empty()) {
+  if (tables.empty()) {
     return;
   }
-
-  // One scratch connection resolves the store entries; FinishReplay commits
-  // each index's streamed delta into the storage. Entry resolution goes
-  // through the connection's transaction, so an explicit one must be active.
-  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
-  conn->BeginTransaction();
-  irs::Finally end_txn = [&] noexcept {
-    try {
-      conn->Commit();
-    } catch (...) {  // NOLINT(bugprone-empty-catch)
-    }
-  };
-  std::vector<duckdb::BoundIndex*> to_finish;
-  for (const auto [database_id, table_id] : tables_to_finish) {
-    CollectStoreTableReplays(*conn->context, database_id, table_id, to_finish);
-  }
-  // The replay commits each delta into the storage's writer, but the query
-  // snapshot only advances on a refresh -- force one per index so recovered
-  // rows are searchable the instant the server accepts queries.
-  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<InvertedIndexStorage>>
-    storage_by_index;
-  storage_by_index.reserve(recovering_storages.size());
-  for (const auto& storage : recovering_storages) {
-    storage_by_index.emplace(storage->GetId(), storage);
-  }
-  duckdb::TaskExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(*conn->context)};
-  for (auto* index : to_finish) {
-    const auto index_id =
-      index->Cast<connector::InvertedStoreIndex>().IndexId();
-    auto it = storage_by_index.find(index_id);
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, *index, it == storage_by_index.end() ? nullptr : it->second));
-  }
-  executor.WorkOnTasks();
-
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO(SEARCH, "search index recovery: replayed ", tables_to_finish.size(),
-           " table(s), ", recovering_storages.size(), " inverted index(es) in ",
+  SDB_INFO(SEARCH, "search index recovery: bound ", tables.size(),
+           " table(s), ", recovering.size(), " inverted index(es) in ",
            absl::FormatDuration(duration));
 }
 

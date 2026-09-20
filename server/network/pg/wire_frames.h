@@ -37,9 +37,10 @@
 
 namespace duckdb {
 
+class ClientContext;
 class PreparedStatement;
-}
 
+}  // namespace duckdb
 namespace sdb::network::pg {
 
 inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
@@ -107,7 +108,7 @@ void WriteCopyBinaryFooter(message::Buffer& out);
 // CopyDone ('c'): ends the CopyData stream after the trailer.
 void WriteCopyDone(message::Buffer& out);
 
-void WriteRowDescription(message::Buffer& out,
+void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
                          std::span<const duckdb::LogicalType> types,
                          std::span<const duckdb::Identifier> names,
                          std::span<const sdb::pg::VarFormat> formats);
@@ -147,7 +148,7 @@ void WriteNoticeResponse(message::Buffer& out,
 irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
 
 // Funnels any exception caught at the command-loop boundary into pg
-// SqlErrorData: a serenedb SqlException keeps its sqlstate/detail/hint, a
+// SqlErrorData: a serenedb irs::SqlException keeps its sqlstate/detail/hint, a
 // DuckDB exception maps via DuckErrorToSqlData, anything else is XX000
 // internal.
 irs::pg::SqlErrorData ToSqlError(const std::exception& exception);

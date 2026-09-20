@@ -22,7 +22,6 @@
 
 #include <string_view>
 
-#include "catalog/identifiers/object_id.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/options_parser.h"
 
@@ -34,8 +33,7 @@ class ClientContext;
 namespace sdb::pg {
 
 irs::analysis::TokenizerConfig CompileTSDictionarySpec(
-  duckdb::ClientContext& context, ObjectId db_id,
-  std::string_view current_schema, std::string_view spec);
+  duckdb::ClientContext& context, std::string_view spec);
 
 std::string FormatTSDictionaryHelp();
 

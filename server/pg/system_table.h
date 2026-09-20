@@ -27,6 +27,10 @@
 
 #include <algorithm>
 #include <array>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -37,38 +41,36 @@
 #include <span>
 #include <type_traits>
 
-#include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/role.h"
-#include "catalog/virtual_table.h"
+#include "catalog/entry/role.h"
 #include "connector/pg_logical_types.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_types.h"
+#include "pg/virtual_table.h"
 
 namespace sdb::pg {
 
 struct PrivChar {
-  catalog::AclMode mode;
+  duckdb::AclMode mode;
   char chr;
 };
 inline constexpr std::array kPrivChars{
-  PrivChar{catalog::AclMode::Insert, 'a'},
-  PrivChar{catalog::AclMode::Select, 'r'},
-  PrivChar{catalog::AclMode::Update, 'w'},
-  PrivChar{catalog::AclMode::Delete, 'd'},
-  PrivChar{catalog::AclMode::Truncate, 'D'},
-  PrivChar{catalog::AclMode::References, 'x'},
-  PrivChar{catalog::AclMode::Trigger, 't'},
-  PrivChar{catalog::AclMode::Maintain, 'm'},
-  PrivChar{catalog::AclMode::Execute, 'X'},
-  PrivChar{catalog::AclMode::Usage, 'U'},
-  PrivChar{catalog::AclMode::Create, 'C'},
-  PrivChar{catalog::AclMode::CreateTemp, 'T'},
-  PrivChar{catalog::AclMode::Connect, 'c'},
-  PrivChar{catalog::AclMode::Set, 's'},
-  PrivChar{catalog::AclMode::AlterSystem, 'A'},
+  PrivChar{duckdb::AclMode::Insert, 'a'},
+  PrivChar{duckdb::AclMode::Select, 'r'},
+  PrivChar{duckdb::AclMode::Update, 'w'},
+  PrivChar{duckdb::AclMode::Delete, 'd'},
+  PrivChar{duckdb::AclMode::Truncate, 'D'},
+  PrivChar{duckdb::AclMode::References, 'x'},
+  PrivChar{duckdb::AclMode::Trigger, 't'},
+  PrivChar{duckdb::AclMode::Maintain, 'm'},
+  PrivChar{duckdb::AclMode::Execute, 'X'},
+  PrivChar{duckdb::AclMode::Usage, 'U'},
+  PrivChar{duckdb::AclMode::Create, 'C'},
+  PrivChar{duckdb::AclMode::CreateTemp, 'T'},
+  PrivChar{duckdb::AclMode::Connect, 'c'},
+  PrivChar{duckdb::AclMode::Set, 's'},
+  PrivChar{duckdb::AclMode::AlterSystem, 'A'},
 };
 
 inline void PutId(std::string& out, std::string_view name) {
@@ -84,24 +86,49 @@ inline void PutId(std::string& out, std::string_view name) {
 }
 
 inline std::string AclToPgString(
-  const catalog::AclItem& item,
-  absl::FunctionRef<std::string_view(ObjectId)> name_of) {
+  const duckdb::AclItem& item,
+  absl::FunctionRef<std::string_view(duckdb::idx_t)> name_of) {
   std::string out;
-  if (item.grantee != catalog::kPublicGrantee) {
-    PutId(out, name_of(ObjectId{item.grantee}));
+  if (item.grantee != kPublicGrantee) {
+    PutId(out, name_of(item.grantee));
   }
   out.push_back('=');
   for (const auto& p : kPrivChars) {
-    if ((item.privs & p.mode) != catalog::AclMode::NoRights) {
+    if ((item.privs & p.mode) != duckdb::AclMode::NoRights) {
       out.push_back(p.chr);
-      if ((item.grant_option & p.mode) != catalog::AclMode::NoRights) {
+      if ((item.grant_option & p.mode) != duckdb::AclMode::NoRights) {
         out.push_back('*');
       }
     }
   }
   out.push_back('/');
-  PutId(out, name_of(ObjectId{item.grantor}));
+  PutId(out, name_of(item.grantor));
   return out;
+}
+
+inline void VisitSchemas(
+  duckdb::ClientContext& context, duckdb::Catalog& database,
+  absl::FunctionRef<void(duckdb::SchemaCatalogEntry&)> visitor) {
+  for (auto& schema : database.GetSchemas(context)) {
+    if (!schema.get().internal) {
+      visitor(schema.get());
+    }
+  }
+}
+
+// Every entry of one type in the database being projected. duckdb keeps
+// tables and views in a single set, so a scan of either type yields both and
+// the entry's own type is what separates them.
+template<typename T>
+void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
+                  absl::FunctionRef<void(T&)> visitor) {
+  VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
+    schema_ref.Scan(context, T::Type, [&](duckdb::CatalogEntry& entry) {
+      if (entry.type == T::Type) {
+        visitor(entry.template Cast<T>());
+      }
+    });
+  });
 }
 
 template<typename T>
@@ -186,15 +213,15 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
       auto& child = duckdb::ListVector::GetEntry(vec);
       for (duckdb::idx_t i = 0; i < list_size; i++) {
         std::string oid_fallback;
-        auto text =
-          AclToPgString(field.items[i], [&](ObjectId id) -> std::string_view {
-            if (id == catalog::kPublicGrantee) {
+        auto text = AclToPgString(
+          field.items[i], [&](duckdb::idx_t id) -> std::string_view {
+            if (id == kPublicGrantee) {
               return {};
             }
             if (auto name = roles.NameOf(id); !name.empty()) {
               return name;
             }
-            oid_fallback = std::to_string(id.id());
+            oid_fallback = std::to_string(id);
             return oid_fallback;
           });
         duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
@@ -298,56 +325,42 @@ void WriteData(std::vector<duckdb::Vector>& columns, const T& value,
 }
 
 template<typename T>
-class SystemTable;
-
-template<typename T>
-class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
+class SystemTableSnapshot final {
  public:
-  explicit SystemTableSnapshot(const catalog::VirtualTable& table,
-                               ObjectId database_id, const Config& config)
-    : VirtualTableSnapshot{table, database_id, table.Id(), table.GetName()},
-      _config{config},
+  SystemTableSnapshot(duckdb::Catalog& database, duckdb::ClientContext& context)
+    : _database{database},
+      _context{context},
       // Once per snapshot, not once per row: resolving it walks the role
       // registry, and rebuilds the whole graph for a session that has created a
       // role itself. Every row of one snapshot answers from the same graph.
-      _roles{auth::RolesOf(&config.GetClientContext())} {}
+      _roles{auth::RolesOf(&context)} {}
 
-  duckdb::LogicalType RowType() const noexcept final {
-    return _table->RowType();
-  }
+  MaterializedData GetTableData() { return {}; }
 
-  const catalog::MaterializedData& GetData(
-    std::vector<std::string> names) final {
-    if (!_data) {
-      _data = GetTableData();
-    }
-    return *_data;
-  }
-
-  catalog::MaterializedData GetTableData() { return {}; }
-
+  duckdb::Catalog& GetDatabase() const noexcept { return _database; }
+  duckdb::idx_t GetDatabaseId() const noexcept { return _database.GetOid(); }
   const auth::RoleGraph& Roles() const noexcept { return *_roles; }
 
  private:
-  const Config& _config;
+  duckdb::Catalog& _database;
+  duckdb::ClientContext& _context;
   const std::shared_ptr<const auth::RoleGraph> _roles;
-  std::optional<catalog::MaterializedData> _data;
 };
 
 template<typename T>
-class SystemTable : public catalog::VirtualTable {
+class SystemTable : public VirtualTable {
  public:
   constexpr SystemTable() {
-    _id = ObjectId{T::kId};
+    _id = T::kId;
     _name = T::kName;
     if constexpr (requires { T::kSuperuserOnly; }) {
       _acl = {};  // no PUBLIC grant -> superuser-only
     }
   }
 
-  std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
-    ObjectId database, const Config& config) const final {
-    return std::make_shared<SystemTableSnapshot<T>>(*this, database, config);
+  MaterializedData Materialize(duckdb::Catalog& database,
+                               duckdb::ClientContext& context) const final {
+    return SystemTableSnapshot<T>{database, context}.GetTableData();
   }
 
   duckdb::LogicalType RowType() const noexcept final {

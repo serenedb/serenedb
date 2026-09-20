@@ -40,7 +40,6 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/lambda_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <duckdb/planner/bound_parameter_map.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -53,6 +52,7 @@
 #include <utility>
 #include <vector>
 
+#include "connector/column_id.h"
 #include "connector/common.h"
 
 namespace sdb::connector {
@@ -80,6 +80,18 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
   return expr;
 }
 
+class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
+ public:
+  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
+                       duckdb::vector<duckdb::LogicalType> t) {
+    bindings = std::move(b);
+    types = std::move(t);
+  }
+  void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
+    VisitExpression(&expr);
+  }
+};
+
 }  // namespace
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
@@ -100,10 +112,48 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
     stream, context, params);
 }
 
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
+  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
+  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
+  duckdb::vector<duckdb::ColumnBinding> bindings;
+  duckdb::vector<duckdb::LogicalType> types;
+  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
+  const auto count = slot_to_col_id.size();
+  bindings.reserve(count);
+  types.reserve(count);
+  for (duckdb::idx_t slot = 0; slot < count; ++slot) {
+    bindings.emplace_back(duckdb::TableIndex(table_id),
+                          duckdb::ProjectionIndex(
+                            static_cast<duckdb::idx_t>(slot_to_col_id[slot])));
+    types.push_back(chunk.data[slot].GetType());
+  }
+  ChunkBindingResolver resolver(std::move(bindings), std::move(types));
+  auto copy = expr.Copy();
+  resolver.Resolve(copy);
+  return copy;
+}
+
+duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
+                                     duckdb::DataChunk& chunk,
+                                     duckdb::idx_t table_id,
+                                     std::span<const ColumnId> slot_to_col_id,
+                                     duckdb::ClientContext& context,
+                                     bool is_geojson) {
+  auto resolved =
+    ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
+  const auto num_rows = chunk.size();
+  duckdb::Vector result(resolved->GetReturnType(), num_rows);
+  duckdb::ExpressionExecutor executor(context, *resolved);
+  executor.ExecuteExpression(chunk, result);
+  if (!is_geojson) {
+    RejectJsonObjectArrayLeaves(result, num_rows);
+  }
+  return result;
+}
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::ColumnId> col_index_to_id,
-  duckdb::ClientContext& context) {
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
   auto copy = FoldConstantCasts(expr.Copy(), context);
   auto visit = [&](auto& self, duckdb::Expression& e) -> void {
     e.SetAlias("");
@@ -114,7 +164,7 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
       SDB_ASSERT(idx < col_index_to_id.size());
       const auto col_id = col_index_to_id[idx];
       cref.BindingMutable() = duckdb::ColumnBinding(
-        duckdb::TableIndex(table_id.id()),
+        duckdb::TableIndex(table_id),
         duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
     } else if (e.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
@@ -127,18 +177,17 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
-std::vector<catalog::ColumnId> CollectDependentColumns(
-  const duckdb::Expression& expr) {
+std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr) {
   constexpr size_t kReserved = 8;
-  std::vector<catalog::ColumnId> out;
+  std::vector<ColumnId> out;
   out.reserve(kReserved);
   auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
     if (node.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-      out.push_back(static_cast<catalog::ColumnId>(
-        node.Cast<duckdb::BoundColumnRefExpression>()
-          .Binding()
-          .column_index.GetIndex()));
+      out.push_back(
+        static_cast<ColumnId>(node.Cast<duckdb::BoundColumnRefExpression>()
+                                .Binding()
+                                .column_index.GetIndex()));
     }
     duckdb::ExpressionIterator::EnumerateChildren(
       node, [&](const duckdb::Expression& child) { self(self, child); });
@@ -184,61 +233,6 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                 "object or array"));
     }
   }
-}
-
-namespace {
-
-// A resolver seeded with the chunk's own bindings, so a persisted expression's
-// catalog-stable column refs become chunk offsets.
-class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
- public:
-  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
-  void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    VisitExpression(&expr);
-  }
-};
-
-}  // namespace
-
-duckdb::Vector EvaluateExprOverChunk(
-  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id,
-  duckdb::ClientContext& context, bool is_geojson) {
-  auto resolved =
-    ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
-  const auto num_rows = chunk.size();
-  duckdb::Vector result(resolved->GetReturnType(), num_rows);
-  duckdb::ExpressionExecutor executor(context, *resolved);
-  executor.ExecuteExpression(chunk, result);
-  if (!is_geojson) {
-    RejectJsonObjectArrayLeaves(result, num_rows);
-  }
-  return result;
-}
-
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id) {
-  duckdb::vector<duckdb::ColumnBinding> bindings;
-  duckdb::vector<duckdb::LogicalType> types;
-  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
-  const auto count = slot_to_col_id.size();
-  bindings.reserve(count);
-  types.reserve(count);
-  for (duckdb::idx_t slot = 0; slot < count; ++slot) {
-    bindings.emplace_back(duckdb::TableIndex(table_id.id()),
-                          duckdb::ProjectionIndex(
-                            static_cast<duckdb::idx_t>(slot_to_col_id[slot])));
-    types.push_back(chunk.data[slot].GetType());
-  }
-  ChunkBindingResolver resolver(std::move(bindings), std::move(types));
-  auto copy = expr.Copy();
-  resolver.Resolve(copy);
-  return copy;
 }
 
 }  // namespace sdb::connector

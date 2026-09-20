@@ -42,6 +42,6 @@ struct PgExtension {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgExtension>::GetTableData();
+MaterializedData SystemTableSnapshot<PgExtension>::GetTableData();
 
 }  // namespace sdb::pg

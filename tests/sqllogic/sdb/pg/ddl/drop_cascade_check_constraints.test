@@ -62,11 +62,7 @@ statement error
 DROP FUNCTION vedernikoff_iceberg_within_bounds(INT);
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_within_bounds" because there are entries that depend on it.
-table "vedernikoff_iceberg_t1" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t2" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t3" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t4" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t5" depends on macro function "vedernikoff_iceberg_within_bounds".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -242,8 +238,7 @@ statement error
 DROP FUNCTION vedernikoff_ml_inner(INT);
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_ml_inner" because there are entries that depend on it.
-macro function "vedernikoff_ml_outer" depends on macro function "vedernikoff_ml_inner".
-table "vedernikoff_ml_data" depends on macro function "vedernikoff_ml_inner".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

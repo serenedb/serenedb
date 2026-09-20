@@ -31,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -41,7 +40,7 @@ struct LocalTableChangesEntry {
   struct Op {
     std::unique_ptr<duckdb::ColumnDataCollection> collection;
     std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
-    std::vector<SearchDbWal::SegmentRef> segments;
+    std::vector<SearchDbWal::PendingChunk> chunks;
     std::vector<std::string> delete_pks;
     bool truncate = false;
     bool clears_shard = false;
@@ -69,22 +68,22 @@ struct LocalTableChangesEntry {
     }
   }
 
-  // Move a bulk statement's already-flushed segments into the current insert
-  // run (does not seal it). Batched: one run lookup per statement, not per
-  // segment.
-  void AppendSegments(std::vector<SearchDbWal::SegmentRef>&& segments) {
-    if (segments.empty()) {
+  // Move a bulk statement's chunk files into the current insert run (does not
+  // seal it). Batched: one statement's chunks resolve the current run once,
+  // instead of re-checking the seal condition per chunk on this hot path.
+  void AppendReference(std::vector<SearchDbWal::PendingChunk>&& chunks) {
+    if (chunks.empty()) {
       return;
     }
     auto& run = CurrentInsertRun();
-    if (run.segments.empty()) {
-      run.segments = std::move(segments);  // fresh run: take the whole vector
+    if (run.chunks.empty()) {
+      run.chunks = std::move(chunks);  // fresh run: take the whole vector
       return;
     }
     // A prior bulk statement already coalesced into this run; append.
-    run.segments.insert(run.segments.end(),
-                        std::make_move_iterator(segments.begin()),
-                        std::make_move_iterator(segments.end()));
+    for (auto& c : chunks) {
+      run.chunks.push_back(std::move(c));
+    }
   }
 
   // Append a DELETE op, sealing the current insert run. (A delete op is
@@ -123,6 +122,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<duckdb::idx_t, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

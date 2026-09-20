@@ -1,0 +1,1319 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "auth/enforce.h"
+
+#include <absl/strings/match.h>
+
+#include <algorithm>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/constraint.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_trigger_info.hpp>
+#include <duckdb/parser/parsed_data/detach_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/logical_operator.hpp>
+#include <duckdb/planner/logical_operator_visitor.hpp>
+#include <duckdb/planner/operator/logical_copy_to_file.hpp>
+#include <duckdb/planner/operator/logical_create.hpp>
+#include <duckdb/planner/operator/logical_create_index.hpp>
+#include <duckdb/planner/operator/logical_create_table.hpp>
+#include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/operator/logical_insert.hpp>
+#include <duckdb/planner/operator/logical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_simple.hpp>
+#include <duckdb/planner/operator/logical_update.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "auth/role_closure.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "connector/duckdb_table_function.h"
+#include "pg/commands/rbac.h"
+#include "pg/connection_context.h"
+#include "pg/pg_types.h"
+
+namespace sdb::auth {
+namespace {
+
+using duckdb::AclMode;
+using duckdb::CatalogType;
+using duckdb::LogicalOperatorType;
+
+std::string KindName(CatalogType type) {
+  switch (type) {
+    case CatalogType::TABLE_ENTRY:
+      return "table";
+    case CatalogType::VIEW_ENTRY:
+      return "view";
+    case CatalogType::SEQUENCE_ENTRY:
+      return "sequence";
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+      return "function";
+    case CatalogType::TYPE_ENTRY:
+      return "type";
+    case CatalogType::SCHEMA_ENTRY:
+      return "schema";
+    case CatalogType::DATABASE_ENTRY:
+      return "database";
+    case CatalogType::INDEX_ENTRY:
+      return "index";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "text search dictionary";
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return "foreign server";
+    default:
+      return "object";
+  }
+}
+
+[[noreturn]] void Denied(const duckdb::CatalogEntry& entry) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for ", KindName(entry.type), " ",
+                          entry.name.GetIdentifierName()));
+}
+
+[[noreturn]] void MustOwn(const duckdb::CatalogEntry& entry) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of ", KindName(entry.type), " ",
+                          entry.name.GetIdentifierName()));
+}
+
+bool Unowned(const duckdb::CatalogEntry& entry) {
+  return entry.permissions.owner == pg::kInvalidOid;
+}
+
+CatalogType DefaultObjType(LogicalOperatorType type) {
+  switch (type) {
+    case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
+      return CatalogType::SEQUENCE_ENTRY;
+    case LogicalOperatorType::LOGICAL_CREATE_MACRO:
+      return CatalogType::MACRO_ENTRY;
+    case LogicalOperatorType::LOGICAL_CREATE_TYPE:
+      return CatalogType::TYPE_ENTRY;
+    default:
+      return CatalogType::TABLE_ENTRY;
+  }
+}
+
+void MergeGrant(duckdb::vector<duckdb::AclItem>& acl,
+                const duckdb::AclItem& item) {
+  auto it = std::ranges::find_if(acl, [&](const duckdb::AclItem& existing) {
+    return existing.grantee == item.grantee && existing.grantor == item.grantor;
+  });
+  if (it == acl.end()) {
+    acl.push_back(item);
+    return;
+  }
+  it->privs |= item.privs;
+  it->grant_option |= item.grant_option;
+}
+
+std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
+  const duckdb::TableCatalogEntry& table) {
+  std::vector<std::span<const duckdb::AclItem>> acls;
+  for (const auto& column : table.GetColumns().Logical()) {
+    acls.push_back(column.Acl());
+  }
+  return acls;
+}
+
+bool IsRename(const duckdb::AlterInfo& info) {
+  return info.type == duckdb::AlterType::RENAME;
+}
+
+class Enforcer {
+ public:
+  Enforcer(duckdb::ClientContext& context, ConnectionContext& connection,
+           duckdb::Binder& binder, duckdb::LogicalOperator& root)
+    : _context{context},
+      _connection{connection},
+      _props{binder.GetStatementProperties()},
+      _root{root},
+      _caller{connection.GetRoleId()},
+      _roles{RolesOf(&context)},
+      _caller_closure{ComputeRoleClosure(*_roles, _caller)},
+      _enforce{!_caller_closure.is_superuser} {}
+
+  void Run() {
+    CheckViews();
+    Collect(_root);
+    Check(_root);
+    if (!_enforce) {
+      return;
+    }
+    _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
+    CheckResolved();
+    CheckReturning();
+    if (_file_copy) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied to COPY to a file"));
+    }
+  }
+
+ private:
+  void Collect(duckdb::LogicalOperator& op) {
+    switch (op.type) {
+      case LogicalOperatorType::LOGICAL_UPDATE: {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        _dml_tables.emplace(update.table_index.index, &update.table);
+        MarkTargetScans(op, update.table);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_DELETE: {
+        auto& del = op.Cast<duckdb::LogicalDelete>();
+        _dml_tables.emplace(del.table_index.index, &del.table);
+        MarkTargetScans(op, del.table);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        _dml_tables.emplace(merge.table_index.index, &merge.table);
+        MarkTargetScans(op, merge.table);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_INSERT: {
+        auto& insert = op.Cast<duckdb::LogicalInsert>();
+        _dml_tables.emplace(insert.table_index.index, &insert.table);
+        break;
+      }
+      default:
+        break;
+    }
+    for (auto& child : op.children) {
+      Collect(*child);
+    }
+  }
+
+  void MarkTargetScans(duckdb::LogicalOperator& op,
+                       const duckdb::TableCatalogEntry& table) {
+    if (op.type == LogicalOperatorType::LOGICAL_GET) {
+      auto& get = op.Cast<duckdb::LogicalGet>();
+      if (get.GetTable().get() == &table) {
+        _target_scans.emplace(get.table_index.index, &get);
+      }
+    }
+    for (auto& child : op.children) {
+      MarkTargetScans(*child, table);
+    }
+  }
+
+  void Check(duckdb::LogicalOperator& op) {
+    if (op.type == LogicalOperatorType::LOGICAL_UPDATE &&
+        !op.children.empty() &&
+        op.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+      auto& update = op.Cast<duckdb::LogicalUpdate>();
+      const auto& projection =
+        op.children[0]->Cast<duckdb::LogicalProjection>();
+      auto& positions = _projection_reads[projection.table_index.index];
+      for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
+        auto collect = [&](duckdb::Expression& expr) {
+          if (expr.GetExpressionType() !=
+              duckdb::ExpressionType::BOUND_COLUMN_REF) {
+            return;
+          }
+          const auto& binding =
+            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
+          if (binding.table_index.index != projection.table_index.index) {
+            return;
+          }
+          const auto position = binding.column_index.GetIndex();
+          if (i < update.columns.size() &&
+              IsPassthrough(projection, position, update.table,
+                            update.columns[i])) {
+            return;
+          }
+          positions.insert(position);
+        };
+        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
+                                                        collect);
+      }
+    }
+    auto visit = [&](duckdb::Expression& expr) {
+      switch (expr.GetExpressionType()) {
+        case duckdb::ExpressionType::BOUND_COLUMN_REF: {
+          const auto& binding =
+            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
+          if (auto it = _dml_tables.find(binding.table_index.index);
+              it != _dml_tables.end()) {
+            _returning[it->second].insert(binding.column_index.GetIndex());
+          }
+          _scan_refs[binding.table_index.index].insert(
+            binding.column_index.GetIndex());
+          break;
+        }
+        case duckdb::ExpressionType::BOUND_FUNCTION: {
+          const auto& name = expr.Cast<duckdb::BoundFunctionExpression>()
+                               .Function()
+                               .GetName()
+                               .GetIdentifierName();
+          if (name == "nextval") {
+            _nextval = true;
+          } else if (name == "currval") {
+            _currval = true;
+          } else if (name == "setval") {
+            _setval = true;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    };
+    if (op.type == LogicalOperatorType::LOGICAL_PROJECTION &&
+        _projection_reads.contains(
+          op.Cast<duckdb::LogicalProjection>().table_index.index)) {
+      const auto& positions = _projection_reads.at(
+        op.Cast<duckdb::LogicalProjection>().table_index.index);
+      for (duckdb::idx_t i = 0; i < op.expressions.size(); ++i) {
+        if (positions.contains(i)) {
+          duckdb::ExpressionIterator::EnumerateExpression(op.expressions[i],
+                                                          visit);
+        }
+      }
+    } else {
+      duckdb::LogicalOperatorVisitor::EnumerateExpressions(
+        op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
+          duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
+        });
+    }
+
+    switch (op.type) {
+      case LogicalOperatorType::LOGICAL_GET: {
+        auto& get = op.Cast<duckdb::LogicalGet>();
+        if (_enforce || PrincipalFor(get.table_index.index) != _caller) {
+          CheckGet(get);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_INSERT: {
+        auto& insert = op.Cast<duckdb::LogicalInsert>();
+        RequireWritableSchema(insert.table.ParentSchema(_context));
+        if (_enforce) {
+          CheckInsert(insert);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_UPDATE: {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        RequireWritableSchema(update.table.ParentSchema(_context));
+        if (_enforce) {
+          CheckUpdate(update);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_DELETE: {
+        auto& del = op.Cast<duckdb::LogicalDelete>();
+        RequireWritableSchema(del.table.ParentSchema(_context));
+        if (_enforce) {
+          RequireTablePrivilege(
+            del.table, del.is_truncate ? AclMode::Truncate : AclMode::Delete);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        RequireWritableSchema(merge.table.ParentSchema(_context));
+        if (_enforce) {
+          CheckMerge(merge);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
+        auto& create = op.Cast<duckdb::LogicalCreateTable>();
+        auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
+        RequireWritableSchema(create.schema);
+        Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
+        if (_enforce) {
+          RequireSchemaCreate(create.schema);
+          CheckForeignKeys(info, create.schema);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_VIEW:
+      case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
+      case LogicalOperatorType::LOGICAL_CREATE_MACRO:
+      case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
+        auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireWritableSchema(create.schema);
+        Stamp(*create.info, DefaultObjType(op.type), create.schema);
+        if (_enforce) {
+          RequireSchemaCreate(*create.schema);
+          CheckReplace(*create.info);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
+        auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireWritableSchema(create.schema);
+        Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
+        if (_enforce) {
+          CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_SCHEMA: {
+        auto& create = op.Cast<duckdb::LogicalCreate>();
+        Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr);
+        if (_enforce) {
+          RequireDatabasePrivilege(AclMode::Create);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_INDEX: {
+        auto& create = op.Cast<duckdb::LogicalCreateIndex>();
+        RequireWritableSchema(create.table.ParentSchema(_context));
+        if (_enforce) {
+          RequireOwner(create.table);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_DROP: {
+        auto& info =
+          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::DropInfo>();
+        RequireWritableSchema(SchemaOf(info.type, info.GetQualifiedName()));
+        if (_enforce) {
+          CheckDrop(info);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_ALTER: {
+        auto& info =
+          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::AlterInfo>();
+        if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
+          ResolvePermissions(info.Cast<duckdb::AlterPermissionsInfo>());
+        } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
+          pg::ResolveAlterRole(_context, info.Cast<duckdb::AlterRoleInfo>());
+        } else {
+          RequireWritableSchema(
+            SchemaOf(info.GetCatalogType(), info.GetQualifiedName()));
+          if (_enforce) {
+            CheckAlter(info);
+          }
+        }
+        const auto type = info.GetCatalogType();
+        if (type == CatalogType::DATABASE_ENTRY ||
+            type == CatalogType::ROLE_ENTRY) {
+          info.GetQualifiedNameMutable() = duckdb::QualifiedName{
+            duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
+            duckdb::Identifier{}, info.GetQualifiedName().Name()};
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_ATTACH:
+        if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied to create database"));
+        }
+        break;
+      case LogicalOperatorType::LOGICAL_DETACH:
+        if (_enforce) {
+          RequireDatabaseOwner(op.Cast<duckdb::LogicalSimple>()
+                                 .info->Cast<duckdb::DetachInfo>()
+                                 .name.GetIdentifierName());
+        }
+        break;
+      case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
+        if (_enforce &&
+            op.Cast<duckdb::LogicalCopyToFile>().file_path != "/dev/stdout") {
+          _file_copy = true;
+        }
+        break;
+      case LogicalOperatorType::LOGICAL_EXPORT:
+      case LogicalOperatorType::LOGICAL_LOAD:
+      case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
+      case LogicalOperatorType::LOGICAL_CREATE_SECRET:
+        if (_enforce) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied: superuser required"));
+        }
+        break;
+      default:
+        break;
+    }
+    for (auto& child : op.children) {
+      Check(*child);
+    }
+  }
+
+  const RoleClosure& ClosureOf(duckdb::idx_t principal) {
+    if (principal == _caller) {
+      return _caller_closure;
+    }
+    auto [it, inserted] = _closures.try_emplace(principal);
+    if (inserted) {
+      it->second = ComputeRoleClosure(*_roles, principal);
+    }
+    return it->second;
+  }
+
+  duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
+    const duckdb::StatementProperties::ViewScope* inner = nullptr;
+    for (const auto& scope : _props.view_scopes) {
+      if (scope.begin <= table_index && table_index < scope.end &&
+          (!inner || scope.end - scope.begin < inner->end - inner->begin)) {
+        inner = &scope;
+      }
+    }
+    if (!inner || inner->view->security_invoker) {
+      return _caller;
+    }
+    return inner->view->permissions.owner;
+  }
+
+  duckdb::idx_t EnclosingPrincipal(
+    const duckdb::StatementProperties::ViewScope& scope) const {
+    const duckdb::StatementProperties::ViewScope* inner = nullptr;
+    for (const auto& other : _props.view_scopes) {
+      if (other.view == scope.view && other.begin == scope.begin &&
+          other.end == scope.end) {
+        continue;
+      }
+      if (Unowned(*other.view)) {
+        continue;
+      }
+      if (other.begin <= scope.begin && scope.end <= other.end &&
+          (!inner || other.end - other.begin < inner->end - inner->begin)) {
+        inner = &other;
+      }
+    }
+    if (!inner || inner->view->security_invoker) {
+      return _caller;
+    }
+    return inner->view->permissions.owner;
+  }
+
+  bool IsPassthrough(const duckdb::LogicalProjection& projection,
+                     duckdb::idx_t position,
+                     const duckdb::TableCatalogEntry& table,
+                     duckdb::PhysicalIndex target) const {
+    if (position >= projection.expressions.size()) {
+      return false;
+    }
+    const auto& expr = *projection.expressions[position];
+    if (expr.GetExpressionType() != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      return false;
+    }
+    const auto& binding =
+      expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
+    const auto get = _target_scans.find(binding.table_index.index);
+    if (get == _target_scans.end()) {
+      return false;
+    }
+    const auto& column_ids = get->second->GetColumnIds();
+    const auto index = binding.column_index.GetIndex();
+    if (index >= column_ids.size() || column_ids[index].IsRowIdColumn() ||
+        column_ids[index].IsVirtualColumn()) {
+      return false;
+    }
+    const auto& column = table.GetColumns().GetColumn(
+      duckdb::LogicalIndex(column_ids[index].GetPrimaryIndex()));
+    return !column.Generated() && column.Physical() == target;
+  }
+
+  void CheckIndexScan(duckdb::LogicalGet& get) {
+    if (get.function.name != "iresearch_scan" || !get.bind_data) {
+      return;
+    }
+    const auto& bind = get.bind_data->Cast<connector::SereneDBScanBindData>();
+    if (!bind.IsViewBacked() || !bind.inverted_index) {
+      return;
+    }
+    const auto& index = *bind.inverted_index;
+    auto view = index.ParentSchema(_context).GetEntry(
+      index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
+      index.GetTableName());
+    if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
+      return;
+    }
+    if (!ClosureOf(PrincipalFor(get.table_index.index))
+           .Can(CatalogType::TABLE_ENTRY, view->permissions, AclMode::Select)) {
+      Denied(*view);
+    }
+  }
+
+  void CheckGet(duckdb::LogicalGet& get) {
+    auto table = get.GetTable();
+    if (!table) {
+      CheckIndexScan(get);
+      return;
+    }
+    if (!table->catalog.IsDuckCatalog()) {
+      RequireServerUsage(table->catalog.GetName());
+    }
+    if (Unowned(*table)) {
+      return;
+    }
+    const auto& closure = ClosureOf(PrincipalFor(get.table_index.index));
+    const bool target = _target_scans.contains(get.table_index.index);
+    const auto& column_ids = get.GetColumnIds();
+    std::vector<std::span<const duckdb::AclItem>> acls;
+    const auto add = [&](const duckdb::ColumnIndex& column) {
+      if (column.IsRowIdColumn() || column.IsVirtualColumn()) {
+        return;
+      }
+      acls.push_back(
+        table->GetColumns()
+          .GetColumn(duckdb::LogicalIndex(column.GetPrimaryIndex()))
+          .Acl());
+    };
+    if (target) {
+      if (auto it = _scan_refs.find(get.table_index.index);
+          it != _scan_refs.end()) {
+        for (const auto position : it->second) {
+          if (position < column_ids.size()) {
+            add(column_ids[position]);
+          }
+        }
+      }
+      if (acls.empty()) {
+        return;
+      }
+    } else {
+      for (const auto& column : column_ids) {
+        add(column);
+      }
+      if (acls.empty()) {
+        if (!closure.CanAnyColumn(table->permissions, AclMode::Select,
+                                  AllColumnAcls(*table))) {
+          Denied(*table);
+        }
+        return;
+      }
+    }
+    if (!closure.CanColumns(table->permissions, AclMode::Select, acls)) {
+      Denied(*table);
+    }
+  }
+
+  static bool ReferencesColumns(duckdb::unique_ptr<duckdb::Expression>& expr) {
+    bool found = false;
+    duckdb::ExpressionIterator::EnumerateExpression(
+      expr, [&](duckdb::Expression& node) {
+        found |=
+          node.GetExpressionType() == duckdb::ExpressionType::BOUND_COLUMN_REF;
+      });
+    return found;
+  }
+
+  void CheckInsert(duckdb::LogicalInsert& insert) {
+    auto& table = insert.table;
+    const auto& columns = table.GetColumns();
+    std::vector<std::span<const duckdb::AclItem>> acls;
+    auto* source = insert.children.empty() ? nullptr : insert.children[0].get();
+    const bool per_column =
+      source && source->type == LogicalOperatorType::LOGICAL_PROJECTION &&
+      source->expressions.size() == columns.PhysicalColumnCount();
+    duckdb::idx_t position = 0;
+    for (const auto& column : columns.Physical()) {
+      if (!per_column || ReferencesColumns(source->expressions[position])) {
+        acls.push_back(column.Acl());
+      }
+      ++position;
+    }
+    if (!_caller_closure.CanColumns(table.permissions, AclMode::Insert, acls)) {
+      Denied(table);
+    }
+    if (insert.on_conflict_info.set_columns.empty()) {
+      return;
+    }
+    std::vector<std::span<const duckdb::AclItem>> updated;
+    for (const auto index : insert.on_conflict_info.set_columns) {
+      updated.push_back(columns.GetColumn(index).Acl());
+    }
+    if (!_caller_closure.CanColumns(table.permissions, AclMode::Update,
+                                    updated)) {
+      Denied(table);
+    }
+  }
+
+  void CheckUpdate(duckdb::LogicalUpdate& update) {
+    auto& table = update.table;
+    if (update.update_is_del_and_insert) {
+      RequireTablePrivilege(table, AclMode::Update);
+      return;
+    }
+    std::vector<std::span<const duckdb::AclItem>> acls;
+    for (const auto index : update.columns) {
+      acls.push_back(table.GetColumns().GetColumn(index).Acl());
+    }
+    if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
+      Denied(table);
+    }
+  }
+
+  void CheckMerge(duckdb::LogicalMergeInto& merge) {
+    for (const auto& [condition, actions] : merge.actions) {
+      for (const auto& action : actions) {
+        switch (action->action_type) {
+          case duckdb::MergeActionType::MERGE_UPDATE:
+            RequireTablePrivilege(merge.table, AclMode::Update);
+            break;
+          case duckdb::MergeActionType::MERGE_DELETE:
+            RequireTablePrivilege(merge.table, AclMode::Delete);
+            break;
+          case duckdb::MergeActionType::MERGE_INSERT:
+            RequireTablePrivilege(merge.table, AclMode::Insert);
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  void CheckViews() {
+    auto scopes = _props.view_scopes;
+    std::ranges::sort(scopes, [](const auto& lhs, const auto& rhs) {
+      return lhs.begin != rhs.begin ? lhs.begin < rhs.begin : lhs.end > rhs.end;
+    });
+    for (const auto& scope : scopes) {
+      const auto& view = *scope.view;
+      if (Unowned(view) && !view.ParentCatalog().IsSystemCatalog()) {
+        continue;
+      }
+      if (!ClosureOf(EnclosingPrincipal(scope))
+             .Can(CatalogType::TABLE_ENTRY, view.permissions,
+                  AclMode::Select)) {
+        Denied(view);
+      }
+    }
+  }
+
+  void CheckResolved() {
+    const bool defines_relation =
+      _root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE ||
+      _root.type == LogicalOperatorType::LOGICAL_ALTER;
+    irs::containers::FlatHashSet<const duckdb::CatalogEntry*> seen;
+    if (_root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
+      const auto& dependencies =
+        _root.Cast<duckdb::LogicalCreateTable>().info->dependencies.Set();
+      for (const auto& dependency : dependencies) {
+        if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
+          continue;
+        }
+        auto entry = duckdb::Catalog::GetEntry(
+          _context,
+          duckdb::EntryLookupInfo{
+            CatalogType::TYPE_ENTRY,
+            duckdb::QualifiedName{dependency.catalog, dependency.entry.schema,
+                                  dependency.entry.name}},
+          duckdb::OnEntryNotFound::RETURN_NULL);
+        if (!entry || Unowned(*entry) || !seen.insert(entry.get()).second) {
+          continue;
+        }
+        if (!_caller_closure.Can(entry->type, entry->permissions,
+                                 AclMode::Usage)) {
+          Denied(*entry);
+        }
+      }
+    }
+    for (const auto* entry : _props.resolved_entries) {
+      if (!seen.insert(entry).second || Unowned(*entry)) {
+        continue;
+      }
+      switch (entry->type) {
+        case CatalogType::MACRO_ENTRY:
+        case CatalogType::TABLE_MACRO_ENTRY:
+          if (!_caller_closure.Can(entry->type, entry->permissions,
+                                   AclMode::Execute)) {
+            Denied(*entry);
+          }
+          break;
+        case CatalogType::TYPE_ENTRY:
+          if (defines_relation &&
+              !_caller_closure.Can(entry->type, entry->permissions,
+                                   AclMode::Usage)) {
+            Denied(*entry);
+          }
+          break;
+        case CatalogType::SEQUENCE_ENTRY:
+          if (_nextval &&
+              !_caller_closure.CanAny(entry->type, entry->permissions,
+                                      AclMode::Usage | AclMode::Update)) {
+            Denied(*entry);
+          }
+          if (_currval &&
+              !_caller_closure.CanAny(entry->type, entry->permissions,
+                                      AclMode::Usage | AclMode::Select)) {
+            Denied(*entry);
+          }
+          if (_setval && !_caller_closure.Can(entry->type, entry->permissions,
+                                              AclMode::Update)) {
+            Denied(*entry);
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  void CheckReturning() {
+    for (const auto& [table, columns] : _returning) {
+      const auto& list = table->GetColumns();
+      std::vector<std::span<const duckdb::AclItem>> acls;
+      for (const auto column : columns) {
+        if (column < list.PhysicalColumnCount()) {
+          acls.push_back(list.GetColumn(duckdb::PhysicalIndex(column)).Acl());
+        }
+      }
+      if (!acls.empty() && !_caller_closure.CanColumns(table->permissions,
+                                                       AclMode::Select, acls)) {
+        Denied(*table);
+      }
+    }
+  }
+
+  void CheckForeignKeys(const duckdb::CreateTableInfo& info,
+                        const duckdb::SchemaCatalogEntry& schema) {
+    for (const auto& constraint : info.constraints) {
+      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+        continue;
+      }
+      const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+      if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+        continue;
+      }
+      const auto parent_schema = fk.info.schema.GetIdentifierName().empty()
+                                   ? schema.name
+                                   : fk.info.schema;
+      auto parent = duckdb::Catalog::GetEntry(
+        _context,
+        duckdb::EntryLookupInfo(
+          CatalogType::TABLE_ENTRY,
+          duckdb::QualifiedName(schema.catalog.GetName(), parent_schema,
+                                fk.info.table)),
+        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!parent || parent->type != CatalogType::TABLE_ENTRY) {
+        continue;
+      }
+      auto& table = parent->Cast<duckdb::TableCatalogEntry>();
+      std::vector<std::span<const duckdb::AclItem>> acls;
+      for (const auto& column : fk.pk_columns) {
+        duckdb::Identifier name = column;
+        acls.push_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
+      }
+      if (!_caller_closure.CanColumns(table.permissions, AclMode::References,
+                                      acls)) {
+        Denied(table);
+      }
+    }
+  }
+
+  void CheckCreateTrigger(const duckdb::CreateTriggerInfo& info) {
+    auto entry = duckdb::Catalog::GetEntry(
+      _context,
+      duckdb::EntryLookupInfo(CatalogType::TABLE_ENTRY,
+                              info.base_table->GetQualifiedName()),
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!entry) {
+      return;
+    }
+    if (!_caller_closure.Owns(entry->permissions.owner) &&
+        !_caller_closure.Can(CatalogType::TABLE_ENTRY, entry->permissions,
+                             AclMode::Trigger)) {
+      Denied(*entry);
+    }
+  }
+
+  static bool IsSchemaScoped(CatalogType type) {
+    switch (type) {
+      case CatalogType::TABLE_ENTRY:
+      case CatalogType::VIEW_ENTRY:
+      case CatalogType::SEQUENCE_ENTRY:
+      case CatalogType::TYPE_ENTRY:
+      case CatalogType::MACRO_ENTRY:
+      case CatalogType::TABLE_MACRO_ENTRY:
+      case CatalogType::INDEX_ENTRY:
+      case CatalogType::TRIGGER_ENTRY:
+      case CatalogType::TOKENIZER_ENTRY:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
+    CatalogType type, const duckdb::QualifiedName& name) {
+    return duckdb::Catalog::GetEntry(_context,
+                                     duckdb::EntryLookupInfo(type, name),
+                                     duckdb::OnEntryNotFound::RETURN_NULL);
+  }
+
+  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaOf(
+    CatalogType type, const duckdb::QualifiedName& name) {
+    if (type == CatalogType::SCHEMA_ENTRY) {
+      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
+                                        duckdb::OnEntryNotFound::RETURN_NULL);
+    }
+    if (type == CatalogType::TRIGGER_ENTRY) {
+      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Schema(),
+                                        duckdb::OnEntryNotFound::RETURN_NULL);
+    }
+    if (!IsSchemaScoped(type)) {
+      return nullptr;
+    }
+    auto entry = FindEntry(type, name);
+    return entry ? &entry->ParentSchema(_context) : nullptr;
+  }
+
+  void RequireWritableSchema(
+    duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
+    if (schema) {
+      RequireWritableSchema(*schema);
+    }
+  }
+
+  void RequireWritableSchema(const duckdb::SchemaCatalogEntry& schema) {
+    if (_connection.IsSystemWriter() ||
+        schema.name != duckdb::Identifier{irs::StaticStrings::kDocsSchema}) {
+      return;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("schema \"", schema.name.GetIdentifierName(), "\" is read-only"),
+      ERR_DETAIL("The embedded documentation is rebuilt from the "
+                 "server binary at startup."));
+  }
+
+  void CheckDrop(const duckdb::DropInfo& info) {
+    const auto& name = info.GetQualifiedName();
+    if (info.type == CatalogType::SCHEMA_ENTRY) {
+      auto schema =
+        duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
+                                   duckdb::OnEntryNotFound::RETURN_NULL);
+      if (schema) {
+        RequireOwner(*schema);
+      }
+      return;
+    }
+    if (!IsSchemaScoped(info.type)) {
+      return;
+    }
+    if (auto entry = FindEntry(info.type, name)) {
+      RequireOwner(*entry);
+    }
+  }
+
+  // CREATE OR REPLACE keeps an existing object under its own name, which is the
+  // owner's to change.
+  void CheckReplace(const duckdb::CreateInfo& info) {
+    const bool replaces =
+      info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT ||
+      info.on_conflict == duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
+    if (!replaces || !IsSchemaScoped(info.type)) {
+      return;
+    }
+    if (auto entry = FindEntry(info.type, info.GetQualifiedName())) {
+      RequireOwner(*entry);
+    }
+  }
+
+  void CheckAlter(const duckdb::AlterInfo& info) {
+    const auto type = info.GetCatalogType();
+    if (!IsSchemaScoped(type)) {
+      return;
+    }
+    auto entry = FindEntry(type, info.GetQualifiedName());
+    if (!entry) {
+      return;
+    }
+    RequireOwner(*entry);
+    if (IsRename(info)) {
+      RequireSchemaCreate(entry->ParentSchema(_context));
+    }
+  }
+
+  void ResolvePermissions(duckdb::AlterPermissionsInfo& info) {
+    if (!info.new_owner.empty()) {
+      ResolveOwner(info);
+    } else if (info.default_objtype != CatalogType::INVALID) {
+      ResolveDefaultPrivileges(info);
+    } else {
+      ResolveGrant(info);
+    }
+  }
+
+  [[noreturn]] static void NotSupported(std::string_view what) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(what, " is not supported"));
+  }
+
+  duckdb::idx_t RoleId(std::string_view name) {
+    auto& cluster = catalog::ClusterOf(_context);
+    auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                  .GetEntry(cluster.GetCatalogTransaction(_context),
+                            duckdb::Identifier{std::string{name}});
+    if (!role) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", name, "\" does not exist"));
+    }
+    return role->oid;
+  }
+
+  duckdb::idx_t GranteeId(const std::string& name) {
+    return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+  }
+
+  duckdb::idx_t RoleSpecId(const std::string& name) {
+    if (absl::EqualsIgnoreCase(name, "CURRENT_USER") ||
+        absl::EqualsIgnoreCase(name, "CURRENT_ROLE")) {
+      return _caller;
+    }
+    if (absl::EqualsIgnoreCase(name, "SESSION_USER")) {
+      return _connection.GetSessionRoleId();
+    }
+    return RoleId(name);
+  }
+
+  void RequireGrantable(const duckdb::CatalogEntry& entry) {
+    const auto& perm = entry.permissions;
+    if (!_enforce || _caller_closure.Owns(perm.owner)) {
+      return;
+    }
+    const auto stored =
+      perm.acl.empty()
+        ? duckdb::Permissions::AclDefault(
+            duckdb::Permissions::AclClass(entry.type), perm.owner)
+        : perm.acl;
+    auto held = _caller_closure.HeldModes(stored) |
+                _caller_closure.GrantableModes(stored);
+    if (entry.type == CatalogType::TABLE_ENTRY) {
+      for (const auto& column :
+           entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+        held |= _caller_closure.HeldModes(column.Acl()) |
+                _caller_closure.GrantableModes(column.Acl());
+      }
+    }
+    if (held == AclMode::NoRights) {
+      Denied(entry);
+    }
+  }
+
+  duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
+    const auto& name = info.GetQualifiedName();
+    if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
+      auto& schema =
+        duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
+      info.SetQualifiedName(schema.ParentCatalog().GetName(),
+                            duckdb::Identifier(), schema.name);
+      return schema;
+    }
+    auto entry = FindEntry(info.entry_catalog_type, name);
+    if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+      entry = FindEntry(CatalogType::TABLE_MACRO_ENTRY, name);
+    }
+    if (!entry) {
+      const bool relation = info.entry_catalog_type == CatalogType::TABLE_ENTRY;
+      THROW_SQL_ERROR(
+        ERR_CODE(relation ? ERRCODE_UNDEFINED_TABLE : ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG(relation ? "relation" : KindName(info.entry_catalog_type),
+                " \"", name.ToString(), "\" does not exist"));
+    }
+    info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY
+                                ? CatalogType::TABLE_ENTRY
+                                : entry->type;
+    info.SetQualifiedName(entry->ParentCatalog().GetName(),
+                          entry->ParentSchemaName(), entry->name);
+    return *entry;
+  }
+
+  void ResolveGrant(duckdb::AlterPermissionsInfo& info) {
+    info.grantee_id = GranteeId(info.grantee);
+    if (!info.granted_by.empty()) {
+      const auto granted_by = RoleId(info.granted_by);
+      if (_enforce && !_caller_closure.MemberOf(granted_by)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+          ERR_MSG("must be member of role \"", info.granted_by, "\""));
+      }
+      info.grantors = {granted_by};
+    } else if (_enforce) {
+      info.grantors.push_back(_caller);
+      for (const auto role : _caller_closure.closure) {
+        if (role != _caller) {
+          info.grantors.push_back(role);
+        }
+      }
+    }
+    if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
+      const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
+      const auto database = DatabaseEntry(name);
+      if (!database) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                        ERR_MSG("database \"", name, "\" does not exist"));
+      }
+      RequireGrantable(*database);
+      return;
+    }
+    if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
+      const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
+      const auto server = ServerEntry(name);
+      if (!server) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("server \"", name, "\" does not exist"));
+      }
+      info.SetQualifiedName(server->ParentCatalog().GetName(),
+                            duckdb::Identifier(), server->name);
+      RequireGrantable(*server);
+      return;
+    }
+    if (info.all_in_schema) {
+      return;
+    }
+    RequireGrantable(ResolveTarget(info));
+  }
+
+  void ResolveOwner(duckdb::AlterPermissionsInfo& info) {
+    auto& entry = ResolveTarget(info);
+    info.new_owner_id = RoleSpecId(info.new_owner);
+    if (!_enforce || info.new_owner_id == entry.permissions.owner) {
+      return;
+    }
+    RequireOwner(entry);
+    if (info.new_owner_id != _caller &&
+        !_caller_closure.CanSet(info.new_owner_id)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("must be able to SET ROLE \"",
+                              _roles->NameOf(info.new_owner_id), "\""));
+    }
+    if (entry.type != CatalogType::SCHEMA_ENTRY &&
+        !ClosureOf(info.new_owner_id)
+           .Can(CatalogType::SCHEMA_ENTRY,
+                entry.ParentSchema(_context).permissions, AclMode::Create)) {
+      Denied(entry.ParentSchema(_context));
+    }
+  }
+
+  void ResolveDefaultPrivileges(duckdb::AlterPermissionsInfo& info) {
+    info.target_role = info.for_role.empty() ? _caller : RoleId(info.for_role);
+    if (_enforce && !_caller_closure.MemberOf(info.target_role)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to change default privileges"));
+    }
+    info.grantee_id = GranteeId(info.grantee);
+    std::string database{_connection.GetDatabase()};
+    if (!info.default_schema.empty()) {
+      auto& schema =
+        duckdb::Catalog::GetSchema(_context, duckdb::Identifier{},
+                                   duckdb::Identifier{info.default_schema});
+      if (_enforce && !ClosureOf(info.target_role)
+                         .Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
+                              AclMode::Create)) {
+        Denied(schema);
+      }
+      info.default_scope = schema.oid;
+      database = schema.ParentCatalog().GetName().GetIdentifierName();
+    }
+    if (!DatabaseEntry(database)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", database, "\" does not exist"));
+    }
+    info.SetQualifiedName(duckdb::Identifier{}, duckdb::Identifier{},
+                          duckdb::Identifier{database});
+  }
+
+  void RequireTablePrivilege(const duckdb::TableCatalogEntry& table,
+                             AclMode need) {
+    if (!_caller_closure.Can(CatalogType::TABLE_ENTRY, table.permissions,
+                             need)) {
+      Denied(table);
+    }
+  }
+
+  void RequireSchemaCreate(const duckdb::SchemaCatalogEntry& schema) {
+    if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
+                             AclMode::Create)) {
+      Denied(schema);
+    }
+  }
+
+  void RequireOwner(const duckdb::CatalogEntry& entry) {
+    if (entry.type == CatalogType::INDEX_ENTRY) {
+      auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+      auto host = index.ParentSchema(_context).GetEntry(
+        index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
+        index.GetTableName());
+      if (host && !_caller_closure.Owns(host->permissions.owner)) {
+        MustOwn(*host);
+      }
+      return;
+    }
+    if (!_caller_closure.Owns(entry.permissions.owner)) {
+      MustOwn(entry);
+    }
+  }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> DatabaseEntry(
+    std::string_view name) {
+    auto& cluster = catalog::ClusterOf(_context);
+    return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(_context),
+                duckdb::Identifier{std::string{name}});
+  }
+
+  void RequireDatabasePrivilege(AclMode need) {
+    auto database = DatabaseEntry(_connection.GetDatabase());
+    if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
+                                         database->permissions, need)) {
+      Denied(*database);
+    }
+  }
+
+  void RequireDatabaseOwner(std::string_view name) {
+    auto database = DatabaseEntry(name);
+    if (database && !_caller_closure.Owns(database->permissions.owner)) {
+      MustOwn(*database);
+    }
+  }
+  duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
+    std::string_view name) {
+    auto& catalog = duckdb::Catalog::GetCatalog(
+                      _context, duckdb::Identifier{_connection.GetDatabase()})
+                      .Cast<duckdb::DuckCatalog>();
+    return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+      .GetEntry(catalog.GetCatalogTransaction(_context),
+                duckdb::Identifier{std::string{name}});
+  }
+  void RequireServerUsage(const duckdb::Identifier& name) {
+    for (const auto& db :
+         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
+      auto& catalog = db->GetCatalog();
+      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+        continue;
+      }
+      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+      auto server =
+        duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+          .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
+      if (!server) {
+        continue;
+      }
+      if (!_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                               server->permissions, AclMode::Usage)) {
+        Denied(*server);
+      }
+      return;
+    }
+  }
+
+  void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
+             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
+    info.permissions.owner = _caller;
+    duckdb::vector<duckdb::AclItem> acl;
+    const auto apply = [&](const duckdb::Permissions& holder,
+                           duckdb::idx_t scope) {
+      for (const auto& defaults : holder.defaults) {
+        if (defaults.role != _caller || defaults.objtype != objtype ||
+            defaults.scope != scope) {
+          continue;
+        }
+        if (acl.empty()) {
+          acl = duckdb::Permissions::AclDefault(objtype, _caller);
+        }
+        for (const auto& item : defaults.acl) {
+          MergeGrant(acl, item);
+        }
+      }
+    };
+    const auto database = DatabaseEntry(
+      schema ? schema->ParentCatalog().GetName().GetIdentifierName()
+             : std::string{_connection.GetDatabase()});
+    if (database) {
+      if (schema) {
+        apply(database->permissions, schema->oid);
+      }
+      apply(database->permissions, 0);
+    }
+    if (!acl.empty()) {
+      info.permissions.acl = std::move(acl);
+    }
+  }
+
+  duckdb::ClientContext& _context;
+  ConnectionContext& _connection;
+  duckdb::StatementProperties& _props;
+  duckdb::LogicalOperator& _root;
+  const duckdb::idx_t _caller;
+  std::shared_ptr<const RoleGraph> _roles;
+  RoleClosure _caller_closure;
+  const bool _enforce;
+  irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
+  irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::LogicalGet*>
+    _target_scans;
+  irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
+    _dml_tables;
+  irs::containers::FlatHashMap<const duckdb::TableCatalogEntry*,
+                               irs::containers::FlatHashSet<duckdb::idx_t>>
+    _returning;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               irs::containers::FlatHashSet<duckdb::idx_t>>
+    _scan_refs;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               irs::containers::FlatHashSet<duckdb::idx_t>>
+    _projection_reads;
+  bool _file_copy = false;
+  bool _nextval = false;
+  bool _currval = false;
+  bool _setval = false;
+};
+
+}  // namespace
+
+void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
+                 duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
+  if (connection.IsStorageConnection()) {
+    return;
+  }
+  Enforcer{context, connection, binder, plan}.Run();
+}
+
+}  // namespace sdb::auth

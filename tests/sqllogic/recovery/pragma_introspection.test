@@ -115,18 +115,18 @@ SELECT row_group_id, column_name, column_id, column_path, segment_type, start, c
 row_group_id	column_name	column_id	column_path	segment_type	start	count	persistent	block_id
 0	i	0	[0]	INTEGER	0	2000	t	-1
 0	s	1	[1]	VARCHAR	0	2000	t	-1
-0	tags	2	[2, 1]	VARCHAR	0	4000	t	-1
 0	tags	2	[2]	VARCHAR[]	0	2000	t	-1
-0	info	3	[3, 1]	INTEGER	0	2000	t	-1
-0	info	3	[3, 2]	VARCHAR	0	2000	t	-1
-0	maybe	4	[4, 0]	VALIDITY	0	2000	t	-1
+0	info	3	[3]	STRUCT(a INTEGER, b VARCHAR)	0	2000	t	-1
 0	maybe	4	[4]	INTEGER	0	2000	t	-1
 0	rowid	NULL	[rowid]	BIGINT	0	2000	t	-1
 
 
-# Stats and block offsets are populated for synthesized rows.
+# One row per stored column per iresearch segment, straight from the segment's
+# column store: the column's type and row count, the segment's document offset.
+# The store keeps no min/max statistics and has no blocks, so stats is NULL and
+# the block columns are -1 / 0.
 query
-SELECT count(*) FROM pragma_storage_info('pin_search') WHERE stats IS NULL OR block_offset IS NULL;
+SELECT count(*) FROM pragma_storage_info('pin_search') WHERE stats IS NOT NULL OR block_offset <> 0;
 ----
 count
 0
@@ -154,9 +154,9 @@ row_group_id	column_name	column_id	column_path	segment_type	count
 # --- pragma_storage_info: FROM-index entries -------------------------------
 
 # The INCLUDE column is stored in the inverted index's column store, next to
-# the encoded-primary-key column that carries row identity (no physical
-# column backs it, so it surfaces under the row-identity virtual column --
-# named after the PK column -- with a NULL column_id).
+# the encoded primary key that carries row identity. The encoded key is
+# reported under the PK column it encodes; its stored type is the encoding's
+# BIGINT, not the column's INTEGER.
 statement ok
 VACUUM (REFRESH_TABLE) pin_txn;
 
@@ -164,8 +164,8 @@ query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	i	0	[0]	BIGINT	5000	t
 0	j	2	[2]	INTEGER	5000	t
-0	i	NULL	[i]	BIGINT	5000	t
 
 
 # A plain inverted index stores values only for the encoded primary key.
@@ -173,7 +173,7 @@ query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	NULL	[i]	BIGINT	5000	t
+0	i	0	[0]	BIGINT	5000	t
 
 
 # A secondary index is a native ART on the store table; it has no column

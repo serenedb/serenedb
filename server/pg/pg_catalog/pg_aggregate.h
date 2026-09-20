@@ -74,6 +74,6 @@ struct PgAggregate {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAggregate>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAggregate>::GetTableData();
 
 }  // namespace sdb::pg

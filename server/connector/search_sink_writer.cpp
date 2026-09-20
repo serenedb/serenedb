@@ -25,16 +25,16 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/table_options.h"
+#include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
 #include "server/utils/primary_key.h"
 
@@ -150,14 +150,14 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
   std::vector<IndexedExpression>&& indexed_exprs,
-  std::shared_ptr<const search::SearchTable::TermsByColumn> terms_by_column)
+  std::shared_ptr<const catalog::InvertedIndexConfig> config)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk_policy{pk_policy},
     _indexed_expressions{std::move(indexed_exprs)},
-    _terms_by_column{std::move(terms_by_column)} {
-  _pk_field.PrepareForKeywordStringValue(catalog::term_dict::kPKFieldId);
+    _config{std::move(config)} {
+  _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
 }
 
 void SearchSinkInsertBaseImpl::EmitPkTerms(
@@ -560,24 +560,6 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
   FinishColumnBlocks(jpf.null_field);
 }
 
-void SearchSinkInsertBaseImpl::AppendValueColumn(
-  irs::field_id field_id, const duckdb::LogicalType& type,
-  const duckdb::Vector& vec, duckdb::idx_t count) {
-  AppendToColumn(field_id, type, vec, count);
-}
-
-std::span<const irs::field_id> SearchSinkInsertBaseImpl::TermFieldsForColumn(
-  catalog::ColumnId col_id) const noexcept {
-  if (!_terms_by_column) {
-    return {};
-  }
-  auto it = _terms_by_column->find(col_id);
-  if (it == _terms_by_column->end()) {
-    return {};
-  }
-  return it->second;
-}
-
 // Emits term postings for one field; stores the value inline only when the
 // field's config entry has store_values. Plain-column term fields keep it off
 // so the value is not stored once per index; indexed expressions keep it on.
@@ -642,8 +624,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
         child_kind == duckdb::LogicalTypeId::BLOB) {
       _field.PrepareForStringValue(field_id, ResolveTokenizer(field_id));
     } else if (child_kind == duckdb::LogicalTypeId::BOOLEAN ||
-               catalog::term_dict::IsNumeric(
-                 catalog::term_dict::Classify(child_kind))) {
+               term_dict::IsNumeric(term_dict::Classify(child_kind))) {
       _field.PrepareForBlockValue(field_id);
     } else {
       return;
@@ -683,7 +664,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       WriteBoolColumn(_field, _null_field, count);
       return;
     default: {
-      if (!catalog::term_dict::IsNumeric(catalog::term_dict::Classify(kind))) {
+      if (!term_dict::IsNumeric(term_dict::Classify(kind))) {
         return;
       }
       _field.PrepareForBlockValue(field_id);
@@ -721,7 +702,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   _pk_column_writer = nullptr;
   if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
     _pk_column_writer =
-      EnsureColumnWriter(catalog::term_dict::kPKFieldId, pk.column->GetType());
+      EnsureColumnWriter(term_dict::kPKFieldId, pk.column->GetType());
   }
   if (_pk_column_writer && pk.column) {
     AppendPkColumn(*pk.column, batch_size);
@@ -735,7 +716,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
 }
 
 void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
-  irs::field_id entry_field_id, const catalog::InvertedIndexEntryInfo* entry,
+  irs::field_id entry_field_id, const catalog::InvertedIndexField* entry,
   catalog::ColumnTokenizer& string_analyzer) {
   SDB_ASSERT(entry);
   SDB_ASSERT(irs::field_limits::valid(entry_field_id));
@@ -820,9 +801,9 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   irs::field_id field_id, catalog::ColumnTokenizer& column_analyzer) {
   id = field_id;
   index_features = column_analyzer.features;
-  keyword = column_analyzer.verbatim;
   SDB_ASSERT(column_analyzer.analyzer);
   string_analyzer = column_analyzer.analyzer.get();
+  keyword = string_analyzer->type() == irs::Type<irs::KeywordTokenizer>::id();
   const bool has_store = keyword || string_analyzer->Traits().store;
   store_column =
     has_store ? column_analyzer.tokenizer_column : irs::field_limits::invalid();
@@ -850,8 +831,8 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
   FinishImpl();
   SDB_ASSERT(!_remove_filter);
-  _remove_filter = std::make_shared<SearchRemoveFilter>(
-    batch_size, catalog::term_dict::kPKFieldId);
+  _remove_filter =
+    std::make_shared<SearchRemoveFilter>(batch_size, term_dict::kPKFieldId);
 }
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
@@ -863,103 +844,52 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
-  duckdb::ClientContext& context) {
-  auto config = shard.GetIndexConfig();
-  // Each index keeps its own allocated field ids, so unioning every declared
-  // index's indexed expressions and text dictionaries is collision-free.
+  duckdb::Catalog& catalog, duckdb::ClientContext& context) {
+  auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
-  for (const auto& index : catalog::RelationInvertedIndexes(
-         &context, shard.GetSchemaId(), shard.GetTableId())) {
-    auto exprs = MakeIndexedExpressions(catalog::InvertedInfo(*index), context);
-    indexed_exprs.insert(indexed_exprs.end(),
-                         std::make_move_iterator(exprs.begin()),
-                         std::make_move_iterator(exprs.end()));
+  for (const auto& key : config->keys) {
+    if (key.normalized_expression.empty()) {
+      continue;
+    }
+    const auto* entry = config->FindEntry(key.field_id);
+    indexed_exprs.push_back({
+      .normalized_expr =
+        DeserializeBoundExpression(key.normalized_expression, context),
+      .field_id = key.field_id,
+      .is_geojson = key.type.IsJSONType() && entry &&
+                    irs::field_limits::valid(entry->synthetic_column),
+    });
   }
-  auto dicts = search::ResolveShardTokenizers(shard, &context);
-  // Norm-featured fields must get the merged encoding config or the writer
-  // asserts.
-  trx.SetFieldOptions(shard.GetFieldOptions());
+  auto tokenizers =
+    std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
+  auto entry_of = [config](irs::field_id field_id) {
+    const auto* entry = config->FindEntry(field_id);
+    return entry ? entry : AllStoredEntry();
+  };
+  trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, MakeConfigTokenizerProvider(context, config, std::move(dicts)),
-    MakeConfigEntryInfoProvider(std::move(config)),
+    trx,
+    [tokenizers](irs::field_id field_id) {
+      return tokenizers->Acquire(field_id);
+    },
+    std::move(entry_of),
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
-    std::move(indexed_exprs), shard.GetTermsByColumn());
-}
-
-namespace {
-
-// Shared tail of the two chunk writers: the PK terms are already encoded in
-// the sink's key scratch, `gen_pk` holds the rowid each row stores.
-void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-                     std::span<const catalog::ColumnId> column_ids,
-                     const duckdb::Vector& gen_pk, ObjectId table_id,
-                     duckdb::ClientContext& context);
-
-}  // namespace
-
-void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                            duckdb::DataChunk& chunk,
-                            std::span<const catalog::ColumnId> column_ids,
-                            uint64_t pk_base, ObjectId table_id,
-                            duckdb::ClientContext& context) {
-  const auto num_rows = chunk.size();
-
-  auto& scratch = sink.GetKeyScratch();
-  auto& key_terms = scratch.key_terms;
-  key_terms.clear();
-  key_terms.reserve(num_rows);
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    key_terms.push_back(
-      catalog::duckdb_primary_key::GeneratedKeyTerm(pk_base + row));
-    ids[row] = static_cast<int64_t>(pk_base + row);
-  }
-  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
-}
-
-void WriteRebuiltChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids, duckdb::idx_t rowid_slot,
-  ObjectId table_id, duckdb::ClientContext& context) {
-  const auto num_rows = chunk.size();
-  SDB_ASSERT(rowid_slot < chunk.ColumnCount());
-
-  duckdb::UnifiedVectorFormat rowids;
-  chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
-  const auto* rowid_data =
-    duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
-
-  auto& key_terms = sink.GetKeyScratch().key_terms;
-  key_terms.clear();
-  key_terms.reserve(num_rows);
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    const auto rowid = rowid_data[rowids.sel->get_index(row)];
-    key_terms.push_back(catalog::duckdb_primary_key::GeneratedKeyTerm(
-      static_cast<uint64_t>(rowid)));
-    ids[row] = rowid;
-  }
-  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
+    std::move(indexed_exprs), std::move(config));
 }
 
 namespace {
 
 void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-                     std::span<const catalog::ColumnId> column_ids,
-                     const duckdb::Vector& gen_pk, ObjectId table_id,
+                     std::span<const ColumnId> column_ids,
+                     const duckdb::Vector& gen_pk, duckdb::idx_t table_id,
                      duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-
-  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.GetKeyScratch().key_terms});
-  // The value goes under the column id; the terms go under whatever term fields
-  // the declaring indexes allocated for that column.
-  auto write_column = [&](catalog::ColumnId col_id,
-                          const duckdb::LogicalType& type,
-                          const duckdb::Vector& vec) {
-    sink.AppendValueColumn(static_cast<irs::field_id>(col_id), type, vec,
-                           num_rows);
+  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.GetKeyScratch().key_views});
+  const auto write_column = [&](ColumnId col_id,
+                                const duckdb::LogicalType& type,
+                                const duckdb::Vector& vec) {
+    sink.AppendToColumn(static_cast<irs::field_id>(col_id), type, vec,
+                        num_rows);
     for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }
@@ -967,9 +897,8 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   for (size_t col = 0; col < column_ids.size(); ++col) {
     write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
-  write_column(catalog::kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
-  for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
-    SDB_ASSERT(indexed_expr.normalized_expr);
+  write_column(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
+  for (const auto& indexed_expr : sink.IndexedExpressions()) {
     auto result =
       EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
                             column_ids, context, indexed_expr.is_geojson);
@@ -980,4 +909,62 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
 }
 
 }  // namespace
+
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const ColumnId> column_ids,
+                            uint64_t pk_base, duckdb::idx_t table_id,
+                            duckdb::ClientContext& context) {
+  const auto num_rows = chunk.size();
+  auto& scratch = sink.GetKeyScratch();
+  auto& row_keys = scratch.row_keys;
+  auto& key_views = scratch.key_views;
+  row_keys.resize(num_rows);
+  key_views.clear();
+  key_views.reserve(num_rows);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    auto& key = row_keys[row];
+    key.clear();
+    primary_key::AppendGenerated(key, pk_base + row);
+    key_views.push_back(
+      duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())});
+    ids[row] = static_cast<int64_t>(pk_base + row);
+  }
+  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
+}
+
+void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                                   duckdb::DataChunk& chunk,
+                                   std::span<const ColumnId> column_ids,
+                                   duckdb::idx_t rowid_slot,
+                                   duckdb::idx_t table_id,
+                                   duckdb::ClientContext& context) {
+  const auto num_rows = chunk.size();
+  SDB_ASSERT(rowid_slot < chunk.ColumnCount());
+  duckdb::UnifiedVectorFormat rowids;
+  chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
+  const auto* rowid_data =
+    duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
+  auto& scratch = sink.GetKeyScratch();
+  auto& row_keys = scratch.row_keys;
+  auto& key_views = scratch.key_views;
+  row_keys.resize(num_rows);
+  key_views.clear();
+  key_views.reserve(num_rows);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const auto rowid = rowid_data[rowids.sel->get_index(row)];
+    auto& key = row_keys[row];
+    key.clear();
+    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
+    key_views.push_back(
+      duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())});
+    ids[row] = rowid;
+  }
+  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
+}
+
 }  // namespace sdb::connector

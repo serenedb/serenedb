@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -33,9 +34,8 @@
 #include <memory>
 #include <utility>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
@@ -124,11 +124,14 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const override {
-    auto role = catalog::FindRole(nullptr, username);
-    if (!role) {
+    auto& cluster = catalog::ClusterOf();
+    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                   .GetEntry(cluster.LoginTransaction(),
+                             duckdb::Identifier{std::string{username}});
+    if (!entry) {
       return std::nullopt;
     }
-    const auto stored = role->Password();
+    const auto& stored = entry->Cast<catalog::RoleCatalogEntry>().Password();
     if (stored.empty()) {
       return std::nullopt;
     }

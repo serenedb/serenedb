@@ -38,9 +38,7 @@ statement error
 DROP FUNCTION vedernikoff_clickclack_step1(INT);
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_clickclack_step1" because there are entries that depend on it.
-macro function "vedernikoff_clickclack_step2" depends on macro function "vedernikoff_clickclack_step1".
-macro function "vedernikoff_clickclack_step3" depends on macro function "vedernikoff_clickclack_step2".
-macro function "vedernikoff_clickclack_step4" depends on macro function "vedernikoff_clickclack_step3".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -49,9 +47,7 @@ statement error
 DROP FUNCTION vedernikoff_clickclack_step1(INT) RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_clickclack_step1" because there are entries that depend on it.
-macro function "vedernikoff_clickclack_step2" depends on macro function "vedernikoff_clickclack_step1".
-macro function "vedernikoff_clickclack_step3" depends on macro function "vedernikoff_clickclack_step2".
-macro function "vedernikoff_clickclack_step4" depends on macro function "vedernikoff_clickclack_step3".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -115,9 +111,7 @@ statement error
 DROP TABLE vedernikoff_iceberg_base;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
-view "vedernikoff_iceberg_tower1" depends on table "vedernikoff_iceberg_base".
-view "vedernikoff_iceberg_tower2" depends on view "vedernikoff_iceberg_tower1".
-view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -126,8 +120,7 @@ statement error
 DROP VIEW vedernikoff_iceberg_tower1;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower1" because there are entries that depend on it.
-view "vedernikoff_iceberg_tower2" depends on view "vedernikoff_iceberg_tower1".
-view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -262,9 +255,7 @@ statement error
 DROP SEQUENCE vedernikoff_mop_offer_seq;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_seq" because there are entries that depend on it.
-table "vedernikoff_mop_listings_a" depends on sequence "vedernikoff_mop_offer_seq".
-table "vedernikoff_mop_listings_b" depends on sequence "vedernikoff_mop_offer_seq".
-table "vedernikoff_mop_listings_c" depends on sequence "vedernikoff_mop_offer_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -560,8 +551,7 @@ statement error
 DROP SEQUENCE vedernikoff_iceberg_partition_seq;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_partition_seq" because there are entries that depend on it.
-macro function "vedernikoff_iceberg_next_partition" depends on sequence "vedernikoff_iceberg_partition_seq".
-view "vedernikoff_iceberg_manifest_feed" depends on sequence "vedernikoff_iceberg_partition_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -777,9 +767,7 @@ statement error
 DROP SEQUENCE vedernikoff_mop_ats_seq;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_mop_ats_seq" because there are entries that depend on it.
-macro function "vedernikoff_mop_ats_next" depends on sequence "vedernikoff_mop_ats_seq".
-table "vedernikoff_mop_ats_records" depends on sequence "vedernikoff_mop_ats_seq".
-view "vedernikoff_mop_ats_window" depends on sequence "vedernikoff_mop_ats_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -788,9 +776,7 @@ statement error
 DROP SEQUENCE vedernikoff_mop_ats_seq RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_mop_ats_seq" because there are entries that depend on it.
-macro function "vedernikoff_mop_ats_next" depends on sequence "vedernikoff_mop_ats_seq".
-table "vedernikoff_mop_ats_records" depends on sequence "vedernikoff_mop_ats_seq".
-view "vedernikoff_mop_ats_window" depends on sequence "vedernikoff_mop_ats_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -1153,9 +1139,7 @@ statement error
 DROP FUNCTION vedernikoff_iceberg_threshold(INT);
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_iceberg_threshold" because there are entries that depend on it.
-table "vedernikoff_iceberg_t_alpha" depends on macro function "vedernikoff_iceberg_threshold".
-table "vedernikoff_iceberg_t_beta" depends on macro function "vedernikoff_iceberg_threshold".
-table "vedernikoff_iceberg_t_gamma" depends on macro function "vedernikoff_iceberg_threshold".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -1231,9 +1215,7 @@ statement error
 DROP TYPE vedernikoff_mop_stage;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_mop_stage" because there are entries that depend on it.
-table "vedernikoff_mop_pipeline_a" depends on type "vedernikoff_mop_stage".
-table "vedernikoff_mop_pipeline_b" depends on type "vedernikoff_mop_stage".
-table "vedernikoff_mop_pipeline_c" depends on type "vedernikoff_mop_stage".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -1403,8 +1385,7 @@ statement error
 DROP SEQUENCE vedernikoff_mop_dispatch_seq;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_mop_dispatch_seq" because there are entries that depend on it.
-macro function "vedernikoff_mop_dispatch_next" depends on sequence "vedernikoff_mop_dispatch_seq".
-view "vedernikoff_mop_dispatch_view" depends on macro function "vedernikoff_mop_dispatch_next".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

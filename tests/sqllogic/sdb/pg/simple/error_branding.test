@@ -15,4 +15,4 @@ CREATE TABLE branding_t (x int);
 statement error
 ALTER TABLE branding_t SET PARTITIONED BY (x);
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET PARTITIONED BY is not supported for DuckDB tables

@@ -21,8 +21,8 @@
 # can be rolled back gets a case below.
 #
 # The inverted-index versions of these cases are in
-# inverted_index_rollback_alters.test; rolled-back DROP INDEX is not
-# compensated and is pinned as a known gap in index_rollback_drop_gap.test.
+# inverted_index_rollback_alters.test; rolled-back DROP INDEX is in
+# index_rollback_drop.test.
 
 
 statement ok

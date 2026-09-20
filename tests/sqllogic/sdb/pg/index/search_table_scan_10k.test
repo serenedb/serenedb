@@ -205,7 +205,7 @@ db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on
 statement error
 INSERT INTO stk VALUES (1, 1, 'dup', 1) ON CONFLICT (pk) DO NOTHING;
 ----
-db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
 
 
 # Deletes: masked rows vanish from filtered scans, counts and top-k.

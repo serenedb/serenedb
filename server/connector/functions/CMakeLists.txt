@@ -13,7 +13,6 @@ target_sources(
         system.cpp
         minhash.cpp
         search.cpp
-        sequence.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
         ts_between.cpp

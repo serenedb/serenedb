@@ -46,8 +46,7 @@
 #include <span>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/table_options.h"
+#include "catalog/catalog.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
@@ -62,7 +61,8 @@ namespace sdb::connector {
 
 duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
   auto copy = duckdb::make_uniq<OffsetsBindData>();
-  copy->inverted_index = inverted_index;
+  copy->config = config;
+  copy->tokenizers = tokenizers;
   copy->column_id = column_id;
   copy->dict_tokenizer = dict_tokenizer;
   copy->limit = limit;
@@ -72,15 +72,15 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
 
 bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<OffsetsBindData>();
-  return inverted_index == o.inverted_index && column_id == o.column_id &&
+  return config == o.config && column_id == o.column_id &&
          dict_tokenizer == o.dict_tokenizer && limit == o.limit &&
          stored_filter == o.stored_filter;
 }
 
 namespace {
 
-constexpr irs::field_id kStandaloneFieldId = catalog::kMaxRealColumnIdValue + 4;
-constexpr catalog::ColumnId kStandaloneSyntheticColumnId{kStandaloneFieldId};
+constexpr irs::field_id kStandaloneFieldId = kMaxRealColumnIdValue + 4;
+constexpr ColumnId kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
 class SortingOffsetTokenizer final
   : public irs::analysis::TypedTokenizer<SortingOffsetTokenizer> {
@@ -149,7 +149,7 @@ constexpr auto kOffsetsFeatures =
   irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Offs;
 
 struct IndexField {
-  void Reset(catalog::ColumnId column_id,
+  void Reset(ColumnId column_id,
              catalog::Tokenizer::TokenizerWrapper analyzer) {
     id = static_cast<irs::field_id>(column_id);
     tokens = EnsureOffsets(std::move(analyzer));
@@ -175,14 +175,11 @@ auto& EnsureField(duckdb::ClientContext& context,
   auto column_id = kStandaloneSyntheticColumnId;
   catalog::Tokenizer::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
-    wrapper = bind.dict_tokenizer->GetTokenizer(context);
+    wrapper = bind.dict_tokenizer->Acquire(context);
   } else {
-    auto column_tokenizer =
-      catalog::InvertedInfo(*bind.inverted_index)
-        .GetTokenizer(context,
-                      catalog::ResolveTokenizers(context, *bind.inverted_index),
-                      static_cast<irs::field_id>(bind.column_id));
-    wrapper = std::move(column_tokenizer.analyzer);
+    wrapper =
+      bind.tokenizers.Acquire(static_cast<irs::field_id>(bind.column_id))
+        .analyzer;
     column_id = bind.column_id;
   }
 
@@ -313,7 +310,9 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  catalog::ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer) {
+  ColumnId column_id,
+  const duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>&
+    dict_tokenizer) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
@@ -344,7 +343,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     SearchColumnInfo info;
     info.field_id = static_cast<irs::field_id>(column_id);
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer.analyzer = dict_tokenizer->GetTokenizer(context);
+    info.tokenizer.analyzer = dict_tokenizer->Acquire(context);
     info.tokenizer.features = irs::IndexFeatures::Freq |
                               irs::IndexFeatures::Pos |
                               irs::IndexFeatures::Offs;

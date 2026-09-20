@@ -37,6 +37,6 @@ struct PgDbRoleSetting {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData();
+MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData();
 
 }  // namespace sdb::pg

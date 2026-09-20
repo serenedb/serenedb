@@ -22,7 +22,14 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -35,16 +42,11 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "catalog/database.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/foreign_server.h"
-#include "catalog/log/duckdb_global_catalog.h"
-#include "catalog/read/duckdb_dependency.h"
-#include "catalog/role.h"
-#include "catalog/schema.h"
-#include "catalog/sequence.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/foreign_server.h"
+#include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 
@@ -123,42 +125,46 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
     state.loaded = true;
     auto& duck_catalog = duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-    if (duck_catalog.GetCatalogType() == catalog::kSereneDBCatalogType) {
+    if (duck_catalog.GetCatalogType() ==
+        catalog::SereneDBCatalog::kStorageType) {
       auto& catalog = duck_catalog.Cast<catalog::SereneDBCatalog>();
       const auto transaction = catalog.GetCatalogTransaction(context);
-      catalog.VisitSchemaEntries([&](catalog::SereneDBSchemaEntry& schema) {
-        // The schema entry itself, which is what owns the sets below. The two
-        // static schemas have no definition of their own and are reported by
-        // name alone.
-        state.rows.push_back(
-          {.schema = schema.name.GetIdentifierName(),
-           .entry_type = duckdb::CatalogTypeToString(schema.type),
-           .name = schema.name.GetIdentifierName(),
-           .entry_oid = schema.oid,
-           .visible = true});
-        // One type per set, and the entry's own type is reported rather than
-        // the set's: tables, views and sequences share a set, as do the two
-        // flavours of macro.
-        for (const auto type :
-             {duckdb::CatalogType::TABLE_ENTRY,
-              duckdb::CatalogType::INDEX_ENTRY,
-              duckdb::CatalogType::MACRO_ENTRY, duckdb::CatalogType::TYPE_ENTRY,
-              duckdb::CatalogType::TOKENIZER_ENTRY}) {
-          schema.GetCatalogSet(type).Scan(
-            transaction, [&](duckdb::CatalogEntry& entry) {
-              state.rows.push_back(
-                {.schema = schema.name.GetIdentifierName(),
-                 .entry_type = duckdb::CatalogTypeToString(entry.type),
-                 .name = entry.name.GetIdentifierName(),
-                 .entry_oid = entry.oid,
-                 .visible = true});
-            });
-        }
-      });
+      catalog.ScanSchemas(
+        context, [&](duckdb::SchemaCatalogEntry& schema_entry) {
+          auto& schema = schema_entry.Cast<duckdb::DuckSchemaEntry>();
+          // The schema entry itself, which is what owns the sets below. The two
+          // static schemas have no definition of their own and are reported by
+          // name alone.
+          state.rows.push_back(
+            {.schema = schema.name.GetIdentifierName(),
+             .entry_type = duckdb::CatalogTypeToString(schema.type),
+             .name = schema.name.GetIdentifierName(),
+             .entry_oid = schema.oid,
+             .visible = true});
+          // One type per set, and the entry's own type is reported rather than
+          // the set's: tables, views and sequences share a set, as do the two
+          // flavours of macro.
+          for (const auto type : {duckdb::CatalogType::TABLE_ENTRY,
+                                  duckdb::CatalogType::INDEX_ENTRY,
+                                  duckdb::CatalogType::SEQUENCE_ENTRY,
+                                  duckdb::CatalogType::MACRO_ENTRY,
+                                  duckdb::CatalogType::TYPE_ENTRY,
+                                  duckdb::CatalogType::TOKENIZER_ENTRY}) {
+            schema.GetCatalogSet(type).Scan(
+              transaction, [&](duckdb::CatalogEntry& entry) {
+                state.rows.push_back(
+                  {.schema = schema.name.GetIdentifierName(),
+                   .entry_type = duckdb::CatalogTypeToString(entry.type),
+                   .name = entry.name.GetIdentifierName(),
+                   .entry_oid = entry.oid,
+                   .visible = true});
+              });
+          }
+        });
       // Foreign servers are database children, so their set hangs off the
       // catalog and has no schema name to report.
-      catalog.GetForeignServerSet().Scan(
-        transaction, [&](duckdb::CatalogEntry& entry) {
+      catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+        .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
           state.rows.push_back(
             {.schema = {},
              .entry_type = duckdb::CatalogTypeToString(entry.type),
@@ -169,33 +175,41 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
     }
     // The two cluster-global sets belong to no database at all, so they are
     // reported whichever one the session is in, with no schema name.
-    if (auto global = catalog::TryGlobalCatalog(context)) {
-      const auto transaction = global->GetCatalogTransaction(context);
-      for (const auto type : {duckdb::CatalogType::ROLE_ENTRY,
-                              duckdb::CatalogType::DATABASE_ENTRY}) {
-        global->TryGetCatalogSet(type)->Scan(
-          transaction, [&](duckdb::CatalogEntry& entry) {
-            state.rows.push_back(
-              {.schema = {},
-               .entry_type = duckdb::CatalogTypeToString(entry.type),
-               .name = entry.name.GetIdentifierName(),
-               .entry_oid = entry.oid,
-               .visible = true});
-          });
-      }
+    auto& cluster = catalog::ClusterOf(context);
+    {
+      const auto transaction = cluster.GetCatalogTransaction(context);
+      const auto row = [&](duckdb::CatalogEntry& entry) {
+        state.rows.push_back(
+          {.schema = {},
+           .entry_type = duckdb::CatalogTypeToString(entry.type),
+           .name = entry.name.GetIdentifierName(),
+           .entry_oid = entry.oid,
+           .visible = true});
+      };
+      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+        .Scan(transaction, row);
+      cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+        .Scan(transaction, row);
     }
     // One row per recorded edge, from every attached manager: an edge is kept
     // by the dependent's own catalog, so no one of them holds the whole graph.
     // entry_oid is the referenced object and the name is the dependent.
-    catalog::VisitAllEdges(
-      context, [&](ObjectId referenced, ObjectId dependent) {
+    for (auto& attached :
+         duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
+      auto manager = attached->GetCatalog().GetDependencyManager();
+      if (!manager) {
+        continue;
+      }
+      manager->Scan(context, [&](duckdb::CatalogEntry& referenced,
+                                 duckdb::CatalogEntry& dependent,
+                                 const duckdb::DependencyDependentFlags&) {
         state.rows.push_back({.schema = {},
-                              .entry_type = duckdb::CatalogTypeToString(
-                                duckdb::CatalogType::DEPENDENCY_ENTRY),
-                              .name = std::to_string(dependent.id()),
-                              .entry_oid = referenced.id(),
+                              .entry_type = "Dependency",
+                              .name = std::to_string(dependent.oid),
+                              .entry_oid = referenced.oid,
                               .visible = true});
       });
+    }
   }
   const auto n =
     std::min<size_t>(STANDARD_VECTOR_SIZE, state.rows.size() - state.offset);

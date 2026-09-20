@@ -25,11 +25,11 @@
 #include <memory>
 #include <vector>
 
-#include "catalog/column_id.h"
-#include "catalog/identifiers/object_id.h"
+#include "connector/column_id.h"
 
 namespace duckdb {
 
+class Catalog;
 class ClientContext;
 
 }  // namespace duckdb
@@ -49,9 +49,10 @@ namespace sdb::connector {
 // published before the index's config was.
 struct SearchBackfillTarget {
   std::shared_ptr<search::SearchTable> shard;
-  ObjectId table_id;
+  duckdb::Catalog* catalog = nullptr;
+  duckdb::idx_t table_id = 0;
   // The table's stored columns in entry order: catalog id and chunk type.
-  std::vector<catalog::ColumnId> column_ids;
+  std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> column_types;
   // Bytes of existing segments rewritten per swap (§6.3 of the design doc).
   // 0 = no limit: every stale segment goes into one group and one swap.

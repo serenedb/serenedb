@@ -320,11 +320,14 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
         auto plan = query->PlanScored({.scorer = *scorer, .fetcher = fetcher});
         ASSERT_NE(nullptr, plan);
         size_t seen = 0;
-        for (;;) {
-          const auto n = plan->Run(docs.data(), scores.data(),
-                                   irs::doc_limits::kMinCapacity);
+        constexpr auto kWindow = irs::doc_limits::kMinCapacity;
+        const auto end = irs::doc_limits::min() +
+                         static_cast<irs::doc_id_t>((*index)[0].docs_count());
+        for (auto min = irs::doc_limits::min(); min < end; min += kWindow) {
+          const auto max = std::min<irs::doc_id_t>(min + kWindow, end);
+          const auto n = plan->Run(min, max, docs.data(), scores.data());
           if (n == 0) {
-            break;
+            continue;
           }
           fetcher.Fetch(docs[0]);
           seen += n;

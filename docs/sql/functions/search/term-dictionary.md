@@ -68,6 +68,10 @@ Filtering the *emitted terms* by arbitrary conditions belongs to the outer query
 
 `EXPLAIN` shows the split: the whole claimed tree renders as `Filter:` inside the `IRESEARCH_SCAN` box and scalar post-filters as a `FILTER` node above the scan.
 
+:::note Filtered enumeration runs in parallel
+An unfiltered enumeration answers from term metadata and costs one dictionary walk, so there is nothing to spread. Once a filter or a pending delete makes the counts document-dependent, a segment large enough to span several row groups is split across worker threads: each counts every term over its own document range, and the thread that finishes the segment's last range emits the summed rows. `min`/`max`-only requests are exempt — they seek to the one term they need instead of walking the dictionary. [`sdb_scan_split`](../../indexes/inverted/maintenance.md#session-settings) forces or disables the split.
+:::
+
 :::note Scores follow the driver
 `ts_dict_score` reflects the driving acceptor only, so scores need a term-driving acceptor — a comparison or a matcher on a keyword column, not a `@@ ts_*` document filter over a tokenized column. In `cat @@ ts_starts_with('p') AND cat @@ ts_levenshtein('phon', 2)` the prefix drives, so every score is `1`; swap the query so the fuzzy matcher drives and the scores become similarities.
 :::

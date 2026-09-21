@@ -43,28 +43,15 @@ Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
   if (query.state.boosts.empty()) {
     if (const auto value =
           irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
-      if (ctx.table != nullptr) {
-        return irs::detail::MakeVariadicPhraseOf<
-          irs::detail::PhraseMatch::Plain, FilteredConstantWalk, Root::ptr>(
-          query, ctx.table, *value);
-      }
       return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Plain,
-                                               PlainConstantWalk, Root::ptr>(
-        query, utils::Empty{}, *value);
+                                               ConstantWalk, Root::ptr>(query,
+                                                                        *value);
     }
   }
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Plain,
-                                             FilteredWalk, Root::ptr, true,
-                                             lead::TwoPhaseScored>(
-      query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
-      args);
-  }
   return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Plain,
-                                           PlainWalk, Root::ptr, true,
+                                           Walk, Root::ptr, true,
                                            lead::TwoPhaseScored>(
-    query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
-    args);
+    query, ctx.fetcher, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::hits

@@ -23,6 +23,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -71,10 +72,15 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
+  const auto& segment = query.Segment();
   if (query.Kind() == QueryKind::Empty) {
     return MakeConstant(0);
   }
-  return query.PlanCount(ctx);
+  const detail::FoldReachScope reach{ctx.span};
+  if (segment.docs_mask() == nullptr) [[likely]] {
+    return query.PlanCount(ctx);
+  }
+  return MakeMasked(query, ctx);
 }
 
 }  // namespace irs::count

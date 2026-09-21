@@ -26,7 +26,7 @@ namespace irs::docs {
 
 class Empty : public Root {
  public:
-  uint32_t Run(doc_id_t*, uint32_t) final { return 0; }
+  uint32_t Run(doc_id_t, doc_id_t, doc_id_t*) final { return 0; }
 };
 
 }  // namespace irs::docs

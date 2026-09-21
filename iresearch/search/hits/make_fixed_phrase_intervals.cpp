@@ -42,27 +42,14 @@ Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
                                     .boost = query.Boost()};
   if (const auto value =
         irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
-    if (ctx.table != nullptr) {
-      return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Intervals,
-                                            FilteredConstantWalk, Root::ptr>(
-        query, ctx.table, *value);
-    }
     return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Intervals,
-                                          PlainConstantWalk, Root::ptr>(
-      query, utils::Empty{}, *value);
-  }
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Intervals,
-                                          FilteredWalk, Root::ptr, true,
-                                          lead::TwoPhaseScored>(
-      query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
-      args);
+                                          ConstantWalk, Root::ptr>(query,
+                                                                   *value);
   }
   return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Intervals,
-                                        PlainWalk, Root::ptr, true,
+                                        Walk, Root::ptr, true,
                                         lead::TwoPhaseScored>(
-    query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
-    args);
+    query, ctx.fetcher, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::hits

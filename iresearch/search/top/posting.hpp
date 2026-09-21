@@ -44,7 +44,7 @@ class Posting : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  using Block = TermBlock<InputType, Table>;
+  using Block = TermBlock<InputType>;
 
   template<typename ExcludesArgs>
   Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)
@@ -62,33 +62,59 @@ class Posting : public Root {
     _block.Prepare(meta, doc_in, segment, field, args, layout, bounds);
   }
 
-  void Run(LoserScoreCollector& collector) final {
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[Block::kFill + doc_limits::kDocsSlack];
-    ABSL_CACHELINE_ALIGNED score_t scores[Block::kFill];
-    for (;;) {
-      if constexpr (kTable) {
-        const auto from = _block.Last() + doc_limits::min();
-        if (const auto live = _admit.Live(from);
-            live != from && !_block.Step(live)) {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    if ((_at == _len || Drain(min, max, collector)) && _block.Start(min)) {
+      for (;;) {
+        if constexpr (kTable) {
+          const auto from = _block.Last() + doc_limits::min();
+          if (const auto live = _admit.Live(from);
+              live != from && !_block.Step(live)) {
+            break;
+          }
+        }
+        _len = _block.Fill(_docs.data(), _scores.data());
+        _at = 0;
+        if (_len == 0 || !Drain(min, max, collector)) {
           break;
         }
-      }
-      auto len = _block.Fill(docs, scores);
-      if (len == 0) {
-        break;
-      }
-      if constexpr (kExcludes) {
-        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
-      }
-      if (len != 0) {
-        _admit.AddDocs(collector, docs, len, scores);
       }
     }
     _admit.Flush(collector);
   }
 
  private:
+  IRS_FORCE_INLINE bool Drain(doc_id_t min, doc_id_t max,
+                              LoserScoreCollector& collector) {
+    auto* first = _docs.data() + _at;
+    auto* const last = _docs.data() + _len;
+    if (*first < min) [[unlikely]] {
+      do {
+        ++first;
+      } while (first != last && *first < min);
+    }
+    auto* stop = last;
+    if (last[-1] >= max) [[unlikely]] {
+      do {
+        --stop;
+      } while (stop != first && stop[-1] >= max);
+    }
+    _at = static_cast<uint32_t>(stop - _docs.data());
+    auto len = static_cast<uint32_t>(stop - first);
+    auto* const scores = _scores.data() + (first - _docs.data());
+    if constexpr (kExcludes) {
+      len = irs::detail::ExcludeBlock(_excludes, first, scores, len);
+    }
+    if (len != 0) {
+      _admit.AddDocs(collector, first, len, scores);
+    }
+    return stop == last;
+  }
+
   Block _block;
+  DocsBuf _docs;
+  SlackBuf<score_t, doc_limits::kBlockSize, doc_limits::kScoresSlack> _scores;
+  uint32_t _len = 0;
+  uint32_t _at = 0;
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] Admit<Table> _admit;
 };

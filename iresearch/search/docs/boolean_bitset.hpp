@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <bit>
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 
@@ -38,32 +38,41 @@ class BooleanBitset : public Root {
   explicit BooleanBitset(detail::BitsetStorage&& set) noexcept
     : _set{std::move(set)} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     constexpr auto kBits = detail::BitsetStorage::kBits;
+    constexpr auto kMin = detail::BitsetStorage::kMin;
     const auto* const words = _set.Words();
-    const auto count = _set.WordCount();
+    const uint64_t total = uint64_t{_set.WordCount()} * kBits;
+    const uint64_t lo = min - kMin;
+    const uint64_t hi =
+      std::min<uint64_t>(doc_limits::eof(max) ? total : max - kMin, total);
+    if (lo >= hi) {
+      return 0;
+    }
+    auto w = static_cast<uint32_t>(lo / kBits);
+    auto word = words[w] & (~uint64_t{0} << (lo % kBits));
+    const auto last = static_cast<uint32_t>((hi - 1) / kBits);
     uint32_t n = 0;
-    for (; _word != count; ++_word) {
-      const auto word = words[_word];
-      if (word == 0) {
-        continue;
-      }
-      const auto card = static_cast<uint32_t>(std::popcount(word));
-      if (n + card > capacity) {
+    for (;; word = words[++w]) {
+      if (w == last) [[unlikely]] {
+        if (const auto tail = hi % kBits; tail != 0) {
+          word &= (uint64_t{1} << tail) - 1;
+        }
+        if (word != 0) {
+          n = static_cast<uint32_t>(
+            MaterializeWord(kMin + w * kBits, word, out + n) - out);
+        }
         return n;
       }
-      n = static_cast<uint32_t>(
-        MaterializeWord(detail::BitsetStorage::kMin + _word * kBits, word,
-                        out + n) -
-        out);
+      if (word != 0) {
+        n = static_cast<uint32_t>(
+          MaterializeWord(kMin + w * kBits, word, out + n) - out);
+      }
     }
-    return n;
   }
 
  private:
   detail::BitsetStorage _set;
-  uint32_t _word = 0;
 };
 
 }  // namespace irs::docs

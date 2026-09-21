@@ -47,40 +47,28 @@ EXPLAIN SELECT pk FROM mv_ivf
   ORDER BY a <-> [90,0,0]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: mv_ivf                          │
-│ Lookup: table                          │
-│ Score: l2_distance(a, FLOAT[3])        │
-│ Top: 2                                 │
-│ Projections: pk,                       │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: mv_ivf                   │
+│ Lookup: table                   │
+│ Score: l2_distance(a, FLOAT[3]) │
+│ Top: 2                          │
+│ Projections: pk                 │
+│ ~4 rows                         │
+╰─────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM mv_ivf
   ORDER BY b <=> [1,0,0,0]::FLOAT[4] LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: mv_ivf                          │
-│ Lookup: table                          │
-│ Score: cosine_distance(b, FLOAT[4])    │
-│ Top: 2                                 │
-│ Projections: pk,                       │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: mv_ivf                       │
+│ Lookup: table                       │
+│ Score: cosine_distance(b, FLOAT[4]) │
+│ Top: 2                              │
+│ Projections: pk                     │
+│ ~4 rows                             │
+╰─────────────────────────────────────╯
 
 # --- kNN on each column, by index name and via base-table rewrite ------------
 

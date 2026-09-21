@@ -49,15 +49,13 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting,
       });
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    return MakePrepared(ctx, [&](auto table) -> Root::ptr {
-      auto root = memory::make_managed<
-        Posting<Input, utils::Empty, utils::Empty, decltype(table)>>(
-        table, std::piecewise_construct, std::forward_as_tuple(),
+    auto root =
+      memory::make_managed<Posting<Input, utils::Empty, utils::Empty>>(
+        std::piecewise_construct, std::forward_as_tuple(),
         std::forward_as_tuple());
-      root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
-                    irs::detail::BoundsOf(own));
-      return root;
-    });
+    root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
+                  irs::detail::BoundsOf(own));
+    return root;
   });
 }
 

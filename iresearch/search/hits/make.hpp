@@ -37,31 +37,9 @@ namespace irs {
 namespace hits {
 
 template<template<typename...> class Shape, typename... Parts, typename... Args>
-Root::ptr MakeShape(const Context& ctx, Args&&... args) {
-  if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., irs::detail::DeadRuns*>>(
-      ctx.table, std::forward<Args>(args)...);
-  }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
-    utils::Empty{}, std::forward<Args>(args)...);
+Root::ptr MakeShape(const Context&, Args&&... args) {
+  return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
 }
-
-template<typename Make>
-Root::ptr MakePrepared(const Context& ctx, Make&& make) {
-  if (ctx.table != nullptr) {
-    return make(ctx.table);
-  }
-  return make(utils::Empty{});
-}
-
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, irs::detail::DeadRuns*>;
-template<typename Node>
-using PlainConstantWalk = ConstantWalk<Node, utils::Empty>;
-template<typename Node>
-using FilteredConstantWalk = ConstantWalk<Node, irs::detail::DeadRuns*>;
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 

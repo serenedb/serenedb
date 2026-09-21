@@ -26,6 +26,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
+#include <iresearch/utils/remap_executable.hpp>
 #include <string>
 
 #include "executor.h"
@@ -67,6 +68,7 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
 }  // namespace
 
 int main(int argc, const char* argv[]) {
+  irs::RemapExecutable();
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the

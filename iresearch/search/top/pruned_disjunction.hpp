@@ -70,16 +70,9 @@ class PrunedDisjunction : public Root {
   PrunedDisjunction(PrunedDisjunction&&) = delete;
   PrunedDisjunction& operator=(PrunedDisjunction&&) = delete;
 
-  void Run(LoserScoreCollector& collector) final {
+  void Run(doc_id_t begin, doc_id_t max, LoserScoreCollector& collector) final {
     _collector = &collector;
-    const doc_id_t max = doc_limits::eof();
-    doc_id_t window_min = doc_limits::min();
-
-    _num_candidates = 0;
-    _num_outer_windows = 0;
-    _min_window_size = 1;
-    _promote_ticks = 0;
-    _exhaustive_windows = kExhaustiveWindowsMin;
+    doc_id_t window_min = begin;
 
   outer:
     while (window_min < max) {
@@ -116,6 +109,10 @@ class PrunedDisjunction : public Root {
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
       } else {
         _exhaustive_windows = kExhaustiveWindowsMin;
+      }
+
+      if (window_max > max) [[unlikely]] {
+        window_max = max;
       }
 
       ProcessEssential([&](Entry* entry) {

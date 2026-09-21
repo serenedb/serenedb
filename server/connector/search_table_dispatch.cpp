@@ -214,6 +214,15 @@ void ApplyStorageKind(
       search_options.segment_memory_max = ResolveUbigintWithOption(
         context, kSegmentMemoryMaxSetting, /*with_value=*/nullptr);
     }
+    const auto rg = with_options.find(std::string{kRowGroupSizeSetting});
+    if (rg != with_options.end() && rg->second) {
+      search_options.row_group_size = static_cast<uint32_t>(
+        ExtractValidatedUbigint(kRowGroupSizeSetting, *rg->second));
+      with_options.erase(std::string{kRowGroupSizeSetting});
+    } else {
+      search_options.row_group_size = ResolveUintWithOption(
+        context, kRowGroupSizeSetting, /*with_value=*/nullptr);
+    }
     if (const auto topk = with_options.find(std::string{kOptimizeTopKSetting});
         topk != with_options.end() && topk->second) {
       auto text = *ExtractString(kOptimizeTopKSetting, *topk->second);

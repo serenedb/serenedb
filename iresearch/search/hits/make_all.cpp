@@ -26,20 +26,18 @@ namespace irs::hits {
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const irs::detail::StatsRecord& record, score_t boost) {
-  return MakePrepared(ctx, [&](auto table) -> Root::ptr {
-    auto root = memory::make_managed<All<decltype(table)>>(
-      table, ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()));
-    root->Prepare(segment, irs::detail::ScoreArgs{.scorer = record.scorer,
-                                                  .stats = record.stats,
-                                                  .fetcher = &ctx.fetcher,
-                                                  .boost = boost});
-    return root;
-  });
+  auto root = memory::make_managed<All>(
+    ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()));
+  root->Prepare(segment, irs::detail::ScoreArgs{.scorer = record.scorer,
+                                                .stats = record.stats,
+                                                .fetcher = &ctx.fetcher,
+                                                .boost = boost});
+  return root;
 }
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score) {
-  return MakeShape<All>(ctx, ctx.fetcher,
-                        static_cast<doc_id_t>(segment.docs_count()), score);
+  return memory::make_managed<All>(
+    ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()), score);
 }
 
 }  // namespace irs::hits

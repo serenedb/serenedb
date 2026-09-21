@@ -425,7 +425,7 @@ class CountRoot : public irs::count::Root {
  public:
   explicit CountRoot(size_t count) noexcept : _count{count} {}
 
-  uint64_t Run() final { return _count; }
+  uint64_t Run(irs::doc_id_t, irs::doc_id_t) final { return _count; }
 
  private:
   size_t _count;
@@ -435,10 +435,10 @@ class DocsRoot : public irs::docs::Root {
  public:
   explicit DocsRoot(DocList::DocidsT docs) noexcept : _list{std::move(docs)} {}
 
-  uint32_t Run(irs::doc_id_t* out, uint32_t capacity) final {
+  uint32_t Run(irs::doc_id_t min, irs::doc_id_t max, irs::doc_id_t* out) final {
     uint32_t size = 0;
-    while (size != capacity && !irs::doc_limits::eof(_list.Next())) {
-      out[size++] = _list.Value();
+    for (auto doc = _list.Seek(min); doc < max; doc = _list.Next()) {
+      out[size++] = doc;
     }
     return size;
   }
@@ -458,8 +458,8 @@ class ScoredRoot : public irs::hits::Root {
       _boost{boost},
       _stats{stats} {}
 
-  uint32_t Run(irs::doc_id_t* docs, irs::score_t* scores,
-               uint32_t capacity) final {
+  uint32_t Run(irs::doc_id_t min, irs::doc_id_t max, irs::doc_id_t* docs,
+               irs::score_t* scores) final {
     const auto score = _ctx.scorer.PrepareScorer({
       .segment = _segment,
       .field = {},
@@ -469,8 +469,8 @@ class ScoredRoot : public irs::hits::Root {
       .boost = _boost,
     });
     uint32_t size = 0;
-    while (size != capacity && !irs::doc_limits::eof(_list.Next())) {
-      docs[size] = _list.Value();
+    for (auto doc = _list.Seek(min); doc < max; doc = _list.Next()) {
+      docs[size] = doc;
       scores[size] = score.Score();
       ++size;
     }

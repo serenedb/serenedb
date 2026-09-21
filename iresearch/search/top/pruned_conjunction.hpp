@@ -77,8 +77,8 @@ class PrunedConjunction : public Root {
   PrunedConjunction(PrunedConjunction&&) = delete;
   PrunedConjunction& operator=(PrunedConjunction&&) = delete;
 
-  void Run(LoserScoreCollector& collector) final {
-    for (auto doc = _lead.Next(); !doc_limits::eof(doc);) {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    for (auto doc = _lead.Seek(min); doc < max;) {
       auto threshold = collector.ScoreThreshold();
       const auto others_end = _others.AdvanceTo(doc);
       const auto lead_last = _lead.BlockLast();
@@ -87,6 +87,9 @@ class PrunedConjunction : public Root {
           static_cast<uint64_t>(others_end - doc) * kNarrowFragment >=
             static_cast<uint64_t>(lead_last - doc)) {
         last = others_end;
+      }
+      if (last >= max) [[unlikely]] {
+        last = max - 1;
       }
       const auto bound = _lead.MaxScore(last) + _others.OpenWindow(doc, last);
 

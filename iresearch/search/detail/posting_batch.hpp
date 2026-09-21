@@ -45,10 +45,92 @@
 
 namespace irs::detail {
 
-template<typename InputType, typename Table, bool Scored>
+inline IRS_FORCE_INLINE uint32_t
+CopyBelow16(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
+            doc_id_t* IRS_RESTRICT out) noexcept {
+#ifdef __AVX2__
+  const auto lo = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+  const auto hi =
+    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first + 8));
+  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out), lo);
+  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + 8), hi);
+  const auto edge = _mm256_set1_epi32(static_cast<int32_t>(max));
+  const auto mask =
+    static_cast<uint32_t>(
+      _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(edge, lo)))) |
+    (static_cast<uint32_t>(
+       _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(edge, hi))))
+     << 8);
+  return static_cast<uint32_t>(std::countr_zero(~mask));
+#else
+  uint32_t n = 0;
+  while (n != 16 && first[n] < max) {
+    out[n] = first[n];
+    ++n;
+  }
+  return n;
+#endif
+}
+
+inline IRS_FORCE_INLINE uint32_t
+CopyBelow(const doc_id_t* IRS_RESTRICT first, const doc_id_t* IRS_RESTRICT last,
+          doc_id_t max, doc_id_t* IRS_RESTRICT out) noexcept {
+  uint32_t n = 0;
+#ifdef __AVX2__
+  const auto edge = _mm256_set1_epi32(static_cast<int32_t>(max));
+  for (; first + 8 <= last; first += 8) {
+    const auto ids =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + n), ids);
+    const auto keep = _mm256_cmpgt_epi32(edge, ids);
+    const auto mask =
+      static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(keep)));
+    n += static_cast<uint32_t>(std::popcount(mask));
+    if (mask != 0xFF) {
+      return n;
+    }
+  }
+#endif
+  while (first != last && *first < max) {
+    out[n++] = *first++;
+  }
+  return n;
+}
+
+inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
+                                           const doc_id_t* IRS_RESTRICT last,
+                                           doc_id_t max,
+                                           doc_id_t* IRS_RESTRICT out,
+                                           const score_t* IRS_RESTRICT src,
+                                           score_t* IRS_RESTRICT dst) noexcept {
+  uint32_t n = 0;
+#ifdef __AVX2__
+  const auto edge = _mm256_set1_epi32(static_cast<int32_t>(max));
+  for (; first + 8 <= last; first += 8, src += 8) {
+    const auto ids =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + n), ids);
+    _mm256_storeu_ps(dst + n, _mm256_loadu_ps(src));
+    const auto keep = _mm256_cmpgt_epi32(edge, ids);
+    const auto mask =
+      static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(keep)));
+    n += static_cast<uint32_t>(std::popcount(mask));
+    if (mask != 0xFF) {
+      return n;
+    }
+  }
+#endif
+  while (first != last && *first < max) {
+    out[n] = *first++;
+    dst[n] = *src++;
+    ++n;
+  }
+  return n;
+}
+
+template<typename InputType, bool Scored>
 class PostingBatch {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
 
   doc_id_t Last() const noexcept { return _last; }
@@ -56,8 +138,17 @@ class PostingBatch {
   uint32_t Left() const noexcept { return _left_in_list; }
 
   bool Step(doc_id_t live) {
-    static_assert(kTable);
     return StepToLive(_walk, In(), live, _left_in_list, _last);
+  }
+
+  bool Start(doc_id_t min) {
+    if (min <= _last + 1) {
+      return true;
+    }
+    if (_left_in_list == 0) {
+      return false;
+    }
+    return Step(min);
   }
 
  protected:
@@ -82,11 +173,8 @@ class PostingBatch {
   }
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
-    if constexpr (kTable) {
-      if (meta.docs_count > kBlock) {
-        const auto skip = ToSkipLayout(layout);
-        _walk.Arm(meta, {.bounds = bounds, .pos = skip.pos, .offs = skip.offs});
-      }
+    if (meta.docs_count > kBlock) {
+      _walk.Arm(meta, SkipShapeOf(layout, bounds));
     }
   }
 
@@ -150,7 +238,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  [[no_unique_address]] utils::Need<kTable, SkipWalk<InputType>> _walk;
+  SkipWalk<InputType> _walk;
 };
 
 }  // namespace irs::detail

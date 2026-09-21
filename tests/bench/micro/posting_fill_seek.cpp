@@ -326,17 +326,16 @@ size_t Next(const irs::lead::Node::ptr& docs) {
   return n;
 }
 
-size_t Emit(const irs::docs::Root::ptr& docs) {
+size_t Emit(const irs::docs::Root::ptr& docs, irs::doc_id_t docs_count) {
   irs::SlackBuf<irs::doc_id_t, kCapacity, irs::doc_limits::kDocsSlack> out;
   size_t n = 0;
-  for (;;) {
-    const auto count = docs->Run(out, kCapacity);
+  const auto end = irs::doc_limits::min() + docs_count;
+  for (auto min = irs::doc_limits::min(); min < end; min += kCapacity) {
+    const auto max = std::min<irs::doc_id_t>(min + kCapacity, end);
+    n += docs->Run(min, max, out);
     benchmark::DoNotOptimize(out);
-    if (count == 0) {
-      return n;
-    }
-    n += count;
   }
+  return n;
 }
 
 size_t Window(const irs::fill::Node::ptr& docs) {
@@ -376,7 +375,8 @@ void BmEmit(benchmark::State& state, std::string_view term) {
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Emit(prepared.Docs());
+    docs += Emit(prepared.Docs(),
+                 static_cast<irs::doc_id_t>(index.reader[0].docs_count()));
   }
   Report(state, docs);
 }
@@ -458,7 +458,8 @@ void BmConj(benchmark::State& state, std::string_view lhs,
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Emit(prepared.Docs());
+    docs +=
+      Emit(prepared.Docs(), static_cast<irs::doc_id_t>(segment.docs_count()));
   }
   Report(state, docs);
 }
@@ -507,7 +508,8 @@ void BmText(benchmark::State& state, uint32_t lhs, uint32_t rhs) {
   for (auto _ : state) {
     auto query = filter->PrepareSegment(segment, {});
     auto plan = query ? irs::count::MakeRoot(*query) : irs::count::Root::ptr{};
-    docs += plan ? plan->Run() : 0;
+    docs +=
+      plan ? plan->Run(irs::doc_limits::min(), irs::doc_limits::eof()) : 0;
   }
   Report(state, docs);
 }

@@ -28,12 +28,14 @@
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/hits/empty.hpp"
 #include "iresearch/search/hits/make_boolean.hpp"
+#include "iresearch/search/hits/masked.hpp"
 #include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
@@ -49,22 +51,14 @@
 namespace irs::hits {
 namespace {
 
-Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
+Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context&) {
+  return irs::detail::MakeFixedPhrase<ConstantWalk, Root::ptr>(query,
+                                                               score_t{0});
 }
 
-Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
+Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context&) {
+  return irs::detail::MakeVariadicPhrase<ConstantWalk, Root::ptr>(query,
+                                                                  score_t{0});
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
@@ -148,7 +142,13 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
-  return query.PlanScored(ctx);
+  const detail::FoldReachScope reach{ctx.span};
+  auto plan = query.PlanScored(ctx);
+  const auto* const docs_mask = query.Segment().docs_mask();
+  if (docs_mask == nullptr || !plan) [[likely]] {
+    return plan;
+  }
+  return memory::make_managed<Masked>(std::move(plan), *docs_mask);
 }
 
 }  // namespace irs::hits

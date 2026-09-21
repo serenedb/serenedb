@@ -31,7 +31,6 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
@@ -118,10 +117,9 @@ class BoostTerm {
   uint32_t _pos[kScoreBlock];
 };
 
-template<typename InputType, typename Boost, typename Excludes, typename Table>
-class Posting : public Root,
-                public irs::detail::PostingBatch<InputType, Table, true> {
-  using Base = irs::detail::PostingBatch<InputType, Table, true>;
+template<typename InputType, typename Boost, typename Excludes>
+class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
+  using Base = irs::detail::PostingBatch<InputType, true>;
 
   using Base::_last;
   using Base::_left_in_list;
@@ -131,17 +129,15 @@ class Posting : public Root,
   using Base::ScoreTail;
 
  public:
-  using Base::kTable;
   static constexpr bool kBoost = !std::is_same_v<Boost, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename BoostArgs, typename ExcludesArgs>
-  Posting(Table table, std::piecewise_construct_t, BoostArgs&& boost,
+  Posting(std::piecewise_construct_t, BoostArgs&& boost,
           ExcludesArgs&& excludes)
     : _boost{std::make_from_tuple<Boost>(std::forward<BoostArgs>(boost))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _table{table} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
 
   Posting(Posting&&) = delete;
   Posting& operator=(Posting&&) = delete;
@@ -158,42 +154,114 @@ class Posting : public Root,
 
   Boost& Optional() noexcept { return _boost; }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    uint32_t emitted = 0;
-    while (_left_in_list != 0 && emitted + kBlock <= capacity) {
-      if constexpr (kTable) {
-        const auto from = _last + doc_limits::min();
-        if (const auto live = _table.Live(from);
-            live != from && !this->Step(live)) {
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,
+               score_t* IRS_RESTRICT scores) final {
+    uint32_t emitted = Drain(docs, scores, min, max);
+    if (_at != _len) {
+      return emitted;
+    }
+    if (!this->Start(min)) {
+      return emitted;
+    }
+    const auto capacity = static_cast<uint32_t>(max - min);
+    while (_left_in_list != 0) {
+      const auto len = std::min(_left_in_list, kBlock);
+      if (emitted + kBlock > capacity) [[unlikely]] {
+        _at = 0;
+        _len = Fill(_block.data(), _scores.data(), len);
+        emitted += Drain(docs + emitted, scores + emitted, min, max);
+        if (_at != _len) {
           break;
         }
+        continue;
       }
-      const auto len = std::min(_left_in_list, kBlock);
       auto* const dest = docs + emitted;
       auto* const out = scores + emitted;
-      ReadDocs(dest, len);
-      if (len == kBlock) {
-        ScoreBlock(dest, out);
-      } else {
-        ScoreTail(dest, out, len);
+      auto kept = Fill(dest, out, len);
+      if (kept != 0 && dest[0] < min) [[unlikely]] {
+        const auto below = static_cast<uint32_t>(
+          std::lower_bound(dest, dest + kept, min) - dest);
+        kept -= below;
+        std::copy_n(dest + below, kept, dest);
+        std::copy_n(out + below, kept, out);
       }
-      if constexpr (kBoost) {
-        _boost.Apply(dest, out, len);
+      if (kept == 0 || dest[kept - 1] < max) [[likely]] {
+        emitted += kept;
+        continue;
       }
-      if constexpr (kExcludes) {
-        emitted += irs::detail::ExcludeBlock(_excludes, dest, out, len);
-      } else {
-        emitted += len;
+      uint32_t stop = 0;
+      while (stop != kept && dest[stop] < max) {
+        ++stop;
       }
+      _len = kept - stop;
+      _at = 0;
+      std::copy_n(dest + stop, _len, _block.data());
+      std::copy_n(out + stop, _len, _scores.data());
+      return emitted + stop;
     }
     return emitted;
   }
 
  private:
+  IRS_FORCE_INLINE uint32_t Fill(doc_id_t* IRS_RESTRICT dest,
+                                 score_t* IRS_RESTRICT out, uint32_t len) {
+    ReadDocs(dest, len);
+    if (len == kBlock) {
+      ScoreBlock(dest, out);
+    } else {
+      ScoreTail(dest, out, len);
+    }
+    if constexpr (kBoost) {
+      _boost.Apply(dest, out, len);
+    }
+    if constexpr (kExcludes) {
+      len = irs::detail::ExcludeBlock(_excludes, dest, out, len);
+    }
+    return len;
+  }
+
+  IRS_FORCE_INLINE uint32_t Drain(doc_id_t* IRS_RESTRICT docs,
+                                  score_t* IRS_RESTRICT scores, doc_id_t min,
+                                  doc_id_t max) noexcept {
+    if (_at == _len) {
+      return 0;
+    }
+    const doc_id_t* const begin = _block.data();
+    const auto* first = begin + _at;
+    const auto* last = begin + _len;
+    if (*first < min) [[unlikely]] {
+      do {
+        ++first;
+      } while (first != last && *first < min);
+      if (first == last) [[unlikely]] {
+        _at = _len;
+        return 0;
+      }
+      _at = static_cast<uint32_t>(first - begin);
+    }
+    if (*first >= max) [[unlikely]] {
+      return 0;
+    }
+    const auto* const src = _scores.data() + _at;
+    if (last[-1] >= max) [[unlikely]] {
+      const auto n =
+        irs::detail::CopyBelow(first, last, max, docs, src, scores);
+      _at += n;
+      return n;
+    }
+    const auto n = static_cast<uint32_t>(last - first);
+    std::copy_n(first, n, docs);
+    std::copy_n(src, n, scores);
+    _at = _len;
+    return n;
+  }
+
+  DocsBuf _block;
+  SlackBuf<score_t, doc_limits::kBlockSize, doc_limits::kScoresSlack> _scores;
+  uint32_t _len = 0;
+  uint32_t _at = 0;
   [[no_unique_address]] Boost _boost;
   [[no_unique_address]] Excludes _excludes;
-  [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::hits

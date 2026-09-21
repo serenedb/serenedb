@@ -128,7 +128,8 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   irs::ColFilterStateCache filter_states;
   auto& score_state = filter_states.State(ctx, score_filter);
 
-  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::lowest();
+  std::atomic<irs::score_t> score_threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{score_threshold, hits};
   irs::ColumnArgsFetcher fetcher;
 
@@ -137,7 +138,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
 
   uint32_t seg_idx = 0;
-  for ([[maybe_unused]] auto& segment : reader) {
+  for (auto& segment : reader) {
     fetcher.Clear();
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
@@ -148,10 +149,13 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
     if (!plan) {
       continue;
     }
-    for (;;) {
-      const auto n = plan->Run(docs.data(), scores.data(), kBatch);
+    const auto end =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(segment.docs_count());
+    for (auto min = irs::doc_limits::min(); min < end; min += kBatch) {
+      const auto max = std::min<irs::doc_id_t>(min + kBatch, end);
+      const auto n = plan->Run(min, max, docs.data(), scores.data());
       if (n == 0) {
-        break;
+        continue;
       }
       const auto passing = irs::ColFilterChain::FilterDocsScores(
         score_filter, score_state, docs.data(), scores.data(), n);

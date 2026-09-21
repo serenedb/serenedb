@@ -35,12 +35,8 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                                             .stats = record.stats,
                                             .fetcher = &ctx.fetcher,
                                             .boost = query.Boost()});
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeWildcardNGram<FilteredConstantWalk, Root::ptr>(
-      query, 0, ctx.table, value);
-  }
-  return irs::detail::MakeWildcardNGram<PlainConstantWalk, Root::ptr>(
-    query, 0, utils::Empty{}, value);
+  return irs::detail::MakeWildcardNGram<ConstantWalk, Root::ptr>(query, 0,
+                                                                 value);
 }
 
 }  // namespace irs::hits

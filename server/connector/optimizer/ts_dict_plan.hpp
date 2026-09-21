@@ -25,7 +25,7 @@
 #include <memory>
 
 #include "catalog/fwd.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
 
 namespace sdb::optimizer {
 
@@ -41,8 +41,8 @@ void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
-  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  connector::SereneDBScanBindData& ss, const catalog::InvertedIndex& index,
+  duckdb::LogicalGet& get, connector::ScanBindData& bind_data,
+  connector::ScanBindData& ss, const catalog::InvertedIndex& index,
   duckdb::ClientContext& context);
 
 }  // namespace sdb::optimizer

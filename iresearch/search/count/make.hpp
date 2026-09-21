@@ -34,6 +34,13 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
 
 Root::ptr MakeConstant(uint64_t count);
 
+Root::ptr MakeAllCount(doc_id_t count);
+
+Root::ptr MakeTermCount(const detail::PostingClause& posting,
+                        const Context& ctx);
+
+Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
+
 Root::ptr MakeTerm(const detail::PostingClause& posting,
                    const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx);

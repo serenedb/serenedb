@@ -331,7 +331,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   const auto rows = _tf_target.size();
 
   RunCastPass(output, rows);
-  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  GatherNonLookupColumns(output, rows);
   return rows;
 }
 

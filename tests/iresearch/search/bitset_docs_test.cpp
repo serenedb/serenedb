@@ -92,16 +92,17 @@ std::vector<irs::doc_id_t> Drain(Cursor& it) {
   return docs;
 }
 
-// Every document the root emits, driven the way a consumer drives it.
-std::vector<irs::doc_id_t> Emit(irs::docs::Root& root, uint32_t capacity) {
+// Every document the root emits, driven the way the scan drives it: fixed
+// windows of `capacity` rows walked from the segment start to its end.
+std::vector<irs::doc_id_t> Emit(irs::docs::Root& root, uint32_t capacity,
+                                irs::doc_id_t docs_count) {
   std::vector<irs::doc_id_t> out(capacity + irs::doc_limits::kDocsSlack);
   std::vector<irs::doc_id_t> docs;
-  for (;;) {
-    const auto n = root.Run(out.data(), capacity);
-    if (n == 0) {
-      break;
-    }
-    EXPECT_LE(n, capacity);
+  const auto end = irs::doc_limits::min() + docs_count;
+  for (auto min = irs::doc_limits::min(); min < end; min += capacity) {
+    const auto max = std::min<irs::doc_id_t>(min + capacity, end);
+    const auto n = root.Run(min, max, out.data());
+    EXPECT_LE(n, max - min);
     docs.insert(docs.end(), out.begin(), out.begin() + n);
   }
   return docs;
@@ -147,14 +148,12 @@ TEST(bitset_docs_test, walk_lead_first_window) {
   const std::vector<irs::doc_id_t> expected{5, 10, 4100};
   irs::docs::BooleanWindow<irs::fill::WalkDocs<irs::lead::BitsetDocs>,
                            irs::utils::Empty, irs::utils::Empty,
-                           irs::utils::Empty, irs::utils::Empty>
-    root{irs::utils::Empty{},
-         std::piecewise_construct,
+                           irs::utils::Empty>
+    root{std::piecewise_construct,
          std::forward_as_tuple(MakeSet(4200, expected)),
-         std::forward_as_tuple(),
-         std::forward_as_tuple(),
+         std::forward_as_tuple(), std::forward_as_tuple(),
          std::forward_as_tuple()};
-  ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
+  ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity, 4200));
 }
 
 TEST(bitset_lead_test, advance) {
@@ -674,20 +673,20 @@ TEST(bitset_docs_test, run) {
   {
     const std::vector<irs::doc_id_t> expected{3, 70, 130, 4095};
     irs::docs::BooleanBitset root{MakeSet(4096, expected)};
-    ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
+    ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity, 4096));
   }
 
   // more documents than one batch holds: a word is never split across two
   {
     const auto expected = Range(1, 300);
     irs::docs::BooleanBitset root{MakeSet(300, expected)};
-    ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
+    ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity, 300));
   }
 
   // a segment holding nothing
   {
     irs::docs::BooleanBitset root{MakeSet(300, {})};
-    ASSERT_TRUE(Emit(root, irs::doc_limits::kMinCapacity).empty());
+    ASSERT_TRUE(Emit(root, irs::doc_limits::kMinCapacity, 300).empty());
   }
 }
 
@@ -898,4 +897,25 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
       }
     }
   }
+}
+
+// A set that is already folded has no clause left to fill from, so a question
+// past its end has to stop at the end rather than reach for one. CountAgainst
+// asks exactly that of the last leaf of a bounded scan.
+TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
+  constexpr irs::doc_id_t kDocs = 300;
+  irs::detail::LazyBitset set{MakeSet(kDocs, {3, 100, 299}), nullptr};
+
+  ASSERT_EQ(kDocs + 1, set.End());
+  ASSERT_EQ(kDocs + 1, set.Filled());
+
+  set.Reach(kDocs + 1);
+  set.Reach(kDocs + 2);
+  set.Reach(irs::doc_limits::eof());
+  ASSERT_EQ(kDocs + 1, set.Filled());
+
+  ASSERT_TRUE(set.Contains(3));
+  ASSERT_TRUE(set.Contains(299));
+  ASSERT_FALSE(set.Contains(4));
+  ASSERT_EQ(irs::doc_limits::eof(), set.Probe(kDocs + 1));
 }

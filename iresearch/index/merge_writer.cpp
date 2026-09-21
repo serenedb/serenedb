@@ -667,8 +667,8 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
+      SDB_ASSERT(!HasUncommitted(reader.Meta()));
       reader_ctx.remap.mask = reader.docs_mask();
-      reader_ctx.remap.uncommitted_begin = reader.Meta().uncommitted_begin;
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {

@@ -167,13 +167,38 @@ class RawVectorReader {
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
     _win = child->Locate(elem, _win);
-    const auto& window = _win;
-    const auto& meta = child->DataBlocks()[window.block];
+    const auto window = _win;  // by value: the walk below moves the hint
+    const auto& blocks = child->DataBlocks();
+    const auto& meta = blocks[window.block];
     if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
         elem >= window.begin && elem < window.end) {
+      // Blocks of an uncompressed column are written back to back, so the run
+      // one read can serve reaches over every block that follows this one
+      // contiguously in the file. Stopping at the first block edge instead
+      // leaves any row sitting on a seam to the columnstore's scan path -- a
+      // pin and an output vector to move one row -- and on a million-row scan
+      // those seams were 11% of the server's CPU.
+      const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
+      uint64_t end = window.end;
+      for (auto w = window; end < want;) {
+        const auto next = child->Locate(end, w);
+        if (next.block == w.block || next.begin != end) {
+          break;
+        }
+        const auto& m = blocks[next.block];
+        if (m.codec->type !=
+              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+            m.file_offset != meta.file_offset +
+                               (next.begin - window.begin) * sizeof(float)) {
+          break;
+        }
+        end = next.end;
+        w = next;
+        _win = next;  // the next call starts where this run ended
+      }
       // Whole rows only: a block boundary that falls inside a row leaves none,
       // and that row goes the slow way so the next one can start clean.
-      const auto fit = static_cast<size_t>((window.end - elem) / _d);
+      const auto fit = static_cast<size_t>((end - elem) / _d);
       if (fit != 0) {
         got = std::min(count, fit);
         const size_t bytes = got * _d * sizeof(float);

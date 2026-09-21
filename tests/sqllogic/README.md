@@ -144,8 +144,9 @@ ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> JOBS
 ```
 
 CI runs the fixture pass always and adds the BigLake pass (`SDB_SQLLOGIC_SCOPE=biglake`,
-`SDB_RECOVERY_TESTS`) only when the repository variable `RUN_BIGLAKE` is `true` and the
-`BIGLAKE_*` repository secrets are present.
+`SDB_RECOVERY_TESTS`) only when the workflow is dispatched with the `BIGLAKE` checkbox on
+and the `BIGLAKE_*` repository secrets are present. Locally the pass is off unless you export
+`RUN_BIGLAKE=true` yourself.
 
 ## Key Features
 

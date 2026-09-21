@@ -399,7 +399,7 @@ def main():
     # a $__TEST_DIR__ symlink at the next variant instead of copying the
     # table and rewriting its hint. nohint variants keep only the metadata
     # jsons up to N for the version-guessing rungs.
-    def emit(name, table, hint, max_meta_json):
+    def emit(name, table, hint, max_meta_json, break_manifests):
         src = os.path.join(WORK, "wh", "ns", table)
         dst = os.path.join(OUT, name)
         os.makedirs(dst)
@@ -414,13 +414,21 @@ def main():
                 if (entry.startswith("v") and entry.endswith(".metadata.json")
                         and int(entry[1:-len(".metadata.json")]) > max_meta_json):
                     os.remove(os.path.join(meta_dst, entry))
+        if break_manifests:
+            for entry in os.listdir(meta_dst):
+                if entry.endswith("-m0.avro"):
+                    with open(os.path.join(meta_dst, entry), "wb") as f:
+                        f.write(b"not an avro container")
 
     for n in range(1, 10):
-        emit(f"plain_v{n}", "plain", n, None)
+        emit(f"plain_v{n}", "plain", n, None, False)
     for n in range(1, 6):
-        emit(f"part_v{n}", "part", n, None)
+        emit(f"part_v{n}", "part", n, None, False)
     for n in range(1, 4):
-        emit(f"plain_nohint_v{n}", "plain", None, n)
+        emit(f"plain_nohint_v{n}", "plain", None, n, False)
+    # The manifest lists still read, so a scan reaches the manifests they name
+    # and fails there -- inside the manifest-read tasks.
+    emit("plain_badmanifest_v1", "plain", 1, None, True)
     print("fixture written to", OUT)
 
 

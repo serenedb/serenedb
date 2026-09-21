@@ -72,12 +72,69 @@ void RerankHits(ScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
   }
 }
 
+struct AnswerWorstFirst {
+  bool operator()(const irs::ScoreDoc& a, const irs::ScoreDoc& b) const {
+    return a.score > b.score;
+  }
+};
+
+// One segment's pool, re-scored exactly and merged into the worker's answer.
+// The collector then restarts from nothing: seeding the next segment with this
+// one's quantized k-th is exactly the comparison this path exists to avoid,
+// and the exact k-th cannot seed a quantized threshold either without a bound
+// on the quantizer's error. Until that bound exists the segment is walked
+// unpruned rather than pruned wrongly.
+void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
+  if (!l.collector) {
+    return;
+  }
+  auto& c = *l.collector;
+  const size_t accepted = c.AcceptedCount();
+  if (accepted != 0) {
+    auto pool = l.hit_slice.first(accepted);
+    // Ascending by doc so the exact vectors come off the columnstore in one
+    // forward pass instead of a scatter.
+    SortByAddress(pool);
+    RerankHits(g, pool);
+    const size_t k = *g.top_k;
+    if (l.answer.size() < k) {
+      l.answer.resize(k);
+    }
+    for (const auto& hit : pool) {
+      if (l.answer_size < k) {
+        l.answer[l.answer_size++] = hit;
+        std::push_heap(l.answer.begin(), l.answer.begin() + l.answer_size,
+                       AnswerWorstFirst{});
+      } else if (hit.score > l.answer.front().score) {
+        std::pop_heap(l.answer.begin(), l.answer.begin() + k,
+                      AnswerWorstFirst{});
+        l.answer[k - 1] = hit;
+        std::push_heap(l.answer.begin(), l.answer.begin() + k,
+                       AnswerWorstFirst{});
+      }
+    }
+  }
+  c.Restart(std::numeric_limits<irs::score_t>::lowest());
+}
+
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
   if (!l.collector) {
+    // A pool that exists to survive a lookup filter is not a rescore and keeps
+    // the old shape, as does an index whose scores are already exact.
+    l.per_segment_rescore =
+      g.topk.rerank_pool != 0 && !g.has_lookup_filter &&
+      g.vector_scorer != nullptr &&
+      g.vector_scorer->quant != irs::VectorQuantization::None;
     l.collector.emplace(g.topk.global_kth_score, l.hit_slice);
   }
   auto& collector = *l.collector;
+  if (l.pool_seg != unit.seg) {
+    if (l.per_segment_rescore && l.pool_seg != std::numeric_limits<uint32_t>::max()) {
+      FlushSegmentPool(g, l);
+    }
+    l.pool_seg = unit.seg;
+  }
   collector.SetSegment(unit.seg);
   const auto range = g.RangeOf(unit);
   if (l.root_seg != unit.seg || range.begin < l.root_end) {
@@ -108,6 +165,15 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
+  if (l.per_segment_rescore) {
+    // Every segment re-scored and merged itself; `answer` is this worker's
+    // top-k on exact scores and nothing else needs doing to it.
+    FlushSegmentPool(g, l);
+    std::copy_n(l.answer.begin(), l.answer_size, l.hit_slice.begin());
+    t.accepted[l.worker].store(static_cast<uint32_t>(l.answer_size),
+                               std::memory_order_release);
+    return;
+  }
   auto hits = l.collector ? l.hit_slice.first(l.collector->AcceptedCount())
                           : l.hit_slice.first(0);
   if (t.rerank_pool != 0 && g.vector_scorer != nullptr &&

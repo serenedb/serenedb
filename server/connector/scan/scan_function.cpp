@@ -155,8 +155,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  state->reader = &ss.search.snapshot->reader;
-  state->total_segments = ss.search.snapshot->reader.size();
+  if (ss.plan_cache.cache_plan && ss.plan_cache.reacquire_snapshot) {
+    state->snapshot = ss.plan_cache.reacquire_snapshot(context);
+  }
+  const auto& snapshot =
+    state->snapshot ? *state->snapshot : *ss.search.snapshot;
+  state->reader = &snapshot.reader;
+  state->total_segments = snapshot.reader.size();
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
   if (!state->top_k && ss.score.top_k_expr) {

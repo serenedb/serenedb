@@ -165,6 +165,9 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
+  // A cached plan outlives the transaction that planned it, so its scan reads
+  // the executing transaction's snapshot, taken at init, not the bind's.
+  search::InvertedIndexSnapshotPtr snapshot;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
   // The query's top-k, from the plan or from this execution's parameters.
@@ -372,6 +375,14 @@ struct StreamLocalState : public ScanLocalState, FetchLocalState {
 
 struct TopKLocalState : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
+  // With a quantized index the pool of each segment is re-scored exactly and
+  // merged here before the next segment starts, so no quantized score ever
+  // decides between two segments -- each segment trains its own quantizer, so
+  // their estimates are not comparable. Qdrant merges segments this way.
+  bool per_segment_rescore = false;
+  std::vector<irs::ScoreDoc> answer;
+  size_t answer_size = 0;
+  uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;
   ColFilterVerify col_verify;

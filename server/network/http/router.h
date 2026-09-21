@@ -59,13 +59,16 @@ class HttpRouter {
     HttpMethod method;
     std::vector<Segment> segments;
     std::unique_ptr<HttpHandler> handler;
-    bool has_param = false;
   };
 
   static bool MatchPath(const std::vector<Segment>& segments,
                         std::string_view path, HttpRequest& request);
 
-  std::vector<Entry> _routes;
+  static HttpHandler* MatchIn(std::vector<Entry>& routes, std::string_view path,
+                              HttpRequest& request);
+
+  std::vector<Entry> _literal;
+  std::vector<Entry> _parameterized;
 };
 
 }  // namespace sdb::network

@@ -53,10 +53,25 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
       rest = rest.substr(slash + 1);
     }
   }
-  const bool has_param =
-    absl::c_any_of(segments, [](const Segment& s) { return s.param; });
-  _routes.push_back(
-    {method, std::move(segments), std::move(handler), has_param});
+  auto& routes =
+    absl::c_any_of(segments, [](const Segment& s) { return s.param; })
+      ? _parameterized
+      : _literal;
+  routes.push_back({method, std::move(segments), std::move(handler)});
+}
+
+HttpHandler* HttpRouter::MatchIn(std::vector<Entry>& routes,
+                                 std::string_view path, HttpRequest& request) {
+  for (auto& route : routes) {
+    if (route.method != request.method) {
+      continue;
+    }
+    request.params.clear();
+    if (MatchPath(route.segments, path, request)) {
+      return route.handler.get();
+    }
+  }
+  return nullptr;
 }
 
 bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
@@ -112,16 +127,11 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   if (path.empty() || path.front() != '/') {
     return nullptr;
   }
-  for (const bool params : {false, true}) {
-    for (auto& route : _routes) {
-      if (route.method != request.method || route.has_param != params) {
-        continue;
-      }
-      request.params.clear();
-      if (MatchPath(route.segments, path, request)) {
-        return route.handler.get();
-      }
-    }
+  if (auto* handler = MatchIn(_literal, path, request)) {
+    return handler;
+  }
+  if (auto* handler = MatchIn(_parameterized, path, request)) {
+    return handler;
   }
   request.params.clear();
   return nullptr;

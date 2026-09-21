@@ -61,6 +61,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "query/config.h"
 #include "query/config_variable_names.h"
 
 namespace sdb::connector {
@@ -571,21 +572,17 @@ void ApplyIncludedOpclass(
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
-  SDB_ASSERT(!v.IsNull());
-  const auto f = v.GetValue<double>();
+  static constinit SettingRef gSampleFactor{"sdb_ivf_sample_factor"};
+  const auto f = gSampleFactor.Double(context);
   SDB_ASSERT(f > 0.0 && f <= 1.0);
   return static_cast<float>(f);
 }
 
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  context.TryGetCurrentSetting("sdb_ivf_posting_size", v);
-  SDB_ASSERT(!v.IsNull());
-  const auto n = v.GetValue<int32_t>();
+  static constinit SettingRef gPostingSize{"sdb_ivf_posting_size"};
+  const auto n = gPostingSize.Int(context);
   SDB_ASSERT(n >= 1);
-  return static_cast<uint32_t>(n);
+  return n;
 }
 
 void ApplyIVFOpclass(

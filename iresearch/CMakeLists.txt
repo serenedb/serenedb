@@ -387,6 +387,7 @@ set(IResearch_core_sources
     ./utils/log.cpp
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
+    ./utils/remap_executable.cpp
     ./utils/static_strings.cpp
     ./utils/string_utils.cpp
     ./utils/zstd_context.cpp

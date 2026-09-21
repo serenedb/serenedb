@@ -22,9 +22,12 @@
 
 #include <iresearch/utils/duckdb_engine.hpp>
 
+#include "query/config.h"
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  irs::DuckDBEngine::Instance().Initialize();
+  irs::DuckDBEngine::Instance().Initialize(
+    &sdb::connector::RegisterConfigVariables);
   const int rc = RUN_ALL_TESTS();
   irs::DuckDBEngine::Instance().CloseDatabases();
   irs::DuckDBEngine::Instance().Shutdown();

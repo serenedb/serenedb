@@ -39,7 +39,7 @@ add_executable(
     connector/writer_generations_test.cpp
 )
 
-target_link_libraries(serenedb-tests PUBLIC sereneserver serene_connector gtest)
+target_link_libraries(serenedb-tests PUBLIC sereneserver gtest)
 
 target_compile_definitions(
     serenedb-tests

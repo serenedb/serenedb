@@ -119,7 +119,8 @@ Result BuildScoredTerms(std::span<const Term> terms, const TermReader* field,
   const auto plain = [&](Plain& leaf, const Term& term) {
     const auto& own = FieldOf(term, field);
     const auto& meta = CookieOf(term);
-    leaf.Prepare(meta, doc, meta.docs_count != 1 && BoundsOf(own),
+    leaf.Prepare(meta, doc, LayoutOf(own),
+                 meta.docs_count != 1 && BoundsOf(own),
                  meta.docs_count != 1 && FreqOf(own));
   };
 
@@ -180,7 +181,7 @@ Result BuildScoredSet(std::span<const Term> terms, const TermReader* field,
         return;
       }
       leaf = fill::Erased{memory::make_managed<fill::Impl<Plain>>(
-        meta, doc, bounds, meta.docs_count != 1 && FreqOf(own))};
+        meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own))};
     });
 }
 
@@ -196,7 +197,7 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
   if (term.stats.stats == nullptr) {
     return ResolveInput(doc, [&]<typename Input> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<PlainFillScored<Input>>>(
-        meta, doc, bounds, meta.docs_count != 1 && FreqOf(own));
+        meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own));
     });
   }
   return ResolveFillScored<fill::Node::ptr>(

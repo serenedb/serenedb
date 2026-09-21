@@ -64,6 +64,7 @@
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
+#include "query/config.h"
 
 namespace {
 
@@ -631,6 +632,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);
     auto& db_config = duckdb::DBConfig::GetConfig(*_db.instance);
+    sdb::connector::RegisterConfigVariables(db_config);
     // Keep filter predicates on LogicalFilter so MakeSearchFilter can see
     // them (FILTER_PUSHDOWN would move them into LogicalGet.table_filters
     // for types DuckDB understands natively). Disable the empty-result and

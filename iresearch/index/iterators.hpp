@@ -23,6 +23,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+
+#include <atomic>
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -104,7 +106,8 @@ struct ScoreDoc {
 // otherwise try to use xsimd/neon specific intrinsics
 class LoserScoreCollector {
  public:
-  LoserScoreCollector(score_t& score_threshold, std::span<ScoreDoc> hits)
+  LoserScoreCollector(std::atomic<score_t>& score_threshold,
+                      std::span<ScoreDoc> hits)
     : _score_threshold{&score_threshold},
       _hits{hits.data()},
       _k{hits.size()},
@@ -114,44 +117,28 @@ class LoserScoreCollector {
 
   IRS_FORCE_INLINE size_t AcceptedCount() const noexcept { return _size; }
 
-  void SetScoreThreshold(score_t& score_threshold) noexcept {
-    SDB_ASSERT(score_threshold <= *_score_threshold);
-    score_threshold = *_score_threshold;
-    _score_threshold = &score_threshold;
-  }
-
-  // The one place the threshold moves, and it only ever rises. Two things
-  // raise it and neither knows about the other: this collector's own k-th
-  // whenever it has k hits, and the scan seeding a segment with the best k-th
-  // any worker has published. The hits are not dropped at that seed, so hits
-  // accepted under the older threshold stay in and the next k-th can be below
-  // the seeded value -- routing every raise through here is what keeps that
-  // lower k-th from writing the threshold back down. SetScoreThreshold
-  // asserts on it.
-  IRS_FORCE_INLINE void RaiseScoreThreshold(score_t score_threshold) noexcept {
-    *_score_threshold = std::max(*_score_threshold, score_threshold);
-  }
-
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
-  // The `k`-th score this collector holds, and what a plan free to leave
-  // documents out is measured against. It only rises, and it spans every
-  // segment of the query, so a plan reads it as it goes rather than once.
   IRS_FORCE_INLINE score_t ScoreThreshold() const noexcept {
-    return *_score_threshold;
+    return _score_threshold->load(std::memory_order_relaxed);
   }
 
   IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept {
     ++_count;
-    TryPush(*_score_threshold, score, doc);
+    const auto old_threshold = ScoreThreshold();
+    auto new_threshold = old_threshold;
+    if (TryPush(new_threshold, score, doc)) {
+      RaiseScoreThreshold(old_threshold, new_threshold);
+    }
   }
 
   IRS_FORCE_INLINE void ConsumeWindow(score_t* scores, uint64_t* mask,
                                       doc_id_t min,
                                       size_t num_blocks) noexcept {
-    score_t threshold = *_score_threshold;
+    const auto old_threshold = ScoreThreshold();
+    auto new_threshold = old_threshold;
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
       if (word == 0) [[likely]] {
@@ -162,49 +149,56 @@ class LoserScoreCollector {
       _count += std::popcount(word);
       auto* IRS_RESTRICT const score_base =
         scores + i * BitsRequired<uint64_t>();
-#ifdef __AVX2__
-      word &= GetScoreMask(score_base, threshold);
-#endif
+      word &= GetScoreMask(score_base, new_threshold);
       const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
 
       while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
         word = PopBit(word);
-        TryPush(threshold, score_base[bit], doc_base + bit);
+        TryPush(new_threshold, score_base[bit], doc_base + bit);
       }
 
       std::memset(score_base, 0, BitsRequired<uint64_t>() * sizeof(score_t));
     }
-    *_score_threshold = threshold;
+    if (old_threshold < new_threshold) {
+      RaiseScoreThreshold(old_threshold, new_threshold);
+    }
   }
 
   IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
                                 const score_t* scores) noexcept {
     _count += count;
-    score_t threshold = *_score_threshold;
+    const auto old_threshold = ScoreThreshold();
+    auto new_threshold = old_threshold;
     size_t i = 0;
 #ifdef __AVX2__
     for (; i + 8 <= count; i += 8) {
       auto pass = static_cast<unsigned>(_mm256_movemask_ps(_mm256_cmp_ps(
-        _mm256_loadu_ps(scores + i), _mm256_set1_ps(threshold), kCmpPred)));
+        _mm256_loadu_ps(scores + i), _mm256_set1_ps(new_threshold), kCmpPred)));
       while (pass != 0) {
         const int bit = std::countr_zero(pass);
         pass = PopBit(pass);
-        TryPush(threshold, scores[i + bit], docs[i + bit]);
+        TryPush(new_threshold, scores[i + bit], docs[i + bit]);
       }
     }
 #endif
     for (; i < count; ++i) {
-      TryPush(threshold, scores[i], docs[i]);
+      TryPush(new_threshold, scores[i], docs[i]);
     }
-    *_score_threshold = threshold;
+    if (old_threshold < new_threshold) {
+      RaiseScoreThreshold(old_threshold, new_threshold);
+    }
   }
 
  private:
-  IRS_FORCE_INLINE void TryPush(score_t& threshold, score_t score,
-                                doc_id_t doc) noexcept {
-    if (score > threshold) {
-      Push(threshold, score, doc);
+  IRS_FORCE_INLINE void RaiseScoreThreshold(score_t old_threshold,
+                                            score_t new_threshold) noexcept {
+    SDB_ASSERT(old_threshold < new_threshold);
+    while (!_score_threshold->compare_exchange_weak(
+      old_threshold, new_threshold, std::memory_order_relaxed)) {
+      if (old_threshold >= new_threshold) {
+        return;
+      }
     }
   }
 
@@ -219,6 +213,15 @@ class LoserScoreCollector {
       const uint64_t bits = _mm256_movemask_ps(
         _mm256_cmp_ps(_mm256_loadu_ps(scores + i), v, kCmpPred));
       mask |= bits << i;
+    }
+    return mask;
+  }
+#else
+  IRS_FORCE_INLINE static uint64_t GetScoreMask(
+    const score_t* IRS_RESTRICT scores, score_t threshold) noexcept {
+    uint64_t mask = 0;
+    for (int i = 0; i < 64; ++i) {
+      mask |= uint64_t{scores[i] > threshold} << i;
     }
     return mask;
   }
@@ -273,23 +276,30 @@ class LoserScoreCollector {
     _root = cur;
   }
 
-  IRS_FORCE_INLINE void Push(score_t& threshold, score_t score,
-                             doc_id_t doc) noexcept {
+  IRS_FORCE_INLINE bool TryPush(score_t& threshold, score_t score,
+                                doc_id_t doc) noexcept {
+    if (score <= threshold) {
+      return false;
+    }
     if (_size != _k) [[unlikely]] {
       _hits[_size++] = {score, doc, _current_segment};
       if (_size != _k) {
-        return;
+        return false;
       }
       Build();
     } else {
       Replace({score, doc, _current_segment});
     }
-    threshold = std::max(threshold, _root.score);
+    if (_root.score <= threshold) {
+      return false;
+    }
+    threshold = _root.score;
+    return true;
   }
 
   uint64_t _count = 0;
   uint32_t _current_segment = 0;
-  score_t* IRS_RESTRICT _score_threshold;
+  std::atomic<score_t>* IRS_RESTRICT _score_threshold;
   ScoreDoc* IRS_RESTRICT _hits;
   size_t _k;
   std::vector<Node> _tree;

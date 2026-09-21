@@ -60,9 +60,8 @@ class PrunedPhrase : public Root {
     });
   }
 
-  void Run(LoserScoreCollector& collector) final {
-    for (auto doc = _slots.Next(doc_limits::invalid()); !doc_limits::eof(doc);
-         doc = _slots.Next(doc)) {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    for (auto doc = _slots.Seek(min); doc < max; doc = _slots.Next(doc)) {
       _freq = _slots.FreqBound();
       _fetcher.Fetch(doc);
       auto score = _score.Score();

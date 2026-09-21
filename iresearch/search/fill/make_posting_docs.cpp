@@ -34,7 +34,8 @@ Node::ptr MakePostingDocs(const detail::PostingClause& posting,
   const auto& doc = *detail::DocOf(own);
   return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
     return memory::make_managed<Impl<detail::PostingFill<Input>>>(
-      posting.state.cookie, doc, detail::BoundsOf(own), detail::FreqOf(own));
+      posting.state.cookie, doc, detail::LayoutOf(own), detail::BoundsOf(own),
+      detail::FreqOf(own));
   });
 }
 

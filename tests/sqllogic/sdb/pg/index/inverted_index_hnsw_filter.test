@@ -24,20 +24,14 @@ EXPLAIN SELECT pk FROM hnsw_f_idx
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: hnsw_f_idx                      │
-│ Lookup: table                          │
-│ Score: l2_distance(emb, FLOAT[8])      │
-│ Top: 2                                 │
-│ Projections: pk,                       │
-│              sdb_inverted_index_score  │
-│ ~300 rows                              │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: hnsw_f_idx                 │
+│ Lookup: table                     │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 2                            │
+│ Projections: pk                   │
+│ ~300 rows                         │
+╰───────────────────────────────────╯
 
 
 query

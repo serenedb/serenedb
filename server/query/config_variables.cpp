@@ -53,21 +53,51 @@
 
 namespace sdb {
 
-uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
-  duckdb::Value v;
-  auto res = context.TryGetCurrentSetting(std::string{name}, v);
-  SDB_ASSERT(res);
-  SDB_ASSERT(!v.IsNull());
-  return v.GetValue<uint32_t>();
+duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
+  auto& config = duckdb::DBConfig::GetConfig(context);
+  auto slot = _slot.load(std::memory_order_relaxed);
+  if (slot.config != &config) [[unlikely]] {
+    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+    const auto index = config.TryGetSettingIndex(
+      duckdb::String{_name.data(), static_cast<uint32_t>(_name.size())},
+      option);
+    SDB_ASSERT(index.IsValid());
+    slot = {.config = &config, .index = index.GetIndex()};
+    _slot.store(slot, std::memory_order_relaxed);
+  }
+  duckdb::Value value;
+  auto found = context.config.user_settings.TryGetSetting(config.user_settings,
+                                                          slot.index, value);
+  if (!found) [[unlikely]] {
+    auto res = context.TryGetCurrentSetting(std::string{_name}, value);
+    SDB_ASSERT(res);
+  }
+  SDB_ASSERT(!value.IsNull());
+  return value;
 }
 
-double ReadDoubleSetting(duckdb::ClientContext& context,
-                         std::string_view name) {
-  duckdb::Value v;
-  auto res = context.TryGetCurrentSetting(std::string{name}, v);
-  SDB_ASSERT(res);
-  SDB_ASSERT(!v.IsNull());
-  return v.GetValue<double>();
+uint32_t SettingRef::Int(duckdb::ClientContext& context) const {
+  return Read(context).GetValue<uint32_t>();
+}
+
+double SettingRef::Double(duckdb::ClientContext& context) const {
+  return Read(context).GetValue<double>();
+}
+
+bool SettingRef::Bool(duckdb::ClientContext& context) const {
+  return Read(context).GetValue<bool>();
+}
+
+uint32_t SettingRef::Enum(duckdb::ClientContext& context,
+                          std::span<const std::string_view> options) const {
+  const auto v = Read(context);
+  const std::string_view value = duckdb::StringValue::Get(v);
+  for (uint32_t i = 0; i != options.size(); ++i) {
+    if (absl::EqualsIgnoreCase(value, options[i])) {
+      return i;
+    }
+  }
+  return static_cast<uint32_t>(options.size());
 }
 
 using duckdb::LogicalTypeId;
@@ -521,6 +551,73 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_scan_split",
+      {
+        LogicalTypeId::VARCHAR,
+        "When an inverted-index scan splits a segment into row-group units: "
+        "'tail' claims whole segments while more remain than workers, then "
+        "row groups; 'always' claims row groups from the first unit; 'never' "
+        "claims whole segments only; 'auto' (default) is 'always' under an "
+        "ORDER BY scan order and 'tail' otherwise.",
+        [] { return duckdb::Value{"auto"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto mode = value.ToString();
+          if (!absl::EqualsIgnoreCase(mode, "auto") &&
+              !absl::EqualsIgnoreCase(mode, "tail") &&
+              !absl::EqualsIgnoreCase(mode, "always") &&
+              !absl::EqualsIgnoreCase(mode, "never")) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("invalid value for parameter \"sdb_scan_split\": \"",
+                      mode, "\" (auto, tail, always or never)"));
+          }
+        },
+      },
+    },
+    {
+      "sdb_scan_order",
+      {
+        LogicalTypeId::VARCHAR,
+        "The order an inverted-index scan claims its units in: "
+        "'smallest_first' and 'largest_first' order segments by live "
+        "document count; 'order' is best-first by the ORDER BY column's "
+        "row-group statistics when the query has a scan order (and "
+        "'smallest_first' otherwise); 'auto' (default) is 'order' under a "
+        "scan order and 'smallest_first' otherwise.",
+        [] { return duckdb::Value{"auto"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto mode = value.ToString();
+          if (!absl::EqualsIgnoreCase(mode, "auto") &&
+              !absl::EqualsIgnoreCase(mode, "smallest_first") &&
+              !absl::EqualsIgnoreCase(mode, "largest_first") &&
+              !absl::EqualsIgnoreCase(mode, "order")) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("invalid value for parameter \"sdb_scan_order\": \"",
+                      mode,
+                      "\" (auto, smallest_first, largest_first or order)"));
+          }
+        },
+      },
+    },
+    {
+      "sdb_scan_no_split_row_groups",
+      {
+        LogicalTypeId::INTEGER,
+        "A segment with at most this many row groups is always one unit of "
+        "an inverted-index scan and is never split across workers. "
+        "Default 1.",
+        [] { return duckdb::Value::INTEGER(1); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (value.GetValue<int32_t>() < 1) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("sdb_scan_no_split_row_groups must be at least 1"));
+          }
+        },
+      },
+    },
+    {
       kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -530,11 +627,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
-          if (n == 0) {
+          if (n == 0 || n % STANDARD_VECTOR_SIZE != 0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"row_group_size\": \"",
-                                    value.ToString(), "\""));
+                                    value.ToString(),
+                                    "\" (must be a positive multiple of the "
+                                    "vector size ",
+                                    STANDARD_VECTOR_SIZE, ")"));
           }
         },
       },

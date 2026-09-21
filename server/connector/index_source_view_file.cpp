@@ -115,7 +115,7 @@ duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
   const auto rows = _tf_target.size();
 
   RunCastPass(output, rows);
-  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  GatherNonLookupColumns(output, rows);
   return rows;
 }
 
@@ -217,7 +217,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
   _tf_target.SetCardinality(total);
 
   RunCastPass(output, total);
-  GatherNonLookupColumns(output, total, _survivor_idx.data());
+  GatherNonLookupColumns(output, total);
   return total;
 }
 

@@ -42,22 +42,16 @@ EXPLAIN SELECT id FROM w_idx WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(w_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 DESC                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: w_idx                           │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 2, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: w_idx                │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2, optimized           │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯

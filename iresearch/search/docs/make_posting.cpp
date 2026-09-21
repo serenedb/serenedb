@@ -35,16 +35,10 @@ Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
   const auto& own = *posting.state.reader;
   const auto& in = *detail::DocOf(own);
   return detail::ResolveInput(in, [&]<typename Input> -> Root::ptr {
-    const auto make = [&](auto table) -> Root::ptr {
-      auto root = memory::make_managed<Posting<Input, decltype(table)>>(table);
-      root->Prepare(meta, in, detail::LayoutOf(own), detail::BoundsOf(own),
-                    detail::FreqOf(own));
-      return root;
-    };
-    if (ctx.table != nullptr) {
-      return make(ctx.table);
-    }
-    return make(utils::Empty{});
+    auto root = memory::make_managed<Posting<Input>>();
+    root->Prepare(meta, in, detail::LayoutOf(own), detail::BoundsOf(own),
+                  detail::FreqOf(own));
+    return root;
   });
 }
 

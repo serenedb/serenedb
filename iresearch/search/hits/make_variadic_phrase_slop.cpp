@@ -42,27 +42,14 @@ Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
                                     .boost = query.Boost()};
   if (const auto value =
         irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
-    if (ctx.table != nullptr) {
-      return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Slop,
-                                               FilteredConstantWalk, Root::ptr>(
-        query, ctx.table, *value);
-    }
     return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Slop,
-                                             PlainConstantWalk, Root::ptr>(
-      query, utils::Empty{}, *value);
+                                             ConstantWalk, Root::ptr>(query,
+                                                                      *value);
   }
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Slop,
-                                             FilteredWalk, Root::ptr, true,
-                                             lead::TwoPhaseScored>(
-      query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
-      args);
-  }
-  return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Slop,
-                                           PlainWalk, Root::ptr, true,
+  return irs::detail::MakeVariadicPhraseOf<irs::detail::PhraseMatch::Slop, Walk,
+                                           Root::ptr, true,
                                            lead::TwoPhaseScored>(
-    query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
-    args);
+    query, ctx.fetcher, query.Segment(), *query.state.reader, args);
 }
 
 }  // namespace irs::hits

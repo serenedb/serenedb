@@ -74,7 +74,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -563,11 +563,11 @@ class Enforcer {
     if (get.function.name != "iresearch_scan" || !get.bind_data) {
       return;
     }
-    const auto& bind = get.bind_data->Cast<connector::SereneDBScanBindData>();
-    if (!bind.IsViewBacked() || !bind.inverted_index) {
+    const auto& bind = get.bind_data->Cast<connector::ScanBindData>();
+    if (!bind.IsViewBacked() || !bind.relation.inverted_index) {
       return;
     }
-    const auto& index = *bind.inverted_index;
+    const auto& index = *bind.relation.inverted_index;
     auto view = index.ParentSchema(_context).GetEntry(
       index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
       index.GetTableName());

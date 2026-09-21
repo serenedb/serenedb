@@ -75,13 +75,19 @@ class LazyBitset {
 
   doc_id_t End() const noexcept { return _set.End(); }
 
-  void Reach(doc_id_t upto) {
-    if (upto <= _filled) {
-      return;
+  void SkipTo(doc_id_t begin) {
+    if (begin > _filled) {
+      _filled = std::min(BitsetStorage::WindowMin(begin), _set.End());
     }
+  }
+
+  void Reach(doc_id_t upto) {
     const auto end = _set.End();
     if (upto > end) {
       upto = end;
+    }
+    if (upto <= _filled) {
+      return;
     }
     auto* const words = _set.Words();
     do {
@@ -186,13 +192,23 @@ class CountAgainst {
   static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = true;
 
-  explicit CountAgainst(LazyBitset& set) noexcept : _set{&set} {}
+  CountAgainst(LazyBitset& set, doc_id_t min, doc_id_t max) noexcept
+    : _set{&set}, _min{min}, _max{max} {}
 
   uint64_t Total() const noexcept { return _total; }
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) {
-    const auto begin = prev + 1;
-    const auto end = begin + len;
+    auto begin = prev + 1;
+    auto end = begin + len;
+    if (begin < _min) [[unlikely]] {
+      begin = _min;
+    }
+    if (end > _max) [[unlikely]] {
+      end = _max;
+    }
+    if (begin >= end) [[unlikely]] {
+      return;
+    }
     _set->Reach(static_cast<doc_id_t>(end));
     _total += CountBitRange(_set->Words(), begin - kMin, end - kMin);
   }
@@ -200,11 +216,31 @@ class CountAgainst {
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) {
     _set->Reach(static_cast<doc_id_t>(max + 1));
-    _total +=
-      CountBlock(_set->Words(), static_cast<int64_t>(prev) - kMin, src, n);
+    const auto begin = prev + 1;
+    if (begin >= _min && begin + uint64_t{n} * kBits <= _max) [[likely]] {
+      _total +=
+        CountBlock(_set->Words(), static_cast<int64_t>(prev) - kMin, src, n);
+      return;
+    }
+    const auto* const live = _set->Words();
+    for (uint32_t i = 0; i != n; ++i) {
+      for (auto word = src[i]; word != 0; word &= word - 1) {
+        const auto doc = begin + uint64_t{i} * kBits +
+                         static_cast<uint64_t>(std::countr_zero(word));
+        if (doc < _min || doc >= _max) {
+          continue;
+        }
+        const auto offset = doc - kMin;
+        _total +=
+          static_cast<uint64_t>(CheckBit(live[offset / kBits], offset % kBits));
+      }
+    }
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) {
+    if (doc < _min || doc >= _max) [[unlikely]] {
+      return;
+    }
     _set->Reach(static_cast<doc_id_t>(doc + 1));
     const auto offset = doc - kMin;
     _total += static_cast<uint64_t>(
@@ -215,6 +251,8 @@ class CountAgainst {
 
  private:
   LazyBitset* _set;
+  uint64_t _min;
+  uint64_t _max;
   uint64_t _total = 0;
 };
 

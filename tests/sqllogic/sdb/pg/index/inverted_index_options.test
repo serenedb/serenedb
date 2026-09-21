@@ -122,7 +122,27 @@ db error: ERROR: unrecognized parameter "segment_memory_maxx"
 statement error
 CREATE INDEX opt_rz ON opt_t USING inverted(label) WITH (row_group_size = 0);
 ----
-db error: ERROR: invalid value for parameter "row_group_size": "0"
+db error: ERROR: invalid value for parameter "row_group_size": "0" (must be a positive multiple of the vector size 2048)
+
+
+# A row group is the unit a scan turns into a document range, and a bitset over
+# that range starts on a word boundary, so it is a whole number of vectors --
+# the rule DuckDB applies to a table's row-group size.
+statement error
+CREATE INDEX opt_rg ON opt_t USING inverted(label) WITH (row_group_size = 4000);
+----
+db error: ERROR: invalid value for parameter "row_group_size": "4000" (must be a positive multiple of the vector size 2048)
+
+
+statement ok
+CREATE INDEX opt_rg ON opt_t USING inverted(label) WITH (row_group_size = 4096)
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'opt_rg';
+----
+reloptions
+{row_group_size=4096,refresh_interval=1000,reindex_interval=0,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # Norms share the index's one `row_group_size`; there is no separate knob.

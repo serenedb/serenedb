@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
@@ -28,6 +29,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -46,9 +48,30 @@ enum class ByteaOutput : uint8_t {
 
 using IsolationLevel = duckdb::TransactionIsolationLevel;
 
-uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name);
+class SettingRef {
+ public:
+  explicit constexpr SettingRef(std::string_view name) noexcept : _name{name} {}
 
-double ReadDoubleSetting(duckdb::ClientContext& context, std::string_view name);
+  uint32_t Int(duckdb::ClientContext& context) const;
+
+  double Double(duckdb::ClientContext& context) const;
+
+  bool Bool(duckdb::ClientContext& context) const;
+
+  uint32_t Enum(duckdb::ClientContext& context,
+                std::span<const std::string_view> options) const;
+
+ private:
+  struct Slot {
+    const duckdb::DBConfig* config = nullptr;
+    uint64_t index = 0;
+  };
+
+  duckdb::Value Read(duckdb::ClientContext& context) const;
+
+  std::string_view _name;
+  mutable std::atomic<Slot> _slot;
+};
 
 struct VariableDescription {
   duckdb::LogicalTypeId type;

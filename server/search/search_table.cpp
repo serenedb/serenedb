@@ -93,7 +93,8 @@ SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
-    _segment_memory_max{options.segment_memory_max} {
+    _segment_memory_max{options.segment_memory_max},
+    _row_group_size{options.row_group_size} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -140,9 +141,10 @@ void SearchTable::OpenWriter() {
   }
 
   auto codec = irs::formats::Get("1_5simd");
-  const auto open_mode =
-    path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-                : irs::OpenMode::kOmCreate;
+  const bool reopen = path_exists && !_is_new;
+  const auto open_mode = reopen
+                           ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+                           : irs::OpenMode::kOmCreate;
 
   irs::ResourceManagementOptions resource_manager;
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
@@ -186,8 +188,7 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  if (path_exists) {
-    // Restore the durable commit tick from the last commit's meta payload.
+  if (reopen) {
     auto reader = _writer->GetSnapshot();
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (payload.size() >= sizeof(uint64_t)) {
@@ -328,6 +329,7 @@ void SearchTable::RebuildConfig() {
   auto merged = std::make_shared<catalog::InvertedIndexConfig>();
   merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
+  merged->row_group_size = _row_group_size;
   for (const auto& index : _configs) {
     for (const auto& [id, field] : index.config->fields) {
       merged->fields.emplace(id, field);

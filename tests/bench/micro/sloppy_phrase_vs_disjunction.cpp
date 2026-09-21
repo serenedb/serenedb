@@ -1005,7 +1005,7 @@ template<typename MakeFn>
     for (const auto& query : prepared.queries) {
       auto plan = irs::count::MakeRoot(*query);
       if (plan) {
-        per_iter += plan->Run();
+        per_iter += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
       }
     }
     benchmark::DoNotOptimize(per_iter);
@@ -1121,10 +1121,15 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
       if (!docs || !offs) {
         continue;
       }
-      for (;;) {
-        const auto n = docs->Run(doc_buf.data(), doc_buf.size());
+      const auto end = irs::doc_limits::min() +
+                       static_cast<irs::doc_id_t>(rdr[seg].docs_count());
+      for (auto min = irs::doc_limits::min(); min < end;
+           min += static_cast<irs::doc_id_t>(doc_buf.size())) {
+        const auto max = std::min<irs::doc_id_t>(
+          min + static_cast<irs::doc_id_t>(doc_buf.size()), end);
+        const auto n = docs->Run(min, max, doc_buf.data());
         if (n == 0) {
-          break;
+          continue;
         }
         docs_per_iter += n;
         for (uint32_t i = 0; i != n; ++i) {

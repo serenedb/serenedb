@@ -21,7 +21,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -31,16 +30,18 @@ namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, detail::DeadRuns* table)
+  explicit HnswHits(std::vector<ScoreDoc>&& hits)
     : _hits{hits.size(),
-            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
-      _table{table} {}
+            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     uint32_t n = 0;
-    while (_pos != _hits.size() && n != capacity) {
-      const auto doc = _hits[_pos++].doc;
-      if (_table != nullptr && _table->Live(doc) != doc) {
+    for (; _pos != _hits.size(); ++_pos) {
+      const auto doc = _hits[_pos].doc;
+      if (doc >= max) {
+        break;
+      }
+      if (doc < min) {
         continue;
       }
       out[n++] = doc;
@@ -50,14 +51,13 @@ class HnswHits : public Root {
 
  private:
   containers::Fixed<ScoreDoc> _hits;
-  detail::DeadRuns* _table;
   size_t _pos = 0;
 };
 
 }  // namespace
 
-Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  return memory::make_managed<HnswHits>(query.RunSearch(), ctx.table);
+Root::ptr Make(const HnswQuery& query, const Context&) {
+  return memory::make_managed<HnswHits>(query.RunSearch());
 }
 
 }  // namespace irs::docs

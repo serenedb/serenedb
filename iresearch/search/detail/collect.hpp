@@ -182,7 +182,8 @@ Result BuildDense(std::span<const Term> terms, const TermReader* field,
         terms.size(), [&](Leaf& leaf, size_t i) {
           const auto& own = FieldOf(terms[i], field);
           const auto& meta = CookieOf(terms[i]);
-          leaf.Prepare(meta, doc, meta.docs_count != 1 && BoundsOf(own),
+          leaf.Prepare(meta, doc, LayoutOf(own),
+                       meta.docs_count != 1 && BoundsOf(own),
                        meta.docs_count != 1 && FreqOf(own));
         });
     }
@@ -193,7 +194,7 @@ Result BuildDense(std::span<const Term> terms, const TermReader* field,
           const auto& own = FieldOf(terms[i], field);
           const auto& meta = CookieOf(terms[i]);
           leaf = fill::Erased{memory::make_managed<fill::Impl<Leaf>>(
-            meta, doc, meta.docs_count != 1 && BoundsOf(own),
+            meta, doc, LayoutOf(own), meta.docs_count != 1 && BoundsOf(own),
             meta.docs_count != 1 && FreqOf(own))};
           return;
         }

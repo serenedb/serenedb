@@ -44,7 +44,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/primary_key.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -95,6 +95,7 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
     .refresh_interval_ms = get(kRefreshIntervalSetting),
     .compaction_interval_ms = get(kCompactionIntervalSetting),
     .cleanup_interval_step = get(kCleanupIntervalStepSetting),
+    .row_group_size = get(kRowGroupSizeSetting),
     .segment_memory_max = FindConstant(options, kSegmentMemoryMaxSetting)
                             ->GetValue()
                             .GetValue<uint64_t>(),
@@ -322,6 +323,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       duckdb::Value::UINTEGER(_options.compaction_interval_ms));
   set(kCleanupIntervalStepSetting,
       duckdb::Value::UINTEGER(_options.cleanup_interval_step));
+  set(kRowGroupSizeSetting, duckdb::Value::UINTEGER(_options.row_group_size));
   set(kSegmentMemoryMaxSetting,
       duckdb::Value::UBIGINT(_options.segment_memory_max));
   if (!_options.optimize_top_k.empty()) {

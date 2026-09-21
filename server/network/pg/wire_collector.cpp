@@ -21,6 +21,7 @@
 #include "network/pg/wire_collector.h"
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <duckdb/execution/operator/helper/physical_execute.hpp>
 #include <duckdb/execution/operator/helper/physical_result_collector.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -253,6 +254,18 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
 // queue/splice overhead for a lone encoder. Source-only, mirroring DuckDB's own
 // AllSourcesSupportBatchIndex idiom (GetSources walks to the pipeline sources,
 // flattening set operations).
+// An EXECUTE keeps the prepared plan in a member and leaves `children` empty,
+// so it answers GetSources() with itself -- a source that never parallelizes --
+// and hides an inner ORDER BY from PreserveInsertionOrder. Both questions are
+// about the plan it runs.
+duckdb::PhysicalOperator& ExecutedPlan(duckdb::PhysicalOperator& root) {
+  auto* op = &root;
+  while (op->type == duckdb::PhysicalOperatorType::EXECUTE) {
+    op = &op->Cast<duckdb::PhysicalExecute>().plan;
+  }
+  return *op;
+}
+
 bool PlanRunsParallel(duckdb::ClientContext& context,
                       duckdb::PhysicalOperator& root) {
   if (duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads() <= 1) {
@@ -294,9 +307,10 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   // TOP N (PreserveInsertionOrder returns true on FIXED_ORDER regardless of the
   // setting). Flipping preserve_insertion_order off then routes plain scans to
   // Parallel with no wire-code change; ORDER BY stays Direct.
+  auto& plan = ExecutedPlan(root);
   ctx->mode =
-    !ctx->paged && PlanRunsParallel(context, root) &&
-        !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, root)
+    !ctx->paged && PlanRunsParallel(context, plan) &&
+        !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, plan)
       ? WireSinkContext::Mode::Parallel
       : WireSinkContext::Mode::Direct;
   return duckdb::make_uniq<PhysicalPgWireCollector>(physical_plan, data, ctx);

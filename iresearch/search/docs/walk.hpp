@@ -22,48 +22,30 @@
 
 #include <utility>
 
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
-template<lead::Type Node, typename Table>
+template<lead::Type Node>
 class Walk : public Root {
  public:
-  static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-
   template<typename... Args>
-  explicit Walk(Table table, Args&&... args)
-    : _node{std::forward<Args>(args)...}, _table{table} {}
+  explicit Walk(Args&&... args) : _node{std::forward<Args>(args)...} {}
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
-    SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     uint32_t n = 0;
-    if (_spent) {
-      return 0;
-    }
-    while (n != capacity) {
-      auto doc = _node.Next();
-      if constexpr (kTable) {
-        if (const auto live = _table.Live(doc); live != doc) {
-          doc = _node.Seek(live);
-        }
-      }
-      if (doc_limits::eof(doc)) {
-        _spent = true;
-        break;
-      }
+    auto doc = _node.Seek(min);
+    while (doc < max) {
       out[n++] = doc;
+      doc = _node.Next();
     }
     return n;
   }
 
  private:
   Node _node;
-  bool _spent = false;
-  [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 
 }  // namespace irs::docs

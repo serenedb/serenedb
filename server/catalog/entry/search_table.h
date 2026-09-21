@@ -70,6 +70,7 @@ inline constexpr auto kSearchTableSettings = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
+  kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
 });
 
@@ -77,6 +78,7 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
+  kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
   kOptimizeTopKSetting,
 });

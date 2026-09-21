@@ -80,6 +80,7 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
+#include "query/config.h"
 #include "search/scorer_options.h"
 
 namespace magic_enum {
@@ -2285,12 +2286,8 @@ absl::Status MakeSearchFilter(
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  duckdb::Value v;
-  uint32_t levenshtein_max_terms = 50;
-  if (context.TryGetCurrentSetting("sdb_levenshtein_max_terms", v) &&
-      !v.IsNull()) {
-    levenshtein_max_terms = static_cast<uint32_t>(v.GetValue<int32_t>());
-  }
+  static constinit SettingRef gLevenshteinMaxTerms{"sdb_levenshtein_max_terms"};
+  const auto levenshtein_max_terms = gLevenshteinMaxTerms.Int(context);
 
   FilterContext ctx{
     .negated = false,

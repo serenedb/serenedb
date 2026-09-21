@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -176,6 +177,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
+  const detail::FoldReachScope reach{ctx.span};
   const auto* const mask = query.Segment().docs_mask();
   if (mask != nullptr) [[unlikely]] {
     return MakeMasked(query, ctx, *mask);

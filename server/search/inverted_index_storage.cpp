@@ -187,9 +187,10 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto codec = irs::formats::Get("1_5simd");
-  const auto open_mode =
-    path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-                : irs::OpenMode::kOmCreate;
+  const bool reopen = path_exists && !is_new;
+  const auto open_mode = reopen
+                           ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+                           : irs::OpenMode::kOmCreate;
 
   // New indexes start at the current tick; existing directories override
   // both values from the persisted segment meta below.
@@ -279,8 +280,7 @@ InvertedIndexStorage::InvertedIndexStorage(
 
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
-  if (!path_exists) {
-    // Initialize empty index
+  if (!reopen) {
     _writer->RefreshCommit();
   }
 
@@ -288,7 +288,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   SDB_ASSERT(reader);
 
   std::shared_ptr<const FileManifest> file_manifest;
-  if (path_exists) {
+  if (reopen) {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
       ReadSegmentMeta(payload, _recovery_tick, _recovery_wal_cursor,

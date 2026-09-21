@@ -61,17 +61,11 @@ EXPLAIN SELECT id FROM v_idx
 ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: v_idx                           │
-│ Lookup: search                         │
-│ Score: l2_distance(vec, FLOAT[3])      │
-│ Top: 2                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~3 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: v_idx                      │
+│ Lookup: search                    │
+│ Score: l2_distance(vec, FLOAT[3]) │
+│ Top: 2                            │
+│ Projections: id                   │
+│ ~3 rows                           │
+╰───────────────────────────────────╯

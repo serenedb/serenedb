@@ -203,6 +203,19 @@ add_subdirectory(abseil-cpp)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
+### zxc library -- lossless compression built for fast decode, an HTTP
+### response content-coding
+################################################################################
+
+set(ZXC_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(ZXC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZXC_INSTALL OFF CACHE BOOL "" FORCE)
+set(ZXC_NATIVE_ARCH OFF CACHE BOOL "" FORCE)
+set(ZXC_ENABLE_LTO OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "zxc" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(zxc)
+
+################################################################################
 ### protozero library -- header-only protobuf wire format, used for OTLP
 ################################################################################
 

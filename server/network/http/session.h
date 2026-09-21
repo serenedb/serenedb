@@ -535,6 +535,24 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
+      const auto negotiated = http::NegotiateContentCoding(
+        request.Header(HttpHeader::AcceptEncoding));
+      switch (negotiated.acceptance) {
+        case http::Acceptance::Ok:
+          if (negotiated.coding != nullptr) {
+            writer.SetContentCoding(*negotiated.coding);
+          }
+          break;
+        case http::Acceptance::Malformed:
+          writer.Error(http::HttpStatus::BadRequest, "bad_accept_encoding");
+          co_await DrainSendOnTask();
+          continue;
+        case http::Acceptance::NotAcceptable:
+          writer.Error(http::HttpStatus::UnsupportedMediaType,
+                       "no_acceptable_content_coding");
+          co_await DrainSendOnTask();
+          continue;
+      }
 
       if (_max_conn != 0 && _active != nullptr &&
           _active->load(std::memory_order_relaxed) > _max_conn) {

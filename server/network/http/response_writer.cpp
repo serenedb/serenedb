@@ -54,6 +54,8 @@ std::string_view ReasonPhrase(HttpStatus status) noexcept {
       return "Conflict";
     case 413:
       return "Content Too Large";
+    case 415:
+      return "Unsupported Media Type";
     case 417:
       return "Expectation Failed";
     case 429:

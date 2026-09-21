@@ -30,6 +30,10 @@ target_link_libraries(
         serene
         llhttp
         duckdb_static
+        ZLIB::ZLIB
+        zstd::zstd
+        lz4_static
+        zxc::zxc_lib
 )
 
 target_include_directories(

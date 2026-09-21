@@ -15,6 +15,7 @@ target_sources(
         http/es/dsl.cpp
         http/es/handlers.cpp
         http/mcp/handlers.cpp
+        http/compression.cpp
         http/otel/handlers.cpp
         http/otel/schema.cpp
         http/mcp/tools.cpp

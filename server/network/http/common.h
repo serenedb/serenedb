@@ -44,6 +44,7 @@ enum class HttpStatus : int {
   RequestTimeout = 408,
   Conflict = 409,
   ContentTooLarge = 413,
+  UnsupportedMediaType = 415,
   ExpectationFailed = 417,
   TooManyRequests = 429,
   RequestHeaderFieldsTooLarge = 431,

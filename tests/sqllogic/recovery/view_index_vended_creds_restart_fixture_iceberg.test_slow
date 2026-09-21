@@ -1,0 +1,195 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vivc FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'sigv4',
+  sigv4_service 'custom',
+  sigv4_region 'us-east-1',
+  secret 'iceberg_ci_storage'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vivc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vivc.${__DATABASE__};
+
+statement ok
+CREATE TABLE vivc.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vivc.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vivc_v AS SELECT * FROM vivc.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vivc_idx ON vivc_v USING inverted(id, body vivc_en) WITH (compaction_interval=0);
+
+query
+SELECT id FROM vivc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+BEGIN;
+
+query
+SELECT body FROM vivc_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+query
+SELECT count(*) AS secrets FROM duckdb_secrets()
+WHERE contains(name, '__internal_ic_') AND storage = 'transaction';
+----
+secrets
+1
+
+statement ok
+COMMIT;
+
+query
+SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+----
+secrets
+0
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vivc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT body FROM vivc_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+connection after_crash
+statement ok
+BEGIN;
+
+connection after_crash
+query
+SELECT id, body FROM vivc_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+connection after_crash
+query
+SELECT count(*) AS secrets FROM duckdb_secrets()
+WHERE contains(name, '__internal_ic_') AND storage = 'transaction';
+----
+secrets
+1
+
+connection after_crash
+statement ok
+COMMIT;
+
+connection after_crash
+query
+SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+----
+secrets
+0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vivc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement count 1
+INSERT INTO vivc.${__DATABASE__}.t VALUES (4, 'after the restart too');
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vivc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT id FROM vivc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+connection reader user=postgres
+query
+SELECT id, body FROM vivc_idx WHERE id = 4;
+----
+id	body
+4	after the restart too
+
+connection reader user=postgres
+query
+SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+----
+secrets
+0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vivc_idx EXCEPT SELECT id, body FROM vivc.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, body FROM vivc.${__DATABASE__}.t EXCEPT SELECT id, body FROM vivc_idx)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP INDEX vivc_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vivc_v;
+
+connection after_crash
+statement ok
+DROP TABLE vivc.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vivc.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vivc;

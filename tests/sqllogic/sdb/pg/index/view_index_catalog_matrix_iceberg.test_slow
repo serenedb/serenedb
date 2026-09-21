@@ -1,0 +1,324 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vcm_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vcm_t (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vcm_t VALUES (1, 'pudge alpha'), (2, 'anchin alpha');
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vcm_t VALUES (3, 'techies beta'), (4, 'mines beta');
+
+statement ok
+CREATE VIEW vcm_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t;
+
+statement ok
+CREATE INDEX vcm_idx ON vcm_v USING inverted(id, body vcm_en) WITH (compaction_interval=0);
+
+query
+SELECT id, body FROM vcm_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	anchin alpha
+3	techies beta
+4	mines beta
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vcm_t VALUES (5, 'vedernikoff gamma');
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM vcm_idx WHERE body @@ ts_phrase('gamma');
+----
+id	body
+5	vedernikoff gamma
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vcm_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t EXCEPT SELECT id, body FROM vcm_idx)
+);
+----
+count
+0
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t WHERE id = 2;
+
+query
+SELECT action, files_added, files_changed, files_removed FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed
+delta	0	1	0
+
+query
+SELECT id FROM vcm_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id
+1
+
+query
+SELECT count(*) FROM vcm_idx WHERE id = 2;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vcm_t SET body = 'pudge alpha prime' WHERE id = 1;
+
+query
+SELECT action FROM serenedb_reindex('vcm_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM vcm_idx WHERE body @@ ts_phrase('prime');
+----
+id	body
+1	pudge alpha prime
+
+query
+SELECT body FROM vcm_idx WHERE id = 1;
+----
+body
+pudge alpha prime
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vcm_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t EXCEPT SELECT id, body FROM vcm_idx)
+);
+----
+count
+0
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vcm_t SET body = 'vedernikoff gamma two' WHERE id = 5;
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vcm_t SET body = 'vedernikoff gamma three' WHERE id = 5;
+
+query
+SELECT action FROM serenedb_reindex('vcm_idx');
+----
+action
+delta
+
+query
+SELECT body FROM vcm_idx WHERE id = 5;
+----
+body
+vedernikoff gamma three
+
+query
+SELECT count(*) FROM vcm_idx WHERE body @@ ts_phrase('gamma');
+----
+count
+1
+
+query
+SELECT count(*) FROM vcm_idx WHERE body @@ ts_phrase('two');
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vcm_t VALUES (6, 'boots delta');
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t WHERE id = 3;
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vcm_t SET body = 'mines beta prime' WHERE id = 4;
+
+query
+SELECT action FROM serenedb_reindex('vcm_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM vcm_idx ORDER BY id;
+----
+id	body
+1	pudge alpha prime
+4	mines beta prime
+5	vedernikoff gamma three
+6	boots delta
+
+query
+SELECT id FROM vcm_idx WHERE body @@ ts_phrase('beta') ORDER BY id;
+----
+id
+4
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vcm_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t EXCEPT SELECT id, body FROM vcm_idx)
+);
+----
+count
+0
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t WHERE id = 6;
+
+query
+SELECT action FROM serenedb_reindex('vcm_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vcm_idx WHERE body @@ ts_phrase('delta');
+----
+count
+0
+
+query
+SELECT id FROM vcm_idx ORDER BY id;
+----
+id
+1
+4
+5
+
+statement count 3
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t;
+
+query
+SELECT action FROM serenedb_reindex('vcm_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vcm_idx;
+----
+count
+0
+
+query
+SELECT count(*) FROM vcm_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vcm_t VALUES (7, 'pudge reborn');
+
+query
+SELECT action, files_added FROM serenedb_reindex('vcm_idx');
+----
+action	files_added
+delta	1
+
+query
+SELECT id, body FROM vcm_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+7	pudge reborn
+
+query
+SELECT body FROM vcm_idx WHERE id = 7;
+----
+body
+pudge reborn
+
+query
+SELECT * FROM serenedb_reindex('vcm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vcm_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vcm_t EXCEPT SELECT id, body FROM vcm_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vcm_idx;
+
+statement ok
+DROP VIEW vcm_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vcm_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

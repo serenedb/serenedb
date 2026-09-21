@@ -1,0 +1,180 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vdr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vdr_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vdr_t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vdr_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vdr_t;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(id, body vdr_en);
+
+query
+SELECT id FROM vdr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+DROP INDEX vdr_idx;
+
+statement error
+SELECT count(*) FROM vdr_idx;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(id, body vdr_en);
+
+query
+SELECT id FROM vdr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT * FROM serenedb_reindex('vdr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX vdr_idx;
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vdr_t VALUES (4, 'after the restart too');
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vdr_t WHERE id = 2;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(id, body vdr_en);
+
+query
+SELECT id FROM vdr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id, body FROM vdr_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	lands after the restart
+4	after the restart too
+
+query
+SELECT * FROM serenedb_reindex('vdr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vdr_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vdr_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vdr_t EXCEPT SELECT id, body FROM vdr_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vdr_idx;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(id, body vdr_en) WITH (compaction_interval=0);
+
+statement ok
+DROP INDEX vdr_idx;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(id, body vdr_en) WITH (reindex_interval=0, compaction_interval=0);
+
+query
+SELECT count(*) FROM vdr_idx;
+----
+count
+3
+
+statement ok
+DROP VIEW vdr_v;
+
+statement error
+SELECT count(*) FROM vdr_idx;
+
+statement ok
+CREATE VIEW vdr_v AS SELECT id AS doc_id, body AS text FROM srv_${__DATABASE__}.${__DATABASE__}.vdr_t;
+
+statement ok
+CREATE INDEX vdr_idx ON vdr_v USING inverted(doc_id, text vdr_en);
+
+query
+SELECT doc_id FROM vdr_idx WHERE text @@ ts_phrase('restart') ORDER BY doc_id;
+----
+doc_id
+3
+4
+
+query
+SELECT text FROM vdr_idx WHERE doc_id = 1;
+----
+text
+pudge goes mid
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vdr_t VALUES (5, 'restart number five');
+
+query
+SELECT * FROM serenedb_reindex('vdr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT doc_id FROM vdr_idx WHERE text @@ ts_phrase('restart') ORDER BY doc_id;
+----
+doc_id
+3
+4
+5
+
+statement ok
+DROP INDEX vdr_idx;
+
+statement ok
+DROP VIEW vdr_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vdr_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

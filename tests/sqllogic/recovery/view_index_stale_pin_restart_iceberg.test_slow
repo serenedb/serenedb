@@ -1,0 +1,169 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER visp FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY visp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA visp.${__DATABASE__};
+
+statement ok
+CREATE TABLE visp.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO visp.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga'), (3, 'vedernikoff pins snapshots');
+
+statement ok
+CREATE VIEW visp_v AS SELECT * FROM visp.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX visp_idx ON visp_v USING inverted(id, body visp_en) WITH (compaction_interval=0);
+
+query
+SELECT id FROM visp_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+statement count 1
+INSERT INTO visp.${__DATABASE__}.t VALUES (4, 'techies mines the jungle');
+
+statement count 1
+DELETE FROM visp.${__DATABASE__}.t WHERE id = 2;
+
+query
+SELECT id FROM visp.${__DATABASE__}.t ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM visp_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM visp_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+connection after_crash
+query
+SELECT body FROM visp_idx WHERE id = 2;
+----
+body
+anchin reads manga
+
+connection after_crash
+query
+SELECT id FROM visp_idx WHERE body @@ ts_phrase('manga');
+----
+id
+2
+
+connection after_crash
+query
+SELECT count(*) FROM visp_idx WHERE body @@ ts_phrase('techies');
+----
+count
+0
+
+connection after_crash
+query
+SELECT id FROM visp.${__DATABASE__}.t ORDER BY id;
+----
+id
+1
+3
+4
+
+connection after_crash
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('visp_idx');
+----
+action	files_added	files_changed
+delta	1	1
+
+connection after_crash
+query
+SELECT id FROM visp_idx ORDER BY id;
+----
+id
+1
+3
+4
+
+connection after_crash
+query
+SELECT id, body FROM visp_idx WHERE body @@ ts_phrase('techies');
+----
+id	body
+4	techies mines the jungle
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('visp_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM visp_idx EXCEPT SELECT id, body FROM visp.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, body FROM visp.${__DATABASE__}.t EXCEPT SELECT id, body FROM visp_idx)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP INDEX visp_idx;
+
+connection after_crash
+statement ok
+DROP VIEW visp_v;
+
+connection after_crash
+statement ok
+DROP TABLE visp.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA visp.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER visp;

@@ -1,0 +1,144 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vicc FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vicc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vicc.${__DATABASE__};
+
+statement ok
+CREATE TABLE vicc.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vicc.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vicc_v AS SELECT * FROM vicc.${__DATABASE__}.t;
+
+statement ok
+SET sdb_faults = 'crash_before_finish_creation';
+
+statement error connection closed
+CREATE INDEX vicc_idx ON vicc_v USING inverted(id, body vicc_en);
+
+connection after_first
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vicc_v;
+----
+count
+3
+
+connection after_first
+statement error
+SELECT * FROM vicc_idx;
+
+connection after_first
+statement ok
+CREATE INDEX vicc_idx ON vicc_v USING inverted(id, body vicc_en);
+
+connection after_first
+query
+SELECT id FROM vicc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_first
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_first
+statement error connection closed
+CREATE INDEX vicc_idx2 ON vicc_v USING inverted(id, body vicc_en);
+
+connection after_second
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vicc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_second
+statement error
+SELECT * FROM vicc_idx2;
+
+connection after_second
+statement ok
+CREATE INDEX vicc_idx2 ON vicc_v USING inverted(id, body vicc_en);
+
+connection after_second
+query
+SELECT id, body FROM vicc_idx2 WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+connection after_second
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_second
+statement error connection closed
+SELECT 1;
+
+connection after_third
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vicc_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_third
+query
+SELECT id, body FROM vicc_idx2 WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+connection after_third
+query
+SELECT body FROM vicc_idx2 WHERE id = 3;
+----
+body
+lands after the restart
+
+connection after_third
+statement ok
+DROP INDEX vicc_idx;
+
+connection after_third
+statement ok
+DROP INDEX vicc_idx2;
+
+connection after_third
+statement ok
+DROP VIEW vicc_v;
+
+connection after_third
+statement ok
+DROP TABLE vicc.${__DATABASE__}.t;
+
+connection after_third
+statement ok
+DROP SCHEMA vicc.${__DATABASE__};
+
+connection after_third
+statement ok
+DROP SERVER vicc;

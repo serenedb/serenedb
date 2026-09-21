@@ -1,0 +1,201 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vqs_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vqs_t (id INTEGER, category TEXT, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vqs_t VALUES
+  (1, 'hero', 'pudge goes mid'),
+  (2, 'hero', 'pudge hooks the courier'),
+  (3, 'item', 'blink dagger for pudge');
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vqs_t VALUES
+  (4, 'hero', 'techies mines the jungle'),
+  (5, 'item', 'boots of travel'),
+  (6, 'item', 'aghanim scepter for pudge');
+
+statement ok
+CREATE VIEW vqs_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t;
+
+statement ok
+CREATE INDEX vqs_idx ON vqs_v USING inverted(id, body vqs_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE TABLE vqs_tags (id INTEGER, tag TEXT);
+
+statement ok
+INSERT INTO vqs_tags VALUES (1, 'classic'), (3, 'mobility'), (6, 'late');
+
+query
+SELECT * FROM vqs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	category	body
+1	hero	pudge goes mid
+2	hero	pudge hooks the courier
+3	item	blink dagger for pudge
+6	item	aghanim scepter for pudge
+
+query
+SELECT count(*) FROM vqs_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+query
+SELECT id, body FROM vqs_idx ORDER BY id DESC LIMIT 2;
+----
+id	body
+6	aghanim scepter for pudge
+5	boots of travel
+
+query
+SELECT category, count(*) FROM vqs_idx GROUP BY category ORDER BY category;
+----
+category	count
+hero	3
+item	3
+
+query
+SELECT category, count(*) FROM vqs_idx WHERE body @@ ts_phrase('pudge') GROUP BY category ORDER BY category;
+----
+category	count
+hero	2
+item	2
+
+query
+SELECT id FROM vqs_idx WHERE id IN (2, 5) ORDER BY id;
+----
+id
+2
+5
+
+query
+SELECT body FROM vqs_idx WHERE id = 3;
+----
+body
+blink dagger for pudge
+
+query
+SELECT id FROM vqs_idx WHERE id BETWEEN 2 AND 4 ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT i.id, t.tag FROM vqs_idx i JOIN vqs_tags t USING (id) WHERE i.body @@ ts_phrase('pudge') ORDER BY i.id;
+----
+id	tag
+1	classic
+3	mobility
+6	late
+
+query
+SELECT id FROM vqs_idx WHERE body @@ ts_phrase('pudge') AND category = 'item' ORDER BY id;
+----
+id
+3
+6
+
+query
+SELECT count(*) FROM (
+  (SELECT id, category, body FROM vqs_idx EXCEPT SELECT id, category, body FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t)
+  UNION ALL
+  (SELECT id, category, body FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t EXCEPT SELECT id, category, body FROM vqs_idx)
+);
+----
+count
+0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vqs_t VALUES (7, 'hero', 'pudge dismembers');
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t WHERE id = 2;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vqs_idx');
+----
+action	files_added	files_changed
+delta	1	1
+
+connection reader_a user=postgres
+query
+SELECT id FROM vqs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+6
+7
+
+connection reader_b user=postgres
+query
+SELECT id, body FROM vqs_idx WHERE id = 7;
+----
+id	body
+7	pudge dismembers
+
+connection reader_b user=postgres
+query
+SELECT count(*) FROM vqs_idx WHERE id = 2;
+----
+count
+0
+
+query
+SELECT category, count(*) FROM vqs_idx GROUP BY category ORDER BY category;
+----
+category	count
+hero	3
+item	3
+
+query
+SELECT count(*) FROM (
+  (SELECT id, category, body FROM vqs_idx EXCEPT SELECT id, category, body FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t)
+  UNION ALL
+  (SELECT id, category, body FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t EXCEPT SELECT id, category, body FROM vqs_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vqs_idx;
+
+statement ok
+DROP VIEW vqs_v;
+
+statement ok
+DROP TABLE vqs_tags;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vqs_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

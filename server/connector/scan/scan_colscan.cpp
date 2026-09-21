@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -110,12 +108,16 @@ void BuildDeadRows(ScanGlobalState& g) {
   g.dead_rows.resize(reader.size());
   for (const auto seg : g.segment_order) {
     const auto* mask = reader[seg].docs_mask();
-    if (mask == nullptr || mask->empty()) {
+    if (mask == nullptr || mask->Empty()) {
       continue;
     }
     auto& dead = g.dead_rows[seg];
-    dead.assign(mask->begin(), mask->end());
-    absl::c_sort(dead);
+    dead.reserve(mask->Count());
+    irs::DocumentMask::Iterator it{mask};
+    for (auto doc = it.Seek(irs::doc_limits::min()); !irs::doc_limits::eof(doc);
+         doc = it.Next()) {
+      dead.push_back(doc);
+    }
   }
 }
 

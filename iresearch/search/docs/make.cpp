@@ -29,7 +29,6 @@
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/make_boolean.hpp"
-#include "iresearch/search/docs/masked.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
@@ -74,12 +73,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return memory::make_managed<Empty>();
   }
   const detail::FoldReachScope reach{ctx.span};
-  auto plan = query.PlanDocs(ctx);
-  const auto* const docs_mask = query.Segment().docs_mask();
-  if (docs_mask == nullptr || !plan) [[likely]] {
-    return plan;
-  }
-  return memory::make_managed<Masked>(std::move(plan), *docs_mask);
+  return query.PlanDocs(ctx);
 }
 
 }  // namespace irs::docs

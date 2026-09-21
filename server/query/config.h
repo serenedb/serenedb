@@ -69,14 +69,14 @@ class SettingRef {
 
  private:
   struct Slot {
-    const duckdb::DBConfig* config;
-    uint64_t index;
+    const duckdb::DBConfig* config = nullptr;
+    uint64_t index = 0;
   };
 
   duckdb::Value Read(duckdb::ClientContext& context) const;
 
   std::string_view _name;
-  mutable std::atomic<const Slot*> _slot = nullptr;
+  mutable std::atomic<Slot> _slot;
 };
 
 struct VariableDescription {

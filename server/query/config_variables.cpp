@@ -55,19 +55,19 @@ namespace sdb {
 
 duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto& config = duckdb::DBConfig::GetConfig(context);
-  auto* slot = _slot.load(std::memory_order_acquire);
-  if (slot == nullptr || slot->config != &config) [[unlikely]] {
+  auto slot = _slot.load(std::memory_order_relaxed);
+  if (slot.config != &config) [[unlikely]] {
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     const auto index = config.TryGetSettingIndex(
       duckdb::String{_name.data(), static_cast<uint32_t>(_name.size())},
       option);
     SDB_ASSERT(index.IsValid());
-    slot = new Slot{.config = &config, .index = index.GetIndex()};
-    _slot.store(slot, std::memory_order_release);
+    slot = {.config = &config, .index = index.GetIndex()};
+    _slot.store(slot, std::memory_order_relaxed);
   }
   duckdb::Value value;
   auto found = context.config.user_settings.TryGetSetting(config.user_settings,
-                                                          slot->index, value);
+                                                          slot.index, value);
   if (!found) [[unlikely]] {
     auto res = context.TryGetCurrentSetting(std::string{_name}, value);
     SDB_ASSERT(res);

@@ -321,7 +321,9 @@ jobs:
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
           # Iceberg tests run a second time against Google BigLake when the
-          # service-account secrets are present; without them only the fixture runs.
+          # repository variable RUN_BIGLAKE is "true" and the service-account
+          # secrets are present; otherwise only the fixture runs.
+          RUN_BIGLAKE: ${{ vars.RUN_BIGLAKE }}
           BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
           BIGLAKE_CATALOG: ${{ secrets.BIGLAKE_CATALOG }}
           BIGLAKE_CLIENT_EMAIL: ${{ secrets.BIGLAKE_CLIENT_EMAIL }}

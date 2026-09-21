@@ -20,7 +20,7 @@ OUT="out/stress/${PROFILE}"
 # pair starts on the host and the container joins the host network to reach it.
 FIXTURE_STATE=""
 FIXTURE_ARGS=()
-if [[ "${PROFILE}" == goshan-* && "${ICEBERG_BACKEND:-local}" == "local" ]]; then
+if [[ "${PROFILE}" == biglake-reindex-* && "${ICEBERG_BACKEND:-local}" == "local" ]]; then
 	FIXTURE_STATE="$(mktemp)"
 	eval "$(python3 "${WORKSPACE}/tests/drivers/harness/iceberg_rest.py" start --state "${FIXTURE_STATE}")"
 	trap 'python3 "${WORKSPACE}/tests/drivers/harness/iceberg_rest.py" stop --state "${FIXTURE_STATE}"; rm -f "${FIXTURE_STATE}"' EXIT

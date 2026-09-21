@@ -1,25 +1,10 @@
 control substitution on
 
-statement ok
-CREATE OR REPLACE PERSISTENT SECRET vml_${__DATABASE__} (
-  TYPE S3,
-  KEY_ID '${MINIO_ACCESS_KEY}',
-  SECRET '${MINIO_SECRET_KEY}',
-  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
-  URL_STYLE 'path',
-  USE_SSL false,
-  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
-);
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
 
 statement ok
-SET s3_use_ssl=false;
-
-statement ok
-CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
-  warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
-  authorization_type 'none'
-);
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY vml_en(
@@ -258,6 +243,3 @@ DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
 
 statement ok
 DROP SERVER srv_${__DATABASE__};
-
-statement ok
-DROP PERSISTENT SECRET vml_${__DATABASE__};

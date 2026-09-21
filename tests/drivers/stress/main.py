@@ -310,7 +310,8 @@ def main(argv=None):
                 data_crash_at.pop(0)
                 print(f"[stress] chaos: crashing in the DATA domain "
                       f"({chaos.result.crashes_attempted + 1})")
-                chaos.crash_and_restart(family=chaos_mod.DATA_DOMAIN_FAULTS)
+                chaos.crash_and_restart(family=chaos_mod.DATA_FAULTS_BY_SCENARIO.get(
+                    profile.scenario, chaos_mod.DATA_DOMAIN_FAULTS))
                 next_quiesce = time.monotonic() + profile.quiesce_every
                 continue
             if compact_at and time.monotonic() >= compact_at[0]:

@@ -38,6 +38,7 @@ class IcebergRestFixture:
         minio_port = free_port()
         self.minio = f"{self.name}-minio"
         _docker("run", "-d", "--name", self.minio, "--network", self.network,
+                "--ulimit", "nofile=65536:65536",
                 "-p", f"{minio_port}:9000",
                 "-e", f"MINIO_ROOT_USER={access}", "-e", f"MINIO_ROOT_PASSWORD={secret}",
                 MINIO_IMAGE, "server", "/data")
@@ -53,6 +54,7 @@ class IcebergRestFixture:
         rest_port = free_port()
         self.rest = f"{self.name}-iceberg-rest"
         _docker("run", "-d", "--name", self.rest, "--network", self.network,
+                "--ulimit", "nofile=65536:65536",
                 "-p", f"{rest_port}:8181",
                 "-e", f"AWS_ACCESS_KEY_ID={access}", "-e", f"AWS_SECRET_ACCESS_KEY={secret}",
                 "-e", "AWS_REGION=us-east-1",

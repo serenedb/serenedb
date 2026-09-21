@@ -232,12 +232,18 @@ class Worker(threading.Thread):
                     break
 
     def _reconnect(self):
-        for _ in range(40):
-            if self.stop_event.is_set():
-                return False
+        deadline = time.monotonic() + max(300.0, self.profile.op_deadline_s)
+        last = None
+        while not self.stop_event.is_set():
             try:
                 self._connect()
                 return True
-            except Exception:
-                time.sleep(0.5)
+            except Exception as exc:
+                last = exc
+            downtime = self.planned_downtime is not None and self.planned_downtime.is_set()
+            if time.monotonic() > deadline and not downtime:
+                self._record_finding("worker_reconnect_failed",
+                                     f"{type(last).__name__}: {last}"[:200])
+                return False
+            time.sleep(0.5)
         return False

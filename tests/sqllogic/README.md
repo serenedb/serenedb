@@ -132,7 +132,7 @@ and `run.sh` fills both variables from `ICEBERG_BACKEND`:
 The bootstrap is shared by every test on one server, so it retries the catalog conflict two
 parallel files can hit creating it. Schemas are named after `${__DATABASE__}`, which carries a
 per-run suffix, so concurrent runs share one BigLake catalog without colliding. Tests that only
-make sense on the fixture (explicit `sigv4`, literal `iceberg_scan('s3://…')` paths) are named
+make sense on the fixture (explicit `sigv4`, literal `iceberg_scan('s3://...')` paths) are named
 `*_fixture_iceberg.test_slow` and are skipped in `biglake` mode. BigLake rate-limits
 `LoadTable`, so keep `--jobs` at 2 there:
 
@@ -144,7 +144,8 @@ ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> JOBS
 ```
 
 CI runs the fixture pass always and adds the BigLake pass (`SDB_SQLLOGIC_SCOPE=biglake`,
-`SDB_RECOVERY_TESTS`) when the `BIGLAKE_*` repository secrets are present.
+`SDB_RECOVERY_TESTS`) only when the repository variable `RUN_BIGLAKE` is `true` and the
+`BIGLAKE_*` repository secrets are present.
 
 ## Key Features
 

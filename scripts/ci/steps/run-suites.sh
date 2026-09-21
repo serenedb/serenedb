@@ -98,15 +98,19 @@ run_serened_core() {
 	local scope=ours
 	[[ "${RUN_SQLITE:-false}" == "true" ]] && scope=all
 	run env SDB_SQLLOGIC_SCOPE="$scope" bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
-	if [[ -n "${BIGLAKE_CLIENT_EMAIL:-}" ]]; then
+	if biglake_enabled; then
 		run env SDB_SQLLOGIC_SCOPE=biglake bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
 	fi
 	run bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
 }
 
+biglake_enabled() {
+	[[ "${RUN_BIGLAKE:-false}" == "true" && -n "${BIGLAKE_CLIENT_EMAIL:-}" ]]
+}
+
 run_recovery() {
 	run bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
-	if [[ -n "${BIGLAKE_CLIENT_EMAIL:-}" ]]; then
+	if biglake_enabled; then
 		run env ICEBERG_BACKEND=biglake JOBS=2 SDB_RECOVERY_TESTS="recovery/*_iceberg.test_slow" \
 			SDB_RECOVERY_JUNIT="tests-serenedb-recovery-biglake" \
 			bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
@@ -136,7 +140,7 @@ run_stress() {
 # table, ingest + search + deletes, restarts, data oracle): every run, hard
 # fail, about eight minutes.
 run_workload() {
-	run env SDB_STRESS_PROFILE=goshan-smoke bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	run env SDB_STRESS_PROFILE=biglake-reindex-smoke bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
 }
 
 # Sanitizer configs run ours + drivers by default; RUN_EXTRA is what widens them

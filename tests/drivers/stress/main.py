@@ -21,6 +21,7 @@ import shutil
 import capture
 import chaos as chaos_mod
 import config
+import workload as workload_mod
 import coverage as coverage_mod
 import faults as faults_mod
 import journal as journal_mod
@@ -29,6 +30,7 @@ import oracle
 import quarantine as quarantine_mod
 import quiesce
 import snapshot as snapshot_mod
+from iceberg_rest import IcebergRestFixture
 from serened import Serened
 from procutil import raise_open_files, reap_orphans
 from watchdog import ALIVE, WEDGED, Watchdog
@@ -185,8 +187,25 @@ def main(argv=None):
 
     attach_root = tempfile.mkdtemp(prefix="sdbstress-att-",
                                    dir=profile.datadir_root)
+    rest_fixture = None
+    workload = None
+    if profile.scenario in config.SCENARIOS_NEEDING_ICEBERG_REST:
+        backend = os.environ.get("ICEBERG_BACKEND", "local")
+        rest_fixture = IcebergRestFixture()
+        try:
+            rest_env = rest_fixture.start() if backend == "local" else {}
+            workload = workload_mod.Workload(dsn, run_tag, profile.dim, profile.seed_docs,
+                                             profile.docs_cap, backend, rest_env)
+            workload.setup()
+        except Exception as exc:
+            print(f"[stress] workload setup failed: {exc}", file=sys.stderr)
+            rest_fixture.stop()
+            server.stop()
+            return 1
+        print(f"[stress] workload backend={backend} table={workload.table} "
+              f"index={workload.index} dim={profile.dim} seed_docs={profile.seed_docs}")
     env = {"iceberg_fixtures": fixtures, "host": "127.0.0.1",
-           "port": server.port, "attach_root": attach_root}
+           "port": server.port, "attach_root": attach_root, "workload": workload}
     workers = [
         Worker(i, dsn, profile, run_tag, seed, jrnl, broker, stop_event,
                pause_event, findings, findings_lock, planned_downtime, env)
@@ -197,6 +216,20 @@ def main(argv=None):
 
     post_crash = []
 
+    def workload_check(label):
+        if workload is None:
+            return []
+        drained, stuck = quiesce.drain(workers, pause_event, timeout=120.0,
+                                       abort_if=lambda: dog.verdict != ALIVE)
+        try:
+            if not drained:
+                return [{"kind": "workload_quiesce_never_converged", "key": None,
+                         "detail": f"{label}: workers still in flight: {stuck}",
+                         "candidates": None, "observed": None}]
+            return workload.check(label)
+        finally:
+            quiesce.resume(pause_event)
+
     def after_recovery(fault_name):
         # Oracle first: it is what collapses each ambiguous key onto the state
         # reality settled on. Resyncing before that would throw away every key
@@ -205,6 +238,7 @@ def main(argv=None):
                            oid_registry, f"after-crash:{fault_name}",
                            abort_if=lambda: dog.verdict != ALIVE,
                            scan_artifacts=True)
+        found.extend(workload_check(f"after-crash:{fault_name}"))
         resynced = [w.state.resync_from(w.model) for w in workers]
         print(f"[stress] resynced worker state after {fault_name}: "
               f"{resynced} live keys per worker")
@@ -313,6 +347,7 @@ def main(argv=None):
                 new = run_oracle(workers, pause_event, dsn, run_tag,
                                  server.datadir, oid_registry, f"quiesce{quiesces}",
                                  abort_if=lambda: dog.verdict != ALIVE)
+                new.extend(workload_check(f"quiesce{quiesces}"))
                 with findings_lock:
                     findings.extend(new)
                 next_quiesce = time.monotonic() + profile.quiesce_every
@@ -330,6 +365,7 @@ def main(argv=None):
             final = run_oracle(workers, pause_event, dsn, run_tag, server.datadir,
                                oid_registry, "final",
                                abort_if=lambda: dog.verdict != ALIVE)
+            final.extend(workload_check("final"))
             with findings_lock:
                 findings.extend(final)
         except Exception as exc:
@@ -456,7 +492,7 @@ def main(argv=None):
 
     if args.junit:
         os.makedirs(args.junit, exist_ok=True)
-        junit.write(os.path.join(args.junit, "tests-stress-junit.xml"),
+        junit.write(os.path.join(args.junit, f"tests-stress-{profile.name}-junit.xml"),
                     f"{profile.name}_{profile.scenario}_w{profile.workers}",
                     elapsed, final_findings, verdict, repro)
 
@@ -464,7 +500,11 @@ def main(argv=None):
         broker.close()
     except Exception:
         pass
+    if workload is not None:
+        print(f"[stress] workload {workload.summary}")
     server.stop(keep_datadir=True)
+    if rest_fixture is not None:
+        rest_fixture.stop()
     shutil.rmtree(attach_root, ignore_errors=True)
 
     if final_findings or verdict != ALIVE:

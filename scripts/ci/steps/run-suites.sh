@@ -132,6 +132,13 @@ run_stress() {
 	fi
 }
 
+# The customer-flow replay (view-backed hybrid index over an iceberg REST
+# table, ingest + search + deletes, restarts, data oracle): every run, hard
+# fail, about eight minutes.
+run_workload() {
+	run env SDB_STRESS_PROFILE=goshan-smoke bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+}
+
 # Sanitizer configs run ours + drivers by default; RUN_EXTRA is what widens them
 # to the full in-scope set. Fold that into the diff gates here so the bodies
 # below only ever read RUN_* -- in particular run_serened_core needs RUN_SQLITE
@@ -161,6 +168,7 @@ dev | coverage)
 	run_test_suites
 	run_serened_core
 	run_recovery
+	run_workload
 	run_sqlsmith
 	;;
 asan | tsan | msan | ubsan)

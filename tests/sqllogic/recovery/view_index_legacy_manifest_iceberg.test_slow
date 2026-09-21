@@ -1,0 +1,117 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET vilm_s3 (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/vilm/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE SERVER vilm FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vilm_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vilm.vilm;
+
+statement ok
+CREATE TABLE vilm.vilm.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vilm.vilm.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vilm_v AS SELECT * FROM vilm.vilm.t;
+
+statement ok
+SET sdb_faults = 'manifest_version_only';
+
+statement ok
+CREATE INDEX vilm_idx ON vilm_v USING inverted(id, body vilm_en);
+
+query
+SELECT id FROM vilm_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vilm_idx;
+----
+count
+3
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vilm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	0
+
+connection after_crash
+query
+SELECT id FROM vilm_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vilm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement ok
+DROP INDEX vilm_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vilm_v;
+
+connection after_crash
+statement ok
+DROP TABLE vilm.vilm.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vilm.vilm;
+
+connection after_crash
+statement ok
+DROP SERVER vilm;
+
+connection after_crash
+statement ok
+DROP PERSISTENT SECRET vilm_s3;

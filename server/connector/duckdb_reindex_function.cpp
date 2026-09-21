@@ -969,6 +969,11 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
     RunFullRebuild(context, conn_ctx, target, *storage);
     return {};
   }
+  if (manifest->version && manifest->entries.empty() &&
+      storage->GetInvertedIndexSnapshot()->reader.live_docs_count() > 0) {
+    RunFullRebuild(context, conn_ctx, target, *storage);
+    return {};
+  }
   if (src->version && src->version == manifest->version) {
     // An unmoved pin proves an empty diff (a died pass never advances the
     // manifest version). Most periodic ticks land here.
@@ -980,14 +985,6 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
       // The indexed snapshot left the table's history: deletes may have
       // been UNDONE, invisible to any seq diff. Only a rebuild converges.
-      RunFullRebuild(context, conn_ctx, target, *storage);
-      return {ReindexAction::Rebuild, 0, 0, 0,
-              static_cast<int64_t>(src->files.size())};
-    }
-    if (manifest->entries.empty() && manifest->version) {
-      // The durable iceberg manifest is version-only: an unmoved pin already
-      // returned up_to_date above, and without the id baseline only a
-      // rebuild converges.
       RunFullRebuild(context, conn_ctx, target, *storage);
       return {ReindexAction::Rebuild, 0, 0, 0,
               static_cast<int64_t>(src->files.size())};

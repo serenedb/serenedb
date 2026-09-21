@@ -1,0 +1,211 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vmi_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vmi_t (id INTEGER, title TEXT, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vmi_t VALUES
+  (1, 'first title', 'pudge goes mid'),
+  (2, 'second title', 'arrives before the restart'),
+  (3, 'third title', 'lands after the restart');
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vmi_u (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vmi_u VALUES (10, 'techies mines the jungle'), (11, 'mines everywhere');
+
+statement ok
+CREATE VIEW vmi_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_t;
+
+statement ok
+CREATE VIEW vmi_u_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_u;
+
+statement ok
+CREATE INDEX vmi_idx_body ON vmi_v USING inverted(id, body vmi_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vmi_idx_title ON vmi_v USING inverted(id, title vmi_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vmi_idx_u ON vmi_u_v USING inverted(id, body vmi_en) WITH (compaction_interval=0);
+
+query
+SELECT id FROM vmi_idx_body WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id, title FROM vmi_idx_title WHERE title @@ ts_phrase('second');
+----
+id	title
+2	second title
+
+query
+SELECT title, body FROM vmi_idx_body WHERE id = 3;
+----
+title	body
+third title	lands after the restart
+
+query
+SELECT id FROM vmi_idx_u WHERE body @@ ts_phrase('mines') ORDER BY id;
+----
+id
+10
+11
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vmi_t VALUES (4, 'fourth title', 'after the restart too');
+
+query
+SELECT * FROM serenedb_reindex('vmi_idx_body');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM vmi_idx_title WHERE title @@ ts_phrase('fourth');
+----
+id
+
+query
+SELECT * FROM serenedb_reindex('vmi_idx_title');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM vmi_idx_title WHERE title @@ ts_phrase('fourth');
+----
+id
+4
+
+query
+SELECT * FROM serenedb_reindex('vmi_idx_u');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX vmi_idx_title;
+
+query
+SELECT id FROM vmi_idx_body WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_t WHERE id = 2;
+
+query
+SELECT action, files_changed FROM serenedb_reindex('vmi_idx_body');
+----
+action	files_changed
+delta	1
+
+query
+SELECT id FROM vmi_idx_body WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+
+statement ok
+CREATE INDEX vmi_idx_title ON vmi_v USING inverted(id, title vmi_en) WITH (compaction_interval=0);
+
+query
+SELECT id, title FROM vmi_idx_title ORDER BY id;
+----
+id	title
+1	first title
+3	third title
+4	fourth title
+
+query
+SELECT * FROM serenedb_reindex('vmi_idx_title');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_u WHERE id = 11;
+
+query
+SELECT action, files_changed FROM serenedb_reindex('vmi_idx_u');
+----
+action	files_changed
+delta	1
+
+query
+SELECT id, body FROM vmi_idx_u ORDER BY id;
+----
+id	body
+10	techies mines the jungle
+
+query
+SELECT * FROM serenedb_reindex('vmi_idx_body');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, title, body FROM vmi_idx_body EXCEPT SELECT id, title, body FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_t)
+  UNION ALL
+  (SELECT id, title, body FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_t EXCEPT SELECT id, title, body FROM vmi_idx_body)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vmi_idx_body;
+
+statement ok
+DROP INDEX vmi_idx_title;
+
+statement ok
+DROP INDEX vmi_idx_u;
+
+statement ok
+DROP VIEW vmi_v;
+
+statement ok
+DROP VIEW vmi_u_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vmi_t;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vmi_u;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

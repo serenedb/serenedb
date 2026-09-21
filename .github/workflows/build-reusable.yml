@@ -320,6 +320,13 @@ jobs:
           # iresearch-load corpus comes from S3; a failed/missing fetch fails the job.
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
+          # Iceberg tests run a second time against Google BigLake when the
+          # service-account secrets are present; without them only the fixture runs.
+          BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
+          BIGLAKE_CATALOG: ${{ secrets.BIGLAKE_CATALOG }}
+          BIGLAKE_CLIENT_EMAIL: ${{ secrets.BIGLAKE_CLIENT_EMAIL }}
+          BIGLAKE_PRIVATE_KEY: ${{ secrets.BIGLAKE_PRIVATE_KEY }}
+          BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
         run: BUILD_DIR=build CONFIG="${{ inputs.CONFIG }}" ./scripts/ci/steps/run-suites.sh
 
       - name: Generate coverage report
@@ -331,8 +338,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-artifacts-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ github.run_number }}
-          path: |
-            out/
-            !out/coverage/profiles/*.profraw
+          path: out/
           if-no-files-found: ignore
           retention-days: 30

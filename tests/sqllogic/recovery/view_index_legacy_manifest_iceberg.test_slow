@@ -1,25 +1,10 @@
 control substitution on
 
-statement ok
-CREATE OR REPLACE PERSISTENT SECRET vilm_s3 (
-  TYPE S3,
-  KEY_ID '${MINIO_ACCESS_KEY}',
-  SECRET '${MINIO_SECRET_KEY}',
-  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
-  URL_STYLE 'path',
-  USE_SSL false,
-  SCOPE 's3://${MINIO_BUCKET}/warehouse/vilm/'
-);
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
 
 statement ok
-SET s3_use_ssl=false;
-
-statement ok
-CREATE SERVER vilm FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
-  warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
-  authorization_type 'none'
-);
+CREATE SERVER vilm FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY vilm_en(
@@ -33,16 +18,16 @@ CREATE TEXT SEARCH DICTIONARY vilm_en(
 );
 
 statement ok
-CREATE SCHEMA vilm.vilm;
+CREATE SCHEMA vilm.${__DATABASE__};
 
 statement ok
-CREATE TABLE vilm.vilm.t (id INTEGER, body TEXT);
+CREATE TABLE vilm.${__DATABASE__}.t (id INTEGER, body TEXT);
 
 statement count 3
-INSERT INTO vilm.vilm.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+INSERT INTO vilm.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
 
 statement ok
-CREATE VIEW vilm_v AS SELECT * FROM vilm.vilm.t;
+CREATE VIEW vilm_v AS SELECT * FROM vilm.${__DATABASE__}.t;
 
 statement ok
 SET sdb_faults = 'manifest_version_only';
@@ -102,16 +87,12 @@ DROP VIEW vilm_v;
 
 connection after_crash
 statement ok
-DROP TABLE vilm.vilm.t;
+DROP TABLE vilm.${__DATABASE__}.t;
 
 connection after_crash
 statement ok
-DROP SCHEMA vilm.vilm;
+DROP SCHEMA vilm.${__DATABASE__};
 
 connection after_crash
 statement ok
 DROP SERVER vilm;
-
-connection after_crash
-statement ok
-DROP PERSISTENT SECRET vilm_s3;

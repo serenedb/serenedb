@@ -1,0 +1,153 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vtyr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vtyr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vtyr.${__DATABASE__};
+
+statement ok
+CREATE TABLE vtyr.${__DATABASE__}.t (id BIGINT, ts TIMESTAMP, score DOUBLE, flag BOOLEAN, tag VARCHAR, body TEXT);
+
+statement count 5
+INSERT INTO vtyr.${__DATABASE__}.t VALUES
+  (1, TIMESTAMP '2026-01-02 03:04:05', 1.5, true, 'a', 'pudge goes mid'),
+  (2, NULL, NULL, false, NULL, NULL),
+  (3, TIMESTAMP '2026-02-03 04:05:06', -2.25, NULL, 'b', ''),
+  (4, TIMESTAMP '2026-03-04 05:06:07', 0, true, 'c', 'привет мир grüße aus münchen'),
+  (1099511627776, TIMESTAMP '2026-04-05 06:07:08', 3, false, 'd', repeat('lorem ', 2000) || 'needle');
+
+statement ok
+CREATE VIEW vtyr_v AS SELECT * FROM vtyr.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vtyr_idx ON vtyr_v USING inverted(id, body vtyr_en) WITH (compaction_interval=0);
+
+query
+SELECT id FROM vtyr_idx WHERE body @@ ts_phrase('привет');
+----
+id
+4
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, ts, flag, tag FROM vtyr_idx ORDER BY id;
+----
+id	ts	flag	tag
+1	2026-01-02 03:04:05	t	a
+2	NULL	f	NULL
+3	2026-02-03 04:05:06	NULL	b
+4	2026-03-04 05:06:07	t	c
+1099511627776	2026-04-05 06:07:08	f	d
+
+connection after_crash
+query
+SELECT id FROM vtyr_idx WHERE body @@ ts_phrase('привет');
+----
+id
+4
+
+connection after_crash
+query
+SELECT id FROM vtyr_idx WHERE body @@ ts_phrase('münchen');
+----
+id
+4
+
+connection after_crash
+query
+SELECT id, length(body) FROM vtyr_idx WHERE body @@ ts_phrase('needle');
+----
+id	length
+1099511627776	12006
+
+connection after_crash
+query
+SELECT id, body FROM vtyr_idx WHERE id IN (2, 3) ORDER BY id;
+----
+id	body
+2	NULL
+3	(empty)
+
+connection after_crash
+query
+SELECT tag FROM vtyr_idx WHERE id = 1099511627776;
+----
+tag
+d
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, ts, score, flag, tag, body FROM vtyr_idx EXCEPT SELECT id, ts, score, flag, tag, body FROM vtyr.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, ts, score, flag, tag, body FROM vtyr.${__DATABASE__}.t EXCEPT SELECT id, ts, score, flag, tag, body FROM vtyr_idx)
+);
+----
+count
+0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vtyr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement count 1
+INSERT INTO vtyr.${__DATABASE__}.t VALUES (5, TIMESTAMP '2026-05-06 07:08:09', 2.5, true, 'e', 'ещё одна строка');
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vtyr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT id, tag FROM vtyr_idx WHERE body @@ ts_phrase('строка');
+----
+id	tag
+5	e
+
+connection after_crash
+statement ok
+DROP INDEX vtyr_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vtyr_v;
+
+connection after_crash
+statement ok
+DROP TABLE vtyr.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vtyr.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vtyr;

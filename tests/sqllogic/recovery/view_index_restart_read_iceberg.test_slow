@@ -1,25 +1,10 @@
 control substitution on
 
-statement ok
-CREATE OR REPLACE PERSISTENT SECRET virr_s3 (
-  TYPE S3,
-  KEY_ID '${MINIO_ACCESS_KEY}',
-  SECRET '${MINIO_SECRET_KEY}',
-  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
-  URL_STYLE 'path',
-  USE_SSL false,
-  SCOPE 's3://${MINIO_BUCKET}/warehouse/virr/'
-);
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
 
 statement ok
-SET s3_use_ssl=false;
-
-statement ok
-CREATE SERVER virr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
-  warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
-  authorization_type 'none'
-);
+CREATE SERVER virr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY virr_en(
@@ -33,16 +18,16 @@ CREATE TEXT SEARCH DICTIONARY virr_en(
 );
 
 statement ok
-CREATE SCHEMA virr.virr;
+CREATE SCHEMA virr.${__DATABASE__};
 
 statement ok
-CREATE TABLE virr.virr.t (id INTEGER, body TEXT);
+CREATE TABLE virr.${__DATABASE__}.t (id INTEGER, body TEXT);
 
 statement count 3
-INSERT INTO virr.virr.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+INSERT INTO virr.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
 
 statement ok
-CREATE VIEW virr_v AS SELECT * FROM virr.virr.t;
+CREATE VIEW virr_v AS SELECT * FROM virr.${__DATABASE__}.t;
 
 statement ok
 CREATE INDEX virr_idx ON virr_v USING inverted(id, body virr_en);
@@ -84,7 +69,7 @@ up_to_date	0	0	0	0
 
 connection after_crash
 statement count 1
-INSERT INTO virr.virr.t VALUES (4, 'after the restart too');
+INSERT INTO virr.${__DATABASE__}.t VALUES (4, 'after the restart too');
 
 connection after_crash
 query
@@ -112,16 +97,12 @@ DROP VIEW virr_v;
 
 connection after_crash
 statement ok
-DROP TABLE virr.virr.t;
+DROP TABLE virr.${__DATABASE__}.t;
 
 connection after_crash
 statement ok
-DROP SCHEMA virr.virr;
+DROP SCHEMA virr.${__DATABASE__};
 
 connection after_crash
 statement ok
 DROP SERVER virr;
-
-connection after_crash
-statement ok
-DROP PERSISTENT SECRET virr_s3;

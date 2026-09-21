@@ -1,0 +1,157 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vty_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vty_t (id BIGINT, ts TIMESTAMP, score DOUBLE, flag BOOLEAN, tag VARCHAR, body TEXT);
+
+statement count 5
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vty_t VALUES
+  (1, TIMESTAMP '2026-01-02 03:04:05', 1.5, true, 'a', 'pudge goes mid'),
+  (2, NULL, NULL, false, NULL, NULL),
+  (3, TIMESTAMP '2026-02-03 04:05:06', -2.25, NULL, 'b', ''),
+  (4, TIMESTAMP '2026-03-04 05:06:07', 0, true, 'c', 'привет мир grüße aus münchen'),
+  (1099511627776, TIMESTAMP '2026-04-05 06:07:08', 3, false, 'd', repeat('lorem ', 2000) || 'needle');
+
+statement ok
+CREATE VIEW vty_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vty_t;
+
+statement ok
+CREATE INDEX vty_idx ON vty_v USING inverted(id, body vty_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vty_idx;
+----
+count
+5
+
+query
+SELECT id, ts, flag, tag FROM vty_idx ORDER BY id;
+----
+id	ts	flag	tag
+1	2026-01-02 03:04:05	t	a
+2	NULL	f	NULL
+3	2026-02-03 04:05:06	NULL	b
+4	2026-03-04 05:06:07	t	c
+1099511627776	2026-04-05 06:07:08	f	d
+
+query
+SELECT id, score FROM vty_idx WHERE id IN (1, 3) ORDER BY id;
+----
+id	score
+1	1.5
+3	-2.25
+
+query
+SELECT id, body FROM vty_idx WHERE id IN (2, 3) ORDER BY id;
+----
+id	body
+2	NULL
+3	(empty)
+
+query
+SELECT id FROM vty_idx WHERE body @@ ts_phrase('привет');
+----
+id
+4
+
+query
+SELECT id FROM vty_idx WHERE body @@ ts_phrase('münchen');
+----
+id
+4
+
+query
+SELECT id, length(body) FROM vty_idx WHERE body @@ ts_phrase('needle');
+----
+id	length
+1099511627776	12006
+
+query
+SELECT tag FROM vty_idx WHERE id = 1099511627776;
+----
+tag
+d
+
+query
+SELECT id FROM vty_idx WHERE body @@ ts_phrase('pudge') AND flag;
+----
+id
+1
+
+query
+SELECT count(*) FROM (
+  (SELECT id, ts, score, flag, tag, body FROM vty_idx EXCEPT SELECT id, ts, score, flag, tag, body FROM srv_${__DATABASE__}.${__DATABASE__}.vty_t)
+  UNION ALL
+  (SELECT id, ts, score, flag, tag, body FROM srv_${__DATABASE__}.${__DATABASE__}.vty_t EXCEPT SELECT id, ts, score, flag, tag, body FROM vty_idx)
+);
+----
+count
+0
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vty_t SET body = 'now has a body' WHERE id = 2;
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vty_t VALUES (5, TIMESTAMP '2026-05-06 07:08:09', 2.5, true, 'e', 'ещё одна строка');
+
+query
+SELECT action FROM serenedb_reindex('vty_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM vty_idx WHERE body @@ ts_phrase('body');
+----
+id	body
+2	now has a body
+
+query
+SELECT id, tag FROM vty_idx WHERE body @@ ts_phrase('строка');
+----
+id	tag
+5	e
+
+query
+SELECT count(*) FROM (
+  (SELECT id, ts, score, flag, tag, body FROM vty_idx EXCEPT SELECT id, ts, score, flag, tag, body FROM srv_${__DATABASE__}.${__DATABASE__}.vty_t)
+  UNION ALL
+  (SELECT id, ts, score, flag, tag, body FROM srv_${__DATABASE__}.${__DATABASE__}.vty_t EXCEPT SELECT id, ts, score, flag, tag, body FROM vty_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vty_idx;
+
+statement ok
+DROP VIEW vty_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vty_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

@@ -1,0 +1,168 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vidr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vidr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vidr.${__DATABASE__};
+
+statement ok
+CREATE TABLE vidr.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO vidr.${__DATABASE__}.t VALUES (1, 'pudge alpha'), (2, 'anchin alpha');
+
+statement count 2
+INSERT INTO vidr.${__DATABASE__}.t VALUES (3, 'techies beta'), (4, 'mines beta');
+
+statement ok
+CREATE VIEW vidr_v AS SELECT * FROM vidr.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vidr_idx ON vidr_v USING inverted(id, body vidr_en) WITH (compaction_interval=0);
+
+statement count 1
+DELETE FROM vidr.${__DATABASE__}.t WHERE id = 2;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vidr_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+statement count 1
+UPDATE vidr.${__DATABASE__}.t SET body = 'pudge alpha prime' WHERE id = 1;
+
+query
+SELECT action FROM serenedb_reindex('vidr_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM vidr_idx ORDER BY id;
+----
+id	body
+1	pudge alpha prime
+3	techies beta
+4	mines beta
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM vidr_idx ORDER BY id;
+----
+id	body
+1	pudge alpha prime
+3	techies beta
+4	mines beta
+
+connection after_crash
+query
+SELECT id FROM vidr_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id
+1
+
+connection after_crash
+query
+SELECT id FROM vidr_idx WHERE body @@ ts_phrase('prime');
+----
+id
+1
+
+connection after_crash
+query
+SELECT body FROM vidr_idx WHERE id = 1;
+----
+body
+pudge alpha prime
+
+connection after_crash
+query
+SELECT count(*) FROM vidr_idx WHERE id = 2;
+----
+count
+0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vidr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement count 2
+DELETE FROM vidr.${__DATABASE__}.t WHERE id IN (3, 4);
+
+connection after_crash
+query
+SELECT action FROM serenedb_reindex('vidr_idx');
+----
+action
+delta
+
+connection after_crash
+query
+SELECT id, body FROM vidr_idx ORDER BY id;
+----
+id	body
+1	pudge alpha prime
+
+connection after_crash
+query
+SELECT count(*) FROM vidr_idx WHERE body @@ ts_phrase('beta');
+----
+count
+0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vidr_idx EXCEPT SELECT id, body FROM vidr.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, body FROM vidr.${__DATABASE__}.t EXCEPT SELECT id, body FROM vidr_idx)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP INDEX vidr_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vidr_v;
+
+connection after_crash
+statement ok
+DROP TABLE vidr.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vidr.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vidr;

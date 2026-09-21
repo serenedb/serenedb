@@ -110,6 +110,42 @@ To modify test parameters in Docker:
 command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
 ```
 
+## Iceberg tests: fixture or Google BigLake
+
+`*_iceberg.test_slow` files do not spell out the catalog. They begin with
+
+```
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER <name> FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+```
+
+and `run.sh` fills both variables from `ICEBERG_BACKEND`:
+
+| `ICEBERG_BACKEND` | bootstrap | server options |
+|---|---|---|
+| `local` (default) | S3 secret `iceberg_ci_storage` for the MinIO warehouse | the iceberg-rest fixture, `authorization_type 'none'` |
+| `biglake` | ICEBERG secret `iceberg_ci_catalog`: `PROVIDER google` from `BIGLAKE_CLIENT_EMAIL` / `BIGLAKE_PRIVATE_KEY` / `BIGLAKE_PRIVATE_KEY_ID`, or your gcloud application-default credentials when those are unset | `bl://projects/$BIGLAKE_PROJECT/catalogs/$BIGLAKE_CATALOG` on `biglake.googleapis.com` |
+
+The bootstrap is shared by every test on one server, so it retries the catalog conflict two
+parallel files can hit creating it. Schemas are named after `${__DATABASE__}`, which carries a
+per-run suffix, so concurrent runs share one BigLake catalog without colliding. Tests that only
+make sense on the fixture (explicit `sigv4`, literal `iceberg_scan('s3://…')` paths) are named
+`*_fixture_iceberg.test_slow` and are skipped in `biglake` mode. BigLake rate-limits
+`LoadTable`, so keep `--jobs` at 2 there:
+
+```bash
+ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> \
+  ./run.sh --single-port 7777 --jobs 2 --test 'sdb/**/*_iceberg.test_slow'
+ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> JOBS=2 \
+  ./run_recovery_tests.sh recovery/view_index_*_iceberg.test_slow
+```
+
+CI runs the fixture pass always and adds the BigLake pass (`SDB_SQLLOGIC_SCOPE=biglake`,
+`SDB_RECOVERY_TESTS`) when the `BIGLAKE_*` repository secrets are present.
+
 ## Key Features
 
 - Supports both simple and extended PostgreSQL protocols

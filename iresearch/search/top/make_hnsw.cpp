@@ -91,7 +91,7 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  auto hits = query.RunSearch(ctx.table, ctx.part, ctx.parts);
+  auto hits = query.RunSearch(ctx.table);
   if (hits.empty()) {
     // Nothing matched -- a part of a split scan whose doc range holds no row
     // the predicate admits, or a search that found none. That is an answer,

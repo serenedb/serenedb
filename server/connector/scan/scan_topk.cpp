@@ -370,12 +370,42 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& ss = g.Bind();
   t.limit = *ss.score.top_k;
   t.offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
-  if (ss.score.vector &&
-      (ss.score.vector->quant != irs::VectorQuantization::None ||
-       g.has_lookup_filter)) {
-    static constinit SettingRef gRerank{"sdb_rerank_factor"};
+  const auto* vs = g.vector_scorer;
+  if (vs != nullptr && !vs->exact &&
+      (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
     const auto k = static_cast<double>(*ss.score.top_k);
-    const double pool = std::ceil(gRerank.Double(context) * k);
+    // The search walks on quantized codes and this many of its candidates are
+    // read back at full precision. Zero means the query answers from the
+    // codes.
+    bool chosen_here = false;
+    const auto factor = AnnOversample(context, *vs, chosen_here);
+    double pool = factor > 0.0 ? std::max(k, std::ceil(factor * k)) : 0.0;
+    if (g.has_lookup_filter) {
+      // This pool is not about precision: a lookup filter drops rows after the
+      // collector, so the over-fetch has to cover everything the search can
+      // return or the query yields fewer than k. It stands whatever the
+      // rescore says.
+      //
+      // For HNSW the ceiling is the beam, which is a real bound on what the
+      // search can hand back. An IVF probe has no such ceiling -- what it can
+      // return is every document in the clusters it probed -- so there is no
+      // honest number to read, and `ef_search` is the wrong one to borrow
+      // because it is populated from the HNSW knob whatever the index kind.
+      // What it had instead was `k`, which absorbs no drops at all: a lookup
+      // filter that rejects the k nearest returns nothing.
+      //
+      // So IVF over-fetches by a factor, and only where the engine chose the
+      // oversample. A value the user wrote is a statement about how much work
+      // they want done and is left exactly as written. It is a guess at
+      // selectivity, and a selective enough filter still empties it -- the
+      // real answer is to widen the probe set until k survive.
+      constexpr double kLookupFilterOverfetch = 4.0;
+      const double reachable =
+        vs->kind == irs::AnnKind::Hnsw
+          ? static_cast<double>(vs->ef_search)
+          : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
+      pool = std::max(pool, std::max(k, reachable));
+    }
     t.rerank_pool = pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
   }
   t.pool =

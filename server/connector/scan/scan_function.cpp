@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
@@ -94,7 +95,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.search.snapshot->reader;
   state->total_segments = ss.search.snapshot->reader.size();
-  state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
@@ -161,12 +161,39 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
   }
   if (ss.score.vector) {
-    auto vs = *ss.score.vector;
-    if (vs.quant != irs::VectorQuantization::None && ss.score.top_k) {
-      static constinit SettingRef gRerank{"sdb_rerank_factor"};
-      vs.min_ef =
-        gRerank.Double(context) * static_cast<uint32_t>(*ss.score.top_k);
+    state->owned_vector_scorer = *ss.score.vector;
+    auto& vs = *state->owned_vector_scorer;
+    // The knobs are the executing session's, not the planning session's: a
+    // cached plan sees every SET made since it was prepared.
+    RefreshVectorKnobs(vs, context);
+    if (ss.score.top_k) {
+      // The beam is the result ceiling, so it is at least k -- and at least
+      // the rescore pool, which is the same thing said of the pool: a search
+      // that returns a hundred cannot hand four hundred to the rescorer. This
+      // has to be decided here rather than next to the pool itself, because
+      // the filter below captures min_ef as it is built. Qdrant takes
+      // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
+      // reason; docs/hnsw-parity.md in vectorbench has the mapping.
+      //
+      // HNSW is the one kind whose search can return fewer candidates than
+      // asked for. An IVF probe returns whatever the collector keeps, so the
+      // pool is the candidate count outright and nothing needs widening.
+      if (vs.kind == irs::AnnKind::Hnsw) {
+        bool chosen_here = false;
+        const auto factor = AnnOversample(context, vs, chosen_here);
+        // The floor is what one segment must hold, not what the query returns.
+        // Asking each of eight segments for a thousand is eight thousand
+        // candidates produced to answer with one thousand. This is a floor and
+        // never a cap: a wider `ef_search` still wins, and a single-segment
+        // index still gets the whole k.
+        const auto k = static_cast<double>(*ss.score.top_k);
+        const double share = SegmentBeamShare(k, state->total_segments);
+        const double seg_pool =
+          factor > 0.0 ? std::max(share, std::ceil(factor * share)) : 0.0;
+        vs.min_ef = static_cast<uint32_t>(seg_pool > 0.0 ? seg_pool : share);
+      }
     }
+    state->vector_scorer = &vs;
     state->owned_filter =
       MakeVectorFilter(vs, ss.search.filter, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();

@@ -24,7 +24,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <optional>
 
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace duckdb {
@@ -59,7 +59,7 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
 // The search column info of the scan's column `col_id`, resolved at execution
 // the way the plan-time claim resolved it, for a deferred claim.
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
-  duckdb::ClientContext& context, const connector::SereneDBScanBindData& scan,
+  duckdb::ClientContext& context, const connector::ScanBindData& scan,
   catalog::ColumnId col_id, bool column_stored);
 
 }  // namespace sdb::optimizer

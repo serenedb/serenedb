@@ -494,8 +494,8 @@ void DispatchInverted(duckdb::ClientContext& context,
         search->VacuumRefresh();  // commit pending inserts + reclaim files
       } else {
         // + merge segments, down to sdb_compact_target_segments of them
-        search->VacuumCompact(
-          ReadIntSetting(context, "sdb_compact_target_segments"));
+        static constinit SettingRef gTargets{"sdb_compact_target_segments"};
+        search->VacuumCompact(gTargets.Int(context));
       }
     }
   }

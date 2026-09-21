@@ -167,6 +167,9 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
+  // The executing session's copy: its knobs and beam floor are read at scan
+  // init, not at plan time, so a cached plan follows the current SETs.
+  std::optional<VectorScorerOptions> owned_vector_scorer;
 
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;

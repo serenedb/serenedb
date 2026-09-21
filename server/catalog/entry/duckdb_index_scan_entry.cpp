@@ -104,7 +104,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->lookup.label = "search";
     data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
-    data->reacquire_snapshot =
+    data->plan_cache.reacquire_snapshot =
       [id = GetIndexedRelationId(), search = relation->GetSearchData()](
         duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
       auto fresh =
@@ -121,7 +121,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->score.prune = data->relation.ScannedIndex().GetTopKScorer();
     data->search.snapshot = conn_ctx.EnsureSearchSnapshot(
       _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
-    data->reacquire_snapshot =
+    data->plan_cache.reacquire_snapshot =
       [index_id = _index_id,
        storage = ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id)](
         duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {

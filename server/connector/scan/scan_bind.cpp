@@ -28,6 +28,7 @@
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <cmath>
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
@@ -86,6 +87,73 @@ std::vector<const catalog::InvertedIndex*> RelationSpec::InvertedIndexes()
            return &catalog::InvertedInfo(*index);
          }) |
          std::ranges::to<std::vector>();
+}
+
+double SegmentBeamShare(double k, size_t segments) noexcept {
+  if (segments <= 1) {
+    return k;
+  }
+  const double n = static_cast<double>(segments);
+  const double mean = k / n;
+  const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
+  return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
+}
+
+namespace {
+
+// Auto is 0 or 1 and never more: a default decides *whether* to re-score, not
+// how much to spend on it. 1 gives every segment its own pool, re-scored
+// exactly, with only real scores crossing a segment boundary -- Qdrant's
+// property. 0 lets quantized scores merge across segments directly.
+//
+// Which side a quantizer falls on is measured rather than read off its bit
+// count. On 120k x 64, eight segments, k=10, moving from 0 to 1 gains:
+//
+//     sq8   +0.018 hnsw  +0.021 ivf     sq4     +0.298  +0.318
+//     usq8  +0.020       +0.025         usq4    +0.347  +0.363
+//                                       pq          --  +0.442
+//                                       rabitq3 +0.265  +0.281
+//                                       tq3     +0.360  +0.418
+//
+// Eight-bit codes rank well enough alone that re-scoring buys two points of
+// recall for the reads it costs, which is not a trade to make for everyone by
+// default. Every narrower code is unusable without it.
+double AutoOversample(const VectorScorerOptions& vs) noexcept {
+  switch (vs.quant) {
+    case irs::VectorQuantization::None:
+    case irs::VectorQuantization::SQ8:
+    case irs::VectorQuantization::USQ8:
+      return 0.0;
+    case irs::VectorQuantization::SQ4:
+    case irs::VectorQuantization::USQ4:
+    case irs::VectorQuantization::PQ:
+    case irs::VectorQuantization::RaBitQ:
+    case irs::VectorQuantization::TQ:
+      return 1.0;
+  }
+  return 0.0;
+}
+
+}  // namespace
+
+double AnnOversample(duckdb::ClientContext& context,
+                     const VectorScorerOptions& vs, bool& chosen_here) {
+  static constinit SettingRef gOversample{"sdb_ann_oversample"};
+  auto factor = gOversample.Double(context);
+  chosen_here = factor < 0.0;
+  return chosen_here ? AutoOversample(vs) : factor;
+}
+
+void RefreshVectorKnobs(VectorScorerOptions& vs,
+                        duckdb::ClientContext& context) {
+  static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
+  static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
+  static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
+  vs.nprobe = gNprobe.Int(context);
+  vs.max_search_fanout = gFanout.Int(context);
+  vs.ef_search = gEfSearch.Int(context);
+  vs.hnsw_filter_mode = ReadHnswFilterMode(context);
+  vs.exact = ReadAnnExact(context);
 }
 
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {

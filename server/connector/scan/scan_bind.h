@@ -264,6 +264,25 @@ std::optional<catalog::PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context);
 bool ReadAnnExact(duckdb::ClientContext& context);
 
+// The share of a global top-k that one of `segments` segments is expected to
+// hold. Every segment is searched with its own beam and the results are
+// merged, so a segment never has to be able to answer the whole query alone --
+// only to hold its part of the answer. How many of the top k land in one
+// segment is Binomial(k, 1/segments); three standard deviations above the mean
+// covers the segment that happens to draw more than its share. One segment
+// gets the whole k, and a beam this narrow is pointless below a few dozen.
+double SegmentBeamShare(double k, size_t segments) noexcept;
+
+// The oversample the engine picks for a quantizer when sdb_ann_oversample is
+// -1, and the session's value otherwise; `chosen_here` reports which.
+double AnnOversample(duckdb::ClientContext& context,
+                     const VectorScorerOptions& vs, bool& chosen_here);
+
+// The search knobs a vector scan reads from the session at execution, rather
+// than from the session that planned it.
+void RefreshVectorKnobs(VectorScorerOptions& vs,
+                        duckdb::ClientContext& context);
+
 // The claimed WHERE of a scan whose plan deferred it, built with the
 // parameter values bound to this execution.
 std::shared_ptr<const irs::Filter> BuildDeferredFilter(

@@ -96,7 +96,7 @@ class ExactChain : public Root {
   ABSL_CACHELINE_ALIGNED score_t _dists[kRun];
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kRun];
   irs::detail::ExactScanner _scanner;
-  irs::detail::BoostProvider _provider;
+  irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;

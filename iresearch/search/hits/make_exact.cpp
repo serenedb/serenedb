@@ -32,8 +32,7 @@ class ExactHits : public Root {
  public:
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
-    : _scanner{query}, _fetcher{ctx.fetcher}, _table{ctx.table} {
-    _scanner.Reset(doc_limits::min(), doc_limits::eof());
+    : _scanner{query}, _fetcher{ctx.fetcher} {
     SDB_ASSERT(args.scorer != nullptr);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
@@ -46,44 +45,39 @@ class ExactHits : public Root {
     });
   }
 
-  uint32_t Run(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
-               uint32_t capacity) final {
-    const auto limit = std::min<uint32_t>(capacity, kScoreBlock);
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,
+               score_t* IRS_RESTRICT scores) final {
+    _scanner.Reset(min, max);
+    _pos = 0;
+    _have = 0;
     uint32_t n = 0;
-    while (n != limit) {
+    for (;;) {
       if (_pos == _have) {
         _have = _scanner.Next(_docs, _dists);
         _pos = 0;
         if (_have == 0) {
-          break;
+          return n;
         }
       }
-      const auto doc = _docs[_pos];
-      const auto dist = _dists[_pos];
-      ++_pos;
-      if (_table != nullptr && _table->Live(doc) != doc) {
-        continue;
-      }
-      docs[n] = doc;
-      _block[n] = dist;
-      ++n;
+      const auto m =
+        static_cast<scores_size_t>(std::min<uint32_t>(_have - _pos,
+                                                      kScoreBlock));
+      std::copy_n(_docs + _pos, m, docs + n);
+      std::copy_n(_dists + _pos, m, _block);
+      _pos += m;
+      _fetcher.Fetch(std::span<const doc_id_t>{docs + n, m});
+      _score.Score(scores + n, m);
+      n += m;
     }
-    if (n == 0) {
-      return 0;
-    }
-    _fetcher.Fetch(std::span<const doc_id_t>{docs, n});
-    _score.Score(scores, static_cast<scores_size_t>(n));
-    return n;
   }
 
  private:
   static constexpr uint32_t kRun = irs::detail::ExactScanner::kRun;
 
   irs::detail::ExactScanner _scanner;
-  irs::detail::BoostProvider _provider;
+  irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  irs::detail::DeadRuns* _table;
   score_t _block[kScoreBlock];
   doc_id_t _docs[kRun];
   score_t _dists[kRun];

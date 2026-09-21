@@ -10,6 +10,7 @@ include(ExternalProject)
 include(UpdateModule)
 
 sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "stringzilla" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 ################################################################################
 ## JEMALLOC
@@ -17,6 +18,7 @@ sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_
 if("${SDB_ALLOC}" MATCHES "JE")
     # jemalloc source is the third_party/jemalloc submodule; jemalloc-cmake
     # compiles it natively (no autotools) into the `jemalloc_native` target.
+    sdb_update_module(${GIT_EXECUTABLE} "jemalloc" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
     add_subdirectory(jemalloc-cmake)
     # Expose it as an IMPORTED target: it is linked globally, so it ends up in
     # the link interface of vendored libs that export() their targets (croaring),
@@ -515,6 +517,8 @@ set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 ## and collides with ours)
 ################################################################################
 
+sdb_update_module(${GIT_EXECUTABLE} "clickhouse-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
 file(
     GLOB_RECURSE CLICKHOUSE_CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/*.cpp"
@@ -716,6 +720,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_azure" ${CMAKE_CURRENT_SOURCE_DIR} "
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")

@@ -22,10 +22,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <stringzilla/utf8_norm/serial.h>
+#if defined(__x86_64__)
 #include <stringzilla/utf8_norm/haswell.h>
 #include <stringzilla/utf8_norm/icelake.h>
-#include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_norm/skylake.h>
+#elif defined(__aarch64__)
+#include <stringzilla/utf8_norm/neon.h>
+#endif
 
 #include <fstream>
 #include <iresearch/analysis/text/normalize/normalize.hpp>
@@ -222,7 +226,9 @@ TEST(norm_stringzilla_test, classify_nfkc_and_strip_safe_conformance) {
 }
 
 TEST(norm_stringzilla_test, simd_backends_match_serial) {
+#if defined(__x86_64__)
   const bool has_avx512 = irs::analysis::sz::HasAvx512();
+#endif
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);
   ASSERT_FALSE(cases.empty());
@@ -246,11 +252,15 @@ TEST(norm_stringzilla_test, simd_backends_match_serial) {
             EXPECT_TRUE(false) << name << " diverges, line: " << c.line;
           }
         };
+#if defined(__x86_64__)
         check_backend(sz_utf8_norm_haswell, "haswell");
         if (has_avx512) {
           check_backend(sz_utf8_norm_skylake, "skylake");
           check_backend(sz_utf8_norm_icelake, "icelake");
         }
+#elif defined(__aarch64__)
+        check_backend(sz_utf8_norm_neon, "neon");
+#endif
       }
     }
     if (failures > 20) {

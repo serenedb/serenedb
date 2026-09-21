@@ -94,14 +94,24 @@ TEST(sentence_engine_test, sentence_break_test_conformance) {
   EXPECT_EQ(0u, failures);
 }
 
+#if defined(__x86_64__) || defined(__aarch64__)
+
+#if defined(__x86_64__)
+constexpr Finder kSentencesSimd = sz_utf8_sentences_haswell;
+constexpr Finder kNewlinesSimd = sz_utf8_newlines_haswell;
+#else
+constexpr Finder kSentencesSimd = sz_utf8_sentences_neon;
+constexpr Finder kNewlinesSimd = sz_utf8_newlines_neon;
+#endif
+
 TEST(sentence_engine_test, sentences_simd_backend_matches_serial) {
-  ExpectBackendsMatch(sz_utf8_sentences_serial, sz_utf8_sentences_haswell,
-                      LoadCorpus());
+  ExpectBackendsMatch(sz_utf8_sentences_serial, kSentencesSimd, LoadCorpus());
 }
 
 TEST(sentence_engine_test, newlines_simd_backend_matches_serial) {
   const std::string corpus =
     LoadCorpus() + "mixed\r\nnel\xC2\x85ls\xE2\x80\xA8ps\xE2\x80\xA9tail";
-  ExpectBackendsMatch(sz_utf8_newlines_serial, sz_utf8_newlines_haswell,
-                      corpus);
+  ExpectBackendsMatch(sz_utf8_newlines_serial, kNewlinesSimd, corpus);
 }
+
+#endif

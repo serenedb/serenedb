@@ -31,6 +31,11 @@
 #   REPORTS_DIR  (default: <workspace>/out/test-results)  -- where JUnit XML lands
 #   PGHOST/PGPORT/PGUSER/PGDATABASE -- postgres_scanner uses an existing server
 #                                      when PGHOST is set
+#   SDB_DUCKDB_MAX_THREADS  (default: min(nproc, 32)) -- caps DuckDB's default
+#     thread count, via the SLURM_CPUS_ON_NODE lever GetSystemMaxThreads()
+#     honours on Linux. The memory-limit tests set a fixed budget (100MB-1GB)
+#     but the minimum footprint scales per thread, so on a many-core box they
+#     OOM before they can spill. Set to empty to use the real core count.
 
 set -uo pipefail
 
@@ -39,6 +44,11 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 : "${BUILD_DIR:=build}"
 : "${REPORTS_DIR:=$WORKSPACE/out/test-results}"
+: "${SDB_DUCKDB_MAX_THREADS:=$(($(nproc) < 32 ? $(nproc) : 32))}"
+
+if [[ -n "$SDB_DUCKDB_MAX_THREADS" ]] && [[ -z "${SLURM_CPUS_ON_NODE:-}" ]]; then
+	export SLURM_CPUS_ON_NODE="$SDB_DUCKDB_MAX_THREADS"
+fi
 
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(

@@ -23,10 +23,9 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
-#include <optional>
 #include <utility>
 
-#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/window.hpp"

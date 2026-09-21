@@ -96,21 +96,13 @@ struct FlushedSegmentContext {
     const auto uncommitted_begin =
       static_cast<doc_id_t>(visible + doc_limits::min());
 
-    if (visible == end) {
-      flushed.docs_mask.Truncate(uncommitted_begin);
-      if (flushed.docs_mask.Count() + uncommitted_count == docs_count) {
-        return true;
-      }
-      document_mask = std::move(flushed.docs_mask);
-      index = std::move(flushed);
-    } else {
-      document_mask = flushed.docs_mask;
-      document_mask.Truncate(uncommitted_begin);
-      if (document_mask.Count() + uncommitted_count == docs_count) {
-        return true;
-      }
-      index = flushed;
+    SDB_ASSERT(visible < end);
+    document_mask = flushed.docs_mask;
+    document_mask.Truncate(uncommitted_begin);
+    if (document_mask.Count() + uncommitted_count == docs_count) {
+      return true;
     }
+    index = flushed;
     index.meta.uncommitted_begin = uncommitted_begin;
     return false;
   }
@@ -443,7 +435,6 @@ std::vector<std::string_view> GetFilesToSync(
                 [&files_to_sync](const IndexSegment& segment) {
                   files_to_sync.emplace_back(segment.filename);
                   const auto& files = segment.meta.files;
-                  SDB_ASSERT(files.size() <= kMaxFilesPerSegment);
                   files_to_sync.insert(files_to_sync.end(), files.begin(),
                                        files.end());
                 });
@@ -1288,16 +1279,20 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // 'committed_state_' or 'pending_state_' to avoid data duplication
     const auto floor = _compacting.floor;
     // TODO(Dronplane): maybe make it member and not refill every run?
-    CompactingSegments unavailable = _compacting.segments;
+    std::optional<CompactingSegments> unavailable;
     for (const auto& segment : *committed_reader) {
       const auto& meta = segment.Meta();
       uint64_t id = 0;
       if (HasUncommitted(meta) ||
           (floor != 0 && ParseSegmentId(meta.name, id) && id <= floor)) {
-        unavailable.insert(meta.name);
+        if (!unavailable) {
+          unavailable = _compacting.segments;
+        }
+        unavailable->insert(meta.name);
       }
     }
-    policy(candidates, *committed_reader, unavailable);
+    policy(candidates, *committed_reader,
+           unavailable ? *unavailable : _compacting.segments);
 
     if (floor != 0) {
       // TODO(Dronplane): should it be an assert?

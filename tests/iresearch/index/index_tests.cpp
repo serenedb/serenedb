@@ -8962,11 +8962,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    {
-      const auto result = writer->Compact(do_commit_and_compact_count);
-      ASSERT_EQ(irs::CompactionError::Ok, result.error);
-      ASSERT_EQ(0, result.size);
-    }
+    // The candidates were already compacted by the commit the test policy ran,
+    // so they are no longer in the merged snapshot: transient Busy, not Fail.
+    ASSERT_EQ(irs::CompactionError::Busy,
+              writer->Compact(do_commit_and_compact_count).error);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
     // check all data is deleted
     const auto one_segment_count = count;
@@ -9047,11 +9046,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    {
-      const auto result = writer->Compact(do_commit_and_compact_count);
-      ASSERT_EQ(irs::CompactionError::Ok, result.error);
-      ASSERT_EQ(0, result.size);
-    }
+    // The candidates were already compacted by the commit the test policy ran,
+    // so they are no longer in the merged snapshot: transient Busy, not Fail.
+    ASSERT_EQ(irs::CompactionError::Busy,
+              writer->Compact(do_commit_and_compact_count).error);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));

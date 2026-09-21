@@ -21,7 +21,6 @@
 #include "iresearch/search/docs/make.hpp"
 
 #include <span>
-#include <utility>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"

@@ -75,7 +75,7 @@ size_t SegmentWriter::memory_active() const noexcept {
 
 size_t SegmentWriter::memory_reserved() const noexcept {
   return sizeof(SegmentWriter) + _docs_context.MemoryReserved() +
-         _docs_mask.ByteSize() + _fields.MemoryReserved();
+         _docs_mask.ByteCapacity() + _fields.MemoryReserved();
 }
 
 bool SegmentWriter::remove(doc_id_t doc_id) noexcept {

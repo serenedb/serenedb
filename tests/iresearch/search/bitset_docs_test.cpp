@@ -801,7 +801,7 @@ irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
 
 irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
                                irs::doc_id_t uncommitted) {
-  return irs::probe::DocsMask{mask, uncommitted};
+  return irs::probe::DocsMask{irs::DocumentMask::Iterator{mask, uncommitted}};
 }
 
 }  // namespace
@@ -871,6 +871,67 @@ TEST(docs_mask_test, fill_covers_the_uncommitted_tail) {
   ASSERT_EQ(1 + 2 * kBits, next);
 }
 
+TEST(docs_mask_test, truncate_drops_everything_from_the_bound_on) {
+  auto mask = MakeMask({1, 63, 64, 65, 127, 128, 1000});
+
+  mask.Truncate(65);
+
+  ASSERT_TRUE(mask.Contains(1));
+  ASSERT_TRUE(mask.Contains(63));
+  ASSERT_TRUE(mask.Contains(64));
+  ASSERT_FALSE(mask.Contains(65));
+  ASSERT_FALSE(mask.Contains(127));
+  ASSERT_FALSE(mask.Contains(128));
+  ASSERT_FALSE(mask.Contains(1000));
+  ASSERT_EQ(3, mask.Count());
+}
+
+TEST(docs_mask_test, truncate_on_a_word_boundary) {
+  auto mask = MakeMask({1, 64, 65, 66});
+
+  mask.Truncate(65);
+
+  ASSERT_TRUE(mask.Contains(1));
+  ASSERT_TRUE(mask.Contains(64));
+  ASSERT_FALSE(mask.Contains(65));
+  ASSERT_FALSE(mask.Contains(66));
+  ASSERT_EQ(2, mask.Count());
+}
+
+TEST(docs_mask_test, truncate_past_the_end_keeps_everything) {
+  auto mask = MakeMask({1, 64, 4999});
+  const auto count = mask.Count();
+
+  mask.Truncate(100000);
+
+  ASSERT_EQ(count, mask.Count());
+  ASSERT_TRUE(mask.Contains(4999));
+}
+
+TEST(docs_mask_test, truncate_at_the_first_doc_empties_the_mask) {
+  auto mask = MakeMask({1, 64, 4999});
+
+  mask.Truncate(irs::doc_limits::min());
+
+  ASSERT_TRUE(mask.Empty());
+  ASSERT_EQ(0, mask.Count());
+}
+
+TEST(docs_mask_test, clear_empties_a_reusable_mask) {
+  auto mask = MakeMask({1, 64, 4999});
+  ASSERT_FALSE(mask.Empty());
+
+  mask.Clear();
+
+  ASSERT_TRUE(mask.Empty());
+  ASSERT_EQ(0, mask.Count());
+  ASSERT_FALSE(mask.Contains(64));
+
+  ASSERT_TRUE(mask.Add(7));
+  ASSERT_EQ(1, mask.Count());
+  ASSERT_TRUE(mask.Contains(7));
+}
+
 TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
   std::vector<irs::doc_id_t> docs;
   for (irs::doc_id_t doc = 1; doc < 20000; ++doc) {
@@ -904,7 +965,7 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
 // asks exactly that of the last leaf of a bounded scan.
 TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
   constexpr irs::doc_id_t kDocs = 300;
-  irs::detail::LazyBitset set{MakeSet(kDocs, {3, 100, 299}), nullptr};
+  irs::detail::LazyBitset set{MakeSet(kDocs, {3, 100, 299}), {}};
 
   ASSERT_EQ(kDocs + 1, set.End());
   ASSERT_EQ(kDocs + 1, set.Filled());

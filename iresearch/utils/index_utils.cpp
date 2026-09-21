@@ -171,6 +171,25 @@ double CompactionScore(const CompactionCandidate& compaction,
 }
 
 }  // namespace tier
+
+SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
+                                    bool increment_version) {
+  auto& meta = segment.meta;
+  SDB_ASSERT(meta.codec);
+  SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
+  SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
+
+  SDB_ASSERT(!meta.docs_mask || !meta.docs_mask->Empty());
+  meta.live_docs_count = meta.docs_count;
+  if (const auto removals = RemovalCount(meta); removals != 0) {
+    SDB_ASSERT(removals < meta.docs_count);
+    meta.live_docs_count -= removals;
+    meta.version += uint64_t{increment_version};
+  }
+
+  return meta.codec->get_segment_meta_writer();
+}
+
 }  // namespace
 
 CompactionPolicy MakePolicy(const CompactionBytes& options) {
@@ -421,24 +440,6 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     /// Stage 5: pick the best candidate
     absl::c_copy(best, std::back_inserter(candidates));
   };
-}
-
-SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
-                                    bool increment_version) {
-  auto& meta = segment.meta;
-  SDB_ASSERT(meta.codec);
-  SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
-  SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
-
-  SDB_ASSERT(!meta.docs_mask || !meta.docs_mask->Empty());
-  meta.live_docs_count = meta.docs_count;
-  if (const auto removals = RemovalCount(meta); removals != 0) {
-    SDB_ASSERT(removals < meta.docs_count);
-    meta.live_docs_count -= removals;
-    meta.version += uint64_t{increment_version};
-  }
-
-  return meta.codec->get_segment_meta_writer();
 }
 
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,

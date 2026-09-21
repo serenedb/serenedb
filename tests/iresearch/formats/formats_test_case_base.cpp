@@ -962,7 +962,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.version = 100;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
       irs::DocumentMask docs_mask;
-      docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
+      docs_mask.Add(42);
+      docs_mask.Add(100);
       docs_mask.Trim();
       return docs_mask;
     }());
@@ -1008,7 +1009,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.uncommitted_begin = 400;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
       irs::DocumentMask docs_mask;
-      docs_mask.Add(std::array<irs::doc_id_t, 2>{42, 100});
+      docs_mask.Add(42);
+      docs_mask.Add(100);
       docs_mask.Trim();
       return docs_mask;
     }());

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/types.hpp"
@@ -29,8 +31,8 @@ namespace irs::probe {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
-    : _it{mask, uncommitted} {}
+  explicit DocsMask(DocumentMask::Iterator&& it) noexcept
+    : _it{std::move(it)} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
     : _it{segment.MaskedDocs()} {}

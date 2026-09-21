@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <roaring/roaring.hh>
-#include <span>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -39,8 +38,8 @@ class DocumentMask final {
    public:
     Iterator() = default;
 
-    Iterator(const DocumentMask* mask,
-             doc_id_t uncommitted = doc_limits::eof()) noexcept
+    explicit Iterator(const DocumentMask* mask,
+                      doc_id_t uncommitted = doc_limits::eof()) noexcept
       : _bits{mask != nullptr ? &mask->_bits : nullptr},
         _uncommitted{uncommitted} {}
 
@@ -53,8 +52,6 @@ class DocumentMask final {
       return doc >= _uncommitted ||
              (_bits != nullptr && roaring::api::bitset_get(_bits, doc - kBase));
     }
-
-    doc_id_t Value() const noexcept { return _value; }
 
     doc_id_t Next() noexcept {
       if (_value >= _uncommitted) {
@@ -118,6 +115,10 @@ class DocumentMask final {
     return roaring::api::bitset_size_in_bytes(&_bits);
   }
 
+  size_t ByteCapacity() const noexcept {
+    return _bits.capacity * sizeof(uint64_t);
+  }
+
   bool Add(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
@@ -126,12 +127,9 @@ class DocumentMask final {
     return added;
   }
 
-  void Add(std::span<const doc_id_t> docs);
   void AddRange(doc_id_t first, doc_id_t last);
   void Truncate(doc_id_t first) noexcept;
-  void Merge(const DocumentMask& other) {
-    roaring::api::bitset_inplace_union(&_bits, &other._bits);
-  }
+  void Merge(const DocumentMask& other);
 
   void Clear() noexcept { roaring::api::bitset_clear(&_bits); }
   void Trim() noexcept { roaring::api::bitset_trim(&_bits); }

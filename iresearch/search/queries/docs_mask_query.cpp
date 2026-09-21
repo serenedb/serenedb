@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 
 namespace irs {
@@ -33,10 +34,8 @@ namespace {
 
 uint32_t MaskedCount(const SubReader& segment) noexcept {
   const auto& meta = segment.Meta();
-  const auto* set = segment.docs_mask();
-  const auto scattered =
-    set != nullptr ? static_cast<uint32_t>(set->Count()) : uint32_t{0};
-  return scattered + UncommittedCount(meta);
+  SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
+  return meta.docs_count - meta.live_docs_count;
 }
 
 }  // namespace
@@ -50,8 +49,8 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
     return query;
   }
   if (!query) {
-    static const All kAll;
-    query = kAll.PrepareSegment(segment, {.memory = memory});
+    const All all;
+    query = all.PrepareSegment(segment, {.memory = memory});
   }
   BooleanBuilder builder{
     segment, memory, 0, kNoBoost, ScoreMergeType::Sum, collector, needs_terms};

@@ -143,7 +143,8 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
       break;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
-    const auto docs = sub.docs_count();
+    const auto docs = std::min<uint64_t>(
+      sub.docs_count(), sub.Meta().uncommitted_begin - irs::doc_limits::min());
     if (l.unit.whole) {
       l.doc_cursor = 0;
       l.doc_end = docs;

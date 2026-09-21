@@ -20,8 +20,11 @@
 
 #include "iresearch/index/document_mask.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <utility>
+
+#include "iresearch/error/error.hpp"
 
 namespace irs {
 
@@ -54,41 +57,59 @@ void DocumentMask::Assign(const roaring::api::bitset_t& other) {
     return;
   }
   const auto bytes = other.arraysize * sizeof(uint64_t);
-  _bits.array = static_cast<uint64_t*>(roaring_malloc(bytes));
-  std::memcpy(_bits.array, other.array, bytes);
+  auto* array = static_cast<uint64_t*>(roaring_malloc(bytes));
+  if (array == nullptr) [[unlikely]] {
+    throw IllegalState{"Failed to allocate a copy of the document mask"};
+  }
+  std::memcpy(array, other.array, bytes);
+  _bits.array = array;
   _bits.arraysize = other.arraysize;
   _bits.capacity = other.arraysize;
 }
 
 bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
-  return lhs._bits.arraysize == rhs._bits.arraysize &&
-         std::memcmp(lhs._bits.array, rhs._bits.array,
-                     lhs._bits.arraysize * sizeof(uint64_t)) == 0;
+  const auto common = std::min(lhs._bits.arraysize, rhs._bits.arraysize);
+  if (common != 0 && std::memcmp(lhs._bits.array, rhs._bits.array,
+                                 common * sizeof(uint64_t)) != 0) {
+    return false;
+  }
+  const auto& tail = lhs._bits.arraysize > common ? lhs._bits : rhs._bits;
+  return std::all_of(tail.array + common, tail.array + tail.arraysize,
+                     [](uint64_t word) { return word == 0; });
 }
 
 DocumentMask DocumentMask::Read(const char* buf, size_t size) {
   const auto compressed = roaring::Roaring::readSafe(buf, size);
   DocumentMask mask;
-  for (const auto doc : compressed) {
-    roaring::api::bitset_set(&mask._bits, doc - kBase);
+  if (!compressed.isEmpty()) {
+    if (compressed.minimum() < kBase) [[unlikely]] {
+      throw IllegalState{"Invalid document id in a document mask"};
+    }
+    const size_t words = (compressed.maximum() - kBase) / 64 + 1;
+    if (!roaring::api::bitset_grow(&mask._bits, words)) [[unlikely]] {
+      throw IllegalState{"Failed to grow the document mask"};
+    }
+    for (const auto doc : compressed) {
+      roaring::api::bitset_set(&mask._bits, doc - kBase);
+    }
   }
   return mask;
 }
 
 roaring::Roaring DocumentMask::Compress() const {
   roaring::Roaring out;
+  roaring::BulkContext ctx;
   for (size_t at = 0; roaring::api::bitset_next_set_bit(&_bits, &at); ++at) {
-    out.add(static_cast<uint32_t>(at + kBase));
+    out.addBulk(ctx, static_cast<uint32_t>(at + kBase));
   }
   out.runOptimize();
   out.shrinkToFit();
   return out;
 }
 
-void DocumentMask::Add(std::span<const doc_id_t> docs) {
-  SDB_ASSERT(std::ranges::all_of(docs, doc_limits::valid));
-  for (const auto doc : docs) {
-    roaring::api::bitset_set(&_bits, doc - kBase);
+void DocumentMask::Merge(const DocumentMask& other) {
+  if (!roaring::api::bitset_inplace_union(&_bits, &other._bits)) [[unlikely]] {
+    throw IllegalState{"Failed to grow the document mask while merging"};
   }
 }
 

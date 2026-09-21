@@ -44,7 +44,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   if (posting.stats.stats == nullptr) {
     return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
       using Leaf = detail::PlainFillScored<Input>;
-      return memory::make_managed<Impl<Leaf>>(meta, doc, bounds, freq);
+      return memory::make_managed<Impl<Leaf>>(meta, doc, detail::LayoutOf(own),
+                                              bounds, freq);
     });
   }
 
@@ -58,8 +59,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
     return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
       using Approx = detail::PostingFill<Input>;
       using Node = ConstantScored<Approx>;
-      return memory::make_managed<Impl<Node>>(merge, value, meta, doc, bounds,
-                                              freq);
+      return memory::make_managed<Impl<Node>>(
+        merge, value, meta, doc, detail::LayoutOf(own), bounds, freq);
     });
   }
 

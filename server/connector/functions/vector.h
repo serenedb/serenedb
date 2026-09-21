@@ -28,7 +28,7 @@
 #include <optional>
 #include <string>
 
-#include "connector/duckdb_table_function.h"
+#include "connector/score_emit.h"
 
 namespace sdb::connector {
 

@@ -210,6 +210,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "remap_executable",
+          "flag": "--remap_executable",
+          "type": "",
+          "defaultValue": "true",
+          "description": "Copy the server's machine code into anonymous huge-page memory at startup and pre-read its read-only data, so the first queries after a cold start pay no code page faults. Turn off when profiling with perf, which symbolizes only file-backed code.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "server_directory",
           "flag": "--server_directory",
           "type": "",

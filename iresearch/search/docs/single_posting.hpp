@@ -31,9 +31,8 @@ class SinglePosting : public Root {
     SDB_ASSERT(doc_limits::valid(doc));
   }
 
-  uint32_t Run(doc_id_t* out, uint32_t capacity) final {
-    SDB_ASSERT(capacity != 0);
-    if (!doc_limits::valid(_doc)) {
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* out) final {
+    if (!doc_limits::valid(_doc) || _doc < min || _doc >= max) {
       return 0;
     }
     out[0] = _doc;

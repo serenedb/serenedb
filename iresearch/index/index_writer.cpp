@@ -1448,15 +1448,15 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
   // validate candidates: no duplicates and all should be from committed reader
 #ifdef SDB_DEV
-  absl::c_sort(candidates);
-  SDB_ASSERT(std::unique(candidates.begin(), candidates.end()) ==
-             candidates.end());
   {
+    auto sorted = candidates;
+    absl::c_sort(sorted);
+    SDB_ASSERT(std::unique(sorted.begin(), sorted.end()) == sorted.end());
     size_t found = 0;
     for (const auto& segment : *committed_reader) {
-      found += static_cast<size_t>(absl::c_binary_search(candidates, &segment));
+      found += static_cast<size_t>(absl::c_binary_search(sorted, &segment));
     }
-    SDB_ASSERT(found == candidates.size());
+    SDB_ASSERT(found == sorted.size());
   }
 #endif
 

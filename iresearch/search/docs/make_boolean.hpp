@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <tuple>
@@ -37,11 +38,19 @@
 
 namespace irs::docs {
 
+inline doc_id_t FoldSpan(const Context& ctx, doc_id_t docs_count) noexcept {
+  return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
+}
+
 template<typename Term>
 Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
                                        const TermReader* field,
                                        const IndexInput& doc,
-                                       doc_id_t docs_count, const Context&) {
+                                       doc_id_t docs_count,
+                                       const Context& ctx) {
+  if (FoldSpan(ctx, docs_count) < docs_count) {
+    return {};
+  }
   return detail::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
                                          nullptr);
 }
@@ -59,7 +68,8 @@ Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
       const auto& own = detail::FieldOf(terms[i], field);
       const auto& meta = detail::CookieOf(terms[i]);
       SDB_ASSERT(meta.docs_count != 0);
-      leaf.Prepare(meta, doc, meta.docs_count != 1 && detail::BoundsOf(own),
+      leaf.Prepare(meta, doc, detail::LayoutOf(own),
+                   meta.docs_count != 1 && detail::BoundsOf(own),
                    meta.docs_count != 1 && detail::FreqOf(own));
     };
     return MakeShape<BooleanWindow, utils::Empty, utils::Empty, Optional,

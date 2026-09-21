@@ -20,6 +20,7 @@
 
 #include <simdjson.h>
 
+#include <algorithm>
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
@@ -219,7 +220,8 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
     queries.emplace_back(filter.PrepareSegment(segment, {}));
   }
   std::vector<std::string> hits;
-  for (auto& query : queries) {
+  for (size_t seg = 0; seg != queries.size(); ++seg) {
+    auto& query = queries[seg];
     if (!query) {
       continue;
     }
@@ -227,14 +229,15 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
     if (!plan) {
       continue;
     }
-    // `Run` fills a whole block and its bitset path writes past the count it
-    // produced, so the buffer carries the slack and the capacity it is told
-    // about does not.
-    irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
-                  irs::doc_limits::kDocsSlack>
-      docs;
-    for (uint32_t n = 0;
-         (n = plan->Run(docs.data(), irs::doc_limits::kMinCapacity)) != 0;) {
+    // The bitset path writes past the count it produced, so the buffer
+    // carries slack beyond the window it is asked for.
+    constexpr auto kWindow = irs::doc_limits::kMinCapacity;
+    irs::SlackBuf<irs::doc_id_t, kWindow, irs::doc_limits::kDocsSlack> docs;
+    const auto end = irs::doc_limits::min() +
+                     static_cast<irs::doc_id_t>(reader[seg].docs_count());
+    for (auto min = irs::doc_limits::min(); min < end; min += kWindow) {
+      const auto max = std::min<irs::doc_id_t>(min + kWindow, end);
+      const auto n = plan->Run(min, max, docs.data());
       for (uint32_t i = 0; i != n; ++i) {
         const auto idx = docs[i] - irs::doc_limits::min();
         if (idx < names.size()) {

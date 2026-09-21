@@ -24,6 +24,7 @@
 
 #include <array>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/common/vector_size.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -125,6 +126,12 @@ inline uint64_t ValidateInvertedIndexOptionValue(std::string_view name,
       result > std::numeric_limits<uint32_t>::max()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("value for option \"", name, "\" is out of range"));
+  }
+  if (name == kRowGroupSizeSetting && result % STANDARD_VECTOR_SIZE != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("value for option \"", name,
+                            "\" must be a multiple of the vector size ",
+                            STANDARD_VECTOR_SIZE));
   }
   return result;
 }

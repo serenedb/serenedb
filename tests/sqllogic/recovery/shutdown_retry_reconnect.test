@@ -1,0 +1,37 @@
+control substitution on
+
+statement ok
+CREATE TABLE srr_docs (id INTEGER, val TEXT);
+
+
+statement ok
+INSERT INTO srr_docs VALUES (1, 'one'), (2, 'two');
+
+
+connection before_shutdown
+query
+SELECT count(*) AS n FROM srr_docs;
+----
+n
+2
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection before_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM srr_docs;
+----
+n
+2
+
+
+connection before_shutdown
+statement ok
+DROP TABLE srr_docs;

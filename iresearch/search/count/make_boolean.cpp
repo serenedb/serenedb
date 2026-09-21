@@ -57,8 +57,9 @@ Root::ptr Api::MakeNegation(
   if (!excluded) {
     return {};
   }
-  return memory::make_managed<Subtract>(segment.docs_count(),
-                                        std::move(excluded));
+  return memory::make_managed<Subtract>(
+    MakeAllCount(static_cast<doc_id_t>(segment.docs_count())),
+    std::move(excluded), ctx.partial);
 }
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {

@@ -20,20 +20,19 @@
 
 #pragma once
 
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
 struct Context {
-  detail::DeadRuns* table = nullptr;
+  doc_id_t span = 0;
 };
 
 struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
-  virtual uint32_t Run(doc_id_t* out, uint32_t capacity) = 0;
+  virtual uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* out) = 0;
 };
 
 }  // namespace irs::docs

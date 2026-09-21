@@ -47,50 +47,38 @@ query
 EXPLAIN SELECT id FROM rk WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: rk                              │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: rk                   │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 3, optimized           │
+│ Projections: id             │
+│ ~4,000 rows                 │
+╰─────────────────────────────╯
 
 connection after_crash
 query
 EXPLAIN SELECT id FROM rk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: rk_idx                          │
-│ Lookup: search                         │
-│ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Top: 3, optimized                      │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: rk_idx               │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 3, optimized           │
+│ Projections: id             │
+│ ~4,000 rows                 │
+╰─────────────────────────────╯
 
 connection after_crash
 statement ok

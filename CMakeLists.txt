@@ -97,14 +97,20 @@ find_package(Git REQUIRED)
 # ------------------------------------------------------------------------------
 
 # stable release: MAJOR.MINOR.PATCH
+# hotfix release: MAJOR.MINOR.PATCH.HOTFIX
 # LTS release:    MAJOR.MINOR.PATCH-lts
 #
 # MAJOR = calendar year, 2-digit, UTC (e.g. 26 for 2026)
 # MINOR = month, 2-digit zero-padded, UTC (e.g. 03 for March)
-# PATCH = growing patch number; 0 means dev/unversioned build
+# PATCH = growing patch number, optionally with a hotfix number after a dot
+#         (e.g. 1 or 1.1); 0 means dev/unversioned build
+#
+# A hotfix ships a fix on top of an already published patch release without
+# moving that release line forward: 26.09.1.1 follows 26.09.1 and leaves
+# 26.09.2 free for the next ordinary release.
 #
 # MAJOR and MINOR are derived from the UTC clock at configure time.
-# PATCH defaults to 0; pass -DSERENEDB_VERSION_PATCH=N (N > 0) for releases.
+# PATCH defaults to 0; pass -DSERENEDB_VERSION_PATCH=N or N.M for releases.
 #
 # These are mapped to the following variables:
 #
@@ -119,11 +125,12 @@ string(TIMESTAMP SERENEDB_VERSION_MINOR "%m" UTC)
 
 if(NOT DEFINED SERENEDB_VERSION_PATCH)
     set(SERENEDB_VERSION_PATCH "0")
-elseif(SERENEDB_VERSION_PATCH EQUAL 0)
+elseif(NOT SERENEDB_VERSION_PATCH MATCHES "^[1-9][0-9]*(\\.[1-9][0-9]*)?$")
     message(
         FATAL_ERROR
-        "SERENEDB_VERSION_PATCH must be > 0 when specified explicitly. "
-        "Omit -DSERENEDB_VERSION_PATCH for dev builds (patch defaults to 0)."
+        "SERENEDB_VERSION_PATCH must be N or N.M, both > 0, got "
+        "'${SERENEDB_VERSION_PATCH}'. Omit -DSERENEDB_VERSION_PATCH for dev "
+        "builds (patch defaults to 0)."
     )
 endif()
 

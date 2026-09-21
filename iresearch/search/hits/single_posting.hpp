@@ -37,9 +37,9 @@ class SinglePosting : public Root {
     _score = irs::detail::SingleDocScore(segment, field, _doc, meta.freq, args);
   }
 
-  uint32_t Run(doc_id_t* docs, score_t* scores, uint32_t capacity) final {
-    SDB_ASSERT(capacity != 0);
-    if (!doc_limits::valid(_doc)) {
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* docs,
+               score_t* scores) final {
+    if (!doc_limits::valid(_doc) || _doc < min || _doc >= max) {
       return 0;
     }
     docs[0] = _doc;

@@ -494,7 +494,7 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
       if (!plan) {
         continue;
       }
-      per_iter += plan->Run();
+      per_iter += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
     }
     benchmark::DoNotOptimize(per_iter);
   }

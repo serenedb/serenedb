@@ -189,22 +189,17 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
   }
 }
 
-void ViewIndexSourceBase::GatherNonLookupColumns(
-  duckdb::DataChunk& output, duckdb::idx_t count,
-  const duckdb::idx_t* survivor_idx) {
+void ViewIndexSourceBase::GatherNonLookupColumns(duckdb::DataChunk& output,
+                                                 duckdb::idx_t count) {
   if (count == 0) {
     return;
   }
-  // Materialize wrote the lookup columns in survivor order: output row w came
-  // from the survivor_idx[w]-th requested pk. The doc-id-keyed columns were
-  // filled earlier (AccountAndWriteVirtualColumns) in doc-id order, so reorder
-  // them to match -- only these small columns move, and nothing writes them
-  // afterwards, so a dictionary Slice suffices (no flatten/copy). The selection
-  // and slot list are reused across batches (built once in InitProjection).
   SDB_ASSERT(count <= _sort_perm.size());
+  SDB_ASSERT(count <= _survivor_idx.size());
   for (duckdb::idx_t k = 0; k < count; ++k) {
-    SDB_ASSERT(survivor_idx[k] < _sort_perm.size());
-    _gather_sel.set_index(k, _sort_perm[survivor_idx[k]]);
+    SDB_ASSERT(_survivor_idx[k] < _sort_perm.size());
+    _survivor_idx[k] = _sort_perm[_survivor_idx[k]];
+    _gather_sel.set_index(k, _survivor_idx[k]);
   }
   for (const auto c : _non_lookup_slots) {
     output.data[c].Slice(_gather_sel, count);

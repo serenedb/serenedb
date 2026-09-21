@@ -185,7 +185,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
     if (!plan) {
       throw std::runtime_error{"no count plan for this query"};
     }
-    count += plan->Run();
+    count += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
   }
   return count;
 }
@@ -204,7 +204,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
 
   EmitResult result;
   size_t seg = 0;
-  for ([[maybe_unused]] auto& segment : _reader) {
+  for (auto& segment : _reader) {
     auto& query = queries[seg++];
     if (!query) {
       continue;
@@ -213,10 +213,13 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
     if (!plan) {
       throw std::runtime_error{"no docs plan for this query"};
     }
-    for (;;) {
-      const auto n = plan->Run(_emit_docs.data(), kEmitWindow);
+    const auto end =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(segment.docs_count());
+    for (auto min = irs::doc_limits::min(); min < end; min += kEmitWindow) {
+      const auto max = std::min<irs::doc_id_t>(min + kEmitWindow, end);
+      const auto n = plan->Run(min, max, _emit_docs.data());
       if (n == 0) {
-        break;
+        continue;
       }
       result.count += n;
       if (report.hash) {
@@ -251,7 +254,7 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   irs::ColumnArgsFetcher fetcher;
   EmitResult result;
   uint32_t seg_idx = 0;
-  for ([[maybe_unused]] auto& segment : _reader) {
+  for (auto& segment : _reader) {
     fetcher.Clear();
     auto& query = queries[seg_idx++];
     if (!query) {
@@ -262,11 +265,14 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
     if (!plan) {
       throw std::runtime_error{"no scored plan for this query"};
     }
-    for (;;) {
+    const auto end =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(segment.docs_count());
+    for (auto min = irs::doc_limits::min(); min < end; min += kEmitWindow) {
+      const auto max = std::min<irs::doc_id_t>(min + kEmitWindow, end);
       const auto n =
-        plan->Run(_emit_docs.data(), _emit_scores.data(), kEmitWindow);
+        plan->Run(min, max, _emit_docs.data(), _emit_scores.data());
       if (n == 0) {
-        break;
+        continue;
       }
       result.count += n;
       if (report.hash) {

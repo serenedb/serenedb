@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <span>
 
 namespace duckdb {
 
@@ -44,6 +45,10 @@ class IndexSource {
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
                                     duckdb::Vector& pk, duckdb::idx_t count,
                                     duckdb::DataChunk& output) = 0;
+
+  // Positions in the batch handed to `Materialize` that survived a pushed
+  // lookup-column filter, in output order.
+  virtual std::span<const duckdb::idx_t> Survivors() const noexcept = 0;
 };
 
 }  // namespace irs

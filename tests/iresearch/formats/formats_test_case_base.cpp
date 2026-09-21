@@ -35,6 +35,7 @@
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -1042,6 +1043,99 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(400, it_mask.Seek(399));
       ASSERT_EQ(400, it_mask.Seek(400));
       ASSERT_EQ(453, it_mask.Seek(453));
+    }
+  }
+
+  {
+    constexpr irs::doc_id_t kDocs = 30000;
+
+    auto scattered = [](irs::doc_id_t first, irs::doc_id_t step) {
+      irs::DocumentMask mask;
+      for (auto doc = first; doc < kDocs; doc += step) {
+        mask.Add(doc);
+      }
+      mask.Trim();
+      return mask;
+    };
+
+    irs::SegmentMeta meta;
+    meta.name = "chained_meta_name";
+    meta.docs_count = kDocs;
+    meta.byte_size = 666;
+    meta.version = 100;
+    meta.files.emplace_back("file1");
+
+    auto mask = scattered(irs::doc_limits::min(), 3);
+    ASSERT_LT(irs::SegmentMetaWriterImpl::kMinChainBytes,
+              mask.Compress().getSizeInBytes());
+
+    std::string filename;
+    auto writer = codec()->get_segment_meta_writer();
+
+    auto flush = [&](const irs::DocumentMask* patch) {
+      meta.docs_mask = std::make_shared<irs::DocumentMask>(mask);
+      meta.live_docs_count =
+        meta.docs_count - static_cast<irs::doc_id_t>(mask.Count());
+      if (patch == nullptr) {
+        writer->write(dir(), filename, meta);
+      } else {
+        writer->WritePatch(dir(), filename, meta, *patch);
+      }
+    };
+
+    flush(nullptr);
+    ASSERT_EQ(1, meta.docs_mask_files);
+    ASSERT_EQ(100, meta.docs_mask_head);
+
+    const auto first_patch = scattered(2, 9);
+    mask.Merge(first_patch);
+    mask.Trim();
+    meta.version = 101;
+    flush(&first_patch);
+    ASSERT_EQ(2, meta.docs_mask_files);
+    ASSERT_EQ(101, meta.docs_mask_head);
+
+    const auto second_patch = scattered(5, 9);
+    mask.Merge(second_patch);
+    mask.Trim();
+    meta.version = 105;
+    flush(&second_patch);
+    ASSERT_EQ(3, meta.docs_mask_files);
+    ASSERT_EQ(105, meta.docs_mask_head);
+
+    const std::vector<std::string> expected_files{
+      "file1", irs::FileName(meta.name, 100, irs::DocsMaskWriter::kFormatExt),
+      irs::FileName(meta.name, 101, irs::DocsMaskWriter::kFormatExt),
+      irs::FileName(meta.name, 105, irs::DocsMaskWriter::kFormatExt)};
+    ASSERT_EQ(expected_files, meta.files);
+
+    {
+      irs::SegmentMeta read_meta;
+      read_meta.name = meta.name;
+      read_meta.version = 105;
+
+      auto reader = codec()->get_segment_meta_reader();
+      reader->read(dir(), read_meta);
+      ASSERT_EQ(meta.docs_count, read_meta.docs_count);
+      ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
+      ASSERT_EQ(meta.byte_size, read_meta.byte_size);
+      ASSERT_EQ(meta.docs_mask_size, read_meta.docs_mask_size);
+      ASSERT_EQ(3, read_meta.docs_mask_files);
+      ASSERT_EQ(105, read_meta.docs_mask_head);
+      ASSERT_EQ(expected_files, read_meta.files);
+      ASSERT_EQ(mask, *read_meta.docs_mask);
+    }
+
+    ASSERT_TRUE(dir().remove(
+      irs::FileName(meta.name, 101, irs::DocsMaskWriter::kFormatExt)));
+
+    {
+      irs::SegmentMeta read_meta;
+      read_meta.name = meta.name;
+      read_meta.version = 105;
+
+      auto reader = codec()->get_segment_meta_reader();
+      ASSERT_THROW(reader->read(dir(), read_meta), irs::IoError);
     }
   }
 

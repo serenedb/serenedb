@@ -86,17 +86,22 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
                                   roaring::Roaring& compressed) {
   SDB_ASSERT(meta.docs_mask_files <= meta.files.size());
 
-  const auto& docs_mask = meta.docs_mask;
-  if (!docs_mask || docs_mask->Empty()) {
+  const auto parent = meta.docs_mask_head;
+  auto drop_chain = [&] {
     meta.files.resize(meta.files.size() - meta.docs_mask_files);
     meta.docs_mask_files = 0;
+    meta.docs_mask_head = 0;
+  };
+
+  const auto& docs_mask = meta.docs_mask;
+  if (!docs_mask || docs_mask->Empty()) {
+    drop_chain();
     return 0;
   }
   compressed = docs_mask->Compress();
   const auto mask_size = compressed.getSizeInBytes();
   if (mask_size <= SegmentMetaWriterImpl::kMaxInlineBytes) {
-    meta.files.resize(meta.files.size() - meta.docs_mask_files);
-    meta.docs_mask_files = 0;
+    drop_chain();
     return 0;
   }
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
@@ -107,17 +112,18 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
     mask_size > SegmentMetaWriterImpl::kMinChainBytes;
   auto chain_size = meta.docs_mask_size;
   if (!append) {
-    meta.files.resize(meta.files.size() - meta.docs_mask_files);
-    meta.docs_mask_files = 0;
+    drop_chain();
     chain_size = 0;
   }
 
+  SDB_ASSERT(!append || parent < meta.version);
   SDB_ASSERT(!append ||
-             meta.files.back() == irs::FileName(meta.name, meta.version - 1,
-                                                DocsMaskWriter::kFormatExt));
+             meta.files.back() ==
+               irs::FileName(meta.name, parent, DocsMaskWriter::kFormatExt));
   auto& name = meta.files.emplace_back(
     irs::FileName(meta.name, meta.version, DocsMaskWriter::kFormatExt));
   ++meta.docs_mask_files;
+  meta.docs_mask_head = meta.version;
 
   auto out = dir.create(name);
 
@@ -125,6 +131,7 @@ inline uint64_t WriteDocumentMask(Directory& dir, SegmentMeta& meta,
     throw IoError{absl::StrCat("failed to create file, path: ", name)};
   }
 
+  out->WriteV64(append ? meta.version - parent : 0);
   WriteDocumentMask(*out, append ? patch->Compress() : compressed);
 
   return chain_size + out->Position();
@@ -174,7 +181,9 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     const auto scattered_count = removal_count - uncommitted_count;
     out->WriteV32(uncommitted_count);
     out->WriteV32(meta.docs_mask_files);
-    if (meta.docs_mask_files == 0 && scattered_count != 0) {
+    if (meta.docs_mask_files != 0) {
+      out->WriteV64(meta.docs_mask_head);
+    } else if (scattered_count != 0) {
       WriteDocumentMask(*out, compressed);
     }
   }

@@ -12686,6 +12686,7 @@ TEST_P(IndexTestCase11, docs_mask_file_survives_cleanup) {
   ASSERT_EQ(1, snapshot.size());
   const auto& meta = snapshot.Meta().index_meta.segments[0].meta;
   ASSERT_EQ(1, meta.docs_mask_files);
+  ASSERT_EQ(meta.version, meta.docs_mask_head);
   const auto mask_file = meta.files.back();
   ASSERT_TRUE(mask_file.ends_with(".dm"));
 

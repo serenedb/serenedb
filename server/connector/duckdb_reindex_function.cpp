@@ -628,11 +628,9 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
   });
 }
 
-// The referenced rows/buckets live on the observe's DeleteMask, alive
-// until the remove commits.
 SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
-  const std::vector<int64_t>& rows) {
-  return [&rows](int64_t min_row) -> std::optional<int64_t> {
+  std::vector<int64_t> rows) {
+  return [rows = std::move(rows)](int64_t min_row) -> std::optional<int64_t> {
     const auto it = absl::c_lower_bound(rows, min_row);
     if (it == rows.end()) {
       return std::nullopt;
@@ -643,22 +641,23 @@ SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
 
 // Buckets ascend by (high, low) = ascending row.
 SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
-  const std::vector<std::pair<int32_t, roaring::Roaring>>& buckets) {
-  return [&buckets](int64_t min_row) -> std::optional<int64_t> {
-    for (const auto& [high, bitmap] : buckets) {
-      const auto base = static_cast<int64_t>(high) << 32;
-      if (min_row >= base + (int64_t{1} << 32)) {
-        continue;
+  std::vector<std::pair<int32_t, roaring::Roaring>> buckets) {
+  return
+    [buckets = std::move(buckets)](int64_t min_row) -> std::optional<int64_t> {
+      for (const auto& [high, bitmap] : buckets) {
+        const auto base = static_cast<int64_t>(high) << 32;
+        if (min_row >= base + (int64_t{1} << 32)) {
+          continue;
+        }
+        const uint32_t low = min_row <= base ? 0 : min_row - base;
+        auto it = bitmap.begin();
+        if (!it.move_equalorlarger(low)) {
+          continue;
+        }
+        return base | *it;
       }
-      const uint32_t low = min_row <= base ? 0 : min_row - base;
-      auto it = bitmap.begin();
-      if (!it.move_equalorlarger(low)) {
-        continue;
-      }
-      return base | *it;
-    }
-    return std::nullopt;
-  };
+      return std::nullopt;
+    };
 }
 
 // Delete kind 1 -- deleted files: one prefix entry per file. nullptr =

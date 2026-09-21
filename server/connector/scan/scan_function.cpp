@@ -25,6 +25,9 @@
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -74,6 +77,42 @@ void ClassifySegments(ScanGlobalState& g) {
       g.segment_order.push_back(si);
     }
   }
+}
+
+// The query vector of a parameterized statement, from the parameters bound to
+// this execution. The expression is evaluated into a vector and cast in one
+// vectorised step, never through one duckdb::Value per dimension: at 1024
+// dimensions that materialisation was a fifth of the query.
+std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
+                                       const VectorScorerOptions& vs) {
+  const auto target =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vs.dims);
+  const auto bad = [&](const char* what) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("the query vector of a vector search ", what));
+  };
+  duckdb::Vector evaluated{vs.query_expr->GetReturnType(), 1};
+  {
+    duckdb::ExpressionExecutor executor{context, *vs.query_expr};
+    executor.ExecuteExpression(evaluated);
+  }
+  duckdb::Vector casted{target, 1};
+  std::string error;
+  if (!duckdb::VectorOperations::TryCast(context, evaluated, casted, 1,
+                                         &error)) {
+    bad(absl::StrCat("is not a ", target.ToString(), ": ", error).c_str());
+  }
+  casted.Flatten(1);
+  if (!duckdb::FlatVector::Validity(casted).RowIsValid(0)) {
+    bad("is NULL");
+  }
+  auto& child = duckdb::ArrayVector::GetEntry(casted);
+  child.Flatten(vs.dims);
+  if (!duckdb::FlatVector::Validity(child).CheckAllValid(vs.dims)) {
+    bad("holds NULL");
+  }
+  const auto* data = duckdb::FlatVector::GetData<float>(child);
+  return std::vector<float>{data, data + vs.dims};
 }
 
 }  // namespace
@@ -167,6 +206,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     // The knobs are the executing session's, not the planning session's: a
     // cached plan sees every SET made since it was prepared.
     RefreshVectorKnobs(vs, context);
+    // A parameterized query vector is kept as an expression at plan time and
+    // read from this execution's parameters.
+    if (vs.query_expr) {
+      vs.query_vector = EvaluateQueryVector(context, vs);
+    }
+    SDB_ENSURE(!vs.query_vector.empty(),
+               "a vector search has a query vector to search for");
     if (ss.score.top_k) {
       // The beam is the result ceiling, so it is at least k -- and at least
       // the rescore pool, which is the same thing said of the pool: a search

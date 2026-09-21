@@ -25,6 +25,7 @@
 
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -34,16 +35,28 @@ namespace irs::fill {
 class DocsMask {
  public:
   DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
-    : _it{mask, doc_limits::eof()}, _uncommitted{uncommitted} {}
+    : _it{mask, doc_limits::eof()},
+      _words{mask != nullptr ? mask->Words() : nullptr},
+      _word_count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount())
+                                  : 0},
+      _uncommitted{uncommitted} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
     : DocsMask{segment.docs_mask(), segment.Meta().uncommitted_begin} {}
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
-    auto next = _it.Seek(min);
-    while (next < max) {
-      Set(words, next - min);
-      next = _it.Next();
+    const auto base = static_cast<int64_t>(min - doc_limits::min());
+    const auto len = static_cast<uint32_t>(max - min);
+    const auto full = len / detail::kWindowBits;
+    for (uint32_t w = 0; w != full; ++w) {
+      words[w] |= detail::WordAt(_words, _word_count,
+                                 base + int64_t{w} * detail::kWindowBits);
+    }
+    if (const auto rest = len % detail::kWindowBits; rest != 0) {
+      words[full] |=
+        detail::WordAt(_words, _word_count,
+                       base + int64_t{full} * detail::kWindowBits) &
+        (~uint64_t{0} >> (detail::kWindowBits - rest));
     }
     if (_uncommitted < max) {
       for (auto doc = std::max(min, _uncommitted); doc < max; ++doc) {
@@ -51,16 +64,19 @@ class DocsMask {
       }
       return max;
     }
-    return std::min(next, _uncommitted);
+    return std::min(_it.Seek(max), _uncommitted);
   }
 
  private:
   static IRS_FORCE_INLINE void Set(uint64_t* IRS_RESTRICT words,
                                    doc_id_t offset) noexcept {
-    words[offset / 64] |= uint64_t{1} << (offset % 64);
+    words[offset / detail::kWindowBits] |= uint64_t{1}
+                                           << (offset % detail::kWindowBits);
   }
 
   DocumentMask::Iterator _it;
+  const uint64_t* _words;
+  uint32_t _word_count;
   doc_id_t _uncommitted;
 };
 

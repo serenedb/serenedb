@@ -46,6 +46,15 @@ namespace {
 
 using irs::doc_id_t;
 
+irs::DocumentMask MakeMask(std::span<const doc_id_t> docs) {
+  irs::DocumentMask mask;
+  for (const auto doc : docs) {
+    mask.Add(doc);
+  }
+  mask.Trim();
+  return mask;
+}
+
 constexpr doc_id_t kDocs = 1'000'000;
 constexpr doc_id_t kBegin = irs::doc_limits::min();
 constexpr doc_id_t kEnd = kBegin + kDocs;
@@ -158,15 +167,12 @@ size_t RoaringResidentBytes(const roaring::Roaring& set) noexcept {
 
 class DocumentMaskArm {
  public:
-  explicit DocumentMaskArm(std::span<const doc_id_t> deleted) {
-    irs::DocumentMask builder;
-    builder.Add(deleted);
-    builder.Trim();
-    _mask = std::move(builder);
-  }
+  explicit DocumentMaskArm(std::span<const doc_id_t> deleted)
+    : _mask{MakeMask(deleted)} {}
 
   irs::probe::DocsMask Probes() const noexcept {
-    return irs::probe::DocsMask{&_mask, irs::doc_limits::eof()};
+    return irs::probe::DocsMask{
+      irs::DocumentMask::Iterator{&_mask, irs::doc_limits::eof()}};
   }
 
   irs::fill::DocsMask Fills() const noexcept {
@@ -735,10 +741,7 @@ void BmMergeDocumentMask(benchmark::State& state) {
   std::vector<irs::DocumentMask> links;
   links.reserve(kChainLinks);
   for (const auto& part : parts) {
-    irs::DocumentMask builder;
-    builder.Add(part);
-    builder.Trim();
-    links.emplace_back(std::move(builder));
+    links.emplace_back(MakeMask(part));
   }
 
   for (auto _ : state) {
@@ -1005,9 +1008,7 @@ void BmFootprint(benchmark::State& state) {
   const auto per_mille = state.range(1);
   const auto deleted = MakeDeletedAt(docs, per_mille, state.range(2));
 
-  irs::DocumentMask bits;
-  bits.Add(deleted);
-  bits.Trim();
+  const auto bits = MakeMask(deleted);
 
   roaring::Roaring set;
   set.addMany(deleted.size(), deleted.data());
@@ -1134,10 +1135,7 @@ void BmChainFold(benchmark::State& state) {
   blobs.reserve(files);
   size_t total = 0;
   for (const auto& part : parts) {
-    irs::DocumentMask link;
-    link.Add(part);
-    link.Trim();
-    blobs.emplace_back(SerializeMask(link));
+    blobs.emplace_back(SerializeMask(MakeMask(part)));
     total += blobs.back().size();
   }
 

@@ -119,6 +119,10 @@ class DocumentMask final {
     return _bits.capacity * sizeof(uint64_t);
   }
 
+  const uint64_t* Words() const noexcept { return _bits.array; }
+
+  size_t WordCount() const noexcept { return _bits.arraysize; }
+
   bool Add(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));

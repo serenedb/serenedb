@@ -29,6 +29,7 @@
 #include <protozero/pbf_reader.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Wire format:      https://protobuf.dev/programming-guides/encoding/
@@ -38,6 +39,11 @@ namespace {
 
 using protozero::pbf_reader;
 using protozero::pbf_wire_type;
+
+template<typename Field>
+constexpr uint32_t Tag(Field field) {
+  return std::to_underlying(field);
+}
 
 std::string_view View(protozero::data_view view) {
   return {view.data(), view.size()};
@@ -89,11 +95,11 @@ AnyValue* DecodeAnyValue(pbf_reader reader, ValueArena& arena);
 
 void DecodeKeyValue(pbf_reader reader, KeyValue& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<KeyValueTag>(reader.tag())) {
+      case KeyValueTag::Key:
         out.key = Text(reader);
         break;
-      case 2:
+      case KeyValueTag::Value:
         out.value = DecodeAnyValue(reader.get_message(), arena);
         break;
       default:
@@ -105,7 +111,7 @@ void DecodeKeyValue(pbf_reader reader, KeyValue& out, ValueArena& arena) {
 KeyValueList DecodeKeyValueList(pbf_reader reader, ValueArena& arena) {
   KeyValueList out;
   while (reader.next()) {
-    if (reader.tag() == 1) {
+    if (reader.tag() == Tag(KeyValueListTag::Values)) {
       DecodeKeyValue(reader.get_message(), out.emplace_back(), arena);
     } else {
       reader.skip();
@@ -117,24 +123,24 @@ KeyValueList DecodeKeyValueList(pbf_reader reader, ValueArena& arena) {
 AnyValue* DecodeAnyValue(pbf_reader reader, ValueArena& arena) {
   AnyValue* out = arena.Make();
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<AnyValueTag>(reader.tag())) {
+      case AnyValueTag::StringValue:
         out->value = Text(reader);
         break;
-      case 2:
+      case AnyValueTag::BoolValue:
         out->value = reader.get_bool();
         break;
-      case 3:
+      case AnyValueTag::IntValue:
         out->value = reader.get_int64();
         break;
-      case 4:
+      case AnyValueTag::DoubleValue:
         out->value = reader.get_double();
         break;
-      case 5: {
+      case AnyValueTag::ArrayValue: {
         ArrayValue array;
         pbf_reader values = reader.get_message();
         while (values.next()) {
-          if (values.tag() == 1) {
+          if (values.tag() == Tag(ArrayValueTag::Values)) {
             array.values.push_back(DecodeAnyValue(values.get_message(), arena));
           } else {
             values.skip();
@@ -143,11 +149,11 @@ AnyValue* DecodeAnyValue(pbf_reader reader, ValueArena& arena) {
         out->value = std::move(array);
         break;
       }
-      case 6:
+      case AnyValueTag::KvlistValue:
         out->value = KvlistValue{
           .values = DecodeKeyValueList(reader.get_message(), arena)};
         break;
-      case 7:
+      case AnyValueTag::BytesValue:
         out->value =
           BytesValue{.data = absl::Base64Escape(View(reader.get_view()))};
         break;
@@ -160,12 +166,12 @@ AnyValue* DecodeAnyValue(pbf_reader reader, ValueArena& arena) {
 
 void DecodeResource(pbf_reader reader, Resource& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<ResourceTag>(reader.tag())) {
+      case ResourceTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 2:
+      case ResourceTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
       default:
@@ -177,18 +183,18 @@ void DecodeResource(pbf_reader reader, Resource& out, ValueArena& arena) {
 void DecodeScope(pbf_reader reader, InstrumentationScope& out,
                  ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<InstrumentationScopeTag>(reader.tag())) {
+      case InstrumentationScopeTag::Name:
         out.name = Text(reader);
         break;
-      case 2:
+      case InstrumentationScopeTag::Version:
         out.version = Text(reader);
         break;
-      case 3:
+      case InstrumentationScopeTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 4:
+      case InstrumentationScopeTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
       default:
@@ -199,39 +205,39 @@ void DecodeScope(pbf_reader reader, InstrumentationScope& out,
 
 void DecodeLogRecord(pbf_reader reader, LogRecord& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<LogRecordTag>(reader.tag())) {
+      case LogRecordTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 2:
+      case LogRecordTag::SeverityNumber:
         out.severity_number = static_cast<SeverityNumber>(reader.get_enum());
         break;
-      case 3:
+      case LogRecordTag::SeverityText:
         out.severity_text = Text(reader);
         break;
-      case 5:
+      case LogRecordTag::Body:
         out.body = DecodeAnyValue(reader.get_message(), arena);
         break;
-      case 6:
+      case LogRecordTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 7:
+      case LogRecordTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
-      case 8:
+      case LogRecordTag::Flags:
         out.flags = reader.get_fixed32();
         break;
-      case 9:
+      case LogRecordTag::TraceId:
         out.trace_id.hex = ReadHexId(reader);
         break;
-      case 10:
+      case LogRecordTag::SpanId:
         out.span_id.hex = ReadHexId(reader);
         break;
-      case 11:
+      case LogRecordTag::ObservedTimeUnixNano:
         out.observed_time_unix_nano = reader.get_fixed64();
         break;
-      case 12:
+      case LogRecordTag::EventName:
         out.event_name = Text(reader);
         break;
       default:
@@ -242,18 +248,18 @@ void DecodeLogRecord(pbf_reader reader, LogRecord& out, ValueArena& arena) {
 
 void DecodeSpanEvent(pbf_reader reader, SpanEvent& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<SpanEventTag>(reader.tag())) {
+      case SpanEventTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 2:
+      case SpanEventTag::Name:
         out.name = Text(reader);
         break;
-      case 3:
+      case SpanEventTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 4:
+      case SpanEventTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
       default:
@@ -264,24 +270,24 @@ void DecodeSpanEvent(pbf_reader reader, SpanEvent& out, ValueArena& arena) {
 
 void DecodeSpanLink(pbf_reader reader, SpanLink& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<SpanLinkTag>(reader.tag())) {
+      case SpanLinkTag::TraceId:
         out.trace_id.hex = ReadHexId(reader);
         break;
-      case 2:
+      case SpanLinkTag::SpanId:
         out.span_id.hex = ReadHexId(reader);
         break;
-      case 3:
+      case SpanLinkTag::TraceState:
         out.trace_state = Text(reader);
         break;
-      case 4:
+      case SpanLinkTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 5:
+      case SpanLinkTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
-      case 6:
+      case SpanLinkTag::Flags:
         out.flags = reader.get_fixed32();
         break;
       default:
@@ -292,11 +298,11 @@ void DecodeSpanLink(pbf_reader reader, SpanLink& out, ValueArena& arena) {
 
 void DecodeStatus(pbf_reader reader, Status& out) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 2:
+    switch (static_cast<StatusTag>(reader.tag())) {
+      case StatusTag::Message:
         out.message = Text(reader);
         break;
-      case 3:
+      case StatusTag::Code:
         out.code = static_cast<StatusCode>(reader.get_enum());
         break;
       default:
@@ -307,54 +313,54 @@ void DecodeStatus(pbf_reader reader, Status& out) {
 
 void DecodeSpan(pbf_reader reader, Span& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<SpanTag>(reader.tag())) {
+      case SpanTag::TraceId:
         out.trace_id.hex = ReadHexId(reader);
         break;
-      case 2:
+      case SpanTag::SpanId:
         out.span_id.hex = ReadHexId(reader);
         break;
-      case 3:
+      case SpanTag::TraceState:
         out.trace_state = Text(reader);
         break;
-      case 4:
+      case SpanTag::ParentSpanId:
         out.parent_span_id.hex = ReadHexId(reader);
         break;
-      case 5:
+      case SpanTag::Name:
         out.name = Text(reader);
         break;
-      case 6:
+      case SpanTag::Kind:
         out.kind = static_cast<SpanKind>(reader.get_enum());
         break;
-      case 7:
+      case SpanTag::StartTimeUnixNano:
         out.start_time_unix_nano = reader.get_fixed64();
         break;
-      case 8:
+      case SpanTag::EndTimeUnixNano:
         out.end_time_unix_nano = reader.get_fixed64();
         break;
-      case 9:
+      case SpanTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 10:
+      case SpanTag::DroppedAttributesCount:
         out.dropped_attributes_count = reader.get_uint32();
         break;
-      case 11:
+      case SpanTag::Events:
         DecodeSpanEvent(reader.get_message(), out.events.emplace_back(), arena);
         break;
-      case 12:
+      case SpanTag::DroppedEventsCount:
         out.dropped_events_count = reader.get_uint32();
         break;
-      case 13:
+      case SpanTag::Links:
         DecodeSpanLink(reader.get_message(), out.links.emplace_back(), arena);
         break;
-      case 14:
+      case SpanTag::DroppedLinksCount:
         out.dropped_links_count = reader.get_uint32();
         break;
-      case 15:
+      case SpanTag::Status:
         DecodeStatus(reader.get_message(), out.status);
         break;
-      case 16:
+      case SpanTag::Flags:
         out.flags = reader.get_fixed32();
         break;
       default:
@@ -365,23 +371,23 @@ void DecodeSpan(pbf_reader reader, Span& out, ValueArena& arena) {
 
 void DecodeExemplar(pbf_reader reader, Exemplar& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 2:
+    switch (static_cast<ExemplarTag>(reader.tag())) {
+      case ExemplarTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 3:
+      case ExemplarTag::AsDouble:
         out.value = reader.get_double();
         break;
-      case 4:
+      case ExemplarTag::SpanId:
         out.span_id.hex = ReadHexId(reader);
         break;
-      case 5:
+      case ExemplarTag::TraceId:
         out.trace_id.hex = ReadHexId(reader);
         break;
-      case 6:
+      case ExemplarTag::AsInt:
         out.value = reader.get_sfixed64();
         break;
-      case 7:
+      case ExemplarTag::FilteredAttributes:
         DecodeKeyValue(reader.get_message(),
                        out.filtered_attributes.emplace_back(), arena);
         break;
@@ -394,28 +400,28 @@ void DecodeExemplar(pbf_reader reader, Exemplar& out, ValueArena& arena) {
 void DecodeNumberDataPoint(pbf_reader reader, NumberDataPoint& out,
                            ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 2:
+    switch (static_cast<NumberDataPointTag>(reader.tag())) {
+      case NumberDataPointTag::StartTimeUnixNano:
         out.start_time_unix_nano = reader.get_fixed64();
         break;
-      case 3:
+      case NumberDataPointTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 4:
+      case NumberDataPointTag::AsDouble:
         out.value = reader.get_double();
         break;
-      case 5:
+      case NumberDataPointTag::Exemplars:
         DecodeExemplar(reader.get_message(), out.exemplars.emplace_back(),
                        arena);
         break;
-      case 6:
+      case NumberDataPointTag::AsInt:
         out.value = reader.get_sfixed64();
         break;
-      case 7:
+      case NumberDataPointTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 8:
+      case NumberDataPointTag::Flags:
         out.flags = reader.get_uint32();
         break;
       default:
@@ -427,40 +433,40 @@ void DecodeNumberDataPoint(pbf_reader reader, NumberDataPoint& out,
 void DecodeHistogramDataPoint(pbf_reader reader, HistogramDataPoint& out,
                               ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 2:
+    switch (static_cast<HistogramDataPointTag>(reader.tag())) {
+      case HistogramDataPointTag::StartTimeUnixNano:
         out.start_time_unix_nano = reader.get_fixed64();
         break;
-      case 3:
+      case HistogramDataPointTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 4:
+      case HistogramDataPointTag::Count:
         out.count = reader.get_fixed64();
         break;
-      case 5:
+      case HistogramDataPointTag::Sum:
         out.sum = reader.get_double();
         break;
-      case 6:
+      case HistogramDataPointTag::BucketCounts:
         ReadFixed64s(reader, out.bucket_counts);
         break;
-      case 7:
+      case HistogramDataPointTag::ExplicitBounds:
         ReadDoubles(reader, out.explicit_bounds);
         break;
-      case 8:
+      case HistogramDataPointTag::Exemplars:
         DecodeExemplar(reader.get_message(), out.exemplars.emplace_back(),
                        arena);
         break;
-      case 9:
+      case HistogramDataPointTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 10:
+      case HistogramDataPointTag::Flags:
         out.flags = reader.get_uint32();
         break;
-      case 11:
+      case HistogramDataPointTag::Min:
         out.min = reader.get_double();
         break;
-      case 12:
+      case HistogramDataPointTag::Max:
         out.max = reader.get_double();
         break;
       default:
@@ -472,11 +478,11 @@ void DecodeHistogramDataPoint(pbf_reader reader, HistogramDataPoint& out,
 void DecodeExponentialBuckets(pbf_reader reader,
                               ExponentialHistogramBuckets& out) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<ExponentialHistogramBucketsTag>(reader.tag())) {
+      case ExponentialHistogramBucketsTag::Offset:
         out.offset = reader.get_sint32();
         break;
-      case 2:
+      case ExponentialHistogramBucketsTag::BucketCounts:
         ReadUint64s(reader, out.bucket_counts);
         break;
       default:
@@ -489,49 +495,49 @@ void DecodeExponentialHistogramDataPoint(pbf_reader reader,
                                          ExponentialHistogramDataPoint& out,
                                          ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<ExponentialHistogramDataPointTag>(reader.tag())) {
+      case ExponentialHistogramDataPointTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 2:
+      case ExponentialHistogramDataPointTag::StartTimeUnixNano:
         out.start_time_unix_nano = reader.get_fixed64();
         break;
-      case 3:
+      case ExponentialHistogramDataPointTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 4:
+      case ExponentialHistogramDataPointTag::Count:
         out.count = reader.get_fixed64();
         break;
-      case 5:
+      case ExponentialHistogramDataPointTag::Sum:
         out.sum = reader.get_double();
         break;
-      case 6:
+      case ExponentialHistogramDataPointTag::Scale:
         out.scale = reader.get_sint32();
         break;
-      case 7:
+      case ExponentialHistogramDataPointTag::ZeroCount:
         out.zero_count = reader.get_fixed64();
         break;
-      case 8:
+      case ExponentialHistogramDataPointTag::Positive:
         DecodeExponentialBuckets(reader.get_message(), out.positive);
         break;
-      case 9:
+      case ExponentialHistogramDataPointTag::Negative:
         DecodeExponentialBuckets(reader.get_message(), out.negative);
         break;
-      case 10:
+      case ExponentialHistogramDataPointTag::Flags:
         out.flags = reader.get_uint32();
         break;
-      case 11:
+      case ExponentialHistogramDataPointTag::Exemplars:
         DecodeExemplar(reader.get_message(), out.exemplars.emplace_back(),
                        arena);
         break;
-      case 12:
+      case ExponentialHistogramDataPointTag::Min:
         out.min = reader.get_double();
         break;
-      case 13:
+      case ExponentialHistogramDataPointTag::Max:
         out.max = reader.get_double();
         break;
-      case 14:
+      case ExponentialHistogramDataPointTag::ZeroThreshold:
         out.zero_threshold = reader.get_double();
         break;
       default:
@@ -543,28 +549,28 @@ void DecodeExponentialHistogramDataPoint(pbf_reader reader,
 void DecodeSummaryDataPoint(pbf_reader reader, SummaryDataPoint& out,
                             ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 2:
+    switch (static_cast<SummaryDataPointTag>(reader.tag())) {
+      case SummaryDataPointTag::StartTimeUnixNano:
         out.start_time_unix_nano = reader.get_fixed64();
         break;
-      case 3:
+      case SummaryDataPointTag::TimeUnixNano:
         out.time_unix_nano = reader.get_fixed64();
         break;
-      case 4:
+      case SummaryDataPointTag::Count:
         out.count = reader.get_fixed64();
         break;
-      case 5:
+      case SummaryDataPointTag::Sum:
         out.sum = reader.get_double();
         break;
-      case 6: {
+      case SummaryDataPointTag::QuantileValues: {
         auto& quantile = out.quantile_values.emplace_back();
         pbf_reader inner = reader.get_message();
         while (inner.next()) {
-          switch (inner.tag()) {
-            case 1:
+          switch (static_cast<SummaryQuantileValueTag>(inner.tag())) {
+            case SummaryQuantileValueTag::Quantile:
               quantile.quantile = inner.get_double();
               break;
-            case 2:
+            case SummaryQuantileValueTag::Value:
               quantile.value = inner.get_double();
               break;
             default:
@@ -573,11 +579,11 @@ void DecodeSummaryDataPoint(pbf_reader reader, SummaryDataPoint& out,
         }
         break;
       }
-      case 7:
+      case SummaryDataPointTag::Attributes:
         DecodeKeyValue(reader.get_message(), out.attributes.emplace_back(),
                        arena);
         break;
-      case 8:
+      case SummaryDataPointTag::Flags:
         out.flags = reader.get_uint32();
         break;
       default:
@@ -591,11 +597,13 @@ void DecodePoints(pbf_reader reader, std::vector<Point>& points,
                   AggregationTemporality* temporality, bool* is_monotonic,
                   ValueArena& arena, DecodeOne decode_one) {
   while (reader.next()) {
-    if (reader.tag() == 1) {
+    if (reader.tag() == Tag(MetricShapeTag::DataPoints)) {
       decode_one(reader.get_message(), points.emplace_back(), arena);
-    } else if (reader.tag() == 2 && temporality != nullptr) {
+    } else if (reader.tag() == Tag(MetricShapeTag::AggregationTemporality) &&
+               temporality != nullptr) {
       *temporality = static_cast<AggregationTemporality>(reader.get_enum());
-    } else if (reader.tag() == 3 && is_monotonic != nullptr) {
+    } else if (reader.tag() == Tag(MetricShapeTag::IsMonotonic) &&
+               is_monotonic != nullptr) {
       *is_monotonic = reader.get_bool();
     } else {
       reader.skip();
@@ -605,24 +613,24 @@ void DecodePoints(pbf_reader reader, std::vector<Point>& points,
 
 void DecodeMetric(pbf_reader reader, Metric& out, ValueArena& arena) {
   while (reader.next()) {
-    switch (reader.tag()) {
-      case 1:
+    switch (static_cast<MetricTag>(reader.tag())) {
+      case MetricTag::Name:
         out.name = Text(reader);
         break;
-      case 2:
+      case MetricTag::Description:
         out.description = Text(reader);
         break;
-      case 3:
+      case MetricTag::Unit:
         out.unit = Text(reader);
         break;
-      case 5: {
+      case MetricTag::Gauge: {
         Gauge gauge;
         DecodePoints(reader.get_message(), gauge.data_points, nullptr, nullptr,
                      arena, DecodeNumberDataPoint);
         out.data = std::move(gauge);
         break;
       }
-      case 7: {
+      case MetricTag::Sum: {
         Sum sum;
         DecodePoints(reader.get_message(), sum.data_points,
                      &sum.aggregation_temporality, &sum.is_monotonic, arena,
@@ -630,7 +638,7 @@ void DecodeMetric(pbf_reader reader, Metric& out, ValueArena& arena) {
         out.data = std::move(sum);
         break;
       }
-      case 9: {
+      case MetricTag::Histogram: {
         Histogram histogram;
         DecodePoints(reader.get_message(), histogram.data_points,
                      &histogram.aggregation_temporality, nullptr, arena,
@@ -638,7 +646,7 @@ void DecodeMetric(pbf_reader reader, Metric& out, ValueArena& arena) {
         out.data = std::move(histogram);
         break;
       }
-      case 10: {
+      case MetricTag::ExponentialHistogram: {
         ExponentialHistogram exponential;
         DecodePoints(reader.get_message(), exponential.data_points,
                      &exponential.aggregation_temporality, nullptr, arena,
@@ -646,14 +654,14 @@ void DecodeMetric(pbf_reader reader, Metric& out, ValueArena& arena) {
         out.data = std::move(exponential);
         break;
       }
-      case 11: {
+      case MetricTag::Summary: {
         Summary summary;
         DecodePoints(reader.get_message(), summary.data_points, nullptr,
                      nullptr, arena, DecodeSummaryDataPoint);
         out.data = std::move(summary);
         break;
       }
-      case 12:
+      case MetricTag::Metadata:
         DecodeKeyValue(reader.get_message(), out.metadata.emplace_back(),
                        arena);
         break;
@@ -668,32 +676,32 @@ void DecodeRequest(std::string_view wire, ExportRequest<Record>& out,
                    DecodeOne decode_one) {
   pbf_reader reader{wire.data(), wire.size()};
   while (reader.next()) {
-    if (reader.tag() != 1) {
+    if (reader.tag() != Tag(ExportRequestTag::ResourceRecords)) {
       reader.skip();
       continue;
     }
     auto& resource_records = out.resources.emplace_back();
     pbf_reader resource_reader = reader.get_message();
     while (resource_reader.next()) {
-      switch (resource_reader.tag()) {
-        case 1:
+      switch (static_cast<ResourceRecordsTag>(resource_reader.tag())) {
+        case ResourceRecordsTag::Resource:
           DecodeResource(resource_reader.get_message(),
                          resource_records.resource, out.arena);
           break;
-        case 2: {
+        case ResourceRecordsTag::ScopeRecords: {
           auto& scope_records = resource_records.scopes.emplace_back();
           pbf_reader scope_reader = resource_reader.get_message();
           while (scope_reader.next()) {
-            switch (scope_reader.tag()) {
-              case 1:
+            switch (static_cast<ScopeRecordsTag>(scope_reader.tag())) {
+              case ScopeRecordsTag::Scope:
                 DecodeScope(scope_reader.get_message(), scope_records.scope,
                             out.arena);
                 break;
-              case 2:
+              case ScopeRecordsTag::Records:
                 decode_one(scope_reader.get_message(),
                            scope_records.records.emplace_back(), out.arena);
                 break;
-              case 3:
+              case ScopeRecordsTag::SchemaUrl:
                 scope_records.schema_url = Text(scope_reader);
                 break;
               default:
@@ -702,7 +710,7 @@ void DecodeRequest(std::string_view wire, ExportRequest<Record>& out,
           }
           break;
         }
-        case 3:
+        case ResourceRecordsTag::SchemaUrl:
           resource_records.schema_url = Text(resource_reader);
           break;
         default:

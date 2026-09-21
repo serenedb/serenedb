@@ -47,10 +47,29 @@ struct KeyValue {
   AnyValue* value = nullptr;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
+// KeyValue
+enum class KeyValueTag : uint32_t {
+  Key = 1,
+  Value = 2,
+};
+
 using KeyValueList = std::vector<KeyValue>;
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
+// KeyValueList
+enum class KeyValueListTag : uint32_t {
+  Values = 1,
+};
 
 struct ArrayValue {
   std::vector<AnyValue*> values;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
+// ArrayValue
+enum class ArrayValueTag : uint32_t {
+  Values = 1,
 };
 
 struct KvlistValue {
@@ -65,6 +84,18 @@ struct AnyValue {
   std::variant<std::monostate, std::string, bool, int64_t, double, ArrayValue,
                KvlistValue, BytesValue>
     value;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
+// AnyValue
+enum class AnyValueTag : uint32_t {
+  StringValue = 1,
+  BoolValue = 2,
+  IntValue = 3,
+  DoubleValue = 4,
+  ArrayValue = 5,
+  KvlistValue = 6,
+  BytesValue = 7,
 };
 
 class ValueArena {
@@ -119,11 +150,27 @@ struct Resource {
   uint32_t dropped_attributes_count = 0;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/resource/v1/resource.proto
+// Resource
+enum class ResourceTag : uint32_t {
+  Attributes = 1,
+  DroppedAttributesCount = 2,
+};
+
 struct InstrumentationScope {
   std::string name;
   std::string version;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/common/v1/common.proto
+// InstrumentationScope
+enum class InstrumentationScopeTag : uint32_t {
+  Name = 1,
+  Version = 2,
+  Attributes = 3,
+  DroppedAttributesCount = 4,
 };
 
 struct LogRecord {
@@ -138,6 +185,22 @@ struct LogRecord {
   uint32_t flags = 0;
   TraceId trace_id;
   SpanId span_id;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
+// LogRecord
+enum class LogRecordTag : uint32_t {
+  TimeUnixNano = 1,
+  SeverityNumber = 2,
+  SeverityText = 3,
+  Body = 5,
+  Attributes = 6,
+  DroppedAttributesCount = 7,
+  Flags = 8,
+  TraceId = 9,
+  SpanId = 10,
+  ObservedTimeUnixNano = 11,
+  EventName = 12,
 };
 
 enum class SpanKind : int32_t {
@@ -160,11 +223,27 @@ struct Status {
   std::string message;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto
+// Status
+enum class StatusTag : uint32_t {
+  Message = 2,
+  Code = 3,
+};
+
 struct SpanEvent {
   uint64_t time_unix_nano = 0;
   std::string name;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto
+// Span.Event
+enum class SpanEventTag : uint32_t {
+  TimeUnixNano = 1,
+  Name = 2,
+  Attributes = 3,
+  DroppedAttributesCount = 4,
 };
 
 struct SpanLink {
@@ -174,6 +253,17 @@ struct SpanLink {
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
   uint32_t flags = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto
+// Span.Link
+enum class SpanLinkTag : uint32_t {
+  TraceId = 1,
+  SpanId = 2,
+  TraceState = 3,
+  Attributes = 4,
+  DroppedAttributesCount = 5,
+  Flags = 6,
 };
 
 struct Span {
@@ -195,6 +285,27 @@ struct Span {
   Status status;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto
+// Span
+enum class SpanTag : uint32_t {
+  TraceId = 1,
+  SpanId = 2,
+  TraceState = 3,
+  ParentSpanId = 4,
+  Name = 5,
+  Kind = 6,
+  StartTimeUnixNano = 7,
+  EndTimeUnixNano = 8,
+  Attributes = 9,
+  DroppedAttributesCount = 10,
+  Events = 11,
+  DroppedEventsCount = 12,
+  Links = 13,
+  DroppedLinksCount = 14,
+  Status = 15,
+  Flags = 16,
+};
+
 enum class AggregationTemporality : int32_t {
   Unspecified = 0,
   Delta = 1,
@@ -209,6 +320,17 @@ struct Exemplar {
   TraceId trace_id;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// Exemplar
+enum class ExemplarTag : uint32_t {
+  TimeUnixNano = 2,
+  AsDouble = 3,
+  SpanId = 4,
+  TraceId = 5,
+  AsInt = 6,
+  FilteredAttributes = 7,
+};
+
 struct NumberDataPoint {
   KeyValueList attributes;
   uint64_t start_time_unix_nano = 0;
@@ -216,6 +338,18 @@ struct NumberDataPoint {
   std::variant<std::monostate, int64_t, double> value;
   std::vector<Exemplar> exemplars;
   uint32_t flags = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// NumberDataPoint
+enum class NumberDataPointTag : uint32_t {
+  StartTimeUnixNano = 2,
+  TimeUnixNano = 3,
+  AsDouble = 4,
+  Exemplars = 5,
+  AsInt = 6,
+  Attributes = 7,
+  Flags = 8,
 };
 
 struct HistogramDataPoint {
@@ -232,9 +366,32 @@ struct HistogramDataPoint {
   std::optional<double> max;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// HistogramDataPoint
+enum class HistogramDataPointTag : uint32_t {
+  StartTimeUnixNano = 2,
+  TimeUnixNano = 3,
+  Count = 4,
+  Sum = 5,
+  BucketCounts = 6,
+  ExplicitBounds = 7,
+  Exemplars = 8,
+  Attributes = 9,
+  Flags = 10,
+  Min = 11,
+  Max = 12,
+};
+
 struct ExponentialHistogramBuckets {
   int32_t offset = 0;
   std::vector<uint64_t> bucket_counts;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// ExponentialHistogramDataPoint.Buckets
+enum class ExponentialHistogramBucketsTag : uint32_t {
+  Offset = 1,
+  BucketCounts = 2,
 };
 
 struct ExponentialHistogramDataPoint {
@@ -254,9 +411,35 @@ struct ExponentialHistogramDataPoint {
   double zero_threshold = 0;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// ExponentialHistogramDataPoint
+enum class ExponentialHistogramDataPointTag : uint32_t {
+  Attributes = 1,
+  StartTimeUnixNano = 2,
+  TimeUnixNano = 3,
+  Count = 4,
+  Sum = 5,
+  Scale = 6,
+  ZeroCount = 7,
+  Positive = 8,
+  Negative = 9,
+  Flags = 10,
+  Exemplars = 11,
+  Min = 12,
+  Max = 13,
+  ZeroThreshold = 14,
+};
+
 struct SummaryQuantileValue {
   double quantile = 0;
   double value = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// SummaryDataPoint.ValueAtQuantile
+enum class SummaryQuantileValueTag : uint32_t {
+  Quantile = 1,
+  Value = 2,
 };
 
 struct SummaryDataPoint {
@@ -267,6 +450,18 @@ struct SummaryDataPoint {
   double sum = 0;
   std::vector<SummaryQuantileValue> quantile_values;
   uint32_t flags = 0;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// SummaryDataPoint
+enum class SummaryDataPointTag : uint32_t {
+  StartTimeUnixNano = 2,
+  TimeUnixNano = 3,
+  Count = 4,
+  Sum = 5,
+  QuantileValues = 6,
+  Attributes = 7,
+  Flags = 8,
 };
 
 struct Gauge {
@@ -296,6 +491,15 @@ struct Summary {
   std::vector<SummaryDataPoint> data_points;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// Gauge, Sum, Histogram, ExponentialHistogram and Summary share this
+// layout; only Sum carries is_monotonic.
+enum class MetricShapeTag : uint32_t {
+  DataPoints = 1,
+  AggregationTemporality = 2,
+  IsMonotonic = 3,
+};
+
 struct Metric {
   std::string name;
   std::string description;
@@ -306,11 +510,33 @@ struct Metric {
   KeyValueList metadata;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto
+// Metric
+enum class MetricTag : uint32_t {
+  Name = 1,
+  Description = 2,
+  Unit = 3,
+  Gauge = 5,
+  Sum = 7,
+  Histogram = 9,
+  ExponentialHistogram = 10,
+  Summary = 11,
+  Metadata = 12,
+};
+
 template<typename Record>
 struct ScopeRecords {
   InstrumentationScope scope;
   std::vector<Record> records;
   std::string schema_url;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
+// ScopeLogs, and the ScopeSpans / ScopeMetrics of the other two signals.
+enum class ScopeRecordsTag : uint32_t {
+  Scope = 1,
+  Records = 2,
+  SchemaUrl = 3,
 };
 
 template<typename Record>
@@ -320,10 +546,24 @@ struct ResourceRecords {
   std::string schema_url;
 };
 
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
+// ResourceLogs, and the ResourceSpans / ResourceMetrics of the other two.
+enum class ResourceRecordsTag : uint32_t {
+  Resource = 1,
+  ScopeRecords = 2,
+  SchemaUrl = 3,
+};
+
 template<typename Record>
 struct ExportRequest {
   std::vector<ResourceRecords<Record>> resources;
   ValueArena arena;
+};
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/logs/v1/logs_service.proto
+// ExportLogsServiceRequest, and the trace / metrics service requests.
+enum class ExportRequestTag : uint32_t {
+  ResourceRecords = 1,
 };
 
 // One decoded metrics payload, shared by the five otlp_metrics_* binds it

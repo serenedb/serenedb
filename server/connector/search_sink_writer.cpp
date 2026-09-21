@@ -762,11 +762,6 @@ irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsureColumnWriter(
   return it->second;
 }
 
-irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsureBlobColumnWriter(
-  irs::field_id field_id) {
-  return EnsureColumnWriter(field_id, duckdb::LogicalType::BLOB);
-}
-
 void SearchSinkInsertBaseImpl::AppendPkColumn(const duckdb::Vector& pk,
                                               duckdb::idx_t count) {
   SDB_ASSERT(_pk_column_writer);

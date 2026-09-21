@@ -103,7 +103,9 @@ struct TsDictLocalState : public ScanLocalState {
   bool emitting = false;
 
  private:
-  uint32_t FieldIndex() const noexcept;
+  uint32_t FieldIndex() const noexcept {
+    return static_cast<uint32_t>(_field - fields.data());
+  }
   ScanGlobalState::TsDictCounts* CountsFor(ScanGlobalState& g) const;
 
   irs::DocRange _range;
@@ -401,10 +403,6 @@ uint32_t TsDictLocalState::NullDocs(const irs::TermReader& reader,
     }
   }
   return WalkLive(reader, *it, count_all);
-}
-
-uint32_t TsDictLocalState::FieldIndex() const noexcept {
-  return static_cast<uint32_t>(_field - fields.data());
 }
 
 ScanGlobalState::TsDictCounts* TsDictLocalState::CountsFor(

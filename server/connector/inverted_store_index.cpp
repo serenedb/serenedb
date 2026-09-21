@@ -401,11 +401,11 @@ PublishedInvertedIndex PublishInvertedIndex(
     options, entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);
-  auto* table = dynamic_cast<duckdb::DuckTableEntry*>(&relation);
-  if (table == nullptr) {
+  if (relation.type != duckdb::CatalogType::TABLE_ENTRY ||
+      !relation.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
     return {std::move(storage), 0};
   }
-  auto& data = table->GetStorage();
+  auto& data = relation.Cast<duckdb::DuckTableEntry>().GetStorage();
   duckdb::CreateIndexInput input{
     context,      duckdb::TableIOManager::Get(data),
     data.db,      entry.index_constraint_type,

@@ -79,7 +79,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     return delta_files.empty() ? ReindexPass::Rebuild : ReindexPass::Delta;
   }
 
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const override {
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final {
     auto base = duckdb::CreateIndexInfo::Copy();
     auto result = duckdb::make_uniq<SereneDBCreateIndexInfo>(
       std::move(base->Cast<duckdb::CreateIndexInfo>()));

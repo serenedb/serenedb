@@ -265,8 +265,7 @@ class Enforcer {
             return;
           }
           const auto position = binding.column_index.GetIndex();
-          if (i < update.columns.size() &&
-              IsPassthrough(projection, position, update.table,
+          if (IsPassthrough(projection, position, update.table,
                             update.columns[i])) {
             return;
           }
@@ -560,7 +559,7 @@ class Enforcer {
   }
 
   void CheckIndexScan(duckdb::LogicalGet& get) {
-    if (get.function.name != "iresearch_scan" || !get.bind_data) {
+    if (get.function.name != "iresearch_scan") {
       return;
     }
     const auto& bind = get.bind_data->Cast<connector::ScanBindData>();

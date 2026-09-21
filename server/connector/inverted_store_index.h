@@ -65,49 +65,49 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                      std::shared_ptr<search::InvertedIndexStorage> storage,
                      std::shared_ptr<const InvertedIndexConfig> config,
                      catalog::IndexTokenizers tokenizers, bool has_predicate);
-  ~InvertedStoreIndex() override;
+  ~InvertedStoreIndex() final;
 
   duckdb::ErrorData Append(duckdb::IndexLock&, duckdb::DataChunk& chunk,
-                           duckdb::Vector& row_ids) override {
+                           duckdb::Vector& row_ids) final {
     return AppendImpl(chunk, row_ids);
   }
   duckdb::ErrorData Insert(duckdb::IndexLock&, duckdb::DataChunk& chunk,
-                           duckdb::Vector& row_ids) override {
+                           duckdb::Vector& row_ids) final {
     return AppendImpl(chunk, row_ids);
   }
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
-              duckdb::Vector& row_ids) override;
+              duckdb::Vector& row_ids) final;
   duckdb::idx_t TryDelete(
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
-    duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
+    duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
 
-  void OnReplayRange(duckdb::idx_t commit_offset) override {
+  void OnReplayRange(duckdb::idx_t commit_offset) final {
     _replay_commit_offset = commit_offset;
   }
-  void FinishReplay() override;
+  void FinishReplay() final;
 
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext context,
-    const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
+    const duckdb::case_insensitive_map_t<duckdb::Value>& options) final;
   duckdb::IndexStorageInfo SerializeToWAL(
-    const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
+    const duckdb::case_insensitive_map_t<duckdb::Value>& options) final;
 
-  void ResetStorage(duckdb::IndexLock&) override {}
-  bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {
+  void ResetStorage(duckdb::IndexLock&) final {}
+  bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) final {
     return true;
   }
-  void Vacuum(duckdb::IndexLock&) override {}
-  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) override { return 0; }
-  void Verify(duckdb::IndexLock&) override {}
-  std::string ToString(duckdb::IndexLock&, bool) override {
+  void Vacuum(duckdb::IndexLock&) final {}
+  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) final { return 0; }
+  void Verify(duckdb::IndexLock&) final {}
+  std::string ToString(duckdb::IndexLock&, bool) final {
     return "inverted store index";
   }
-  void VerifyAllocations(duckdb::IndexLock&) override {}
-  void VerifyBuffers(duckdb::IndexLock&) override {}
+  void VerifyAllocations(duckdb::IndexLock&) final {}
+  void VerifyBuffers(duckdb::IndexLock&) final {}
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
                                             duckdb::idx_t,
-                                            duckdb::DataChunk&) override {
+                                            duckdb::DataChunk&) final {
     return "inverted store index constraint violation";
   }
 

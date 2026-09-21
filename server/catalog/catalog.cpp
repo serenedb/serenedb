@@ -80,20 +80,15 @@
 #include "search/search_table.h"
 
 namespace sdb::catalog {
-namespace {
-
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
-                     duckdb::DatabaseModificationType type =
-                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY) {
+                     duckdb::DatabaseModificationType type) {
   if (!transaction.context) {
     return;
   }
   duckdb::MetaTransaction::Get(transaction.GetContext())
     .ModifyDatabase(catalog.GetAttached(), type);
 }
-
-}  // namespace
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
   : duckdb::DuckCatalog{db, true} {}

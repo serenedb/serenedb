@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <string>
 
@@ -41,49 +42,54 @@ struct DropInfo;
 }  // namespace duckdb
 namespace sdb::catalog {
 
+void DeclareModified(duckdb::CatalogTransaction transaction,
+                     duckdb::Catalog& catalog,
+                     duckdb::DatabaseModificationType type =
+                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+
 class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
   explicit SereneDBCatalog(duckdb::AttachedDatabase& db);
 
-  std::string GetCatalogType() override { return kStorageType; }
+  std::string GetCatalogType() final { return kStorageType; }
 
-  duckdb::SqlCompatibility Compatibility() const override {
+  duckdb::SqlCompatibility Compatibility() const final {
     return duckdb::SqlCompatibility::POSTGRES;
   }
 
-  void Initialize(bool load_builtin) override;
+  void Initialize(bool load_builtin) final;
 
-  void OnDetach(duckdb::ClientContext& context) override;
+  void OnDetach(duckdb::ClientContext& context) final;
 
   void Alter(duckdb::CatalogTransaction transaction,
-             duckdb::AlterInfo& info) override;
+             duckdb::AlterInfo& info) final;
 
-  std::string GetDefaultSchema() const override {
+  std::string GetDefaultSchema() const final {
     return std::string{irs::StaticStrings::kPublic};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSchemaInfo& info) override;
+    duckdb::CreateSchemaInfo& info) final;
 
   duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
     duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-    duckdb::CatalogEntry& relation) override;
+    duckdb::CatalogEntry& relation) final;
 
   duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-    duckdb::BoundCreateTableInfo& info) override;
+    duckdb::BoundCreateTableInfo& info) final;
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeForeignServerEntry(
-    duckdb::CreateForeignServerInfo& info) override {
+    duckdb::CreateForeignServerInfo& info) final {
     return duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
   }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
     duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info) override {
+    duckdb::CreateTokenizerInfo& info) final {
     return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
   }
 
@@ -104,33 +110,33 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,
-    duckdb::optional_ptr<duckdb::PhysicalOperator> plan) override;
+    duckdb::optional_ptr<duckdb::PhysicalOperator> plan) final;
 
   duckdb::PhysicalOperator& PlanDelete(duckdb::ClientContext& context,
                                        duckdb::PhysicalPlanGenerator& planner,
                                        duckdb::LogicalDelete& op,
-                                       duckdb::PhysicalOperator& plan) override;
+                                       duckdb::PhysicalOperator& plan) final;
 
   duckdb::PhysicalOperator& PlanCreateTableAs(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
-    duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) override;
+    duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) final;
 
   duckdb::PhysicalOperator& PlanMergeInto(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
-    duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) override;
+    duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) final;
 
   duckdb::PhysicalOperator& PlanUpdate(duckdb::ClientContext& context,
                                        duckdb::PhysicalPlanGenerator& planner,
                                        duckdb::LogicalUpdate& op,
-                                       duckdb::PhysicalOperator& plan) override;
+                                       duckdb::PhysicalOperator& plan) final;
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
     duckdb::CatalogEntry& table,
-    duckdb::unique_ptr<duckdb::LogicalOperator> plan) override;
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
 
   duckdb::ErrorData SupportsCreateTable(
-    duckdb::BoundCreateTableInfo& info) override;
+    duckdb::BoundCreateTableInfo& info) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,

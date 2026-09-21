@@ -142,9 +142,9 @@ void SearchTable::OpenWriter() {
 
   auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !_is_new;
-  const auto open_mode = reopen
-                           ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-                           : irs::OpenMode::kOmCreate;
+  const auto open_mode =
+    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+           : irs::OpenMode::kOmCreate;
 
   irs::ResourceManagementOptions resource_manager;
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
@@ -271,12 +271,6 @@ StoreStats SearchTable::GetStats() const {
   stats.numBufferedDocs = _writer->BufferedDocs();
   _maintenance.Fill(stats);
   return stats;
-}
-
-unsigned SearchTable::RegisterWriter() { return _writers.Register(); }
-
-void SearchTable::DeregisterWriter(unsigned slot) noexcept {
-  _writers.Deregister(slot);
 }
 
 void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {

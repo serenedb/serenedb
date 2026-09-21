@@ -34,14 +34,14 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
 
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info);
-  ~DatabaseCatalogEntry() override;
+  ~DatabaseCatalogEntry() final;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
-    duckdb::ClientContext& context) const override;
-  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override { return GetInfo()->ToString(); }
-  void Rollback(duckdb::CatalogEntry& prev_entry) override;
-  void OnDrop() override { _dropped = true; }
+    duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
+  void Rollback(duckdb::CatalogEntry& prev_entry) final;
+  void OnDrop() final { _dropped = true; }
 
  private:
   bool _dropped = false;

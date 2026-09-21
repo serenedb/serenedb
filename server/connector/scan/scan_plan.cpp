@@ -239,7 +239,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                               (info && info->IsStored());
     if (!index_stored) {
       state.has_lookup_filter = true;
-    } else if (index_meta || bind_data.relation.IsSearchTable()) {
+    } else {
       auto& cf = state.col_filters.emplace_back();
       cf.field = col_id;
       cf.filter = &entry.Filter();
@@ -506,11 +506,6 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
     }
     return;
   }
-  if (!bind_data.relation.IsInvertedIndex()) {
-    state.needs_lookup = state.has_real_column;
-    return;
-  }
-
   std::vector<std::string_view> path;
   for (duckdb::idx_t proj = 0; proj < state.projected_columns.size(); ++proj) {
     const auto bind_col = state.projected_columns[proj];
@@ -571,11 +566,6 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
     return ScanShape::ColScan;
   }
   return ScanShape::Stream;
-}
-
-ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
-  return g.vector_scorer == nullptr ? ScoreEmit::Identity
-                                    : g.vector_scorer->score_emit;
 }
 
 void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,

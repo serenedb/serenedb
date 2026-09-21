@@ -44,19 +44,19 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
                    const pg::VirtualTable& table);
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext&, duckdb::column_t) override {
+    duckdb::ClientContext&, duckdb::column_t) final {
     return nullptr;
   }
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) override {
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) final {
     return {};
   }
 
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   const pg::VirtualTable& Table() const noexcept { return _table; }
 

@@ -63,9 +63,7 @@ struct LocalTableChangesEntry {
       op.pk_segments = std::make_unique<std::vector<SearchDbWal::InlinePk>>();
     }
     op.collection->Append(chunk);
-    if (op.pk_segments != nullptr) {
-      op.pk_segments->push_back({pk_base, chunk.size()});
-    }
+    op.pk_segments->push_back({pk_base, chunk.size()});
   }
 
   // Move a bulk statement's chunk files into the current insert run (does not

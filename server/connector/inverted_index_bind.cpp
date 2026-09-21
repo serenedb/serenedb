@@ -982,13 +982,6 @@ void ApplyOpclassToEntry(
   }
 }
 
-const duckdb::Value* FindOption(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& with,
-  std::string_view name) {
-  auto it = with.find(name);
-  return it != with.end() ? &it->second : nullptr;
-}
-
 // Field ids of the keys that are not bare columns. A bare column indexes under
 // its own column id; an expression has none, so it takes a slot from the
 // synthetic range, which no relation column can ever collide with. Stride 8
@@ -1005,7 +998,7 @@ PkPolicy ResolvePkPolicy(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
   bool has_pk, bool single_key, bool file_row) {
   std::string store_pk = "auto";
-  if (auto* v = FindOption(with, "store_pk")) {
+  if (auto* v = catalog::FindOption(with, "store_pk")) {
     store_pk = duckdb::StringUtil::Lower(
       v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
     if (store_pk == "true") {
@@ -1064,7 +1057,9 @@ void DeriveKeys(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
   InvertedIndexConfig& config) {
-  const auto* table = dynamic_cast<const duckdb::TableCatalogEntry*>(&relation);
+  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
   static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
@@ -1210,7 +1205,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type) {
   const bool table_backed =
-    dynamic_cast<const duckdb::TableCatalogEntry*>(&relation) != nullptr;
+    relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto config = std::make_shared<InvertedIndexConfig>();
   config->row_group_size =
     catalog::ResolveSettings(entry.options).row_group_size;

@@ -165,11 +165,8 @@ bool IResearchPushdownExpression(duckdb::ClientContext&,
   if (bind.relation.IsSearchTable()) {
     return true;
   }
-  if (bind.relation.IsInvertedIndex()) {
-    const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-    return info != nullptr && info->IsStored();
-  }
-  return false;
+  const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
+  return info && info->IsStored();
 }
 
 }  // namespace sdb::connector

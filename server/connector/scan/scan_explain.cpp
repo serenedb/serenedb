@@ -312,47 +312,43 @@ void ScanBindData::AppendSummary(
   const auto& bind = *this;
   const auto& vector = score.vector;
   std::unique_ptr<irs::Scorer> query_scorer;
-  if (relation.inverted_config) {
-    const auto name_of = MakeFieldNameResolver(bind);
-    const auto kind_of = MakeFieldKindResolver(bind);
-    const bool vector_is_range =
-      vector && vector->radius != std::numeric_limits<float>::max();
-    if (vector_is_range) {
-      const auto display =
-        MakeVectorFilter(*vector, search.filter, vector->radius);
-      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                   *display, name_of, kind_of)));
-    } else if (search.filter) {
-      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                   *search.filter, name_of, kind_of)));
+  const auto name_of = MakeFieldNameResolver(bind);
+  const auto kind_of = MakeFieldKindResolver(bind);
+  const bool vector_is_range =
+    vector && vector->radius != std::numeric_limits<float>::max();
+  if (vector_is_range) {
+    const auto display =
+      MakeVectorFilter(*vector, search.filter, vector->radius);
+    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                 *display, name_of, kind_of)));
+  } else if (search.filter) {
+    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                 *search.filter, name_of, kind_of)));
+  }
+  for (const auto& req : ts_dict.requests) {
+    if (!req.having_filter) {
+      continue;
     }
-    for (const auto& req : ts_dict.requests) {
-      if (!req.having_filter) {
-        continue;
-      }
-      auto key = ts_dict.requests.size() == 1
-                   ? std::string{"Index Filter"}
-                   : absl::StrCat("Index Filter(",
-                                  DisplayColumnName(req.display_id), ")");
-      out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
-                                   *req.having_filter, name_of, kind_of)));
+    auto key = ts_dict.requests.size() == 1
+                 ? std::string{"Index Filter"}
+                 : absl::StrCat("Index Filter(",
+                                DisplayColumnName(req.display_id), ")");
+    out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
+                                 *req.having_filter, name_of, kind_of)));
+  }
+  if (vector && !vector_is_range) {
+    const auto col_id = vector->field_id;
+    auto ctype = ColumnTypeById(col_id);
+    if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
+      ctype = relation.inverted_config->ExpressionType(vector->field_id);
     }
-    if (vector && !vector_is_range) {
-      const auto col_id = vector->field_id;
-      auto ctype = ColumnTypeById(col_id);
-      if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
-        ctype = relation.inverted_config->ExpressionType(vector->field_id);
-      }
-      out.insert("Score",
-                 absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
-                              name_of(col_id), ", ", ctype.ToString(), ")"));
-    }
+    out.insert("Score",
+               absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
+                            name_of(col_id), ", ", ctype.ToString(), ")"));
   }
   if (score.text) {
     query_scorer = search::MakeScorer(*score.text);
-    if (query_scorer) {
-      out.insert("Score", query_scorer->ToString());
-    }
+    out.insert("Score", query_scorer->ToString());
   }
   if (score.top_k) {
     std::string topk_val = absl::StrCat(
@@ -365,11 +361,8 @@ void ScanBindData::AppendSummary(
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
-    if (const auto& prune = score.prune;
-        pruning && prune && prune != score.text) {
-      if (auto bounds = search::MakeScorer(*prune)) {
-        out.insert("Bounds", bounds->ToString());
-      }
+    if (pruning && score.prune != score.text) {
+      out.insert("Bounds", search::MakeScorer(*score.prune)->ToString());
     }
   }
   if (offsets.Active()) {
@@ -397,10 +390,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
     return result;
   }
   auto& bind = input.bind_data->Cast<ScanBindData>();
-  const char* kind = bind.relation.kind != ScanEntryKind::BaseTable ? "Index"
-                     : bind.IsViewBacked()                         ? "View"
-                                                                   : "Table";
-  result.insert(kind, std::string{bind.RelationName()});
+  result.insert("Index", std::string{bind.RelationName()});
   const auto entries = BuildProjectionEntries(bind, input);
   bool has_index = false;
   bool has_lookup = false;

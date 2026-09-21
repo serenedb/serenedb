@@ -66,10 +66,6 @@ void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
   }
 }
 
-void AppendGenerated(std::string& key, uint64_t value) {
-  AppendSigned(key, static_cast<int64_t>(value));
-}
-
 std::string PkFilePrefix(uint64_t file_id) {
   std::string prefix;
   AppendUnsigned(prefix, file_id);

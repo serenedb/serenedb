@@ -202,7 +202,9 @@ class SearchSinkInsertBaseImpl {
 
   irs::ColumnWriter* EnsureColumnWriter(irs::field_id field_id,
                                         const duckdb::LogicalType& type);
-  irs::ColumnWriter* EnsureBlobColumnWriter(irs::field_id field_id);
+  irs::ColumnWriter* EnsureBlobColumnWriter(irs::field_id field_id) {
+    return EnsureColumnWriter(field_id, duckdb::LogicalType::BLOB);
+  }
   void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
   void EmitPkTerms(const Field& pk_field,
                    std::span<const duckdb::string_t> keys);

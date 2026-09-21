@@ -416,7 +416,9 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);
-ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept;
+inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
+  return g.vector_scorer ? g.vector_scorer->score_emit : ScoreEmit::Identity;
+}
 
 void RunCountScan(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output);

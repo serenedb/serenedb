@@ -39,21 +39,21 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   explicit ClusterCatalog(duckdb::AttachedDatabase& db);
 
-  std::string GetCatalogType() override { return kStorageType; }
+  std::string GetCatalogType() final { return kStorageType; }
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
-    duckdb::CreateRoleInfo& info) override {
+    duckdb::CreateRoleInfo& info) final {
     return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
   }
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
-    duckdb::CreateDatabaseInfo& info) override {
+    duckdb::CreateDatabaseInfo& info) final {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
   }
 
   void FinalizeLoad(
-    duckdb::optional_ptr<duckdb::ClientContext> context) override;
+    duckdb::optional_ptr<duckdb::ClientContext> context) final;
   void Alter(duckdb::CatalogTransaction transaction,
-             duckdb::AlterInfo& info) override;
+             duckdb::AlterInfo& info) final;
 
   duckdb::CatalogTransaction LoginTransaction() {
     return duckdb::CatalogTransaction{GetDatabase(),

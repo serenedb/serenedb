@@ -188,9 +188,9 @@ InvertedIndexStorage::InvertedIndexStorage(
 
   auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !is_new;
-  const auto open_mode = reopen
-                           ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-                           : irs::OpenMode::kOmCreate;
+  const auto open_mode =
+    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+           : irs::OpenMode::kOmCreate;
 
   // New indexes start at the current tick; existing directories override
   // both values from the persisted segment meta below.

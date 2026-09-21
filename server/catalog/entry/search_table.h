@@ -100,45 +100,45 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
                    std::shared_ptr<search::SearchTable> inherited_storage = {});
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext&, duckdb::column_t) override {
+    duckdb::ClientContext&, duckdb::column_t) final {
     return nullptr;
   }
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) override {
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) final {
     return {};
   }
 
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
     duckdb::ColumnSegmentInfoScanState& state,
-    duckdb::vector<duckdb::ColumnSegmentInfo>& result) override;
+    duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
 
   static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
     const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
     duckdb::column_t generated_pk);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
 
-  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override { return GetInfo()->ToString(); }
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
 
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
-  void OnDrop() override;
+  void OnDrop() final;
 
-  void Rollback(duckdb::CatalogEntry& prev_entry) override;
+  void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,
-                             duckdb::ClientContext& context) override;
+                             duckdb::ClientContext& context) final;
 
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> GeneratedPkSequence(
     duckdb::ClientContext& context) const;

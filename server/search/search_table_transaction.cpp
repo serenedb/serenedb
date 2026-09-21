@@ -69,8 +69,6 @@ void RecordDeletesForBuild(SearchTable& shard,
 
 }  // namespace
 
-SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
-
 void SearchTableTransaction::RegisterWriter(
   const std::shared_ptr<SearchTable>& shard) {
   auto& w = _writes[shard->GetTableId()];
@@ -259,9 +257,7 @@ uint64_t SearchTableTransaction::AppendCommit() {
       if (op.collection && op.collection->Count() > 0) {
         ops.push_back(SearchDbWal::Op{
           op.collection.get(),
-          op.pk_segments
-            ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
-            : std::span<const SearchDbWal::InlinePk>{},
+          std::span<const SearchDbWal::InlinePk>{*op.pk_segments},
           {},
           {}});
       }

@@ -41,10 +41,7 @@ class InvertedIndexStorage;
 class SearchTable;
 
 class SearchEngine;
-SearchEngine& GetSearchEngine();
 
-uint32_t AnnAcquireWorkers(uint32_t want) noexcept;
-void AnnReleaseWorkers(uint32_t n) noexcept;
 const irs::AnnBuildEnv& AnnBuildEnv();
 
 class SearchEngine final {
@@ -52,7 +49,10 @@ class SearchEngine final {
   inline static SearchEngine* gInstance = nullptr;
 
   static uint32_t MaxAnnBuildWorkers() noexcept;
-  static uint32_t MaxAnnWorkersPerBuild() noexcept;
+  static uint32_t MaxAnnWorkersPerBuild() noexcept {
+    return std::clamp<uint32_t>(
+      static_cast<uint32_t>(MaxConcurrentCompactions()), 1, 16);
+  }
 
   // Process-wide cap on concurrent compactions, the only hard ceiling on
   // in-flight merges. Cores-derived (Lucene maxThreadCount): max(1, min(4,
@@ -61,7 +61,7 @@ class SearchEngine final {
   static int MaxConcurrentCompactions() noexcept;
 
   SearchEngine();
-  ~SearchEngine();
+  ~SearchEngine() { gInstance = nullptr; }
 
   void start();
   void stop();
@@ -148,6 +148,16 @@ class SearchEngine final {
   // group for good. stop() Done()s the token, then Waits.
   yaclib::WaitGroup<> _loops{1};
 };
+
+inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
+
+inline uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+inline void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
 
 }  // namespace search
 }  // namespace sdb

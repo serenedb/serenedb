@@ -373,7 +373,7 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    const auto* info = bd.relation.IsIndexRelation()
+    const auto* info = bd.relation.IsInvertedIndex()
                          ? bd.relation.ScannedIndex().FindColumnInfo(col_id)
                          : nullptr;
     const bool stored =

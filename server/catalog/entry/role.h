@@ -57,11 +57,11 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   const duckdb::vector<std::string>& Config() const noexcept { return _config; }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
-    duckdb::ClientContext& context, duckdb::AlterInfo& info) override;
-  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override { return GetInfo()->ToString(); }
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
   RoleOption _options;

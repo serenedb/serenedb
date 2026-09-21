@@ -34,6 +34,7 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
+#include "catalog/catalog.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/credentials.h"
@@ -43,17 +44,6 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kRootRole = "postgres";
-
-void DeclareModified(duckdb::CatalogTransaction transaction,
-                     duckdb::Catalog& catalog,
-                     duckdb::DatabaseModificationType type =
-                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY) {
-  if (!transaction.context) {
-    return;
-  }
-  duckdb::MetaTransaction::Get(transaction.GetContext())
-    .ModifyDatabase(catalog.GetAttached(), type);
-}
 
 }  // namespace
 

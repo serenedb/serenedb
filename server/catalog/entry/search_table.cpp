@@ -238,7 +238,7 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
 bool SearchTableEntry::ScanColumnSegmentInfo(
   const duckdb::QueryContext&, duckdb::ColumnSegmentInfoScanState& state,
   duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
-  if (state.position++ != 0 || !_storage) {
+  if (state.position++ != 0) {
     return false;
   }
   auto reader = _storage->GetDirectoryReader();

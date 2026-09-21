@@ -55,7 +55,9 @@ void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
 
 // The synthetic rowid of a generated-PK relation, encoded exactly as `Create`
 // encodes the BIGINT column that materialises it.
-void AppendGenerated(std::string& key, uint64_t value);
+inline void AppendGenerated(std::string& key, uint64_t value) {
+  AppendSigned(key, static_cast<int64_t>(value));
+}
 
 // The leading bytes every row key of one source file shares.
 std::string PkFilePrefix(uint64_t file_id);

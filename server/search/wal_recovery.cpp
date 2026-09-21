@@ -73,11 +73,12 @@ void InitInvertedIndexes() {
         [&](duckdb::SchemaCatalogEntry& schema) {
           schema.Scan(
             duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-              auto* index = dynamic_cast<catalog::InvertedIndexEntry*>(&entry);
-              if (!index) {
+              if (!connector::IsInvertedIndex(
+                    entry.Cast<duckdb::IndexCatalogEntry>())) {
                 return;
               }
-              const auto& storage = index->Storage();
+              auto& index = entry.Cast<catalog::InvertedIndexEntry>();
+              const auto& storage = index.Storage();
               if (!storage) {
                 return;
               }
@@ -85,7 +86,7 @@ void InitInvertedIndexes() {
               storage->StartTasks();
               auto relation =
                 schema.GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
-                                index->GetTableName());
+                                index.GetTableName());
               const bool table_backed =
                 relation &&
                 relation->type == duckdb::CatalogType::TABLE_ENTRY &&

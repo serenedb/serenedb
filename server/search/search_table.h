@@ -184,8 +184,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   void VacuumRefresh();
   void VacuumCompact();
 
-  [[nodiscard]] unsigned RegisterWriter();
-  void DeregisterWriter(unsigned slot) noexcept;
+  [[nodiscard]] unsigned RegisterWriter() { return _writers.Register(); }
+  void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
   class [[nodiscard]] BuildClaim {

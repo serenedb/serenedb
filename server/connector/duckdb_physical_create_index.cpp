@@ -406,12 +406,10 @@ void AdvanceUncommittedMin(CreateIndexGlobalState& gstate, size_t slot,
 duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBPhysicalCreateIndex::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
-  auto* gstate_ptr =
-    sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->index_storage) {
+  auto& gstate = sink_state->Cast<CreateIndexGlobalState>();
+  if (!gstate.index_storage) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
-  auto& gstate = *gstate_ptr;
 
   auto& inverted_storage = *gstate.index_storage;
 
@@ -447,9 +445,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   auto* lstate = &input.local_state.Cast<CreateIndexLocalState>();
-  if (!lstate->writer) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
   auto* writer = lstate->writer.get();
 
   if (gstate.backfill_rowid_end != std::numeric_limits<int64_t>::max()) {
@@ -600,25 +595,24 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
-  if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
-    lstate->writer.reset();
-    // Flush this thread's tail segment here (in parallel Combines) rather than
-    // leaving it for the single-threaded Finalize refresh to write.
-    bool committed = false;
-    if (lstate->search_trx) {
-      auto& trx = *lstate->search_trx;
-      trx.RegisterFlush();
-      committed = trx.FlushAndCommit(
-        search::TickDomain::Instance().Next(trx.GetQueries() + 1));
-    }
-    lstate->search_trx.reset();
-    if (committed) {
-      // The final commit went through: nothing pending here anymore, drop
-      // out of the begin computation.
-      AdvanceUncommittedMin(input.global_state.Cast<CreateIndexGlobalState>(),
-                            lstate->uncommitted_min_slot,
-                            std::numeric_limits<int64_t>::max());
-    }
+  auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
+  if (!gstate.index_storage) {
+    return duckdb::SinkCombineResultType::FINISHED;
+  }
+  auto& lstate = input.local_state.Cast<CreateIndexLocalState>();
+  lstate.writer.reset();
+  // Flush this thread's tail segment here (in parallel Combines) rather than
+  // leaving it for the single-threaded Finalize refresh to write.
+  auto& trx = *lstate.search_trx;
+  trx.RegisterFlush();
+  const bool committed = trx.FlushAndCommit(
+    search::TickDomain::Instance().Next(trx.GetQueries() + 1));
+  lstate.search_trx.reset();
+  if (committed) {
+    // The final commit went through: nothing pending here anymore, drop
+    // out of the begin computation.
+    AdvanceUncommittedMin(gstate, lstate.uncommitted_min_slot,
+                          std::numeric_limits<int64_t>::max());
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -704,9 +698,9 @@ duckdb::SourceResultType SereneDBPhysicalCreateIndex::GetDataInternal(
 duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
-  auto* sdb_catalog =
-    dynamic_cast<catalog::SereneDBCatalog*>(&op.table.ParentCatalog());
-  if (!sdb_catalog) {
+  auto& table_catalog = op.table.ParentCatalog();
+  if (table_catalog.GetCatalogType() !=
+      catalog::SereneDBCatalog::kStorageType) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot CREATE INDEX on ",
@@ -719,7 +713,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   }
   auto& schema_entry =
     op.table.ParentSchema(input.context).Cast<duckdb::DuckSchemaEntry>();
-  auto database_id = sdb_catalog->GetOid();
+  auto database_id = table_catalog.Cast<catalog::SereneDBCatalog>().GetOid();
 
   duckdb::optional_ptr<duckdb::CatalogEntry> relation;
   std::vector<IndexRelationColumn> columns;

@@ -48,14 +48,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     if (!info || !info->store_values) {
       return nullptr;
     }
-  } else if (bind.relation.IsSearchTable()) {
-    if (col_id > kMaxRealColumnIdValue) {
-      return nullptr;
-    }
-  } else {
-    return nullptr;
-  }
-  if (!bind.search.snapshot) {
+  } else if (col_id > kMaxRealColumnIdValue) {
     return nullptr;
   }
   const auto* stats = bind.search.snapshot->reader.GetColumnStats(col_id);

@@ -52,7 +52,7 @@ struct SearchShardWrites {
 // commit logic.
 class SearchTableTransaction {
  public:
-  ~SearchTableTransaction();
+  ~SearchTableTransaction() { ReleaseWriters(); }
 
   // Registers this transaction as a writer of `shard`, once, before anything
   // reads the shard's index config -- so a rebuild that publishes a config can

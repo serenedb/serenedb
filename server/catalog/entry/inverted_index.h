@@ -177,6 +177,13 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   std::optional<ScorerOptions> top_k_scorer;
 };
 
+inline const duckdb::Value* FindOption(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& with,
+  std::string_view name) {
+  const auto it = with.find(name);
+  return it != with.end() ? &it->second : nullptr;
+}
+
 std::optional<ScorerOptions> TopKScorer(
   duckdb::ClientContext& context,
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
@@ -211,35 +218,35 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
     _config = std::move(config);
   }
 
-  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override {
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final {
     return duckdb::IndexCatalogEntry::GetInfo()->ToString();
   }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
 
   using duckdb::DuckIndexEntry::AlterEntry;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
-    duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) override;
+    duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) final;
 
   // A view-backed index has no DataTableInfo to read the relation's name off,
   // and the base would dereference it. The name it was created against is the
   // answer, and it is the only one available.
-  duckdb::Identifier GetTableName() const override;
+  duckdb::Identifier GetTableName() const final;
 
-  duckdb::Identifier GetSchemaName() const override {
+  duckdb::Identifier GetSchemaName() const final {
     return ParentSchemaName();
   }
 
-  void Rollback(duckdb::CatalogEntry& prev_entry) override;
+  void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
-  void OnDrop() override;
+  void OnDrop() final;
 
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
     duckdb::ColumnSegmentInfoScanState& state,
-    duckdb::vector<duckdb::ColumnSegmentInfo>& result) const override;
+    duckdb::vector<duckdb::ColumnSegmentInfo>& result) const final;
 
   // Handed over once the storage is opened, which happens after the entry is
   // created. Every later version of the entry inherits it through Copy.

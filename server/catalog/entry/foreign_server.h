@@ -44,12 +44,12 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   const ServerOptions& Options() const noexcept { return _options; }
 
   void Attach(duckdb::ClientContext& context) const;
-  void OnDrop() override;
+  void OnDrop() final;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
-    duckdb::ClientContext& context) const override;
-  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override { return GetInfo()->ToString(); }
+    duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
   std::string _server_type;

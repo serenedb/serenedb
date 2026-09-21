@@ -162,10 +162,6 @@ TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
     TsDictRequest{.field_id = field_id, .display_id = field_id});
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> ScanBindData::Copy() const {
-  return duckdb::make_uniq<ScanBindData>(*this);
-}
-
 bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<ScanBindData>();
   if (view.has_value() != o.view.has_value()) {
@@ -220,17 +216,15 @@ duckdb::LogicalType ScanBindData::ColumnTypeById(ColumnId col_id) const {
 
 std::string ScanBindData::DisplayColumnName(ColumnId col_id) const {
   auto name = ColumnNameById(col_id);
-  if (name.empty() && relation.inverted_config) {
+  if (name.empty()) {
     name = ColumnNameById(relation.inverted_config->ColumnOf(col_id));
   }
   if (!name.empty()) {
     return std::string{name};
   }
-  if (relation.inverted_config) {
-    auto expr = relation.inverted_config->ExpressionText(col_id);
-    if (!expr.empty()) {
-      return expr;
-    }
+  if (auto expr = relation.inverted_config->ExpressionText(col_id);
+      !expr.empty()) {
+    return expr;
   }
   return absl::StrCat("col", col_id);
 }
@@ -267,7 +261,7 @@ void ScanBindData::IterateColumns(const ColumnVisitor& cb) const {
 }
 
 bool ScanBindData::IsHnswScored() const noexcept {
-  if (!score.vector || !relation.inverted_config) {
+  if (!score.vector) {
     return false;
   }
   const auto info =
@@ -275,12 +269,8 @@ bool ScanBindData::IsHnswScored() const noexcept {
   return info && info->kind == irs::AnnKind::Hnsw;
 }
 
-duckdb::idx_t ScanBindData::RelationId() const {
-  return view ? view->id : relation.table_entry->oid;
-}
-
 std::string_view ScanBindData::RelationName() const {
-  if (relation.IsInvertedIndex() && relation.inverted_index) {
+  if (relation.IsInvertedIndex()) {
     return relation.inverted_index->name.GetIdentifierName();
   }
   return view ? std::string_view{view->name}
@@ -377,19 +367,13 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
-  if (bind.view && bind.relation.inverted_config &&
+  if (bind.view &&
       bind.relation.inverted_config->pk.column == PkColumnKind::Has) {
     if (const auto& fp = bind.view->fast_path) {
       return fp->pk_spec;
     }
   }
   return std::nullopt;
-}
-
-const irs::Scorer* ResolvePruneScorer(
-  const std::optional<catalog::ScorerOptions>& topk,
-  const irs::Scorer* scorer) {
-  return topk && scorer && scorer->Compatible(*topk) ? scorer : nullptr;
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,

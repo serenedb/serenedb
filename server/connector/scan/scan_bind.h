@@ -52,7 +52,6 @@ namespace sdb::connector {
 struct OffsetsBindData;
 
 enum class ScanEntryKind : uint8_t {
-  BaseTable,
   InvertedIndex,
   SearchTable,
   SearchTableIndex,
@@ -154,20 +153,14 @@ struct RelationSpec {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   duckdb::optional_ptr<const catalog::InvertedIndexEntry> inverted_index;
   std::shared_ptr<const catalog::InvertedIndexConfig> inverted_config;
-  ScanEntryKind kind = ScanEntryKind::BaseTable;
+  ScanEntryKind kind = ScanEntryKind::InvertedIndex;
   uint32_t row_group_size = 0;
 
   bool IsInvertedIndex() const noexcept {
-    return kind == ScanEntryKind::InvertedIndex ||
-           kind == ScanEntryKind::SearchTableIndex;
+    return kind != ScanEntryKind::SearchTable;
   }
   bool IsSearchTable() const noexcept {
-    return kind == ScanEntryKind::SearchTable ||
-           kind == ScanEntryKind::SearchTableIndex;
-  }
-  bool IsIndexRelation() const noexcept {
-    return kind == ScanEntryKind::InvertedIndex ||
-           kind == ScanEntryKind::SearchTableIndex;
+    return kind != ScanEntryKind::InvertedIndex;
   }
   const catalog::InvertedIndexConfig& ScannedIndex() const noexcept {
     SDB_ASSERT(inverted_config);
@@ -192,7 +185,9 @@ struct ScanBindData final : duckdb::FunctionData {
   LookupSpec lookup;
   std::optional<ViewSpec> view;
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<ScanBindData>(*this);
+  }
   bool Equals(const duckdb::FunctionData& other) const final;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
@@ -212,7 +207,9 @@ struct ScanBindData final : duckdb::FunctionData {
 
   bool IsHnswScored() const noexcept;
 
-  duckdb::idx_t RelationId() const;
+  duckdb::idx_t RelationId() const {
+    return view ? view->id : relation.table_entry->oid;
+  }
   std::string_view RelationName() const;
   duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(
     duckdb::ClientContext& context) const;
@@ -227,7 +224,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   duckdb::vector<duckdb::string>& names);
 
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
-  return get.bind_data && get.function.bind == &ScanBind;
+  return get.function.bind == &ScanBind;
 }
 
 duckdb::TableFunction BindSearchTableScan(
@@ -238,7 +235,10 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
-const irs::Scorer* ResolvePruneScorer(
-  const std::optional<catalog::ScorerOptions>& topk, const irs::Scorer* scorer);
+inline const irs::Scorer* ResolvePruneScorer(
+  const std::optional<catalog::ScorerOptions>& topk,
+  const irs::Scorer* scorer) {
+  return topk && scorer && scorer->Compatible(*topk) ? scorer : nullptr;
+}
 
 }  // namespace sdb::connector

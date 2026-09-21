@@ -64,10 +64,6 @@ SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
   gInstance = this;
 }
 
-SearchEngine::~SearchEngine() { gInstance = nullptr; }
-
-SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
-
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   // The background pool is max(logical/4, 2) threads (--background_threads,
   // resolved at startup). Merges may use all but one of them -- refresh,
@@ -79,19 +75,6 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
   return std::max<uint32_t>(
     1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
-}
-
-uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
-  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
-                              1, 16);
-}
-
-uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
-  return GetSearchEngine().AcquireAnnWorkers(want);
-}
-
-void AnnReleaseWorkers(uint32_t n) noexcept {
-  GetSearchEngine().ReleaseAnnWorkers(n);
 }
 
 const irs::AnnBuildEnv& AnnBuildEnv() {

@@ -88,13 +88,6 @@ std::optional<persistence::InvertedIndexData> Unpack(
   return data;
 }
 
-const duckdb::Value* FindOption(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& with,
-  std::string_view name) {
-  auto it = with.find(name);
-  return it != with.end() ? &it->second : nullptr;
-}
-
 std::string TopKScorerOption(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   const auto* value = FindOption(options, kTopKScorerOption);
@@ -134,13 +127,13 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   config->keys.reserve(data.keys.size());
   for (auto& record : data.keys) {
     const auto slot = config->keys.size();
+    const bool has_expression = !record.normalized_expression.empty();
     config->keys.push_back({
       .field_id = record.field_id,
       .column_id = record.column_id,
       .type = std::move(record.type),
       .normalized_expression = std::move(record.normalized_expression),
-      .expression_text = !record.normalized_expression.empty() &&
-                             slot < parsed_expressions.size()
+      .expression_text = has_expression && slot < parsed_expressions.size()
                            ? parsed_expressions[slot]->ToString()
                            : std::string{},
     });
@@ -591,9 +584,6 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
     return false;
   }
   const auto snapshot = _storage->GetInvertedIndexSnapshot();
-  if (!snapshot || !snapshot->reader) {
-    return false;
-  }
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID

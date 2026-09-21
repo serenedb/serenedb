@@ -95,6 +95,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.search.snapshot->reader;
   state->total_segments = ss.search.snapshot->reader.size();
+  state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);

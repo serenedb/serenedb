@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
@@ -34,6 +36,8 @@
 #include <ranges>
 
 #include "catalog/entry/duckdb_table_entry.h"
+#include "connector/optimizer/iresearch_plan.h"
+#include "connector/search_filter_builder.hpp"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -339,6 +343,55 @@ const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,
   const irs::Scorer* scorer) {
   return topk && scorer && scorer->Compatible(*topk) ? scorer : nullptr;
+}
+
+std::shared_ptr<const irs::Filter> BuildDeferredFilter(
+  duckdb::ClientContext& context, const ScanBindData& scan) {
+  SDB_ASSERT(scan.plan_cache.deferred);
+  const auto& claim = *scan.plan_cache.deferred;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  conjuncts.reserve(claim.conjuncts.size());
+  for (const auto& e : claim.conjuncts) {
+    conjuncts.push_back(optimizer::NormalizeClaimShape(
+      context,
+      optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true)));
+  }
+  const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
+    -> std::optional<SearchColumnInfo> {
+    const auto it = claim.columns->find(
+      {ref.Binding().table_index.index, ref.Binding().column_index.GetIndex()});
+    if (it == claim.columns->end()) {
+      return std::nullopt;
+    }
+    return optimizer::ResolveSearchColumnById(context, scan, it->second.column,
+                                              it->second.column_stored);
+  };
+  const ExpressionGetter expr_getter =
+    [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
+    return std::nullopt;
+  };
+  auto root = std::make_unique<irs::BooleanFilter>();
+  FilterScorers scorers;
+  const auto status =
+    MakeSearchFilter(*root, conjuncts, getter, context, expr_getter, &scorers);
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("cannot build the search filter from the "
+                            "statement's parameters: ",
+                            status.message()));
+  }
+  irs::Filter::ptr filter = std::move(root);
+  EnsureIncludeSides(*filter);
+  irs::OptimizeContext ctx;
+  ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
+                             claim.analyzed_fields.end());
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  for (const auto& [marker, field] : claim.null_markers) {
+    null_markers[marker] = field;
+  }
+  ctx.null_markers = &null_markers;
+  irs::Optimize(filter, ctx);
+  return std::shared_ptr<const irs::Filter>{std::move(filter)};
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,

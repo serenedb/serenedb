@@ -212,6 +212,9 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
+  // The claimed WHERE rebuilt from this execution's parameters, when the plan
+  // deferred it; `owned_filter` wraps it and `filter` points into that.
+  std::shared_ptr<const irs::Filter> owned_where;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;

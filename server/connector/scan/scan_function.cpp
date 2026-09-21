@@ -200,6 +200,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "fast-path source (read_parquet/csv/json/...)"));
     }
   }
+  // The claimed WHERE, rebuilt with this execution's parameter values where
+  // the plan deferred it; otherwise the one the plan built.
+  std::shared_ptr<const irs::Filter> where = ss.search.filter;
+  if (ss.plan_cache.deferred) {
+    state->owned_where = BuildDeferredFilter(context, ss);
+    where = state->owned_where;
+  }
   if (ss.score.vector) {
     state->owned_vector_scorer = *ss.score.vector;
     auto& vs = *state->owned_vector_scorer;
@@ -241,12 +248,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       }
     }
     state->vector_scorer = &vs;
-    state->owned_filter =
-      MakeVectorFilter(vs, ss.search.filter, vs.EffectiveRadius());
+    state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
-    state->filter =
-      ss.search.filter ? ss.search.filter.get() : &MatchAllFilter();
+    state->filter = where ? where.get() : &MatchAllFilter();
   }
   state->queries.resize(state->total_segments);
 

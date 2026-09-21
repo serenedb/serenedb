@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -343,6 +344,15 @@ const irs::Scorer* ResolvePruneScorer(
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
+  if (vs.exact && vs.radius == std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByVectorExact>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
+    o->query = vs.query_vector;
+    o->metric = vs.metric;
+    o->inner = std::move(inner);
+    return f;
+  }
   if (vs.radius != std::numeric_limits<float>::max()) {
     auto f = std::make_unique<irs::ByRadius>();
     *f->mutable_field_id() = vs.field_id;
@@ -369,6 +379,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;
+  o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->inner = std::move(inner);
   return f;
 }

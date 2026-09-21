@@ -26,22 +26,16 @@ EXPLAIN SELECT pk FROM ax_idx
   ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 ASC                       │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ax_idx                          │
-│ Lookup: table                          │
-│ Score: l2_distance(emb, FLOAT[8])      │
-│ Exact:                                 │
-│ brute force over the stored vectors    │
-│ Top: 3                                 │
-│ Projections: pk,                       │
-│              sdb_inverted_index_score  │
-│ ~3,000 rows                            │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: ax_idx                       │
+│ Lookup: table                       │
+│ Score: l2_distance(emb, FLOAT[8])   │
+│ Exact:                              │
+│ brute force over the stored vectors │
+│ Top: 3                              │
+│ Projections: pk                     │
+│ ~3,000 rows                         │
+╰─────────────────────────────────────╯
 
 # Exact and brute force agree row for row.
 query

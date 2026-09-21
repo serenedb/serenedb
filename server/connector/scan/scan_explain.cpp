@@ -403,6 +403,9 @@ void ScanBindData::AppendSummary(
     }
     out.insert("Score", absl::StrCat(VectorMetricFunctionName(vector->metric),
                                      "(", fname, ", ", ctype.ToString(), ")"));
+    if (vector->exact) {
+      out.insert("Exact", "brute force over the stored vectors");
+    }
   }
   std::unique_ptr<irs::Scorer> query_scorer;
   if (score.text) {

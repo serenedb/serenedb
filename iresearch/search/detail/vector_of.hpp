@@ -143,8 +143,20 @@ class RawVectorReader {
         size_t got = 0;
         const auto* base = ReadSome(docs[i], run, got);
         SDB_ASSERT(got != 0 && got <= run);
+        // The rows are contiguous and each is several cache lines, so the
+        // hardware prefetcher has to recognise the stream afresh every row it
+        // strides over. Ninety-six threads streaming at once leave it little
+        // room; naming the next row keeps the scan ahead of its own reads.
+        const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+        constexpr size_t kAhead = 2;
         for (size_t k = 0; k < got; ++k) {
-          out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+          if (k + kAhead < got) {
+            const auto* ahead = base + (k + kAhead) * stride;
+            for (size_t off = 0; off < stride; off += 64) {
+              __builtin_prefetch(ahead + off, 0, 3);
+            }
+          }
+          out[i + k] = _dist(q, base + k * stride, d);
         }
         i += got;
         run -= got;

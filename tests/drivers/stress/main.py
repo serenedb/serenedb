@@ -105,6 +105,7 @@ def main(argv=None):
     ap.add_argument("--slow-windows", type=int, dest="slow_windows")
     ap.add_argument("--graceful-restarts", type=int, dest="graceful_restarts")
     ap.add_argument("--keep-datadir", action="store_true")
+    ap.add_argument("--keep-going", action="store_true")
     args = ap.parse_args(argv)
 
     profile = config.resolve(args.profile, scenario=args.scenario,
@@ -194,8 +195,10 @@ def main(argv=None):
         rest_fixture = IcebergRestFixture()
         try:
             rest_env = rest_fixture.start() if backend == "local" else {}
-            workload = workload_mod.Workload(dsn, run_tag, profile.dim, profile.seed_docs,
-                                             profile.docs_cap, backend, rest_env)
+            workload = workload_mod.Workload(
+                dsn, run_tag, profile.dim, profile.seed_docs, profile.docs_cap, backend,
+                rest_env, compaction_interval=(profile.compaction_interval
+                                               if profile.compaction_interval >= 0 else None))
             workload.setup()
         except Exception as exc:
             print(f"[stress] workload setup failed: {exc}", file=sys.stderr)
@@ -226,7 +229,11 @@ def main(argv=None):
                 return [{"kind": "workload_quiesce_never_converged", "key": None,
                          "detail": f"{label}: workers still in flight: {stuck}",
                          "candidates": None, "observed": None}]
-            return workload.check(label)
+            started = time.monotonic()
+            found = workload.check(label)
+            print(f"[stress] workload check {label}: {'ok' if not found else f'{len(found)} finding(s)'} "
+                  f"in {time.monotonic() - started:.0f}s, {workload.summary}")
+            return found
         finally:
             quiesce.resume(pause_event)
 
@@ -351,7 +358,7 @@ def main(argv=None):
                 with findings_lock:
                     findings.extend(new)
                 next_quiesce = time.monotonic() + profile.quiesce_every
-                if new:
+                if new and not args.keep_going:
                     break
     finally:
         stop_event.set()
@@ -504,7 +511,11 @@ def main(argv=None):
         print(f"[stress] workload {workload.summary}")
     server.stop(keep_datadir=True)
     if rest_fixture is not None:
-        rest_fixture.stop()
+        if final_findings and rest_fixture.env.get("ICEBERG_REST_URL"):
+            print(f"[stress] fixture kept for inspection: {rest_fixture.env} "
+                  f"(containers {rest_fixture.minio}, {rest_fixture.rest})")
+        else:
+            rest_fixture.stop()
     shutil.rmtree(attach_root, ignore_errors=True)
 
     if final_findings or verdict != ALIVE:

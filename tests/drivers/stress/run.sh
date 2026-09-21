@@ -29,7 +29,7 @@ usage() {
 	cat <<-EOF
 		Usage: $0 [OPTIONS]
 
-		  --profile NAME     smoke | soak | soak-tsan | wedge-probe | goshan-smoke (default ${SDB_STRESS_PROFILE})
+		  --profile NAME     smoke | soak | soak-tsan | wedge-probe | biglake-reindex-smoke (default ${SDB_STRESS_PROFILE})
 		  --scenario NAME    ddl_churn | ddl_dml_race | dependency_churn |
 		                     serial_churn | tables_only
 		  --seconds N        override the profile duration

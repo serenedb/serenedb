@@ -30,16 +30,30 @@ class Profile:
     dim: int = 3072
     seed_docs: int = 500
     docs_cap: int = 20000
+    compaction_interval: int = -1
 
 
 PROFILES = {
     "smoke": Profile(
         name="smoke", seconds=45, workers=4, quiesce_every=15.0,
     ),
-    "goshan-smoke": Profile(
-        name="goshan-smoke", seconds=480, workers=3, scenario="biglake_goshan_dr",
-        quiesce_every=60.0, op_deadline_s=120.0, probe_timeout_s=30.0,
-        faults_enabled=True, data_domain_crashes=2, graceful_restarts=2,
+    "biglake-reindex-smoke": Profile(
+        name="biglake-reindex-smoke", seconds=480, workers=3,
+        scenario="biglake_reindex", quiesce_every=60.0, op_deadline_s=120.0,
+        probe_timeout_s=30.0, faults_enabled=True, data_domain_crashes=2,
+        graceful_restarts=2,
+    ),
+    "biglake-reindex-soak": Profile(
+        name="biglake-reindex-soak", seconds=7200, workers=5,
+        scenario="biglake_reindex", quiesce_every=300.0, op_deadline_s=300.0,
+        probe_timeout_s=30.0, faults_enabled=True, data_domain_crashes=6,
+        graceful_restarts=6, seed_docs=2000, docs_cap=50000,
+    ),
+    "biglake-reindex-soak-nocompact": Profile(
+        name="biglake-reindex-soak-nocompact", seconds=7200, workers=5,
+        scenario="biglake_reindex", quiesce_every=300.0, op_deadline_s=300.0,
+        probe_timeout_s=30.0, faults_enabled=True, data_domain_crashes=6,
+        graceful_restarts=6, seed_docs=2000, docs_cap=50000, compaction_interval=0,
     ),
     "soak": Profile(
         name="soak", seconds=900, workers=8, quiesce_every=60.0,
@@ -129,7 +143,7 @@ def iceberg_fixtures(repo):
 
 
 SCENARIOS_NEEDING_ICEBERG = frozenset({"iceberg_views"})
-SCENARIOS_NEEDING_ICEBERG_REST = frozenset({"biglake_goshan_dr"})
+SCENARIOS_NEEDING_ICEBERG_REST = frozenset({"biglake_reindex"})
 
 
 def resolve(name, **overrides):

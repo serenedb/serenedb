@@ -40,6 +40,7 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/root.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -52,6 +53,13 @@
 
 namespace bench {
 namespace {
+
+irs::QueryBuilder::ptr PrepareMasked(const irs::Filter& filter,
+                                     const irs::SubReader& segment,
+                                     const irs::PrepareContext& ctx) {
+  return irs::WithDocsMask(filter.PrepareSegment(segment, ctx), segment,
+                           ctx.memory, ctx.collector, ctx.needs_terms);
+}
 
 template<typename T>
 size_t HashBatch(size_t hash, const T* data, size_t size) {
@@ -171,7 +179,8 @@ size_t Executor::ExecuteCount(std::string_view query) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    const irs::PrepareContext ctx{};
+    queries.emplace_back(PrepareMasked(*filter, segment, ctx));
   }
 
   size_t count = 0;
@@ -199,7 +208,8 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    const irs::PrepareContext ctx{};
+    queries.emplace_back(PrepareMasked(*filter, segment, ctx));
   }
 
   EmitResult result;
@@ -246,8 +256,8 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.Get()}));
+    const irs::PrepareContext ctx{.collector = collector.Get()};
+    queries.emplace_back(PrepareMasked(*filter, segment, ctx));
   }
   collector.Finish();
 

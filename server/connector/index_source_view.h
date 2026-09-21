@@ -80,12 +80,7 @@ class ViewIndexSourceBase : public irs::IndexSource {
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
-  // Reorder the doc-id-keyed output columns (every slot the lookup did not
-  // write) into survivor order, matching the compact lookup emit.
-  // `survivor_idx` maps each output row to the requested-pk index it came from
-  // (always set).
-  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count,
-                              const duckdb::idx_t* survivor_idx);
+  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count);
 
   ViewFastPath _fast_path;
   std::vector<duckdb::idx_t> _real_proj_slots;
@@ -104,8 +99,6 @@ class ViewIndexSourceBase : public irs::IndexSource {
   // batch, so neither is rebuilt per batch.
   std::vector<duckdb::idx_t> _non_lookup_slots;
   duckdb::SelectionVector _gather_sel;
-  // Filled by a filtered/compacted lookup: dense survivor row -> sorted-pk
-  // index (feeds GatherNonLookupColumns). Empty when the lookup kept every pk.
   std::vector<duckdb::idx_t> _survivor_idx;
 };
 

@@ -1,0 +1,78 @@
+control substitution on
+
+statement ok
+DETACH DATABASE IF EXISTS db_tko;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/db_tko.duckdb' AS db_tko;
+
+
+statement ok
+CREATE TABLE db_tko.main.pts(id INTEGER, emb FLOAT[3], label VARCHAR);
+
+
+statement ok
+INSERT INTO db_tko.main.pts VALUES
+  (1, [1, 0, 0]::FLOAT[3], 'a'),
+  (2, [2, 0, 0]::FLOAT[3], 'b'),
+  (3, [3, 0, 0]::FLOAT[3], 'c'),
+  (4, [4, 0, 0]::FLOAT[3], 'd'),
+  (5, [5, 0, 0]::FLOAT[3], 'e');
+
+
+statement ok
+CREATE VIEW v_tko AS SELECT * FROM db_tko.main.pts ORDER BY id DESC;
+
+
+statement ok
+CREATE INDEX v_tko_idx ON v_tko
+  USING inverted(emb hnsw (metric = 'l2', quant = 'none'));
+
+
+query
+SELECT id, label FROM v_tko_idx
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 4;
+----
+id	label
+1	a
+2	b
+3	c
+4	d
+
+
+query
+SELECT id FROM v_tko_idx
+  ORDER BY emb <-> [3.4, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+3
+4
+2
+
+
+query
+SELECT id FROM v_tko_idx
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2 OFFSET 1;
+----
+id
+2
+3
+
+
+query
+SELECT id, label FROM v_tko_idx WHERE label <> 'b'
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id	label
+1	a
+3	c
+4	d
+
+
+statement ok
+DROP VIEW v_tko CASCADE;
+
+
+statement ok
+DETACH db_tko;

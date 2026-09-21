@@ -1,0 +1,64 @@
+# force_checkpoint called as a function, pointed at a database by name.
+#
+# duckdb opens a transaction on a database the first time a statement touches
+# it, and DuckTransactionManager::Checkpoint(force) refuses when the caller
+# already holds one on the target. The statement form is qualified to the
+# system catalog and touches nothing else first, so FORCE CHECKPOINT works on
+# the current database; the function form works on any database the statement
+# has not touched, which is every database but the current one. duckdb v1.5.5
+# behaves the same way (CALL force_checkpoint('<current db>') refuses there too).
+
+
+statement ok
+CREATE DATABASE fcf_other;
+
+statement ok
+CREATE TABLE fcf_other.public.t(a INTEGER);
+
+statement ok
+INSERT INTO fcf_other.public.t VALUES (1), (2);
+
+
+query
+CALL force_checkpoint('fcf_other');
+----
+Success
+
+
+query
+SELECT * FROM force_checkpoint('fcf_other');
+----
+Success
+
+
+query
+SELECT force_checkpoint('fcf_other');
+----
+force_checkpoint
+
+
+statement ok
+FORCE CHECKPOINT;
+
+statement ok
+FORCE CHECKPOINT fcf_other;
+
+statement ok
+CHECKPOINT fcf_other;
+
+
+query
+SELECT count(*) FROM fcf_other.public.t;
+----
+count
+2
+
+
+statement error
+CALL force_checkpoint('fcf_missing');
+----
+db error: ERROR: Database "fcf_missing" not found
+
+
+statement ok
+DROP DATABASE fcf_other;

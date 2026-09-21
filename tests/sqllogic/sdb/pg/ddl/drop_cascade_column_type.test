@@ -270,20 +270,30 @@ statement ok
 DROP TYPE vedernikoff_iceberg_state CASCADE;
 
 
-# The table is a dependent of the type, so CASCADE takes the whole table with
-# every index on it.
+# CASCADE takes the column and the indexes covering it; the table and the
+# other indexes stay.
 query
 SELECT indexname FROM pg_indexes
   WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
 ----
 indexname
+ix_body
+vedernikoff_manifests_pkey
 
 
 query
 SELECT count(*) AS n FROM pg_tables WHERE tablename = 'vedernikoff_manifests';
 ----
 n
-0
+1
+
+
+statement error (?i)(column|referenced).*state.*
+SELECT state FROM vedernikoff_manifests;
+
+
+statement ok
+DROP TABLE vedernikoff_manifests;
 
 
 # --- Cross-schema variant: type in schema A, table in schema B, index in B.
@@ -303,8 +313,8 @@ CREATE TYPE vedernikoff_clickclack_types.priority AS ENUM ('low','high');
 statement ok
 CREATE TABLE vedernikoff_clickclack_data.jobs (
   id INT,
-  p vedernikoff_clickclack_types.priority,
-  label TEXT
+  label TEXT,
+  p vedernikoff_clickclack_types.priority
 );
 
 
@@ -345,6 +355,56 @@ SELECT indexname FROM pg_indexes
   WHERE schemaname = 'vedernikoff_clickclack_data' ORDER BY indexname;
 ----
 indexname
+ix_jobs_label
+
+
+# --- An index on a column after the dropped one is duckdb's storage limit: the
+# --- index would have to renumber its columns. The drop is refused whole.
+
+statement ok
+CREATE TYPE vedernikoff_clickclack_types.priority AS ENUM ('low','high');
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_data.later (
+  id INT,
+  p vedernikoff_clickclack_types.priority,
+  label TEXT
+);
+
+
+statement ok
+CREATE INDEX ix_later_label ON vedernikoff_clickclack_data.later(label);
+
+
+statement error
+DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
+----
+db error: ERROR: Cannot drop this column: an index depends on a column after it!
+
+
+query
+SELECT count(*) AS n FROM duckdb_types() WHERE schema_name = 'vedernikoff_clickclack_types' AND type_name = 'priority';
+----
+n
+1
+
+
+statement ok
+DROP INDEX vedernikoff_clickclack_data.ix_later_label;
+
+
+statement ok
+DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
+
+
+query
+SELECT column_name FROM information_schema.columns
+  WHERE table_schema = 'vedernikoff_clickclack_data' AND table_name = 'later' ORDER BY ordinal_position;
+----
+column_name
+id
+label
 
 
 statement ok

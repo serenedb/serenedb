@@ -36,6 +36,7 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
@@ -400,7 +401,8 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_SCHEMA: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr);
+        Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr,
+              SchemaOwner(create.info->Cast<duckdb::CreateSchemaInfo>()));
         if (_enforce) {
           RequireDatabasePrivilege(AclMode::Create);
         }
@@ -958,6 +960,13 @@ class Enforcer {
 
   void CheckAlter(const duckdb::AlterInfo& info) {
     const auto type = info.GetCatalogType();
+    if (type == CatalogType::SCHEMA_ENTRY) {
+      if (auto schema = SchemaOf(type, info.GetQualifiedName())) {
+        RequireOwner(*schema);
+        RequireDatabasePrivilege(AclMode::Create);
+      }
+      return;
+    }
     if (!IsSchemaScoped(type)) {
       return;
     }
@@ -1000,6 +1009,19 @@ class Enforcer {
 
   duckdb::idx_t GranteeId(const std::string& name) {
     return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+  }
+
+  duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {
+    if (info.authorization.empty()) {
+      return _caller;
+    }
+    const auto owner = RoleId(info.authorization.GetIdentifierName());
+    if (_enforce && owner != _caller && !_caller_closure.CanSet(owner)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("must be able to SET ROLE \"",
+                              info.authorization.GetIdentifierName(), "\""));
+    }
+    return owner;
   }
 
   duckdb::idx_t RoleSpecId(const std::string& name) {
@@ -1247,17 +1269,23 @@ class Enforcer {
 
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
-    info.permissions.owner = _caller;
+    Stamp(info, objtype, schema, _caller);
+  }
+
+  void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
+             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
+             duckdb::idx_t owner) {
+    info.permissions.owner = owner;
     duckdb::vector<duckdb::AclItem> acl;
     const auto apply = [&](const duckdb::Permissions& holder,
                            duckdb::idx_t scope) {
       for (const auto& defaults : holder.defaults) {
-        if (defaults.role != _caller || defaults.objtype != objtype ||
+        if (defaults.role != owner || defaults.objtype != objtype ||
             defaults.scope != scope) {
           continue;
         }
         if (acl.empty()) {
-          acl = duckdb::Permissions::AclDefault(objtype, _caller);
+          acl = duckdb::Permissions::AclDefault(objtype, owner);
         }
         for (const auto& item : defaults.acl) {
           MergeGrant(acl, item);

@@ -96,13 +96,21 @@ struct FlushedSegmentContext {
     const auto uncommitted_begin =
       static_cast<doc_id_t>(visible + doc_limits::min());
 
-    SDB_ASSERT(visible < end);
-    document_mask = flushed.docs_mask;
-    document_mask.Truncate(uncommitted_begin);
-    if (document_mask.Count() + uncommitted_count == docs_count) {
-      return true;
+    if (visible == end) {
+      flushed.docs_mask.Truncate(uncommitted_begin);
+      if (flushed.docs_mask.Count() + uncommitted_count == docs_count) {
+        return true;
+      }
+      document_mask = std::move(flushed.docs_mask);
+      index = std::move(flushed);
+    } else {
+      document_mask = flushed.docs_mask;
+      document_mask.Truncate(uncommitted_begin);
+      if (document_mask.Count() + uncommitted_count == docs_count) {
+        return true;
+      }
+      index = flushed;
     }
-    index = flushed;
     index.meta.uncommitted_begin = uncommitted_begin;
     return false;
   }
@@ -410,7 +418,7 @@ std::vector<std::string_view> GetFilesToSync(
   std::span<const IndexSegment> segments,
   std::span<const PartialSync> partial_sync, size_t partial_sync_threshold) {
   // TODO(gnusi): make format dependent?
-  static constexpr size_t kMaxFilesPerSegment = 14;
+  static constexpr size_t kMaxFilesPerSegment = 6;
 
   SDB_ASSERT(partial_sync_threshold <= segments.size());
   const size_t full_sync_count = segments.size() - partial_sync_threshold;

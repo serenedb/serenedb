@@ -396,12 +396,12 @@ void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
 void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   auto& t = g.topk;
   const auto& ss = g.Bind();
-  t.limit = *ss.score.top_k;
+  t.limit = *g.top_k;
   t.offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
   const auto* vs = g.vector_scorer;
   if (vs != nullptr && !vs->exact &&
       (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
-    const auto k = static_cast<double>(*ss.score.top_k);
+    const auto k = static_cast<double>(*g.top_k);
     // The search walks on quantized codes and this many of its candidates are
     // read back at full precision. Zero means the query answers from the
     // codes.
@@ -437,7 +437,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
     t.rerank_pool = pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
   }
   t.pool =
-    t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*ss.score.top_k);
+    t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
   t.hits.resize(size_t{g.workers} * t.pool);
   t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
   for (uint32_t w = 0; w < g.workers; ++w) {

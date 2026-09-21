@@ -79,6 +79,29 @@ void ClassifySegments(ScanGlobalState& g) {
   }
 }
 
+// The LIMIT of a parameterized statement, from the parameters bound to this
+// execution. A value the scan cannot use (NULL, negative, or wider than a
+// size_t) leaves the top-k unset: the scan then streams and the sort above it
+// trims, which is what the plan would do without the pushdown.
+std::optional<size_t> EvaluateTopK(duckdb::ClientContext& context,
+                                   const duckdb::Expression& expr) {
+  duckdb::Value folded;
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, folded) ||
+      folded.IsNull()) {
+    return std::nullopt;
+  }
+  duckdb::Value casted;
+  if (!folded.DefaultTryCastAs(duckdb::LogicalType::UBIGINT, casted, nullptr) ||
+      casted.IsNull()) {
+    return std::nullopt;
+  }
+  const auto k = casted.GetValue<uint64_t>();
+  if (k == 0 || k > std::numeric_limits<uint32_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(k);
+}
+
 // The query vector of a parameterized statement, from the parameters bound to
 // this execution. The expression is evaluated into a vector and cast in one
 // vectorised step, never through one duckdb::Value per dimension: at 1024
@@ -135,6 +158,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->reader = &ss.search.snapshot->reader;
   state->total_segments = ss.search.snapshot->reader.size();
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
+  state->top_k = ss.score.top_k;
+  if (!state->top_k && ss.score.top_k_expr) {
+    state->top_k = EvaluateTopK(context, *ss.score.top_k_expr);
+  }
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
@@ -220,7 +247,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     SDB_ENSURE(!vs.query_vector.empty(),
                "a vector search has a query vector to search for");
-    if (ss.score.top_k) {
+    if (state->top_k) {
       // The beam is the result ceiling, so it is at least k -- and at least
       // the rescore pool, which is the same thing said of the pool: a search
       // that returns a hundred cannot hand four hundred to the rescorer. This
@@ -240,7 +267,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         // candidates produced to answer with one thousand. This is a floor and
         // never a cap: a wider `ef_search` still wins, and a single-segment
         // index still gets the whole k.
-        const auto k = static_cast<double>(*ss.score.top_k);
+        const auto k = static_cast<double>(*state->top_k);
         const double share = SegmentBeamShare(k, state->total_segments);
         const double seg_pool =
           factor > 0.0 ? std::max(share, std::ceil(factor * share)) : 0.0;
@@ -435,8 +462,8 @@ void IResearchSetScanOrder(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->row_limit.IsValid() ||
-      !options->single_order_key) {
+  if (!bind_data || !options || !options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
   static constinit SettingRef gDisableTopK{"sdb_disable_top_k_optimization"};
@@ -462,21 +489,30 @@ void IResearchSetScanOrder(
     }
     return;
   }
-  if (bd.score.top_k) {
+  if (bd.score.top_k || bd.score.top_k_expr) {
     return;
   }
+  // A constant LIMIT is the top-k the plan carries; a parameterized one is
+  // kept as the expression the scan evaluates at execution.
+  const auto take_limit = [&] {
+    if (options->row_limit.IsValid()) {
+      bd.score.top_k = options->row_limit.GetIndex();
+    } else {
+      bd.score.top_k_expr = options->row_limit_expression;
+    }
+  };
   if (bd.score.text) {
     if (options->order_type != duckdb::OrderType::DESCENDING) {
       return;
     }
-    bd.score.top_k = options->row_limit.GetIndex();
+    take_limit();
     return;
   }
   if (bd.score.vector) {
     if (options->order_type != bd.score.vector->natural_order) {
       return;
     }
-    bd.score.top_k = options->row_limit.GetIndex();
+    take_limit();
   }
 }
 
@@ -484,7 +520,13 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
                           duckdb::FunctionData& bind_data, duckdb::idx_t limit,
                           duckdb::idx_t offset) {
   auto& bd = bind_data.Cast<ScanBindData>();
-  if (!bd.score.top_k || *bd.score.top_k != limit + offset) {
+  // A parameterized LIMIT is not a number here, so the offset cannot be
+  // checked against it; the scan applies both at execution.
+  if (bd.score.top_k_expr) {
+    if (offset != 0) {
+      return false;
+    }
+  } else if (!bd.score.top_k || *bd.score.top_k != limit + offset) {
     return false;
   }
   bd.score.top_offset = offset;

@@ -576,7 +576,7 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
     return ss.IsMatchAll() && g.col_filters.empty() ? ScanShape::CountFast
                                                     : ScanShape::Count;
   }
-  if (ss.score.top_k && (ss.score.text || ss.score.order) &&
+  if (g.top_k && (ss.score.text || ss.score.order) &&
       (!g.has_lookup_filter || ss.score.vector)) {
     return ScanShape::TopK;
   }

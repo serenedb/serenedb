@@ -414,9 +414,11 @@ void ScanBindData::AppendSummary(
       out.insert("Score", query_scorer->ToString());
     }
   }
-  if (score.top_k) {
-    std::string topk_val = absl::StrCat(
-      *score.top_k - (score.top_n_consumed ? score.top_offset : 0));
+  if (score.top_k || score.top_k_expr) {
+    std::string topk_val =
+      score.top_k ? absl::StrCat(*score.top_k -
+                                 (score.top_n_consumed ? score.top_offset : 0))
+                  : score.top_k_expr->ToString();
     if (score.top_n_consumed && score.top_offset != 0) {
       absl::StrAppend(&topk_val, ", offset ", score.top_offset);
     }
@@ -529,7 +531,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   }
   bind.AppendSummary(result);
   if (bind.score.static_floor > std::numeric_limits<float>::lowest() &&
-      (bind.score.top_k || bind.score.text)) {
+      (bind.score.top_k || bind.score.top_k_expr || bind.score.text)) {
     result.insert("Min Score", absl::StrCat(bind.score.static_floor));
   }
   if (count_only) {

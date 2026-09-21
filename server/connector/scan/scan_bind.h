@@ -64,6 +64,10 @@ struct SearchSpec {
 
 struct ScoreSpec {
   std::optional<catalog::ScorerOptions> text;
+  // A LIMIT that is a prepared-statement parameter is not a number at plan
+  // time. It is kept as the expression the scan evaluates at execution, so
+  // the top-k still runs inside the scan instead of a sort above it.
+  std::shared_ptr<const duckdb::Expression> top_k_expr;
   std::optional<VectorScorerOptions> vector;
   std::optional<catalog::ScorerOptions> prune;
   std::optional<duckdb::OrderType> order;

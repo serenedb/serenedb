@@ -172,14 +172,42 @@ bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
          g.lookup_projected_columns[col] == duckdb::DConstants::INVALID_INDEX;
 }
 
-void CopyFetched(const ScanGlobalState& g, const duckdb::DataChunk& from,
-                 duckdb::DataChunk& into, duckdb::idx_t count,
-                 duckdb::idx_t offset) {
+// Whether anything writes this slot of the batch. A projected column outside
+// the output set gets neither a columnstore projection nor a lookup entry
+// (ClassifyColumnstoreProjections drops it), so its vector is never touched.
+// The streaming shape hands such a slot straight to duckdb, which does not
+// read it; the top-k shape copies the batch twice on its way to the answer,
+// and an untouched vector is not something to copy.
+bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
+                    duckdb::idx_t col) noexcept {
+  if (col == g.score_output_idx || col == g.tableoid_output_idx) {
+    return true;
+  }
+  // ts_offsets() is written by WriteChunkOffsets, not from the columnstore.
+  if (absl::c_any_of(f.offsets_entries, [col](const auto& e) {
+        return e.output_idx == col;
+      })) {
+    return true;
+  }
+  return absl::c_any_of(g.cs_projections, [col](const auto& p) {
+    return p.output_slot == col;
+  });
+}
+
+void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
+                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
+                 duckdb::idx_t count, duckdb::idx_t offset) {
   for (duckdb::idx_t c = 0; c < from.ColumnCount(); ++c) {
-    if (FetchedColumn(g, c)) {
-      duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
-                                     offset);
+    if (!FetchedColumn(g, c)) {
+      continue;
     }
+    if (!ProducedColumn(g, f, c)) {
+      into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(into.data[c], true);
+      continue;
+    }
+    duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
+                                   offset);
   }
   into.SetChildCardinality(offset + count);
 }
@@ -194,7 +222,7 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return;
   }
   SDB_ASSERT(appended + count <= capacity);
-  CopyFetched(g, tmp, into, count, appended);
+  CopyFetched(g, l, tmp, into, count, appended);
   if (g.needs_lookup) {
     SDB_ASSERT(l.pk_column != nullptr);
     if (!pk) {
@@ -313,7 +341,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
       auto& fetched = *t.fetched[u];
       auto& pk = *t.fetched_pk[u];
       batch.Reset();
-      CopyFetched(g, fetched, batch, fu.count, 0);
+      CopyFetched(g, l, fetched, batch, fu.count, 0);
       const auto rows = l.index_source->Materialize(ctx, pk, fu.count, batch);
       g.metrics.rows_looked_up.fetch_add(fu.count, std::memory_order_relaxed);
       const auto survivors = l.index_source->Survivors();

@@ -29,6 +29,7 @@
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs {
@@ -126,11 +127,15 @@ HnswSearchScratch& ThreadScratch() {
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const DocumentMask* mask) {
+                                  const DocumentMask* mask, doc_id_t end) {
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
+    // A hit names a row the caller will read columns for, so a node outside
+    // the segment is a torn read rather than an answer.
+    SDB_ENSURE(doc >= doc_limits::min() && doc < end,
+               "an hnsw hit is outside its segment");
     if (mask != nullptr && mask->contains(doc)) {
       continue;
     }
@@ -867,7 +872,9 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
                                                _max_results, scratch);
                  });
                });
-  return CollectHits(scratch.nearest, _segment.docs_mask());
+  return CollectHits(
+    scratch.nearest, _segment.docs_mask(),
+    doc_limits::min() + static_cast<doc_id_t>(_segment.docs_count()));
 }
 
 }  // namespace irs

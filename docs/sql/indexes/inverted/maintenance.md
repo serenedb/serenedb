@@ -85,19 +85,23 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_disable_top_k_optimization` | `false` | When `true`, the optimizer does **not** pull `ORDER BY <scorer> DESC LIMIT k` into the index scan, so [WAND top-K pruning](./ranking.md#top-k-queries-and-wand-pruning) never engages. Useful to A/B the optimization or work around a plan regression. |
 | `sdb_scored_terms_limit` | `1024` | Maximum number of terms considered for scoring in multi-term filters. Higher values give more accurate IDF-style [scoring](./ranking.md) at the cost of memory and per-query work; `0` disables scored-term collection entirely. |
 | `sdb_levenshtein_max_terms` | `64` | Maximum number of dictionary terms a fuzzy predicate ([`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein)) expands to, per index segment. The terms closest to the query survive; the rest neither match nor contribute to scoring. Raise it for wide expansions, or set `0` to match every term within the edit distance. A predicate on a column that a `ts_dict_*` query enumerates is exempt, since there the terms are the result; other predicates in the same query keep the cap. |
-| `sdb_nprobe` | `8` | Number of IVF cluster lists scanned per [vector](./vector-search.md) kNN query (`ORDER BY <dist> LIMIT k`). Higher = better recall, slower queries. Does not affect range (`WHERE <dist> < r`) queries. |
-| `sdb_rerank_factor` | `4` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#quantization) index, the candidate pool re-scored with exact distances is `sdb_rerank_factor * k`. Higher = better recall, slower queries; `0` disables reranking. Ignored for unquantized indexes. |
+| `sdb_ivf_search_nprobe` | `8` | Number of IVF cluster lists scanned per [vector](./vector-search.md) kNN query (`ORDER BY <dist> LIMIT k`). Higher = better recall, slower queries. Does not affect range (`WHERE <dist> < r`) queries. |
+| `sdb_hnsw_ef_search` | `64` | Beam width for an [HNSW](./vector-search.md#hnsw) kNN query. Higher = better recall, slower queries. The beam is also the result ceiling, so it is floored at the share of the query's `LIMIT` one segment is expected to hold. |
+| `sdb_hnsw_filter_mode` | `auto` | How an [HNSW](./vector-search.md#filtered-search) index answers a kNN query with a `WHERE`: `auto` picks by the predicate's estimated selectivity, `scan` scores every admitted row, and `walk`, `prune`, `twohop` and `bridge` force a walk shape. For measurement — `auto` is the one to leave alone. |
+| `sdb_ann_oversample` | `-1` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#oversampling) index, `ceil(sdb_ann_oversample * k)` of each segment's candidates are re-read at full precision and re-ordered before segments are compared. `0` answers from the codes alone; `-1` lets the engine choose by code width. Ignored for unquantized indexes. |
+| `sdb_ann_exact` | `false` | Skip the ANN index and score every row from its stored vector — the exact answer, at the cost of a full scan. Useful to measure recall. |
 | `sdb_scan_split` | `auto` | When an index scan splits a segment into row-group units across worker threads. `tail` claims whole segments while more segments remain than workers, then row groups of the remaining ones; `always` claims row groups from the first unit; `never` claims whole segments only. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests: whole-segment units run with no per-unit overhead, row-group units keep every core busy on one large segment. |
 | `sdb_scan_order` | `auto` | The order an index scan claims its units in. `smallest_first` leaves the large segments for the row-group tail; `largest_first` is plain largest-job-first over whole segments (with `sdb_scan_split = never` this reproduces a scan without row-group units); `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `smallest_first` otherwise. |
 | `sdb_scan_no_split_row_groups` | `1` | A segment with at most this many row groups is always one unit of an index scan and is never split across workers. |
 
 ```sql
-SET sdb_nprobe = 32;             -- scan more clusters for this session
-SET sdb_rerank_factor = 8;       -- widen the exact-rerank pool for a quantized index
+SET sdb_ivf_search_nprobe = 32;  -- scan more IVF clusters for this session
+SET sdb_hnsw_ef_search = 256;    -- widen the HNSW beam
+SET sdb_ann_oversample = 2;      -- widen the exact-rescore pool for a quantized index
 SET sdb_scored_terms_limit = 4096;
 SET sdb_levenshtein_max_terms = 256; -- widen fuzzy expansion
 -- … run queries …
-RESET sdb_nprobe;                -- back to the default
+RESET sdb_ivf_search_nprobe;     -- back to the default
 ```
 
 ## Introspection

@@ -15,15 +15,17 @@ fi
 # If anything is missing, fall back to:
 #   1. a venv (if python3-venv is available), or
 #   2. a system-wide pip install with --break-system-packages (last resort).
-need_install=0
-for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto; do
-	if ! python3 -c "import $mod" 2>/dev/null; then
-		need_install=1
-		break
-	fi
-done
+missing_module() {
+	for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf; do
+		if ! python3 -c "import $mod" 2>/dev/null; then
+			echo "$mod"
+			return 0
+		fi
+	done
+	return 1
+}
 
-if [[ $need_install -eq 1 ]]; then
+if missing_module >/dev/null; then
 	VENV="${SCRIPT_DIR}/.venv"
 	if [[ ! -d "$VENV" ]] && python3 -m venv --help >/dev/null 2>&1; then
 		python3 -m venv --system-site-packages "$VENV" 2>/dev/null || true
@@ -40,9 +42,13 @@ if [[ $need_install -eq 1 ]]; then
 	fi
 	# Final fallback: install system-wide. The build image runs as root with
 	# a throwaway filesystem, so --break-system-packages is fine for CI.
-	if ! python3 -c "import pytest" 2>/dev/null; then
+	if mod=$(missing_module); then
+		echo "[python] $mod missing, installing requirements system-wide"
 		python3 -m pip install --quiet --break-system-packages \
 			-r "$SCRIPT_DIR/requirements.txt"
+	fi
+	if mod=$(missing_module); then
+		echo "[python] $mod still missing after install" >&2
 	fi
 fi
 

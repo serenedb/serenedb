@@ -29,9 +29,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <numeric>
 #include <random>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -64,31 +64,39 @@ constexpr doc_id_t kWindows =
   (kDocs + irs::detail::kWindowDocs - 1) / irs::detail::kWindowDocs;
 constexpr size_t kPaddedBits = size_t{kWindows} * irs::detail::kWindowDocs;
 
-std::vector<doc_id_t> MakeDeleted(int64_t per_mille, int64_t shape) {
+std::vector<doc_id_t> MakeDeletedAt(doc_id_t docs, int64_t per_mille,
+                                    int64_t shape) {
   const auto count = static_cast<size_t>(
-    uint64_t{kDocs} * static_cast<uint64_t>(per_mille) / 1000);
+    uint64_t{docs} * static_cast<uint64_t>(per_mille) / 1000);
+  const auto end = kBegin + docs;
   std::vector<doc_id_t> deleted;
   deleted.reserve(count);
-  std::mt19937 rng{42};
+
+  if (count == 0) {
+    return deleted;
+  }
 
   if (shape == kTail) {
-    for (auto doc = kEnd - static_cast<doc_id_t>(count); doc != kEnd; ++doc) {
+    for (auto doc = end - static_cast<doc_id_t>(count); doc != end; ++doc) {
       deleted.push_back(doc);
     }
     return deleted;
   }
 
+  std::mt19937_64 rng{42};
+  std::uniform_real_distribution<double> uni{0.0, 1.0};
+
   if (shape == kClustered) {
-    const auto slots = static_cast<size_t>(kDocs / kRunLength);
-    const auto runs = std::min(slots, (count + kRunLength - 1) / kRunLength);
-    std::vector<doc_id_t> all(slots);
-    std::iota(all.begin(), all.end(), doc_id_t{0});
-    std::vector<doc_id_t> picked;
-    picked.reserve(runs);
-    std::sample(all.begin(), all.end(), std::back_inserter(picked), runs, rng);
-    std::sort(picked.begin(), picked.end());
-    for (const auto slot : picked) {
-      const auto first = kBegin + slot * kRunLength;
+    const auto slots = static_cast<size_t>(docs / kRunLength);
+    auto remaining = std::min(slots, (count + kRunLength - 1) / kRunLength);
+    auto left = slots;
+    for (size_t slot = 0; slot != slots && remaining != 0; ++slot, --left) {
+      if (uni(rng) * static_cast<double>(left) >=
+          static_cast<double>(remaining)) {
+        continue;
+      }
+      --remaining;
+      const auto first = kBegin + static_cast<doc_id_t>(slot * kRunLength);
       for (doc_id_t i = 0; i != kRunLength && deleted.size() != count; ++i) {
         deleted.push_back(first + i);
       }
@@ -96,9 +104,14 @@ std::vector<doc_id_t> MakeDeleted(int64_t per_mille, int64_t shape) {
     return deleted;
   }
 
-  std::vector<doc_id_t> all(kDocs);
-  std::iota(all.begin(), all.end(), kBegin);
-  std::sample(all.begin(), all.end(), std::back_inserter(deleted), count, rng);
+  auto remaining = count;
+  auto left = static_cast<size_t>(docs);
+  for (auto doc = kBegin; remaining != 0; ++doc, --left) {
+    if (uni(rng) * static_cast<double>(left) < static_cast<double>(remaining)) {
+      deleted.push_back(doc);
+      --remaining;
+    }
+  }
   return deleted;
 }
 
@@ -108,7 +121,8 @@ const std::vector<doc_id_t>& Deleted(int64_t per_mille, int64_t shape) {
   if (const auto it = gCache.find(key); it != gCache.end()) {
     return it->second;
   }
-  return gCache.emplace(key, MakeDeleted(per_mille, shape)).first->second;
+  return gCache.emplace(key, MakeDeletedAt(kDocs, per_mille, shape))
+    .first->second;
 }
 
 const std::vector<doc_id_t>& Candidates(int64_t stride) {
@@ -124,9 +138,27 @@ const std::vector<doc_id_t>& Candidates(int64_t stride) {
   return gCache.emplace(stride, std::move(out)).first->second;
 }
 
-class RoaringMask {
+size_t HashSetBytes(size_t values) noexcept {
+  size_t capacity = 1;
+  while (capacity - 1 < (values * 8 + 6) / 7) {
+    capacity <<= 1;
+  }
+  return (capacity - 1) * (sizeof(doc_id_t) + 1) + 16;
+}
+
+size_t RoaringResidentBytes(const roaring::Roaring& set) noexcept {
+  roaring::api::roaring_statistics_t stats{};
+  roaring::api::roaring_bitmap_statistics(&set.roaring, &stats);
+  return sizeof(roaring::api::roaring_bitmap_t) +
+         size_t{stats.n_containers} *
+           (sizeof(void*) + sizeof(uint16_t) + sizeof(uint8_t)) +
+         stats.n_bytes_array_containers + stats.n_bytes_run_containers +
+         stats.n_bytes_bitset_containers;
+}
+
+class DocumentMaskArm {
  public:
-  explicit RoaringMask(std::span<const doc_id_t> deleted) {
+  explicit DocumentMaskArm(std::span<const doc_id_t> deleted) {
     irs::DocumentMask builder;
     builder.Add(deleted);
     builder.Trim();
@@ -313,6 +345,176 @@ class BitsetExactMask {
   irs::bitset _bits;
 };
 
+enum class RoaringSeek : uint8_t {
+  Search,
+  Hybrid,
+};
+
+template<RoaringSeek Policy, bool Optimize = true>
+class RoaringBitmapMask {
+ public:
+  explicit RoaringBitmapMask(std::span<const doc_id_t> deleted) {
+    _set.addMany(deleted.size(), deleted.data());
+    if constexpr (Optimize) {
+      _set.runOptimize();
+      _set.shrinkToFit();
+    }
+  }
+
+  class Cursor {
+   public:
+    explicit Cursor(const roaring::Roaring& set) noexcept {
+      roaring::api::roaring_iterator_init(&set.roaring, &_it);
+      _value = _it.has_value ? static_cast<doc_id_t>(_it.current_value)
+                             : irs::doc_limits::eof();
+    }
+
+    doc_id_t Probe(doc_id_t target) noexcept {
+#ifdef SDB_DEV
+      SDB_ASSERT(_prev <= target);
+      _prev = target;
+#endif
+      if (target <= _value) {
+        return _value;
+      }
+      SDB_ASSERT(_it.has_value);
+      if constexpr (Policy == RoaringSeek::Hybrid) {
+        if (target == _value + 1) {
+          return _value = Advance();
+        }
+      }
+      return _value = roaring::api::roaring_uint32_iterator_move_equalorlarger(
+                        &_it, target)
+                        ? static_cast<doc_id_t>(_it.current_value)
+                        : irs::doc_limits::eof();
+    }
+
+    doc_id_t FillOr(doc_id_t min, doc_id_t max,
+                    uint64_t* IRS_RESTRICT words) noexcept {
+      auto next = Probe(min);
+      while (next < max) {
+        const auto offset = static_cast<size_t>(next - min);
+        words[offset / kBits] |= uint64_t{1} << (offset % kBits);
+        next = _value = Advance();
+      }
+      return max;
+    }
+
+   private:
+    doc_id_t Advance() noexcept {
+      return roaring::api::roaring_uint32_iterator_advance(&_it)
+               ? static_cast<doc_id_t>(_it.current_value)
+               : irs::doc_limits::eof();
+    }
+
+    roaring::api::roaring_uint32_iterator_t _it{};
+    doc_id_t _value = irs::doc_limits::invalid();
+#ifdef SDB_DEV
+    doc_id_t _prev = irs::doc_limits::invalid();
+#endif
+  };
+
+  Cursor Probes() const noexcept { return Cursor{_set}; }
+  Cursor Fills() const noexcept { return Cursor{_set}; }
+
+  bool Test(doc_id_t doc) const noexcept { return _set.contains(doc); }
+
+  size_t Bytes() const noexcept { return RoaringResidentBytes(_set); }
+
+  const roaring::Roaring& Set() const noexcept { return _set; }
+
+ private:
+  roaring::Roaring _set;
+};
+
+using RoaringHybridMask = RoaringBitmapMask<RoaringSeek::Hybrid>;
+using RoaringSearchMask = RoaringBitmapMask<RoaringSeek::Search>;
+using RoaringPlainMask = RoaringBitmapMask<RoaringSeek::Hybrid, false>;
+
+class RoaringRangeFillMask {
+ public:
+  explicit RoaringRangeFillMask(std::span<const doc_id_t> deleted) {
+    _set.addMany(deleted.size(), deleted.data());
+    _set.runOptimize();
+    _set.shrinkToFit();
+  }
+
+  class Cursor {
+   public:
+    explicit Cursor(const roaring::Roaring& set) noexcept {
+      roaring::api::roaring_iterator_init(&set.roaring, &_it);
+    }
+
+    doc_id_t FillOr(doc_id_t min, doc_id_t max,
+                    uint64_t* IRS_RESTRICT words) noexcept {
+      for (;;) {
+        while (_at != _count) {
+          const auto range_min = static_cast<doc_id_t>(_buf[_at].min);
+          const auto range_max = static_cast<doc_id_t>(_buf[_at].max);
+          if (range_min >= max) {
+            return max;
+          }
+          const auto lo = std::max(range_min, min);
+          const auto hi = static_cast<doc_id_t>(
+            std::min<uint64_t>(uint64_t{range_max} + 1, max));
+          if (lo < hi) {
+            SetRange(words, lo, hi, min);
+          }
+          if (range_max >= max) {
+            return max;
+          }
+          ++_at;
+        }
+        if (_drained) {
+          return max;
+        }
+        _count =
+          roaring::api::roaring_uint32_iterator_read_ranges(&_it, _buf, kBatch);
+        _at = 0;
+        _drained = _count < kBatch;
+        if (_count == 0) {
+          return max;
+        }
+      }
+    }
+
+   private:
+    static constexpr size_t kBatch = 32;
+
+    static void SetRange(uint64_t* IRS_RESTRICT words, doc_id_t lo, doc_id_t hi,
+                         doc_id_t base) noexcept {
+      const auto first = static_cast<size_t>(lo - base);
+      const auto last = static_cast<size_t>(hi - base) - 1;
+      auto word = first / kBits;
+      const auto end_word = last / kBits;
+      const auto head = ~uint64_t{0} << (first % kBits);
+      const auto tail = ~uint64_t{0} >> (kBits - 1 - last % kBits);
+      if (word == end_word) {
+        words[word] |= head & tail;
+        return;
+      }
+      words[word] |= head;
+      for (++word; word != end_word; ++word) {
+        words[word] = ~uint64_t{0};
+      }
+      words[end_word] |= tail;
+    }
+
+    roaring::api::roaring_uint32_iterator_t _it{};
+    roaring::api::roaring_uint32_range_closed_t _buf[kBatch]{};
+    size_t _at = 0;
+    size_t _count = 0;
+    bool _drained = false;
+  };
+
+  Cursor Fills() const noexcept { return Cursor{_set}; }
+
+  size_t Bytes() const noexcept { return RoaringResidentBytes(_set); }
+
+ private:
+  roaring::Roaring _set;
+};
+
 template<typename Cursor>
 size_t CountLive(Cursor& cursor) {
   size_t live = 0;
@@ -364,18 +566,21 @@ size_t FillWindows(Cursor& cursor, uint64_t* IRS_RESTRICT dst,
 }
 
 void RatioShape(benchmark::internal::Benchmark* b) {
-  b->ArgsProduct({{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}});
+  b->ArgsProduct({{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}})
+    ->ArgNames({"per_mille", "shape"});
 }
 
 void RatioShapeStride(benchmark::internal::Benchmark* b) {
   b->ArgsProduct(
-    {{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}, {16, 256}});
+     {{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}, {16, 256}})
+    ->ArgNames({"per_mille", "shape", "stride"});
 }
 
-void RatioStride(benchmark::internal::Benchmark* b) {
+void RatioShapeStrideWide(benchmark::internal::Benchmark* b) {
   b->ArgsProduct({{10, 50, 200, 500, 990},
                   {kUniform, kClustered, kTail},
-                  {1, 16, 256, 4096, 65536, 262144}});
+                  {1, 16, 256, 4096, 65536, 262144}})
+    ->ArgNames({"per_mille", "shape", "stride"});
 }
 
 template<typename Mask>
@@ -393,8 +598,14 @@ void BmBuild(benchmark::State& state) {
                           static_cast<int64_t>(deleted.size()));
 }
 
-BENCHMARK_TEMPLATE(BmBuild, RoaringMask)
-  ->Name("Build/roaring")
+BENCHMARK_TEMPLATE(BmBuild, DocumentMaskArm)
+  ->Name("Build/document_mask")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmBuild, RoaringHybridMask)
+  ->Name("Build/roaring_bitmap")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmBuild, RoaringPlainMask)
+  ->Name("Build/roaring_bitmap_raw")
   ->Apply(RatioShape);
 BENCHMARK_TEMPLATE(BmBuild, HashSetMask)
   ->Name("Build/hashset")
@@ -422,8 +633,14 @@ void BmSeekDense(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * kDocs);
 }
 
-BENCHMARK_TEMPLATE(BmSeekDense, RoaringMask)
-  ->Name("SeekDense/roaring")
+BENCHMARK_TEMPLATE(BmSeekDense, DocumentMaskArm)
+  ->Name("SeekDense/document_mask")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmSeekDense, RoaringHybridMask)
+  ->Name("SeekDense/roaring_bitmap")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmSeekDense, RoaringSearchMask)
+  ->Name("SeekDense/roaring_search")
   ->Apply(RatioShape);
 BENCHMARK_TEMPLATE(BmSeekDense, HashSetMask)
   ->Name("SeekDense/hashset")
@@ -452,8 +669,11 @@ void BmSeekBlocks(benchmark::State& state) {
                           static_cast<int64_t>(candidates.size()));
 }
 
-BENCHMARK_TEMPLATE(BmSeekBlocks, RoaringMask)
-  ->Name("SeekBlocks/roaring")
+BENCHMARK_TEMPLATE(BmSeekBlocks, DocumentMaskArm)
+  ->Name("SeekBlocks/document_mask")
+  ->Apply(RatioShapeStride);
+BENCHMARK_TEMPLATE(BmSeekBlocks, RoaringHybridMask)
+  ->Name("SeekBlocks/roaring_bitmap")
   ->Apply(RatioShapeStride);
 BENCHMARK_TEMPLATE(BmSeekBlocks, HashSetMask)
   ->Name("SeekBlocks/hashset")
@@ -482,8 +702,14 @@ void BmFillWindow(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * kDocs);
 }
 
-BENCHMARK_TEMPLATE(BmFillWindow, RoaringMask)
-  ->Name("FillWindow/roaring")
+BENCHMARK_TEMPLATE(BmFillWindow, DocumentMaskArm)
+  ->Name("FillWindow/document_mask")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmFillWindow, RoaringHybridMask)
+  ->Name("FillWindow/roaring_bitmap")
+  ->Apply(RatioShape);
+BENCHMARK_TEMPLATE(BmFillWindow, RoaringRangeFillMask)
+  ->Name("FillWindow/roaring_ranges")
   ->Apply(RatioShape);
 BENCHMARK_TEMPLATE(BmFillWindow, HashSetMask)
   ->Name("FillWindow/hashset")
@@ -504,7 +730,7 @@ std::vector<std::vector<doc_id_t>> SplitChain(
   return parts;
 }
 
-void BmMergeRoaring(benchmark::State& state) {
+void BmMergeDocumentMask(benchmark::State& state) {
   const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
   std::vector<irs::DocumentMask> links;
   links.reserve(kChainLinks);
@@ -526,7 +752,53 @@ void BmMergeRoaring(benchmark::State& state) {
   }
 }
 
-BENCHMARK(BmMergeRoaring)->Name("Merge/roaring")->Apply(RatioShape);
+BENCHMARK(BmMergeDocumentMask)->Name("Merge/document_mask")->Apply(RatioShape);
+
+void BmMergeRoaringBitmap(benchmark::State& state) {
+  const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
+  std::vector<roaring::Roaring> links{kChainLinks};
+  for (size_t i = 0; i != kChainLinks; ++i) {
+    links[i].addMany(parts[i].size(), parts[i].data());
+    links[i].runOptimize();
+    links[i].shrinkToFit();
+  }
+
+  for (auto _ : state) {
+    roaring::Roaring mask;
+    for (const auto& link : links) {
+      mask |= link;
+    }
+    mask.runOptimize();
+    benchmark::DoNotOptimize(mask.cardinality());
+  }
+}
+
+BENCHMARK(BmMergeRoaringBitmap)
+  ->Name("Merge/roaring_bitmap")
+  ->Apply(RatioShape);
+
+void BmMergeRoaringFastUnion(benchmark::State& state) {
+  const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
+  std::vector<roaring::Roaring> links{kChainLinks};
+  std::vector<const roaring::Roaring*> refs;
+  refs.reserve(kChainLinks);
+  for (size_t i = 0; i != kChainLinks; ++i) {
+    links[i].addMany(parts[i].size(), parts[i].data());
+    links[i].runOptimize();
+    links[i].shrinkToFit();
+    refs.push_back(&links[i]);
+  }
+
+  for (auto _ : state) {
+    auto mask = roaring::Roaring::fastunion(refs.size(), refs.data());
+    mask.runOptimize();
+    benchmark::DoNotOptimize(mask.cardinality());
+  }
+}
+
+BENCHMARK(BmMergeRoaringFastUnion)
+  ->Name("Merge/roaring_fastunion")
+  ->Apply(RatioShape);
 
 void BmMergeHashSet(benchmark::State& state) {
   const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
@@ -589,9 +861,12 @@ void BmLookupTest(benchmark::State& state) {
                           static_cast<int64_t>(candidates.size()));
 }
 
-BENCHMARK_TEMPLATE(BmLookupTest, RoaringMask)
-  ->Name("LookupTest/roaring")
-  ->Apply(RatioStride);
+BENCHMARK_TEMPLATE(BmLookupTest, DocumentMaskArm)
+  ->Name("LookupTest/document_mask")
+  ->Apply(RatioShapeStrideWide);
+BENCHMARK_TEMPLATE(BmLookupTest, RoaringHybridMask)
+  ->Name("LookupTest/roaring_bitmap")
+  ->Apply(RatioShapeStrideWide);
 
 void BmRoaringContainsBulk(benchmark::State& state) {
   const auto& deleted = Deleted(state.range(0), state.range(1));
@@ -618,16 +893,16 @@ void BmRoaringContainsBulk(benchmark::State& state) {
 
 BENCHMARK(BmRoaringContainsBulk)
   ->Name("LookupTest/roaring_bulk")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupTest, HashSetMask)
   ->Name("LookupTest/hashset")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupTest, BitsetProbeMask)
   ->Name("LookupTest/bitset_probe")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupTest, BitsetExactMask)
   ->Name("LookupTest/bitset_exact")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 
 template<typename Mask>
 void BmLookupProbe(benchmark::State& state) {
@@ -649,21 +924,27 @@ void BmLookupProbe(benchmark::State& state) {
                           static_cast<int64_t>(candidates.size()));
 }
 
-BENCHMARK_TEMPLATE(BmLookupProbe, RoaringMask)
-  ->Name("LookupProbe/roaring")
-  ->Apply(RatioStride);
+BENCHMARK_TEMPLATE(BmLookupProbe, DocumentMaskArm)
+  ->Name("LookupProbe/document_mask")
+  ->Apply(RatioShapeStrideWide);
+BENCHMARK_TEMPLATE(BmLookupProbe, RoaringHybridMask)
+  ->Name("LookupProbe/roaring_bitmap")
+  ->Apply(RatioShapeStrideWide);
+BENCHMARK_TEMPLATE(BmLookupProbe, RoaringSearchMask)
+  ->Name("LookupProbe/roaring_search")
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupProbe, HashSetMask)
   ->Name("LookupProbe/hashset")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupProbe, BitsetProbeMask)
   ->Name("LookupProbe/bitset_probe")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 BENCHMARK_TEMPLATE(BmLookupProbe, BitsetExactMask)
   ->Name("LookupProbe/bitset_exact")
-  ->Apply(RatioStride);
+  ->Apply(RatioShapeStrideWide);
 
-void BmRoaringSeekRaw(benchmark::State& state) {
-  const RoaringMask mask{Deleted(state.range(0), state.range(1))};
+void BmDocumentMaskSeekRaw(benchmark::State& state) {
+  const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
   const auto& candidates = Candidates(state.range(2));
   size_t hits = 0;
 
@@ -681,12 +962,12 @@ void BmRoaringSeekRaw(benchmark::State& state) {
                           static_cast<int64_t>(candidates.size()));
 }
 
-BENCHMARK(BmRoaringSeekRaw)
-  ->Name("LookupProbe/roaring_raw")
-  ->Apply(RatioStride);
+BENCHMARK(BmDocumentMaskSeekRaw)
+  ->Name("LookupProbe/document_mask_raw")
+  ->Apply(RatioShapeStrideWide);
 
-void BmRoaringIteratorInit(benchmark::State& state) {
-  const RoaringMask mask{Deleted(state.range(0), state.range(1))};
+void BmDocumentMaskIteratorInit(benchmark::State& state) {
+  const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
 
   for (auto _ : state) {
     irs::DocumentMask::Iterator it{&mask.Set()};
@@ -694,7 +975,185 @@ void BmRoaringIteratorInit(benchmark::State& state) {
   }
 }
 
-BENCHMARK(BmRoaringIteratorInit)->Name("LookupInit/roaring")->Apply(RatioShape);
+BENCHMARK(BmDocumentMaskIteratorInit)
+  ->Name("LookupInit/document_mask")
+  ->Apply(RatioShape);
+
+void BmRoaringIteratorInit(benchmark::State& state) {
+  const RoaringHybridMask mask{Deleted(state.range(0), state.range(1))};
+
+  for (auto _ : state) {
+    auto cursor = mask.Probes();
+    benchmark::DoNotOptimize(cursor.Probe(kBegin));
+  }
+}
+
+BENCHMARK(BmRoaringIteratorInit)
+  ->Name("LookupInit/roaring_bitmap")
+  ->Apply(RatioShape);
+
+void FootprintArgs(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct(
+     {{1, 8, 64}, {10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}})
+    ->ArgNames({"docs_m", "per_mille", "shape"})
+    ->Iterations(1)
+    ->Repetitions(1);
+}
+
+void BmFootprint(benchmark::State& state) {
+  const auto docs = static_cast<doc_id_t>(state.range(0) * 1'000'000);
+  const auto per_mille = state.range(1);
+  const auto deleted = MakeDeletedAt(docs, per_mille, state.range(2));
+
+  irs::DocumentMask bits;
+  bits.Add(deleted);
+  bits.Trim();
+
+  roaring::Roaring set;
+  set.addMany(deleted.size(), deleted.data());
+  set.runOptimize();
+  set.shrinkToFit();
+
+  roaring::api::roaring_statistics_t stats{};
+  roaring::api::roaring_bitmap_statistics(&set.roaring, &stats);
+  const auto resident = RoaringResidentBytes(set);
+
+  const bool materialize = state.range(0) * per_mille <= 8 * 500;
+  auto hash_bytes = HashSetBytes(deleted.size());
+  if (materialize) {
+    absl::flat_hash_set<doc_id_t> hash;
+    hash.reserve(deleted.size());
+    hash.insert(deleted.begin(), deleted.end());
+    hash_bytes = hash.capacity() * (sizeof(doc_id_t) + 1);
+  }
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(resident);
+  }
+
+  const auto bitset_bytes = bits.ByteSize();
+  state.counters["docs"] = static_cast<double>(docs);
+  state.counters["deleted"] = static_cast<double>(deleted.size());
+  state.counters["bitset_bytes"] = static_cast<double>(bitset_bytes);
+  state.counters["roaring_bytes"] = static_cast<double>(resident);
+  state.counters["roaring_portable"] =
+    static_cast<double>(set.getSizeInBytes(true));
+  state.counters["roaring_frozen"] =
+    static_cast<double>(set.getFrozenSizeInBytes());
+  state.counters["hashset_bytes"] = static_cast<double>(hash_bytes);
+  state.counters["hashset_estimated"] = materialize ? 0.0 : 1.0;
+  state.counters["roaring_vs_bitset"] =
+    static_cast<double>(resident) /
+    static_cast<double>(std::max<size_t>(1, bitset_bytes));
+  state.counters["bytes_per_deleted"] =
+    static_cast<double>(resident) /
+    static_cast<double>(std::max<size_t>(1, deleted.size()));
+  state.counters["c_array"] = stats.n_array_containers;
+  state.counters["c_run"] = stats.n_run_containers;
+  state.counters["c_bitset"] = stats.n_bitset_containers;
+}
+
+BENCHMARK(BmFootprint)->Name("Footprint/all")->Apply(FootprintArgs);
+
+std::string SerializeMask(const irs::DocumentMask& mask) {
+  const auto compressed = mask.Compress();
+  std::string out;
+  out.resize(compressed.getSizeInBytes(true));
+  compressed.write(out.data(), true);
+  return out;
+}
+
+void BmSerializeCompress(benchmark::State& state) {
+  const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
+
+  for (auto _ : state) {
+    auto compressed = mask.Set().Compress();
+    benchmark::DoNotOptimize(compressed.cardinality());
+  }
+
+  const auto blob = SerializeMask(mask.Set());
+  state.counters["bitset_bytes"] = static_cast<double>(mask.Bytes());
+  state.counters["serialized_bytes"] = static_cast<double>(blob.size());
+}
+
+BENCHMARK(BmSerializeCompress)->Name("Serialize/compress")->Apply(RatioShape);
+
+void BmDeserializeRead(benchmark::State& state) {
+  const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
+  const auto blob = SerializeMask(mask.Set());
+
+  for (auto _ : state) {
+    auto restored = irs::DocumentMask::Read(blob.data(), blob.size());
+    benchmark::DoNotOptimize(restored.Count());
+  }
+
+  state.counters["serialized_bytes"] = static_cast<double>(blob.size());
+  state.counters["bitset_bytes"] = static_cast<double>(mask.Bytes());
+}
+
+BENCHMARK(BmDeserializeRead)->Name("Deserialize/read")->Apply(RatioShape);
+
+void BmMaterializeToBitset(benchmark::State& state) {
+  const auto& deleted = Deleted(state.range(0), state.range(1));
+  roaring::Roaring set;
+  set.addMany(deleted.size(), deleted.data());
+  set.runOptimize();
+  set.shrinkToFit();
+
+  for (auto _ : state) {
+    auto* out = roaring::api::bitset_create();
+    benchmark::DoNotOptimize(
+      roaring::api::roaring_bitmap_to_bitset(&set.roaring, out));
+    roaring::api::bitset_free(out);
+  }
+
+  state.counters["roaring_bytes"] =
+    static_cast<double>(RoaringResidentBytes(set));
+}
+
+BENCHMARK(BmMaterializeToBitset)
+  ->Name("Materialize/to_bitset")
+  ->Apply(RatioShape);
+
+void ChainArgs(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct(
+     {{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}, {1, 2, 4, 8}})
+    ->ArgNames({"per_mille", "shape", "files"});
+}
+
+void BmChainFold(benchmark::State& state) {
+  const auto files = static_cast<size_t>(state.range(2));
+  const auto& deleted = Deleted(state.range(0), state.range(1));
+
+  std::vector<std::vector<doc_id_t>> parts(files);
+  for (size_t i = 0; i != deleted.size(); ++i) {
+    parts[i % files].push_back(deleted[i]);
+  }
+
+  std::vector<std::string> blobs;
+  blobs.reserve(files);
+  size_t total = 0;
+  for (const auto& part : parts) {
+    irs::DocumentMask link;
+    link.Add(part);
+    link.Trim();
+    blobs.emplace_back(SerializeMask(link));
+    total += blobs.back().size();
+  }
+
+  for (auto _ : state) {
+    irs::DocumentMask builder;
+    for (const auto& blob : blobs) {
+      builder.Merge(irs::DocumentMask::Read(blob.data(), blob.size()));
+    }
+    builder.Trim();
+    benchmark::DoNotOptimize(builder.Count());
+  }
+
+  state.counters["serialized_bytes"] = static_cast<double>(total);
+}
+
+BENCHMARK(BmChainFold)->Name("ChainFold/read_merge")->Apply(ChainArgs);
 
 constexpr size_t kScaleProbes = 65536;
 
@@ -716,37 +1175,7 @@ const ScaleData& Scale(int64_t docs_m, int64_t per_mille, int64_t shape) {
   }
 
   const auto docs = static_cast<doc_id_t>(docs_m * 1'000'000);
-  const auto count = static_cast<size_t>(
-    uint64_t{docs} * static_cast<uint64_t>(per_mille) / 1000);
-  std::mt19937_64 rng{42};
-
-  std::vector<doc_id_t> deleted;
-  deleted.reserve(count);
-  if (shape == kClustered) {
-    const auto runs = (count + kRunLength - 1) / kRunLength;
-    const auto slots = static_cast<size_t>(docs / kRunLength);
-    absl::flat_hash_set<size_t> picked;
-    picked.reserve(runs);
-    while (picked.size() < std::min(runs, slots)) {
-      picked.insert(rng() % slots);
-    }
-    std::vector<size_t> sorted{picked.begin(), picked.end()};
-    std::sort(sorted.begin(), sorted.end());
-    for (const auto slot : sorted) {
-      const auto first = kBegin + static_cast<doc_id_t>(slot * kRunLength);
-      for (doc_id_t i = 0; i != kRunLength && deleted.size() != count; ++i) {
-        deleted.push_back(first + i);
-      }
-    }
-  } else {
-    absl::flat_hash_set<doc_id_t> picked;
-    picked.reserve(count);
-    while (picked.size() < count) {
-      picked.insert(kBegin + static_cast<doc_id_t>(rng() % docs));
-    }
-    deleted.assign(picked.begin(), picked.end());
-    std::sort(deleted.begin(), deleted.end());
-  }
+  const auto deleted = MakeDeletedAt(docs, per_mille, shape);
 
   gCache = ScaleData{};
   gCache.docs = docs;
@@ -767,6 +1196,7 @@ const ScaleData& Scale(int64_t docs_m, int64_t per_mille, int64_t shape) {
     gCache.ordered.push_back(kBegin + static_cast<doc_id_t>(i) * stride);
   }
   gCache.shuffled = gCache.ordered;
+  std::mt19937_64 rng{42};
   std::shuffle(gCache.shuffled.begin(), gCache.shuffled.end(), rng);
 
   gKey = key;
@@ -774,7 +1204,11 @@ const ScaleData& Scale(int64_t docs_m, int64_t per_mille, int64_t shape) {
 }
 
 void ScaleArgs(benchmark::internal::Benchmark* b) {
-  b->ArgsProduct({{1, 8, 64}, {10, 200}, {kUniform, kClustered}, {0, 1}});
+  b->ArgsProduct({{1, 8, 64},
+                  {10, 50, 200, 500, 990},
+                  {kUniform, kClustered, kTail},
+                  {0, 1}})
+    ->ArgNames({"docs_m", "per_mille", "shape", "order"});
 }
 
 template<int Arm>
@@ -810,7 +1244,7 @@ void BmLookupScale(benchmark::State& state) {
 
   state.counters["hits"] = static_cast<double>(hits);
   state.counters["roaring_bytes"] =
-    static_cast<double>(data.set.getSizeInBytes());
+    static_cast<double>(RoaringResidentBytes(data.set));
   state.counters["bitset_bytes"] =
     static_cast<double>(data.bits.size() * sizeof(uint64_t));
   state.SetItemsProcessed(state.iterations() *

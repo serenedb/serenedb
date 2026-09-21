@@ -7115,8 +7115,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
     // files from segments 1 and 2, segment_3
-    // segment_2 + stale segment 1 meta, +1 for the removal's mask sidecar
-    ASSERT_EQ(count + 2 + 1 + 1, irs::DirectoryCleaner::clean(dir));
+    // segment_2 + stale segment 1 meta
+    ASSERT_EQ(count + 2 + 1, irs::DirectoryCleaner::clean(dir));
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -7262,9 +7262,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     // files from segments 1 and 2,
     // segment_3
-    // segment_2 + stale segment 1 meta + stale segment 2 meta,
-    // +2 for a mask sidecar per segment the removal touched
-    ASSERT_EQ(count + 3 + 1 + 2, irs::DirectoryCleaner::clean(dir));
+    // segment_2 + stale segment 1 meta + stale segment 2 meta
+    ASSERT_EQ(count + 3 + 1, irs::DirectoryCleaner::clean(dir));
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -8521,10 +8520,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
-    ASSERT_EQ(count + 2 + 1 + 1,  // +2 for  segments_2 + stale segment 1 meta
-                                  // +1 for segments
-              irs::DirectoryCleaner::clean(dir()));  // +1 for the removal's
-                                                     // mask sidecar
+    ASSERT_EQ(count + 2 + 1,  // +2 for  segments_2 + stale segment 1 meta
+              irs::DirectoryCleaner::clean(dir()));  // +1 for segments
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8663,8 +8660,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    // +2 for a mask sidecar per segment the removal touched
-    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8799,8 +8795,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
-    // +1 for the mask sidecar of the segment the first removal touched
-    ASSERT_EQ(count + 4 + 1, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8967,18 +8962,18 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    // The candidates were already compacted by the commit the test policy ran,
-    // so they are no longer in the merged snapshot: transient Busy, not Fail.
-    ASSERT_EQ(irs::CompactionError::Busy,
-              writer->Compact(do_commit_and_compact_count).error);
+    {
+      const auto result = writer->Compact(do_commit_and_compact_count);
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
     // check all data is deleted
     const auto one_segment_count = count;
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
-    // files count should be the same as with one segment, +1 for the mask
-    // sidecar the compaction carried the removal into
-    ASSERT_EQ(one_segment_count + 1, count);
+    // files count should be the same as with one segment
+    ASSERT_EQ(one_segment_count, count);
   }
 
   // repeatable compaction of already compacted segment during two
@@ -9052,10 +9047,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    // The candidates were already compacted by the commit the test policy ran,
-    // so they are no longer in the merged snapshot: transient Busy, not Fail.
-    ASSERT_EQ(irs::CompactionError::Busy,
-              writer->Compact(do_commit_and_compact_count).error);
+    {
+      const auto result = writer->Compact(do_commit_and_compact_count);
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
@@ -9063,9 +9059,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     const auto one_segment_count = count;
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
-    // files count should be the same as with one segment, +2 for the mask
-    // sidecar each of the two removals landed in
-    ASSERT_EQ(one_segment_count + 2, count);
+    // files count should be the same as with one segment
+    ASSERT_EQ(one_segment_count, count);
   }
 
   // check commit rollback and compaction
@@ -9102,9 +9097,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshAbort();
 
-    // leftovers cleanup (aborted compaction segment no longer emits a `.col`),
-    // +1 for the mask sidecar it wrote alongside its meta
-    ASSERT_EQ(1 + 1, irs::DirectoryCleaner::clean(dir()));
+    // leftovers cleanup (aborted compaction segment no longer emits a `.col`)
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
     // still pending
     expected_compacting_segments = {0, 1};
@@ -9215,8 +9209,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    // +2 for a mask sidecar per segment the removal touched
-    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -9384,9 +9377,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // +1 for segments,
     // +1 for segment 1 meta,
     // +1 for segment 2 meta,
-    // +1 for segments_2,
-    // +2 for a mask sidecar per segment the removal touched
-    ASSERT_EQ(count + 4 + 2, irs::DirectoryCleaner::clean(dir()));
+    // +1 for segments_2
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};

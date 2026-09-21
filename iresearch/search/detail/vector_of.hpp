@@ -139,6 +139,11 @@ class RawVectorReader {
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
       size_t run = ConsecutiveRunLength(docs, i);
+      // A run of one is the scattered case: the row after the next is far
+      // enough ahead to be worth naming now.
+      if (run == 1 && i + 2 < docs.size()) {
+        PrefetchRow(docs[i + 2]);
+      }
       while (run != 0) {
         size_t got = 0;
         const auto* base = ReadSome(docs[i], run, got);
@@ -165,6 +170,35 @@ class RawVectorReader {
   }
 
  private:
+  // Name the lines of a row that is coming but not next, without disturbing
+  // the window the scan is reading from. A selective predicate leaves the rows
+  // scattered, so each one is its own miss; naming a later row now lets that
+  // miss overlap the one being scored instead of following it.
+  void PrefetchRow(doc_id_t doc) noexcept {
+    const auto* child = _column->Child();
+    const uint64_t elem =
+      (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
+    const auto w = child->Locate(elem, _win);
+    const auto& blocks = child->DataBlocks();
+    if (w.block >= blocks.size()) {
+      return;
+    }
+    const auto& m = blocks[w.block];
+    const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
+    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        elem < w.begin || elem + _d > w.end) {
+      return;
+    }
+    const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
+    const auto* q = _read_ctx.TryReadStable(off, span);
+    if (q == nullptr) {
+      return;
+    }
+    for (uint64_t o = 0; o < span; o += 64) {
+      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, 3);
+    }
+  }
+
   // The rows of a run that one stable window can serve, and how many that was.
   //
   // A data block holds a few thousand floats, so a run of rows is spread over

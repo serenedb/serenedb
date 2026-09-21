@@ -67,5 +67,5 @@ QUERY PLAN
 │ Score: l2_distance(vec, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
-│ ~2 rows                           │
+│ ~3 rows                           │
 ╰───────────────────────────────────╯

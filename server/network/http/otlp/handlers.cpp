@@ -29,8 +29,8 @@
 #include <array>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
-#include <iresearch/utils/bytes_utils.hpp>
 #include <memory>
+#include <protozero/pbf_writer.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,7 +39,7 @@
 #include "connector/functions/otlp.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
-#include "otel/otlp.h"
+#include "otel/model.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
 #include "pg/connection_context.h"
@@ -60,39 +60,21 @@ inline constexpr std::string_view kProtobufContentType =
 inline constexpr int32_t kCodeInvalidArgument = 3;
 inline constexpr int32_t kCodeInternal = 13;
 
-// A protobuf tag is (field number << 3) | wire type:
-// https://protobuf.dev/programming-guides/encoding/#structure
-inline constexpr uint32_t kFieldNumberShift = 3;
-inline constexpr uint32_t kWireTypeVarint = 0;
-inline constexpr uint32_t kWireTypeLengthDelimited = 2;
-
 // google/rpc/status.proto is not vendored -- it is googleapis, not protobuf --
-// and the message is two fields, so it is encoded by hand:
+// and the message is two fields, so it is written directly:
 //   int32 code = 1; string message = 2;
 // https://github.com/googleapis/googleapis/blob/master/google/rpc/status.proto
-inline constexpr uint32_t kStatusCodeField = 1;
-inline constexpr uint32_t kStatusMessageField = 2;
-
-void AppendVarint(std::string& out, uint64_t value) {
-  irs::WriteVarint(value, [&out](irs::byte_type byte) {
-    out.push_back(static_cast<char>(byte));
-  });
-}
-
-void AppendTag(std::string& out, uint32_t field, uint32_t wire_type) {
-  AppendVarint(out, (field << kFieldNumberShift) | wire_type);
-}
+inline constexpr protozero::pbf_tag_type kStatusCodeField = 1;
+inline constexpr protozero::pbf_tag_type kStatusMessageField = 2;
 
 std::string EncodeStatus(int32_t code, std::string_view message) {
   std::string out;
+  protozero::pbf_writer status{out};
   if (code != 0) {
-    AppendTag(out, kStatusCodeField, kWireTypeVarint);
-    AppendVarint(out, static_cast<uint64_t>(code));
+    status.add_int32(kStatusCodeField, code);
   }
   if (!message.empty()) {
-    AppendTag(out, kStatusMessageField, kWireTypeLengthDelimited);
-    AppendVarint(out, message.size());
-    out.append(message);
+    status.add_string(kStatusMessageField, message.data(), message.size());
   }
   return out;
 }

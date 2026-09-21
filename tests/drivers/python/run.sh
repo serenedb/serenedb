@@ -16,7 +16,7 @@ fi
 #   1. a venv (if python3-venv is available), or
 #   2. a system-wide pip install with --break-system-packages (last resort).
 need_install=0
-for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg; do
+for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto; do
 	if ! python3 -c "import $mod" 2>/dev/null; then
 		need_install=1
 		break
@@ -95,7 +95,7 @@ fi
 
 # OTLP protobuf fixtures: the committed .otlp.pb files must match what the
 # official opentelemetry-proto bindings produce from the .otlp.json sources,
-# so the hand-written decoder is checked against an independent encoder.
+# so the server's decoder is checked against an independent encoder.
 # Regenerate with: scripts/otel_fixtures.py generate.
 echo "[python][otel_fixtures] check"
 if ! python3 "${SCRIPT_DIR}/../../../scripts/otel_fixtures.py" check; then

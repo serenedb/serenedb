@@ -236,9 +236,6 @@
 	path = third_party/libstemmer_c
 	url = https://github.com/serenedb/libstemmer_c.git
 	shallow = true
-[submodule "third_party/protobuf"]
-	path = third_party/protobuf
-	url = https://github.com/serenedb/protobuf.git
-[submodule "third_party/opentelemetry-proto"]
-	path = third_party/opentelemetry-proto
-	url = https://github.com/serenedb/opentelemetry-proto.git
+[submodule "third_party/protozero"]
+	path = third_party/protozero
+	url = https://github.com/serenedb/protozero.git

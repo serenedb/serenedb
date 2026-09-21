@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <google/protobuf/repeated_ptr_field.h>
-
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "otel/otlp.h"
+#include "otel/model.h"
 
 namespace sdb::otel {
 
@@ -34,34 +33,23 @@ namespace sdb::otel {
 inline constexpr std::string_view kServiceNameKey = "service.name";
 inline constexpr std::string_view kEventNameKey = "event.name";
 
-using Attributes = ::google::protobuf::RepeatedPtrField<KeyValue>;
+std::string AttributesToJson(const KeyValueList& attributes);
 
-std::string AttributesToJson(const Attributes& attributes);
+std::string BodyToText(const AnyValue* body);
 
-std::string BodyToText(const AnyValue& body);
-
-const AnyValue* FindAttribute(const Attributes& attributes,
+const AnyValue* FindAttribute(const KeyValueList& attributes,
                               std::string_view key);
 
-// Raw id bytes to lowercase hex; empty for an unset or all-zero id, which the
-// mapping turns into SQL NULL.
-std::string HexId(std::string_view raw);
+std::string_view SpanKindName(SpanKind kind);
 
-std::string_view SpanKindName(pb::trace::v1::Span_SpanKind kind);
+std::string_view StatusCodeName(StatusCode code);
 
-std::string_view StatusCodeName(pb::trace::v1::Status_StatusCode code);
+std::string_view TemporalityName(AggregationTemporality temporality);
 
-std::string_view TemporalityName(
-  pb::metrics::v1::AggregationTemporality temporality);
+std::string EventsToJson(const std::vector<SpanEvent>& events);
 
-std::string EventsToJson(
-  const ::google::protobuf::RepeatedPtrField<pb::trace::v1::Span_Event>&
-    events);
+std::string LinksToJson(const std::vector<SpanLink>& links);
 
-std::string LinksToJson(
-  const ::google::protobuf::RepeatedPtrField<pb::trace::v1::Span_Link>& links);
-
-std::string ExemplarsToJson(
-  const ::google::protobuf::RepeatedPtrField<Exemplar>& exemplars);
+std::string ExemplarsToJson(const std::vector<Exemplar>& exemplars);
 
 }  // namespace sdb::otel

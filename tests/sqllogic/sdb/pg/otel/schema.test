@@ -53,7 +53,7 @@ ALTER TABLE otel_logs_renamed RENAME TO otel_logs;
 statement error
 CREATE TABLE otel_probe_bad (a VARCHAR) WITH (storage = 'search', row_group_size = 1024);
 ----
-db error: ERROR: unrecognized parameter "row_group_size"
+db error: ERROR: value for option "row_group_size" must be a multiple of the vector size 2048
 
 
 statement ok

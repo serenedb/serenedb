@@ -10,8 +10,9 @@ produce identical rows.
 ```
 
 `.otlp.pb` is generated from `.otlp.json` by `scripts/otel_fixtures.py`, using
-the official `opentelemetry-proto` bindings. `check` fails on drift and runs in
-the python driver suite.
+the official `opentelemetry-proto` python bindings, so the server's decoder is
+checked against an independent encoder. `check` fails on drift and runs in the
+python driver suite.
 
 `upstream.otlp.json` are vendored from
 https://github.com/open-telemetry/opentelemetry-proto/tree/main/examples; the

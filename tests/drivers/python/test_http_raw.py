@@ -20,7 +20,12 @@ PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
 USER = os.environ.get("SDB_DRV_USER", "postgres")
 PASSWORD = os.environ.get("SDB_DRV_PASSWORD", "")
 
-AUTH = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+TOKEN = os.environ.get("SDB_DRV_HTTP_TOKEN", "")
+AUTH = (
+    f"Bearer {TOKEN}"
+    if TOKEN
+    else "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+)
 
 
 def _authorize(conn):

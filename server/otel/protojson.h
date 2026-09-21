@@ -22,7 +22,7 @@
 
 #include <string_view>
 
-#include "otel/otlp.h"
+#include "otel/model.h"
 
 namespace sdb::otel {
 

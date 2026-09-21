@@ -20,38 +20,27 @@
 
 #include "otel/protojson.h"
 
-#include <absl/strings/escaping.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
-#include <absl/strings/str_cat.h>
-#include <google/protobuf/descriptor.h>
-#include <google/protobuf/message.h>
 #include <simdjson.h>
 
 #include <cstdint>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
-// ProtoJSON, read straight into the generated messages through protobuf
-// reflection: the field set comes from the descriptors, so a field added to
-// opentelemetry-proto is picked up by regenerating, not by editing this file.
-//
-// Only OTLP's three departures from the ProtoJSON rules are spelled out here,
-// each in one place:
-//
-//   * 64-bit integers arrive as decimal strings (and, from hand-written
-//     payloads, as bare numbers)
-//   * enums arrive as their proto value name or as an integer
-//   * trace and span ids are hex, where the bytes rule would say base64
+// ProtoJSON, plus the one place OTLP departs from it: trace and span ids are
+// hex here, where the generic rule for a bytes field would be base64.
 //
 // ProtoJSON:  https://protobuf.dev/programming-guides/json/
 // OTLP/JSON:  https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
+// Enum names: https://github.com/open-telemetry/opentelemetry-proto
 namespace sdb::otel {
 namespace {
-
-namespace gp = ::google::protobuf;
 
 using Value = simdjson::ondemand::value;
 using Object = simdjson::ondemand::object;
@@ -61,12 +50,17 @@ using Object = simdjson::ondemand::object;
                   ERR_MSG("OTLP/JSON: field [", field, "] must be ", expected));
 }
 
-std::string_view ReadString(Value value, std::string_view field) {
+bool NameIs(std::string_view key, std::string_view camel,
+            std::string_view snake) {
+  return key == camel || key == snake;
+}
+
+std::string ReadString(Value value, std::string_view field) {
   std::string_view text;
   if (value.get_string().get(text) != simdjson::SUCCESS) {
     Throw(field, "a string");
   }
-  return text;
+  return std::string{text};
 }
 
 bool ReadBool(Value value, std::string_view field) {
@@ -86,31 +80,48 @@ bool ReadBool(Value value, std::string_view field) {
   Throw(field, "a boolean");
 }
 
-template<typename Integer, typename Wide>
-Integer Narrow(Wide number, std::string_view field) {
-  if (!std::in_range<Integer>(number)) {
-    Throw(field, "an integer in range");
-  }
-  return static_cast<Integer>(number);
-}
-
-// int32/int64/uint32/uint64 all arrive either as a JSON number or, per
-// ProtoJSON's 64-bit rule, as a decimal string.
-template<typename Integer>
-Integer ReadInteger(Value value, std::string_view field) {
-  if (uint64_t number = 0;
-      value.get_uint64().get(number) == simdjson::SUCCESS) {
-    return Narrow<Integer>(number, field);
-  }
-  if (int64_t number = 0; value.get_int64().get(number) == simdjson::SUCCESS) {
-    return Narrow<Integer>(number, field);
-  }
-  std::string_view text;
-  if (Integer number = 0; value.get_string().get(text) == simdjson::SUCCESS &&
-                          absl::SimpleAtoi(text, &number)) {
+// ProtoJSON writes 64-bit integers as decimal strings, but hand-written
+// payloads and some SDKs send bare numbers; accept both.
+uint64_t ReadUint64(Value value, std::string_view field) {
+  uint64_t number = 0;
+  if (value.get_uint64().get(number) == simdjson::SUCCESS) {
     return number;
   }
-  Throw(field, "an integer");
+  std::string_view text;
+  if (value.get_string().get(text) == simdjson::SUCCESS &&
+      absl::SimpleAtoi(text, &number)) {
+    return number;
+  }
+  Throw(field, "a 64-bit unsigned integer");
+}
+
+int64_t ReadInt64(Value value, std::string_view field) {
+  int64_t number = 0;
+  if (value.get_int64().get(number) == simdjson::SUCCESS) {
+    return number;
+  }
+  std::string_view text;
+  if (value.get_string().get(text) == simdjson::SUCCESS &&
+      absl::SimpleAtoi(text, &number)) {
+    return number;
+  }
+  Throw(field, "a 64-bit signed integer");
+}
+
+int32_t ReadInt32(Value value, std::string_view field) {
+  const int64_t number = ReadInt64(value, field);
+  if (number < INT32_MIN || number > INT32_MAX) {
+    Throw(field, "a 32-bit signed integer");
+  }
+  return static_cast<int32_t>(number);
+}
+
+uint32_t ReadUint32(Value value, std::string_view field) {
+  const uint64_t number = ReadUint64(value, field);
+  if (number > UINT32_MAX) {
+    Throw(field, "a 32-bit unsigned integer");
+  }
+  return static_cast<uint32_t>(number);
 }
 
 double ReadDouble(Value value, std::string_view field) {
@@ -136,167 +147,801 @@ double ReadDouble(Value value, std::string_view field) {
   Throw(field, "a number");
 }
 
-int32_t ReadEnum(Value value, const gp::FieldDescriptor& field) {
+// Enums arrive as the integer value or as the proto enum name; the name form
+// is what `telemetrygen` and the Go collector's JSON marshaller emit.
+int32_t ReadEnum(Value value, std::string_view field,
+                 std::span<const std::pair<std::string_view, int32_t>> names) {
   std::string_view text;
-  if (value.get_string().get(text) != simdjson::SUCCESS) {
-    return ReadInteger<int32_t>(value, field.name());
-  }
-  if (const auto* named = field.enum_type()->FindValueByName(text)) {
-    return named->number();
-  }
-  int32_t parsed = 0;
-  if (absl::SimpleAtoi(text, &parsed)) {
-    return parsed;
-  }
-  Throw(field.name(), "a known enum name or an integer");
-}
-
-// "The traceId and spanId byte arrays are represented as case-insensitive
-// hex-encoded strings; they are not base64-encoded as is defined in the
-// standard Protobuf JSON Mapping."
-// https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
-//
-// The reference implementation reads it the same way, and applies it to every
-// field of those types -- parent_span_id included, which the spec text does
-// not name:
-//   MarshalJSON converts TraceID into a hex string / UnmarshalJSON decodes
-//   TraceID from hex string
-// https://github.com/open-telemetry/opentelemetry-collector/blob/main/pdata/internal/traceid.go
-// https://github.com/open-telemetry/opentelemetry-collector/blob/main/pdata/internal/spanid.go
-//
-// The spec says nothing about the other bytes fields (AnyValue.bytes_value),
-// so those keep the standard mapping's base64:
-// https://protobuf.dev/programming-guides/json/
-bool IsHexIdField(const gp::FieldDescriptor& field) {
-  const auto& name = field.name();
-  return name == "trace_id" || name == "span_id" || name == "parent_span_id";
-}
-
-std::string ReadBytes(Value value, const gp::FieldDescriptor& field) {
-  const auto text = ReadString(value, field.name());
-  const bool hex = IsHexIdField(field);
-  std::string raw;
-  if (!(hex ? absl::HexStringToBytes(text, &raw)
-            : absl::Base64Unescape(text, &raw))) {
-    Throw(field.name(), hex ? "a hex string" : "base64");
-  }
-  return raw;
-}
-
-void ParseMessage(Value value, gp::Message& out);
-
-// Reflection spells the singular and repeated writers as separate members, so
-// which pair to use is the only thing that varies per field type.
-template<typename T>
-using Writer = void (gp::Reflection::*)(gp::Message*,
-                                        const gp::FieldDescriptor*, T) const;
-
-template<typename T>
-void Store(gp::Message& out, const gp::FieldDescriptor& field, bool repeated,
-           T value, Writer<T> set, Writer<T> add) {
-  const auto* reflection = out.GetReflection();
-  const auto writer = repeated ? add : set;
-  (reflection->*writer)(&out, &field, value);
-}
-
-// One field occurrence: the singular value, or one element of a repeated one.
-void ParseSingular(Value value, gp::Message& out,
-                   const gp::FieldDescriptor& field, bool repeated) {
-  using Reflect = gp::Reflection;
-  const auto& name = field.name();
-  switch (field.cpp_type()) {
-    case gp::FieldDescriptor::CPPTYPE_INT32:
-      Store(out, field, repeated, ReadInteger<int32_t>(value, name),
-            &Reflect::SetInt32, &Reflect::AddInt32);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_INT64:
-      Store(out, field, repeated, ReadInteger<int64_t>(value, name),
-            &Reflect::SetInt64, &Reflect::AddInt64);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_UINT32:
-      Store(out, field, repeated, ReadInteger<uint32_t>(value, name),
-            &Reflect::SetUInt32, &Reflect::AddUInt32);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_UINT64:
-      Store(out, field, repeated, ReadInteger<uint64_t>(value, name),
-            &Reflect::SetUInt64, &Reflect::AddUInt64);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_DOUBLE:
-      Store(out, field, repeated, ReadDouble(value, name), &Reflect::SetDouble,
-            &Reflect::AddDouble);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_FLOAT:
-      Store(out, field, repeated, static_cast<float>(ReadDouble(value, name)),
-            &Reflect::SetFloat, &Reflect::AddFloat);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_BOOL:
-      Store(out, field, repeated, ReadBool(value, name), &Reflect::SetBool,
-            &Reflect::AddBool);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_ENUM:
-      Store(out, field, repeated, ReadEnum(value, field),
-            &Reflect::SetEnumValue, &Reflect::AddEnumValue);
-      return;
-    case gp::FieldDescriptor::CPPTYPE_STRING: {
-      // SetString/AddString are overloaded, so they do not go through Store.
-      auto text = field.type() == gp::FieldDescriptor::TYPE_BYTES
-                    ? ReadBytes(value, field)
-                    : std::string{ReadString(value, name)};
-      const auto* reflection = out.GetReflection();
-      if (repeated) {
-        reflection->AddString(&out, &field, std::move(text));
-      } else {
-        reflection->SetString(&out, &field, std::move(text));
+  if (value.get_string().get(text) == simdjson::SUCCESS) {
+    for (const auto& [name, number] : names) {
+      if (text == name) {
+        return number;
       }
-      return;
     }
-    case gp::FieldDescriptor::CPPTYPE_MESSAGE: {
-      const auto* reflection = out.GetReflection();
-      ParseMessage(value, repeated ? *reflection->AddMessage(&out, &field)
-                                   : *reflection->MutableMessage(&out, &field));
-      return;
+    int32_t parsed = 0;
+    if (absl::SimpleAtoi(text, &parsed)) {
+      return parsed;
     }
+    Throw(field, "a known enum name or an integer");
   }
-  Throw(name, "a supported type");
+  return ReadInt32(value, field);
 }
 
-void ParseMessage(Value value, gp::Message& out) {
+// OTLP/JSON encodes trace and span ids as lowercase hex, unlike the base64
+// the generic ProtoJSON bytes rule would give.
+std::string ReadId(Value value, std::string_view field, size_t hex_length) {
+  auto text = ReadString(value, field);
+  if (text.empty()) {
+    return {};
+  }
+  if (text.size() != hex_length) {
+    Throw(field, "a hex string of the declared width");
+  }
+  absl::AsciiStrToLower(&text);
+  for (const char c : text) {
+    const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    if (!hex) {
+      Throw(field, "a hex string");
+    }
+  }
+  if (text.find_first_not_of('0') == std::string::npos) {
+    return {};
+  }
+  return text;
+}
+
+AnyValue* ParseAnyValue(Value value, ValueArena& arena);
+
+KeyValueList ParseKeyValueList(Value value, ValueArena& arena,
+                               std::string_view field) {
+  KeyValueList out;
+  simdjson::ondemand::array items;
+  if (value.get_array().get(items) != simdjson::SUCCESS) {
+    Throw(field, "an array of key/value objects");
+  }
+  for (auto item : items) {
+    Object entry;
+    if (item.get_object().get(entry) != simdjson::SUCCESS) {
+      Throw(field, "an array of key/value objects");
+    }
+    KeyValue kv;
+    for (auto member : entry) {
+      std::string_view key;
+      if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+        Throw(field, "an array of key/value objects");
+      }
+      if (key == "key") {
+        kv.key = ReadString(member.value().value(), "key");
+      } else if (key == "value") {
+        kv.value = ParseAnyValue(member.value().value(), arena);
+      }
+    }
+    out.push_back(std::move(kv));
+  }
+  return out;
+}
+
+AnyValue* ParseAnyValue(Value value, ValueArena& arena) {
+  AnyValue* out = arena.Make();
   Object fields;
   if (value.get_object().get(fields) != simdjson::SUCCESS) {
-    Throw(out.GetDescriptor()->name(), "an object");
+    Throw("value", "an AnyValue object");
   }
-  const auto* descriptor = out.GetDescriptor();
   for (auto member : fields) {
     std::string_view key;
     if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
-      Throw(descriptor->name(), "an object");
+      Throw("value", "an AnyValue object");
     }
-    // Senders use either the ProtoJSON lowerCamelCase name or the original
-    // snake_case one; unknown fields are skipped, as ProtoJSON allows.
-    const auto* field = descriptor->FindFieldByCamelcaseName(key);
-    if (field == nullptr) {
-      field = descriptor->FindFieldByName(key);
+    auto field = member.value().value();
+    if (NameIs(key, "stringValue", "string_value")) {
+      out->value = ReadString(field, key);
+    } else if (NameIs(key, "boolValue", "bool_value")) {
+      out->value = ReadBool(field, key);
+    } else if (NameIs(key, "intValue", "int_value")) {
+      out->value = ReadInt64(field, key);
+    } else if (NameIs(key, "doubleValue", "double_value")) {
+      out->value = ReadDouble(field, key);
+    } else if (NameIs(key, "bytesValue", "bytes_value")) {
+      out->value = BytesValue{.data = ReadString(field, key)};
+    } else if (NameIs(key, "arrayValue", "array_value")) {
+      ArrayValue array;
+      Object wrapper;
+      if (field.get_object().get(wrapper) != simdjson::SUCCESS) {
+        Throw(key, "an ArrayValue object");
+      }
+      for (auto inner : wrapper) {
+        std::string_view inner_key;
+        if (inner.unescaped_key().get(inner_key) != simdjson::SUCCESS) {
+          Throw(key, "an ArrayValue object");
+        }
+        if (inner_key != "values") {
+          continue;
+        }
+        simdjson::ondemand::array items;
+        if (inner.value().get_array().get(items) != simdjson::SUCCESS) {
+          Throw(key, "an array of AnyValue");
+        }
+        for (auto item : items) {
+          array.values.push_back(ParseAnyValue(item.value(), arena));
+        }
+      }
+      out->value = std::move(array);
+    } else if (NameIs(key, "kvlistValue", "kvlist_value")) {
+      KvlistValue kvlist;
+      Object wrapper;
+      if (field.get_object().get(wrapper) != simdjson::SUCCESS) {
+        Throw(key, "a KeyValueList object");
+      }
+      for (auto inner : wrapper) {
+        std::string_view inner_key;
+        if (inner.unescaped_key().get(inner_key) != simdjson::SUCCESS) {
+          Throw(key, "a KeyValueList object");
+        }
+        if (inner_key == "values") {
+          kvlist.values =
+            ParseKeyValueList(inner.value().value(), arena, "values");
+        }
+      }
+      out->value = std::move(kvlist);
     }
-    if (field == nullptr) {
-      continue;
+  }
+  return out;
+}
+
+void ParseResource(Value value, Resource& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("resource", "an object");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("resource", "an object");
     }
-    auto field_value = member.value().value();
-    if (!field->is_repeated()) {
-      ParseSingular(field_value, out, *field, /*repeated=*/false);
-      continue;
-    }
-    simdjson::ondemand::array items;
-    if (field_value.get_array().get(items) != simdjson::SUCCESS) {
-      Throw(field->name(), "an array");
-    }
-    for (auto item : items) {
-      ParseSingular(item.value(), out, *field, /*repeated=*/true);
+    if (key == "attributes") {
+      out.attributes = ParseKeyValueList(member.value().value(), arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(member.value().value(), key);
     }
   }
 }
 
-template<typename Request>
-void ParseRequest(std::string_view json, Request& out) {
+void ParseScope(Value value, InstrumentationScope& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("scope", "an object");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("scope", "an object");
+    }
+    auto field = member.value().value();
+    if (key == "name") {
+      out.name = ReadString(field, key);
+    } else if (key == "version") {
+      out.version = ReadString(field, key);
+    } else if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(field, key);
+    }
+  }
+}
+
+void ParseLogRecord(Value value, LogRecord& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("logRecords", "an array of LogRecord objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("logRecords", "an array of LogRecord objects");
+    }
+    auto field = member.value().value();
+    if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "observedTimeUnixNano", "observed_time_unix_nano")) {
+      out.observed_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "severityNumber", "severity_number")) {
+      static constexpr std::pair<std::string_view, int32_t> kNames[]{
+        {"SEVERITY_NUMBER_UNSPECIFIED", 0}, {"SEVERITY_NUMBER_TRACE", 1},
+        {"SEVERITY_NUMBER_TRACE2", 2},      {"SEVERITY_NUMBER_TRACE3", 3},
+        {"SEVERITY_NUMBER_TRACE4", 4},      {"SEVERITY_NUMBER_DEBUG", 5},
+        {"SEVERITY_NUMBER_DEBUG2", 6},      {"SEVERITY_NUMBER_DEBUG3", 7},
+        {"SEVERITY_NUMBER_DEBUG4", 8},      {"SEVERITY_NUMBER_INFO", 9},
+        {"SEVERITY_NUMBER_INFO2", 10},      {"SEVERITY_NUMBER_INFO3", 11},
+        {"SEVERITY_NUMBER_INFO4", 12},      {"SEVERITY_NUMBER_WARN", 13},
+        {"SEVERITY_NUMBER_WARN2", 14},      {"SEVERITY_NUMBER_WARN3", 15},
+        {"SEVERITY_NUMBER_WARN4", 16},      {"SEVERITY_NUMBER_ERROR", 17},
+        {"SEVERITY_NUMBER_ERROR2", 18},     {"SEVERITY_NUMBER_ERROR3", 19},
+        {"SEVERITY_NUMBER_ERROR4", 20},     {"SEVERITY_NUMBER_FATAL", 21},
+        {"SEVERITY_NUMBER_FATAL2", 22},     {"SEVERITY_NUMBER_FATAL3", 23},
+        {"SEVERITY_NUMBER_FATAL4", 24},
+      };
+      out.severity_number = ReadEnum(field, key, kNames);
+    } else if (NameIs(key, "severityText", "severity_text")) {
+      out.severity_text = ReadString(field, key);
+    } else if (NameIs(key, "eventName", "event_name")) {
+      out.event_name = ReadString(field, key);
+    } else if (key == "body") {
+      out.body = ParseAnyValue(field, arena);
+    } else if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(field, key);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    } else if (NameIs(key, "traceId", "trace_id")) {
+      out.trace_id = ReadId(field, key, 32);
+    } else if (NameIs(key, "spanId", "span_id")) {
+      out.span_id = ReadId(field, key, 16);
+    }
+  }
+}
+
+void ParseSpanEvent(Value value, SpanEvent& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("events", "an array of Event objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("events", "an array of Event objects");
+    }
+    auto field = member.value().value();
+    if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (key == "name") {
+      out.name = ReadString(field, key);
+    } else if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(field, key);
+    }
+  }
+}
+
+void ParseSpanLink(Value value, SpanLink& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("links", "an array of Link objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("links", "an array of Link objects");
+    }
+    auto field = member.value().value();
+    if (NameIs(key, "traceId", "trace_id")) {
+      out.trace_id = ReadId(field, key, 32);
+    } else if (NameIs(key, "spanId", "span_id")) {
+      out.span_id = ReadId(field, key, 16);
+    } else if (NameIs(key, "traceState", "trace_state")) {
+      out.trace_state = ReadString(field, key);
+    } else if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(field, key);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    }
+  }
+}
+
+void ParseStatus(Value value, Status& out) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("status", "an object");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("status", "an object");
+    }
+    auto field = member.value().value();
+    if (key == "code") {
+      static constexpr std::pair<std::string_view, int32_t> kNames[]{
+        {"STATUS_CODE_UNSET", 0},
+        {"STATUS_CODE_OK", 1},
+        {"STATUS_CODE_ERROR", 2},
+      };
+      out.code = static_cast<StatusCode>(ReadEnum(field, key, kNames));
+    } else if (key == "message") {
+      out.message = ReadString(field, key);
+    }
+  }
+}
+
+void ParseSpan(Value value, Span& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("spans", "an array of Span objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("spans", "an array of Span objects");
+    }
+    auto field = member.value().value();
+    if (NameIs(key, "traceId", "trace_id")) {
+      out.trace_id = ReadId(field, key, 32);
+    } else if (NameIs(key, "spanId", "span_id")) {
+      out.span_id = ReadId(field, key, 16);
+    } else if (NameIs(key, "traceState", "trace_state")) {
+      out.trace_state = ReadString(field, key);
+    } else if (NameIs(key, "parentSpanId", "parent_span_id")) {
+      out.parent_span_id = ReadId(field, key, 16);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    } else if (key == "name") {
+      out.name = ReadString(field, key);
+    } else if (key == "kind") {
+      static constexpr std::pair<std::string_view, int32_t> kNames[]{
+        {"SPAN_KIND_UNSPECIFIED", 0}, {"SPAN_KIND_INTERNAL", 1},
+        {"SPAN_KIND_SERVER", 2},      {"SPAN_KIND_CLIENT", 3},
+        {"SPAN_KIND_PRODUCER", 4},    {"SPAN_KIND_CONSUMER", 5},
+      };
+      out.kind = static_cast<SpanKind>(ReadEnum(field, key, kNames));
+    } else if (NameIs(key, "startTimeUnixNano", "start_time_unix_nano")) {
+      out.start_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "endTimeUnixNano", "end_time_unix_nano")) {
+      out.end_time_unix_nano = ReadUint64(field, key);
+    } else if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "droppedAttributesCount",
+                      "dropped_attributes_count")) {
+      out.dropped_attributes_count = ReadUint32(field, key);
+    } else if (key == "events") {
+      simdjson::ondemand::array items;
+      if (field.get_array().get(items) != simdjson::SUCCESS) {
+        Throw(key, "an array");
+      }
+      for (auto item : items) {
+        ParseSpanEvent(item.value(), out.events.emplace_back(), arena);
+      }
+    } else if (NameIs(key, "droppedEventsCount", "dropped_events_count")) {
+      out.dropped_events_count = ReadUint32(field, key);
+    } else if (key == "links") {
+      simdjson::ondemand::array items;
+      if (field.get_array().get(items) != simdjson::SUCCESS) {
+        Throw(key, "an array");
+      }
+      for (auto item : items) {
+        ParseSpanLink(item.value(), out.links.emplace_back(), arena);
+      }
+    } else if (NameIs(key, "droppedLinksCount", "dropped_links_count")) {
+      out.dropped_links_count = ReadUint32(field, key);
+    } else if (key == "status") {
+      ParseStatus(field, out.status);
+    }
+  }
+}
+
+constexpr std::pair<std::string_view, int32_t> kTemporalityNames[]{
+  {"AGGREGATION_TEMPORALITY_UNSPECIFIED", 0},
+  {"AGGREGATION_TEMPORALITY_DELTA", 1},
+  {"AGGREGATION_TEMPORALITY_CUMULATIVE", 2},
+};
+
+void ParseExemplar(Value value, Exemplar& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("exemplars", "an array of Exemplar objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("exemplars", "an array of Exemplar objects");
+    }
+    auto field = member.value().value();
+    if (NameIs(key, "filteredAttributes", "filtered_attributes")) {
+      out.filtered_attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "asDouble", "as_double")) {
+      out.value = ReadDouble(field, key);
+    } else if (NameIs(key, "asInt", "as_int")) {
+      out.value = ReadInt64(field, key);
+    } else if (NameIs(key, "spanId", "span_id")) {
+      out.span_id = ReadId(field, key, 16);
+    } else if (NameIs(key, "traceId", "trace_id")) {
+      out.trace_id = ReadId(field, key, 32);
+    }
+  }
+}
+
+void ParseExemplars(Value value, std::vector<Exemplar>& out,
+                    ValueArena& arena) {
+  simdjson::ondemand::array items;
+  if (value.get_array().get(items) != simdjson::SUCCESS) {
+    Throw("exemplars", "an array");
+  }
+  for (auto item : items) {
+    ParseExemplar(item.value(), out.emplace_back(), arena);
+  }
+}
+
+void ParseNumberDataPoint(Value value, NumberDataPoint& out,
+                          ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("dataPoints", "an array of NumberDataPoint objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("dataPoints", "an array of NumberDataPoint objects");
+    }
+    auto field = member.value().value();
+    if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "startTimeUnixNano", "start_time_unix_nano")) {
+      out.start_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "asDouble", "as_double")) {
+      out.value = ReadDouble(field, key);
+    } else if (NameIs(key, "asInt", "as_int")) {
+      out.value = ReadInt64(field, key);
+    } else if (key == "exemplars") {
+      ParseExemplars(field, out.exemplars, arena);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    }
+  }
+}
+
+std::vector<uint64_t> ReadUint64Array(Value value, std::string_view field) {
+  std::vector<uint64_t> out;
+  simdjson::ondemand::array items;
+  if (value.get_array().get(items) != simdjson::SUCCESS) {
+    Throw(field, "an array");
+  }
+  for (auto item : items) {
+    out.push_back(ReadUint64(item.value(), field));
+  }
+  return out;
+}
+
+std::vector<double> ReadDoubleArray(Value value, std::string_view field) {
+  std::vector<double> out;
+  simdjson::ondemand::array items;
+  if (value.get_array().get(items) != simdjson::SUCCESS) {
+    Throw(field, "an array");
+  }
+  for (auto item : items) {
+    out.push_back(ReadDouble(item.value(), field));
+  }
+  return out;
+}
+
+void ParseHistogramDataPoint(Value value, HistogramDataPoint& out,
+                             ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("dataPoints", "an array of HistogramDataPoint objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("dataPoints", "an array of HistogramDataPoint objects");
+    }
+    auto field = member.value().value();
+    if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "startTimeUnixNano", "start_time_unix_nano")) {
+      out.start_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (key == "count") {
+      out.count = ReadUint64(field, key);
+    } else if (key == "sum") {
+      out.sum = ReadDouble(field, key);
+    } else if (NameIs(key, "bucketCounts", "bucket_counts")) {
+      out.bucket_counts = ReadUint64Array(field, key);
+    } else if (NameIs(key, "explicitBounds", "explicit_bounds")) {
+      out.explicit_bounds = ReadDoubleArray(field, key);
+    } else if (key == "exemplars") {
+      ParseExemplars(field, out.exemplars, arena);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    } else if (key == "min") {
+      out.min = ReadDouble(field, key);
+    } else if (key == "max") {
+      out.max = ReadDouble(field, key);
+    }
+  }
+}
+
+void ParseExponentialBuckets(Value value, ExponentialHistogramBuckets& out) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("buckets", "an object");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("buckets", "an object");
+    }
+    auto field = member.value().value();
+    if (key == "offset") {
+      out.offset = ReadInt32(field, key);
+    } else if (NameIs(key, "bucketCounts", "bucket_counts")) {
+      out.bucket_counts = ReadUint64Array(field, key);
+    }
+  }
+}
+
+void ParseExponentialHistogramDataPoint(Value value,
+                                        ExponentialHistogramDataPoint& out,
+                                        ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("dataPoints", "an array of ExponentialHistogramDataPoint objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("dataPoints", "an array of ExponentialHistogramDataPoint objects");
+    }
+    auto field = member.value().value();
+    if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "startTimeUnixNano", "start_time_unix_nano")) {
+      out.start_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (key == "count") {
+      out.count = ReadUint64(field, key);
+    } else if (key == "sum") {
+      out.sum = ReadDouble(field, key);
+    } else if (key == "scale") {
+      out.scale = ReadInt32(field, key);
+    } else if (NameIs(key, "zeroCount", "zero_count")) {
+      out.zero_count = ReadUint64(field, key);
+    } else if (key == "positive") {
+      ParseExponentialBuckets(field, out.positive);
+    } else if (key == "negative") {
+      ParseExponentialBuckets(field, out.negative);
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    } else if (key == "exemplars") {
+      ParseExemplars(field, out.exemplars, arena);
+    } else if (key == "min") {
+      out.min = ReadDouble(field, key);
+    } else if (key == "max") {
+      out.max = ReadDouble(field, key);
+    } else if (NameIs(key, "zeroThreshold", "zero_threshold")) {
+      out.zero_threshold = ReadDouble(field, key);
+    }
+  }
+}
+
+void ParseSummaryDataPoint(Value value, SummaryDataPoint& out,
+                           ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("dataPoints", "an array of SummaryDataPoint objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("dataPoints", "an array of SummaryDataPoint objects");
+    }
+    auto field = member.value().value();
+    if (key == "attributes") {
+      out.attributes = ParseKeyValueList(field, arena, key);
+    } else if (NameIs(key, "startTimeUnixNano", "start_time_unix_nano")) {
+      out.start_time_unix_nano = ReadUint64(field, key);
+    } else if (NameIs(key, "timeUnixNano", "time_unix_nano")) {
+      out.time_unix_nano = ReadUint64(field, key);
+    } else if (key == "count") {
+      out.count = ReadUint64(field, key);
+    } else if (key == "sum") {
+      out.sum = ReadDouble(field, key);
+    } else if (NameIs(key, "quantileValues", "quantile_values")) {
+      simdjson::ondemand::array items;
+      if (field.get_array().get(items) != simdjson::SUCCESS) {
+        Throw(key, "an array");
+      }
+      for (auto item : items) {
+        Object entry;
+        if (item.get_object().get(entry) != simdjson::SUCCESS) {
+          Throw(key, "an array of objects");
+        }
+        auto& quantile = out.quantile_values.emplace_back();
+        for (auto inner : entry) {
+          std::string_view inner_key;
+          if (inner.unescaped_key().get(inner_key) != simdjson::SUCCESS) {
+            Throw(key, "an array of objects");
+          }
+          if (inner_key == "quantile") {
+            quantile.quantile = ReadDouble(inner.value().value(), inner_key);
+          } else if (inner_key == "value") {
+            quantile.value = ReadDouble(inner.value().value(), inner_key);
+          }
+        }
+      }
+    } else if (key == "flags") {
+      out.flags = ReadUint32(field, key);
+    }
+  }
+}
+
+template<typename Point, typename ParseOne>
+std::vector<Point> ParseDataPoints(Value value, ValueArena& arena,
+                                   ParseOne parse_one) {
+  std::vector<Point> out;
+  simdjson::ondemand::array items;
+  if (value.get_array().get(items) != simdjson::SUCCESS) {
+    Throw("dataPoints", "an array");
+  }
+  for (auto item : items) {
+    parse_one(item.value(), out.emplace_back(), arena);
+  }
+  return out;
+}
+
+enum class MetricShape {
+  None,
+  Gauge,
+  Sum,
+  Histogram,
+  ExponentialHistogram,
+  Summary,
+};
+
+MetricShape ShapeOf(std::string_view key) {
+  if (key == "gauge") {
+    return MetricShape::Gauge;
+  }
+  if (key == "sum") {
+    return MetricShape::Sum;
+  }
+  if (key == "histogram") {
+    return MetricShape::Histogram;
+  }
+  if (NameIs(key, "exponentialHistogram", "exponential_histogram")) {
+    return MetricShape::ExponentialHistogram;
+  }
+  if (key == "summary") {
+    return MetricShape::Summary;
+  }
+  return MetricShape::None;
+}
+
+void ParseMetricShape(Value value, MetricShape shape, Metric& out,
+                      ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("metric data", "an object");
+  }
+  Gauge gauge;
+  Sum sum;
+  Histogram histogram;
+  ExponentialHistogram exponential;
+  Summary summary;
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("metric data", "an object");
+    }
+    auto field = member.value().value();
+    const bool points = NameIs(key, "dataPoints", "data_points");
+    const bool temporality =
+      NameIs(key, "aggregationTemporality", "aggregation_temporality");
+    switch (shape) {
+      case MetricShape::Gauge:
+        if (points) {
+          gauge.data_points = ParseDataPoints<NumberDataPoint>(
+            field, arena, ParseNumberDataPoint);
+        }
+        break;
+      case MetricShape::Sum:
+        if (points) {
+          sum.data_points = ParseDataPoints<NumberDataPoint>(
+            field, arena, ParseNumberDataPoint);
+        } else if (temporality) {
+          sum.aggregation_temporality = static_cast<AggregationTemporality>(
+            ReadEnum(field, key, kTemporalityNames));
+        } else if (NameIs(key, "isMonotonic", "is_monotonic")) {
+          sum.is_monotonic = ReadBool(field, key);
+        }
+        break;
+      case MetricShape::Histogram:
+        if (points) {
+          histogram.data_points = ParseDataPoints<HistogramDataPoint>(
+            field, arena, ParseHistogramDataPoint);
+        } else if (temporality) {
+          histogram.aggregation_temporality =
+            static_cast<AggregationTemporality>(
+              ReadEnum(field, key, kTemporalityNames));
+        }
+        break;
+      case MetricShape::ExponentialHistogram:
+        if (points) {
+          exponential.data_points =
+            ParseDataPoints<ExponentialHistogramDataPoint>(
+              field, arena, ParseExponentialHistogramDataPoint);
+        } else if (temporality) {
+          exponential.aggregation_temporality =
+            static_cast<AggregationTemporality>(
+              ReadEnum(field, key, kTemporalityNames));
+        }
+        break;
+      case MetricShape::Summary:
+        if (points) {
+          summary.data_points = ParseDataPoints<SummaryDataPoint>(
+            field, arena, ParseSummaryDataPoint);
+        }
+        break;
+      case MetricShape::None:
+        break;
+    }
+  }
+  switch (shape) {
+    case MetricShape::Gauge:
+      out.data = std::move(gauge);
+      break;
+    case MetricShape::Sum:
+      out.data = std::move(sum);
+      break;
+    case MetricShape::Histogram:
+      out.data = std::move(histogram);
+      break;
+    case MetricShape::ExponentialHistogram:
+      out.data = std::move(exponential);
+      break;
+    case MetricShape::Summary:
+      out.data = std::move(summary);
+      break;
+    case MetricShape::None:
+      break;
+  }
+}
+
+void ParseMetric(Value value, Metric& out, ValueArena& arena) {
+  Object fields;
+  if (value.get_object().get(fields) != simdjson::SUCCESS) {
+    Throw("metrics", "an array of Metric objects");
+  }
+  for (auto member : fields) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("metrics", "an array of Metric objects");
+    }
+    auto field = member.value().value();
+    if (key == "name") {
+      out.name = ReadString(field, key);
+    } else if (key == "description") {
+      out.description = ReadString(field, key);
+    } else if (key == "unit") {
+      out.unit = ReadString(field, key);
+    } else if (key == "metadata") {
+      out.metadata = ParseKeyValueList(field, arena, key);
+    } else if (const auto shape = ShapeOf(key); shape != MetricShape::None) {
+      ParseMetricShape(field, shape, out, arena);
+    }
+  }
+}
+
+template<typename Record, typename ParseRecord>
+void ParseRequest(std::string_view json, ExportRequest<Record>& out,
+                  std::string_view resource_field,
+                  std::string_view resource_field_snake,
+                  std::string_view scope_field,
+                  std::string_view scope_field_snake,
+                  std::string_view record_field,
+                  std::string_view record_field_snake,
+                  ParseRecord parse_record) {
   simdjson::ondemand::parser parser;
   simdjson::padded_string padded{json};
   simdjson::ondemand::document doc;
@@ -305,25 +950,98 @@ void ParseRequest(std::string_view json, Request& out) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                     ERR_MSG("OTLP/JSON: ", simdjson::error_message(ec)));
   }
-  simdjson::ondemand::value root;
-  if (doc.get_value().get(root) != simdjson::SUCCESS) {
+  Object root;
+  if (doc.get_object().get(root) != simdjson::SUCCESS) {
     Throw("<root>", "an object");
   }
-  ParseMessage(root, out);
+  for (auto member : root) {
+    std::string_view key;
+    if (member.unescaped_key().get(key) != simdjson::SUCCESS) {
+      Throw("<root>", "an object");
+    }
+    if (!NameIs(key, resource_field, resource_field_snake)) {
+      continue;
+    }
+    simdjson::ondemand::array resources;
+    if (member.value().get_array().get(resources) != simdjson::SUCCESS) {
+      Throw(key, "an array");
+    }
+    for (auto entry : resources) {
+      auto& resource_records = out.resources.emplace_back();
+      Object resource_object;
+      if (entry.get_object().get(resource_object) != simdjson::SUCCESS) {
+        Throw(key, "an array of objects");
+      }
+      for (auto resource_member : resource_object) {
+        std::string_view resource_key;
+        if (resource_member.unescaped_key().get(resource_key) !=
+            simdjson::SUCCESS) {
+          Throw(key, "an array of objects");
+        }
+        auto resource_value = resource_member.value().value();
+        if (resource_key == "resource") {
+          ParseResource(resource_value, resource_records.resource, out.arena);
+        } else if (NameIs(resource_key, "schemaUrl", "schema_url")) {
+          resource_records.schema_url =
+            ReadString(resource_value, resource_key);
+        } else if (NameIs(resource_key, scope_field, scope_field_snake)) {
+          simdjson::ondemand::array scopes;
+          if (resource_value.get_array().get(scopes) != simdjson::SUCCESS) {
+            Throw(resource_key, "an array");
+          }
+          for (auto scope_entry : scopes) {
+            auto& scope_records = resource_records.scopes.emplace_back();
+            Object scope_object;
+            if (scope_entry.get_object().get(scope_object) !=
+                simdjson::SUCCESS) {
+              Throw(resource_key, "an array of objects");
+            }
+            for (auto scope_member : scope_object) {
+              std::string_view scope_key;
+              if (scope_member.unescaped_key().get(scope_key) !=
+                  simdjson::SUCCESS) {
+                Throw(resource_key, "an array of objects");
+              }
+              auto scope_value = scope_member.value().value();
+              if (scope_key == "scope") {
+                ParseScope(scope_value, scope_records.scope, out.arena);
+              } else if (NameIs(scope_key, "schemaUrl", "schema_url")) {
+                scope_records.schema_url = ReadString(scope_value, scope_key);
+              } else if (NameIs(scope_key, record_field, record_field_snake)) {
+                simdjson::ondemand::array records;
+                if (scope_value.get_array().get(records) != simdjson::SUCCESS) {
+                  Throw(scope_key, "an array");
+                }
+                for (auto record : records) {
+                  parse_record(record.value(),
+                               scope_records.records.emplace_back(), out.arena);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 }  // namespace
 
 void ParseLogsRequest(std::string_view json, ExportLogsRequest& out) {
-  ParseRequest(json, out);
+  ParseRequest<LogRecord>(json, out, "resourceLogs", "resource_logs",
+                          "scopeLogs", "scope_logs", "logRecords",
+                          "log_records", ParseLogRecord);
 }
 
 void ParseTracesRequest(std::string_view json, ExportTracesRequest& out) {
-  ParseRequest(json, out);
+  ParseRequest<Span>(json, out, "resourceSpans", "resource_spans", "scopeSpans",
+                     "scope_spans", "spans", "spans", ParseSpan);
 }
 
 void ParseMetricsRequest(std::string_view json, ExportMetricsRequest& out) {
-  ParseRequest(json, out);
+  ParseRequest<Metric>(json, out, "resourceMetrics", "resource_metrics",
+                       "scopeMetrics", "scope_metrics", "metrics", "metrics",
+                       ParseMetric);
 }
 
 }  // namespace sdb::otel

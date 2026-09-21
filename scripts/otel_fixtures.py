@@ -3,7 +3,7 @@
 
 The `.otlp.json` files are the source of truth; this writes the matching
 `.otlp.pb` next to each one using the OFFICIAL opentelemetry-proto bindings,
-so the hand-written decoder in server/otel/protobuf.cpp is checked against an
+so the protozero decoder in server/otel/protobuf.cpp is checked against an
 independent implementation rather than against itself.
 
     pip install opentelemetry-proto protobuf

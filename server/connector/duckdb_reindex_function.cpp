@@ -632,32 +632,27 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
 // until the remove commits.
 SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
   const std::vector<int64_t>& rows) {
-  return [&rows,
-          idx = size_t{0}](int64_t min_row) mutable -> std::optional<int64_t> {
-    idx =
-      std::lower_bound(rows.begin() + idx, rows.end(), min_row) - rows.begin();
-    if (idx == rows.size()) {
+  return [&rows](int64_t min_row) -> std::optional<int64_t> {
+    const auto it = absl::c_lower_bound(rows, min_row);
+    if (it == rows.end()) {
       return std::nullopt;
     }
-    return rows[idx];
+    return *it;
   };
 }
 
 // Buckets ascend by (high, low) = ascending row.
 SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
   const std::vector<std::pair<int32_t, roaring::Roaring>>& buckets) {
-  return [&buckets, bucket = size_t{0}](
-           int64_t min_row) mutable -> std::optional<int64_t> {
-    while (bucket < buckets.size()) {
-      const auto base = static_cast<int64_t>(buckets[bucket].first) << 32;
+  return [&buckets](int64_t min_row) -> std::optional<int64_t> {
+    for (const auto& [high, bitmap] : buckets) {
+      const auto base = static_cast<int64_t>(high) << 32;
       if (min_row >= base + (int64_t{1} << 32)) {
-        ++bucket;
         continue;
       }
       const uint32_t low = min_row <= base ? 0 : min_row - base;
-      auto it = buckets[bucket].second.begin();
+      auto it = bitmap.begin();
       if (!it.move_equalorlarger(low)) {
-        ++bucket;
         continue;
       }
       return base | *it;

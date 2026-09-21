@@ -480,7 +480,7 @@ SCENARIOS = {
     "attach_churn": pick_attach_churn,
     "server_race": pick_server_race,
     "break_everything": pick_break_everything,
-    "biglake_goshan_dr": lambda rng, st: st.env["workload"].pick(rng, st),
+    "biglake_reindex": lambda rng, st: st.env["workload"].pick(rng, st),
 }
 
 

@@ -177,7 +177,9 @@ class Worker(threading.Thread):
             attempts = 0
             while True:
                 attempts += 1
+                started = time.monotonic()
                 outcome, sqlstate, msg = self._execute(op)
+                duration = time.monotonic() - started
                 dead = outcome is Outcome.UNKNOWN_CRASH
                 scope = self._scope_for(op.key)
                 cls = classify.classify(
@@ -203,7 +205,7 @@ class Worker(threading.Thread):
                     "w": self.worker_id, "op": op.as_record(),
                     "outcome": outcome.value, "sqlstate": sqlstate,
                     "label": cls.label, "attempt": attempts,
-                    "t": round(time.monotonic(), 4),
+                    "t": round(time.monotonic(), 4), "dur": round(duration, 4),
                 })
                 if cls.retryable and attempts < self.profile.max_retries \
                         and not self.stop_event.is_set():

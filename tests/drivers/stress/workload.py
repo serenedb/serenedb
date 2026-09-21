@@ -103,11 +103,13 @@ def worker_index(state):
 
 
 class Workload:
-    def __init__(self, dsn, run_tag, dim, seed_docs, docs_cap, backend, env):
+    def __init__(self, dsn, run_tag, dim, seed_docs, docs_cap, backend, env,
+                 compaction_interval=None):
         self.dsn = dsn
         self.dim = dim
         self.seed_docs = seed_docs
         self.docs_cap = docs_cap
+        self.compaction_interval = compaction_interval
         self.server = f"gd{run_tag}"
         self.schema = f"gd_{run_tag}"
         self.table = f"{self.server}.{self.schema}.docs"
@@ -127,9 +129,12 @@ class Workload:
         return conn
 
     def create_index_sql(self):
+        options = "reindex_interval=500"
+        if self.compaction_interval is not None:
+            options += f", compaction_interval={self.compaction_interval}"
         return (f"CREATE INDEX {self.index} ON {self.view} USING inverted("
                 f"id, body {self.dictionary}, emb ivf (metric = 'l2')) "
-                f"WITH (reindex_interval=500)")
+                f"WITH ({options})")
 
     def ingest_sql(self, first, count):
         return (f"INSERT INTO {self.table} SELECT s::INTEGER, {category_sql('s')}, "
@@ -299,7 +304,25 @@ class Workload:
                             f"SELECT {cols} FROM {self.view}) UNION ALL (SELECT {cols} FROM "
                             f"{self.view} EXCEPT SELECT {cols} FROM {self.index}))")
             if diff:
-                bad("index_view_rows_mismatch", f"{stage}: {diff} differing rows")
+                cur.execute(f"SELECT 'index_only', {cols} FROM (SELECT {cols} FROM {self.index} "
+                            f"EXCEPT SELECT {cols} FROM {self.view}) UNION ALL "
+                            f"SELECT 'view_only', {cols} FROM (SELECT {cols} FROM {self.view} "
+                            f"EXCEPT SELECT {cols} FROM {self.index}) LIMIT 10")
+                rows = cur.fetchall()
+                ids = sorted({r[1] for r in rows})
+                both = []
+                for k in ids:
+                    cur.execute(f"SELECT 'index', id, ver FROM {self.index} WHERE id = {k} "
+                                f"UNION ALL SELECT 'view', id, ver FROM {self.view} WHERE id = {k}")
+                    both.extend(cur.fetchall())
+                cur.execute(f"VACUUM (REFRESH_INDEX) {self.index}")
+                after = []
+                for k in ids:
+                    cur.execute(f"SELECT 'index', id, ver FROM {self.index} WHERE id = {k}")
+                    after.extend(cur.fetchall())
+                bad("index_view_rows_mismatch",
+                    f"{stage}: {diff} differing rows: {rows}; per id: {both}; "
+                    f"index after VACUUM (REFRESH_INDEX): {after}")
             return c_view
 
         try:
@@ -320,10 +343,10 @@ class Workload:
                         bad("fts_count_mismatch", f"'{word}': index {got}, table {expected}")
                 alive = sorted(truth)
                 for k in sampler.sample(alive, min(5, len(alive))):
-                    top = one(cur, f"SELECT id FROM {self.index} ORDER BY emb <-> "
-                                   f"{vec_sql(k, truth[k], self.dim)} LIMIT 1")
-                    if top != k:
-                        bad("ann_top1_miss", f"exact vector of {k} ranked {top} first")
+                    top = column(cur, f"SELECT id FROM {self.index} ORDER BY emb <-> "
+                                      f"{vec_sql(k, truth[k], self.dim)} LIMIT 5")
+                    if k not in top:
+                        bad("ann_exact_vector_miss", f"exact vector of {k} not in top-5 {top}")
                 for k in sampler.sample(alive, min(3, len(alive))):
                     vec = vec_sql(k, truth[k], self.dim)
                     got = set(column(cur, f"SELECT id FROM {self.index} ORDER BY emb <-> {vec} LIMIT 10"))

@@ -28,7 +28,8 @@ OTLP/HTTP on a listener with `?api=otlp`: `POST /v1/logs`, `/v1/traces`,
 
 Both decoders fill the model in `server/otel/model.h`: `protobuf.cpp` reads
 the wire format with `third_party/protozero`, `protojson.cpp` reads ProtoJSON
-with simdjson.
+through the reflective serializer (`iresearch/utils/serializer.hpp` over
+simdjson), with overloads only for the ProtoJSON deviations.
 
 ## Fixtures
 

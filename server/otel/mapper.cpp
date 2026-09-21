@@ -26,84 +26,79 @@
 #include <absl/time/time.h>
 #include <simdjson.h>
 
+#include <iresearch/utils/serializer.hpp>
+#include <optional>
 #include <variant>
 
-// Canonical value rules shared by every ingestion route: attribute JSON with
-// sorted keys, body stringification, and the string forms stored for the
-// SpanKind / StatusCode / AggregationTemporality enums.
-//
+#include "server/utils/simdjson_sink.h"
+
 // Enum members:  https://github.com/open-telemetry/opentelemetry-proto
 // Attribute keys (service.name, event.name) are semantic conventions:
 // https://opentelemetry.io/docs/specs/semconv/
 namespace sdb::otel {
 namespace {
 
-using StringBuilder = simdjson::builder::string_builder;
+template<typename Context>
+concept JsonWriteContext = requires(Context ctx) { ctx.io().WriteNull(); };
 
-void AppendAnyValue(StringBuilder& sb, const AnyValue* value);
+struct SortedAttributes {
+  const KeyValueList* attributes;
+};
 
-void AppendAttributes(StringBuilder& sb, const KeyValueList& attributes) {
+struct NullableText {
+  std::string_view text;
+};
+
+struct NullableNumber {
+  std::optional<double> number;
+};
+
+template<JsonWriteContext Context>
+void SerdeWrite(Context ctx, SortedAttributes attributes) {
   std::vector<const KeyValue*> sorted;
-  sorted.reserve(attributes.size());
-  for (const auto& kv : attributes) {
+  sorted.reserve(attributes.attributes->size());
+  for (const auto& kv : *attributes.attributes) {
     sorted.push_back(&kv);
   }
   absl::c_stable_sort(sorted, [](const KeyValue* lhs, const KeyValue* rhs) {
     return lhs->key < rhs->key;
   });
-  sb.start_object();
+  auto& sink = ctx.io();
+  sink.OnObjectBegin();
   bool first = true;
   for (const auto* kv : sorted) {
-    if (!first) {
-      sb.append_comma();
+    if (!std::exchange(first, false)) {
+      sink.OnSeparator();
     }
-    first = false;
-    sb.escape_and_append_with_quotes(kv->key);
-    sb.append_colon();
-    AppendAnyValue(sb, kv->value);
+    sink.OnPropertyBegin(kv->key);
+    irs::utils::WriteObject(sink, kv->value);
   }
-  sb.end_object();
+  sink.OnObjectEnd();
 }
 
-void AppendAnyValue(StringBuilder& sb, const AnyValue* value) {
-  if (value == nullptr) {
-    sb.append_null();
-    return;
+template<JsonWriteContext Context>
+void SerdeWrite(Context ctx, NullableText text) {
+  if (text.text.empty()) {
+    ctx.io().WriteNull();
+  } else {
+    ctx.io().WriteValue(text.text);
   }
-  std::visit(
-    [&](const auto& held) {
-      using Held = std::decay_t<decltype(held)>;
-      if constexpr (std::is_same_v<Held, std::monostate>) {
-        sb.append_null();
-      } else if constexpr (std::is_same_v<Held, std::string>) {
-        sb.escape_and_append_with_quotes(held);
-      } else if constexpr (std::is_same_v<Held, bool>) {
-        sb.append_raw(held ? "true" : "false");
-      } else if constexpr (std::is_same_v<Held, int64_t>) {
-        sb.append(held);
-      } else if constexpr (std::is_same_v<Held, double>) {
-        sb.append(held);
-      } else if constexpr (std::is_same_v<Held, BytesValue>) {
-        sb.escape_and_append_with_quotes(held.data);
-      } else if constexpr (std::is_same_v<Held, ArrayValue>) {
-        sb.start_array();
-        bool first = true;
-        for (const auto* element : held.values) {
-          if (!first) {
-            sb.append_comma();
-          }
-          first = false;
-          AppendAnyValue(sb, element);
-        }
-        sb.end_array();
-      } else if constexpr (std::is_same_v<Held, KvlistValue>) {
-        AppendAttributes(sb, held.values);
-      }
-    },
-    value->value);
 }
 
-std::string Finish(StringBuilder& sb) {
+template<JsonWriteContext Context>
+void SerdeWrite(Context ctx, NullableNumber number) {
+  if (number.number) {
+    ctx.io().WriteValue(*number.number);
+  } else {
+    ctx.io().WriteNull();
+  }
+}
+
+template<typename T>
+std::string ToJson(const T& value) {
+  simdjson::builder::string_builder sb;
+  utils::JsonSink sink{sb};
+  irs::utils::WriteObject(sink, value);
   auto view = sb.view();
   if (view.error() != simdjson::SUCCESS) {
     return "null";
@@ -120,18 +115,68 @@ std::string FormatTimestampNs(uint64_t unix_nano) {
     absl::FormatTime("%H:%M:%S", time, absl::UTCTimeZone()), nanos);
 }
 
-std::string AnyValueToJson(const AnyValue* value) {
-  StringBuilder sb;
-  AppendAnyValue(sb, value);
-  return Finish(sb);
+NullableNumber ExemplarNumber(const Exemplar& exemplar) {
+  if (const auto* number = std::get_if<int64_t>(&exemplar.value)) {
+    return {.number = static_cast<double>(*number)};
+  }
+  if (const auto* real = std::get_if<double>(&exemplar.value)) {
+    return {.number = *real};
+  }
+  return {};
 }
+
+struct EventJson {
+  SortedAttributes attributes;
+  uint32_t dropped_attributes_count;
+  std::string_view name;
+  std::string timestamp;
+};
+
+struct LinkJson {
+  SortedAttributes attributes;
+  NullableText span_id;
+  NullableText trace_id;
+  NullableText trace_state;
+};
+
+struct ExemplarJson {
+  SortedAttributes filtered_attributes;
+  NullableText span_id;
+  std::string timestamp;
+  NullableText trace_id;
+  NullableNumber value;
+};
 
 }  // namespace
 
+template<JsonWriteContext Context>
+void SerdeWrite(Context ctx, const AnyValue* value) {
+  auto& sink = ctx.io();
+  if (value == nullptr) {
+    sink.WriteNull();
+    return;
+  }
+  std::visit(
+    [&]<typename Held>(const Held& held) {
+      if constexpr (std::is_same_v<Held, std::monostate>) {
+        sink.WriteNull();
+      } else if constexpr (std::is_same_v<Held, std::string>) {
+        sink.WriteValue(std::string_view{held});
+      } else if constexpr (std::is_same_v<Held, BytesValue>) {
+        sink.WriteValue(std::string_view{held.data});
+      } else if constexpr (std::is_same_v<Held, ArrayValue>) {
+        irs::utils::WriteObject(sink, held.values);
+      } else if constexpr (std::is_same_v<Held, KvlistValue>) {
+        irs::utils::WriteObject(sink, SortedAttributes{&held.values});
+      } else {
+        sink.WriteValue(held);
+      }
+    },
+    value->value);
+}
+
 std::string AttributesToJson(const KeyValueList& attributes) {
-  StringBuilder sb;
-  AppendAttributes(sb, attributes);
-  return Finish(sb);
+  return ToJson(SortedAttributes{&attributes});
 }
 
 std::string BodyToText(const AnyValue* body) {
@@ -147,7 +192,7 @@ std::string BodyToText(const AnyValue* body) {
   if (std::holds_alternative<std::monostate>(body->value)) {
     return {};
   }
-  return AnyValueToJson(body);
+  return ToJson(body);
 }
 
 const AnyValue* FindAttribute(const KeyValueList& attributes,
@@ -203,127 +248,40 @@ std::string_view TemporalityName(AggregationTemporality temporality) {
 }
 
 std::string EventsToJson(const std::vector<SpanEvent>& events) {
-  StringBuilder sb;
-  sb.start_array();
-  bool first = true;
+  std::vector<EventJson> items;
+  items.reserve(events.size());
   for (const auto& event : events) {
-    if (!first) {
-      sb.append_comma();
-    }
-    first = false;
-    sb.start_object();
-    sb.escape_and_append_with_quotes("attributes");
-    sb.append_colon();
-    AppendAttributes(sb, event.attributes);
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("dropped_attributes_count");
-    sb.append_colon();
-    sb.append(static_cast<uint64_t>(event.dropped_attributes_count));
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("name");
-    sb.append_colon();
-    sb.escape_and_append_with_quotes(event.name);
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("timestamp");
-    sb.append_colon();
-    sb.escape_and_append_with_quotes(FormatTimestampNs(event.time_unix_nano));
-    sb.end_object();
+    items.push_back({.attributes = {&event.attributes},
+                     .dropped_attributes_count = event.dropped_attributes_count,
+                     .name = event.name,
+                     .timestamp = FormatTimestampNs(event.time_unix_nano)});
   }
-  sb.end_array();
-  return Finish(sb);
+  return ToJson(items);
 }
 
 std::string LinksToJson(const std::vector<SpanLink>& links) {
-  StringBuilder sb;
-  sb.start_array();
-  bool first = true;
+  std::vector<LinkJson> items;
+  items.reserve(links.size());
   for (const auto& link : links) {
-    if (!first) {
-      sb.append_comma();
-    }
-    first = false;
-    sb.start_object();
-    sb.escape_and_append_with_quotes("attributes");
-    sb.append_colon();
-    AppendAttributes(sb, link.attributes);
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("span_id");
-    sb.append_colon();
-    if (link.span_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(link.span_id);
-    }
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("trace_id");
-    sb.append_colon();
-    if (link.trace_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(link.trace_id);
-    }
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("trace_state");
-    sb.append_colon();
-    if (link.trace_state.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(link.trace_state);
-    }
-    sb.end_object();
+    items.push_back({.attributes = {&link.attributes},
+                     .span_id = {link.span_id.hex},
+                     .trace_id = {link.trace_id.hex},
+                     .trace_state = {link.trace_state}});
   }
-  sb.end_array();
-  return Finish(sb);
+  return ToJson(items);
 }
 
 std::string ExemplarsToJson(const std::vector<Exemplar>& exemplars) {
-  StringBuilder sb;
-  sb.start_array();
-  bool first = true;
+  std::vector<ExemplarJson> items;
+  items.reserve(exemplars.size());
   for (const auto& exemplar : exemplars) {
-    if (!first) {
-      sb.append_comma();
-    }
-    first = false;
-    sb.start_object();
-    sb.escape_and_append_with_quotes("filtered_attributes");
-    sb.append_colon();
-    AppendAttributes(sb, exemplar.filtered_attributes);
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("span_id");
-    sb.append_colon();
-    if (exemplar.span_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(exemplar.span_id);
-    }
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("timestamp");
-    sb.append_colon();
-    sb.escape_and_append_with_quotes(
-      FormatTimestampNs(exemplar.time_unix_nano));
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("trace_id");
-    sb.append_colon();
-    if (exemplar.trace_id.empty()) {
-      sb.append_null();
-    } else {
-      sb.escape_and_append_with_quotes(exemplar.trace_id);
-    }
-    sb.append_comma();
-    sb.escape_and_append_with_quotes("value");
-    sb.append_colon();
-    if (const auto* number = std::get_if<int64_t>(&exemplar.value)) {
-      sb.append(static_cast<double>(*number));
-    } else if (const auto* real = std::get_if<double>(&exemplar.value)) {
-      sb.append(*real);
-    } else {
-      sb.append_null();
-    }
-    sb.end_object();
+    items.push_back({.filtered_attributes = {&exemplar.filtered_attributes},
+                     .span_id = {exemplar.span_id.hex},
+                     .timestamp = FormatTimestampNs(exemplar.time_unix_nano),
+                     .trace_id = {exemplar.trace_id.hex},
+                     .value = ExemplarNumber(exemplar)});
   }
-  sb.end_array();
-  return Finish(sb);
+  return ToJson(items);
 }
 
 }  // namespace sdb::otel

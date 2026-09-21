@@ -556,7 +556,7 @@ rpc.duration	3	1.5	{0.5,0.99}	{0.4,1.1}
 statement error
 INSERT INTO otel_logs SELECT * FROM otlp_logs('{"resourceLogs":');
 ----
-db error: ERROR: OTLP/JSON: field [<root>] must be an object
+db error: ERROR: OTLP/JSON: INCOMPLETE_ARRAY_OR_OBJECT: JSON document ended early in the middle of an object or array. This is a fatal and unrecoverable error.
 
 
 statement error

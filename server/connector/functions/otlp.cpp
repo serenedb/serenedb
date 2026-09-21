@@ -214,16 +214,17 @@ void BuildLogRows(const otel::ExportLogsRequest& request,
         row.push_back({"observed_timestamp", observed == 0
                                                ? duckdb::Value{}
                                                : TimestampNs(observed)});
-        row.push_back({"trace_id", NullableText(record.trace_id)});
-        row.push_back({"span_id", NullableText(record.span_id)});
+        row.push_back({"trace_id", NullableText(record.trace_id.hex)});
+        row.push_back({"span_id", NullableText(record.span_id.hex)});
         row.push_back({"trace_flags", duckdb::Value::INTEGER(
                                         static_cast<int32_t>(record.flags))});
         row.push_back({"severity_text", NullableText(record.severity_text)});
-        row.push_back({"severity_number",
-                       record.severity_number == 0
-                         ? duckdb::Value{}
-                         : duckdb::Value::SMALLINT(
-                             static_cast<int16_t>(record.severity_number))});
+        row.push_back(
+          {"severity_number",
+           record.severity_number == otel::SeverityNumber::Unspecified
+             ? duckdb::Value{}
+             : duckdb::Value::SMALLINT(static_cast<int16_t>(
+                 std::to_underlying(record.severity_number)))});
         std::string event_name = record.event_name;
         if (event_name.empty()) {
           if (const auto* attribute =
@@ -254,9 +255,10 @@ void BuildSpanRows(const otel::ExportTracesRequest& request,
           {"end_timestamp", span.end_time_unix_nano == 0
                               ? duckdb::Value{}
                               : TimestampNs(span.end_time_unix_nano)});
-        row.push_back({"trace_id", NullableText(span.trace_id)});
-        row.push_back({"span_id", NullableText(span.span_id)});
-        row.push_back({"parent_span_id", NullableText(span.parent_span_id)});
+        row.push_back({"trace_id", NullableText(span.trace_id.hex)});
+        row.push_back({"span_id", NullableText(span.span_id.hex)});
+        row.push_back(
+          {"parent_span_id", NullableText(span.parent_span_id.hex)});
         row.push_back({"trace_state", NullableText(span.trace_state)});
         row.push_back({"span_name", NullableText(span.name)});
         row.push_back({"span_kind", duckdb::Value{std::string{
@@ -289,7 +291,7 @@ void BuildSpanRows(const otel::ExportTracesRequest& request,
         std::vector<std::string> link_trace_ids;
         link_trace_ids.reserve(span.links.size());
         for (const auto& link : span.links) {
-          link_trace_ids.push_back(link.trace_id);
+          link_trace_ids.push_back(link.trace_id.hex);
         }
         row.push_back({"event_names", TextList(event_names)});
         row.push_back({"link_trace_ids", TextList(link_trace_ids)});

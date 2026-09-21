@@ -77,6 +77,43 @@ class ValueArena {
   std::vector<std::unique_ptr<AnyValue>> _values;
 };
 
+template<size_t HexLength>
+struct HexId {
+  std::string hex;
+};
+
+using TraceId = HexId<32>;
+using SpanId = HexId<16>;
+
+// https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
+enum class SeverityNumber : int32_t {
+  Unspecified = 0,
+  Trace = 1,
+  Trace2 = 2,
+  Trace3 = 3,
+  Trace4 = 4,
+  Debug = 5,
+  Debug2 = 6,
+  Debug3 = 7,
+  Debug4 = 8,
+  Info = 9,
+  Info2 = 10,
+  Info3 = 11,
+  Info4 = 12,
+  Warn = 13,
+  Warn2 = 14,
+  Warn3 = 15,
+  Warn4 = 16,
+  Error = 17,
+  Error2 = 18,
+  Error3 = 19,
+  Error4 = 20,
+  Fatal = 21,
+  Fatal2 = 22,
+  Fatal3 = 23,
+  Fatal4 = 24,
+};
+
 struct Resource {
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
@@ -92,15 +129,15 @@ struct InstrumentationScope {
 struct LogRecord {
   uint64_t time_unix_nano = 0;
   uint64_t observed_time_unix_nano = 0;
-  int32_t severity_number = 0;
+  SeverityNumber severity_number = SeverityNumber::Unspecified;
   std::string severity_text;
   std::string event_name;
   AnyValue* body = nullptr;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
   uint32_t flags = 0;
-  std::string trace_id;
-  std::string span_id;
+  TraceId trace_id;
+  SpanId span_id;
 };
 
 enum class SpanKind : int32_t {
@@ -131,8 +168,8 @@ struct SpanEvent {
 };
 
 struct SpanLink {
-  std::string trace_id;
-  std::string span_id;
+  TraceId trace_id;
+  SpanId span_id;
   std::string trace_state;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
@@ -140,10 +177,10 @@ struct SpanLink {
 };
 
 struct Span {
-  std::string trace_id;
-  std::string span_id;
+  TraceId trace_id;
+  SpanId span_id;
   std::string trace_state;
-  std::string parent_span_id;
+  SpanId parent_span_id;
   uint32_t flags = 0;
   std::string name;
   SpanKind kind = SpanKind::Unspecified;
@@ -168,8 +205,8 @@ struct Exemplar {
   KeyValueList filtered_attributes;
   uint64_t time_unix_nano = 0;
   std::variant<std::monostate, int64_t, double> value;
-  std::string span_id;
-  std::string trace_id;
+  SpanId span_id;
+  TraceId trace_id;
 };
 
 struct NumberDataPoint {

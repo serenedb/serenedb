@@ -47,7 +47,7 @@ std::string Text(pbf_reader& reader) {
   return std::string{View(reader.get_view())};
 }
 
-std::string HexId(pbf_reader& reader) {
+std::string ReadHexId(pbf_reader& reader) {
   const auto raw = View(reader.get_view());
   if (raw.empty() || raw.find_first_not_of('\0') == std::string_view::npos) {
     return {};
@@ -204,7 +204,7 @@ void DecodeLogRecord(pbf_reader reader, LogRecord& out, ValueArena& arena) {
         out.time_unix_nano = reader.get_fixed64();
         break;
       case 2:
-        out.severity_number = reader.get_enum();
+        out.severity_number = static_cast<SeverityNumber>(reader.get_enum());
         break;
       case 3:
         out.severity_text = Text(reader);
@@ -223,10 +223,10 @@ void DecodeLogRecord(pbf_reader reader, LogRecord& out, ValueArena& arena) {
         out.flags = reader.get_fixed32();
         break;
       case 9:
-        out.trace_id = HexId(reader);
+        out.trace_id.hex = ReadHexId(reader);
         break;
       case 10:
-        out.span_id = HexId(reader);
+        out.span_id.hex = ReadHexId(reader);
         break;
       case 11:
         out.observed_time_unix_nano = reader.get_fixed64();
@@ -266,10 +266,10 @@ void DecodeSpanLink(pbf_reader reader, SpanLink& out, ValueArena& arena) {
   while (reader.next()) {
     switch (reader.tag()) {
       case 1:
-        out.trace_id = HexId(reader);
+        out.trace_id.hex = ReadHexId(reader);
         break;
       case 2:
-        out.span_id = HexId(reader);
+        out.span_id.hex = ReadHexId(reader);
         break;
       case 3:
         out.trace_state = Text(reader);
@@ -309,16 +309,16 @@ void DecodeSpan(pbf_reader reader, Span& out, ValueArena& arena) {
   while (reader.next()) {
     switch (reader.tag()) {
       case 1:
-        out.trace_id = HexId(reader);
+        out.trace_id.hex = ReadHexId(reader);
         break;
       case 2:
-        out.span_id = HexId(reader);
+        out.span_id.hex = ReadHexId(reader);
         break;
       case 3:
         out.trace_state = Text(reader);
         break;
       case 4:
-        out.parent_span_id = HexId(reader);
+        out.parent_span_id.hex = ReadHexId(reader);
         break;
       case 5:
         out.name = Text(reader);
@@ -373,10 +373,10 @@ void DecodeExemplar(pbf_reader reader, Exemplar& out, ValueArena& arena) {
         out.value = reader.get_double();
         break;
       case 4:
-        out.span_id = HexId(reader);
+        out.span_id.hex = ReadHexId(reader);
         break;
       case 5:
-        out.trace_id = HexId(reader);
+        out.trace_id.hex = ReadHexId(reader);
         break;
       case 6:
         out.value = reader.get_sfixed64();

@@ -13,7 +13,7 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-: "${WORKSPACE:=$(realpath "${SCRIPT_DIR}/../..")}"
+: "${WORKSPACE:=$(realpath "${SCRIPT_DIR}/../../..")}"
 : "${BUILD_DIR:=build}"
 : "${SERENED:=${WORKSPACE}/${BUILD_DIR}/bin/serened}"
 
@@ -29,14 +29,14 @@ usage() {
 	cat <<-EOF
 		Usage: $0 [OPTIONS]
 
-		  --profile NAME     smoke | soak | soak-tsan | wedge-probe (default ${SDB_STRESS_PROFILE})
+		  --profile NAME     smoke | soak | soak-tsan | wedge-probe | goshan-smoke (default ${SDB_STRESS_PROFILE})
 		  --scenario NAME    ddl_churn | ddl_dml_race | dependency_churn |
 		                     serial_churn | tables_only
 		  --seconds N        override the profile duration
 		  --workers N        override the profile worker count
 		  --seed N           fix the RNG seed for a repro
 		  --outdir DIR       artifacts (default ${SDB_STRESS_OUTDIR})
-		  --junit DIR        also emit tests-stress-junit.xml here
+		  --junit DIR        also emit tests-stress-<profile>-junit.xml here
 
 		Every flag has an SDB_STRESS_* environment equivalent.
 	EOF

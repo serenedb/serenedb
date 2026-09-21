@@ -27,11 +27,19 @@ class Profile:
     max_retries: int = 5
     livelock_retry_limit: int = 20
     datadir_root: str = "/dev/shm"
+    dim: int = 3072
+    seed_docs: int = 500
+    docs_cap: int = 20000
 
 
 PROFILES = {
     "smoke": Profile(
         name="smoke", seconds=45, workers=4, quiesce_every=15.0,
+    ),
+    "goshan-smoke": Profile(
+        name="goshan-smoke", seconds=480, workers=3, scenario="biglake_goshan_dr",
+        quiesce_every=60.0, op_deadline_s=120.0, probe_timeout_s=30.0,
+        faults_enabled=True, data_domain_crashes=2, graceful_restarts=2,
     ),
     "soak": Profile(
         name="soak", seconds=900, workers=8, quiesce_every=60.0,
@@ -121,6 +129,7 @@ def iceberg_fixtures(repo):
 
 
 SCENARIOS_NEEDING_ICEBERG = frozenset({"iceberg_views"})
+SCENARIOS_NEEDING_ICEBERG_REST = frozenset({"biglake_goshan_dr"})
 
 
 def resolve(name, **overrides):

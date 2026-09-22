@@ -80,12 +80,12 @@ void BytesViewInput::ReadaheadFrom(const byte_type* begin) noexcept {
     return;
   }
   const auto len = std::min<uint64_t>(_window, end - from);
-  if (!_probed) {
-    _probed = true;
+  if (_readahead == Readahead::Probe) {
     if (file_utils::IsResident(from, len)) {
       _readahead = Readahead::Suspended;
       return;
     }
+    _readahead = Readahead::Active;
   }
   file_utils::Prefetch(from, len);
   _prefetch_end = from + len;

@@ -102,7 +102,6 @@ class NormColumnReader final {
   uint64_t _total_sum = 0;
   uint64_t _total_non_zero = 0;
   bool _uniform_byte_size = true;
-  bool _mapped = false;
 };
 
 // Decode one stored value from a row-group's raw bytes.

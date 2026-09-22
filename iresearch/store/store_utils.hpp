@@ -153,13 +153,13 @@ class BytesViewInput : public IndexInput {
       _pos{other._pos},
       _readahead_limit{other._readahead_limit},
       _readahead{other._readahead == Readahead::Off ? Readahead::Off
-                                                    : Readahead::On} {}
+                                                    : Readahead::Probe} {}
 
   IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
-    if (_readahead == Readahead::On) [[unlikely]] {
+    if (_readahead >= Readahead::Probe) [[unlikely]] {
       OnSequentialRead(begin, count);
     }
     return begin;
@@ -231,15 +231,14 @@ class BytesViewInput : public IndexInput {
 
   bool Resident(uint64_t offset, uint64_t count) const noexcept final;
 
-  void EnableReadahead() noexcept final { _readahead = Readahead::On; }
+  void EnableReadahead() noexcept final { _readahead = Readahead::Probe; }
 
   void LimitReadahead(uint64_t end) noexcept final {
     _readahead_limit = _data.data() + std::min<uint64_t>(end, _data.size());
     _seq_end = nullptr;
     _prefetch_end = nullptr;
-    _probed = false;
-    if (_readahead == Readahead::Suspended) {
-      _readahead = Readahead::On;
+    if (_readahead != Readahead::Off) {
+      _readahead = Readahead::Probe;
     }
   }
 
@@ -252,8 +251,9 @@ class BytesViewInput : public IndexInput {
  private:
   enum class Readahead : uint8_t {
     Off,
-    On,
     Suspended,
+    Probe,
+    Active,
   };
 
   static constexpr uint64_t kMinReadahead = 128 * 1024;
@@ -280,7 +280,6 @@ class BytesViewInput : public IndexInput {
   uint64_t _skipped = 0;
   uint64_t _window = kMinReadahead;
   Readahead _readahead = Readahead::Off;
-  bool _probed = false;
 };
 
 // same as BytesViewInput but with support of adress remapping

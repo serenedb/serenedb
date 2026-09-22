@@ -72,14 +72,12 @@ NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
       _spans[rg] = std::span<const byte_type>{dst, byte_count};
       offset += byte_count;
     }
-  } else {
-    _mapped = true;
   }
 }
 
 size_t NormColumnReader::Stream(size_t rg, const byte_type* from,
                                 size_t advised) const noexcept {
-  if (!_mapped) {
+  if (!_owned.empty()) {
     return advised;
   }
   uint64_t budget = file_utils::kMaxReadahead;

@@ -119,7 +119,6 @@ set(IResearch_core_sources
     ./search/count/make_hnsw.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
-    ./search/count/make_docs_mask.cpp
     ./search/count/make_boolean.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp

@@ -58,22 +58,33 @@ inline uint64_t ReadMaskSize(IndexInput& in, std::string_view file) {
   return mask_size;
 }
 
-inline void ReadDocumentMask(IndexInput& in, uint64_t mask_size,
-                             DocumentMask& mask) {
+inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
   in.Seek(0);
   bstring blob(mask_size, 0);
   in.ReadData(blob.data(), mask_size);
-  mask.Merge(DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
-                                blob.size()));
+  return DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
+                            blob.size());
 }
 
-inline uint64_t ReadParent(IndexInput& in, uint64_t mask_size) {
+inline void ReadFiles(duckdb::BinaryDeserializer& meta_in,
+                      std::vector<std::string>& files) {
+  meta_in.ReadOptionalList(
+    SegmentMetaWriterImpl::kFieldFiles, "files",
+    [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      files.emplace_back(list.ReadElement<std::string>());
+    });
+}
+
+inline uint64_t ReadLink(IndexInput& in, uint64_t mask_size,
+                         std::vector<std::string>& files) {
   in.Seek(mask_size);
   duckdb::BinaryDeserializer meta_in{in};
   meta_in.Begin();
-  return meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
+  const auto parent = meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
     SegmentMetaWriterImpl::kFieldParent, "parent",
     SegmentMetaWriterImpl::kNoParent);
+  ReadFiles(meta_in, files);
+  return parent;
 }
 
 inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
@@ -97,6 +108,8 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   const auto parent = meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
     SegmentMetaWriterImpl::kFieldParent, "parent",
     SegmentMetaWriterImpl::kNoParent);
+  std::vector<std::string> files;
+  ReadFiles(meta_in, files);
   auto name = meta_in.ReadProperty<std::string>(
     SegmentMetaWriterImpl::kFieldName, "name");
   const auto segment_version = meta_in.ReadProperty<uint64_t>(
@@ -110,11 +123,6 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
       SegmentMetaWriterImpl::kFieldUncommittedCount, "uncommitted_count", 0);
   const auto size = meta_in.ReadProperty<uint64_t>(
     SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
-  std::vector<std::string> files;
-  meta_in.ReadList(SegmentMetaWriterImpl::kFieldFiles, "files",
-                   [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-                     files.emplace_back(list.ReadElement<std::string>());
-                   });
 
   if (mask_count < uncommitted_count) [[unlikely]] {
     throw IndexError{absl::StrCat(
@@ -148,12 +156,11 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   uint32_t docs_mask_chain = 0;
 
   if (mask_size != 0) {
-    DocumentMask builder;
-    ReadDocumentMask(*in, mask_size, builder);
+    auto builder = ReadDocumentMask(*in, mask_size);
     docs_mask_size = mask_size;
     docs_mask_chain = 1;
 
-    const auto first_link = files.size();
+    std::vector<std::string> links;
     auto version = segment_version;
     auto link = parent;
 
@@ -179,18 +186,19 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
                                       name, "', maskless link: ", file)};
       }
 
-      const auto next = ReadParent(*mask_in, link_size);
-      ReadDocumentMask(*mask_in, link_size, builder);
+      const auto next = ReadLink(*mask_in, link_size, files);
+      builder.Merge(ReadDocumentMask(*mask_in, link_size));
 
       docs_mask_size += link_size;
       ++docs_mask_chain;
-      files.emplace_back(std::move(file));
+      links.emplace_back(std::move(file));
       version = link;
       link = next;
     }
 
-    std::reverse(files.begin() + static_cast<ptrdiff_t>(first_link),
-                 files.end());
+    std::reverse(links.begin(), links.end());
+    files.insert(files.end(), std::make_move_iterator(links.begin()),
+                 std::make_move_iterator(links.end()));
     builder.Trim();
     docs_mask = std::make_shared<DocumentMask>(std::move(builder));
   }

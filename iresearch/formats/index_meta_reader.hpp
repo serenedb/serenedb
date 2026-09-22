@@ -101,13 +101,14 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
       });
     });
   std::optional<bstring> payload;
-  if (meta_in.CanDeserializeProperty(IndexMetaWriterImpl::kFieldPayloadSize,
-                                     "payload_size")) {
-    const auto size = meta_in.ReadProperty<uint64_t>(
-      IndexMetaWriterImpl::kFieldPayloadSize, "payload_size");
-    auto& bytes = payload.emplace(size, byte_type{0});
-    meta_in.ReadProperty(IndexMetaWriterImpl::kFieldPayload, "payload",
-                         bytes.data(), size);
+  if (meta_in.CanDeserializeProperty(IndexMetaWriterImpl::kFieldPayload,
+                                     "payload")) {
+    auto& bytes = payload.emplace();
+    meta_in.ReadList(
+      IndexMetaWriterImpl::kFieldPayload, "payload",
+      [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+        bytes.push_back(static_cast<byte_type>(list.ReadElement<char>()));
+      });
   }
 
   for (auto& segment : segments) {

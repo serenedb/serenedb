@@ -31,10 +31,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-namespace count {
-
-class MaskCount;
-}
 namespace fill {
 
 class DocsMask;
@@ -147,7 +143,6 @@ class DocumentMask final {
   void Trim() noexcept { roaring::api::bitset_trim(&_bits); }
 
  protected:
-  friend class count::MaskCount;
   friend class fill::DocsMask;
   friend class probe::DocsMask;
 

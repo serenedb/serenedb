@@ -11904,8 +11904,12 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
 
   auto writer_options = irs::tests::DefaultWriterOptions();
   uint64_t payload_committed_tick{0};
-  irs::bstring input_payload = static_cast<irs::bstring>(
-    irs::ViewCast<irs::byte_type>(std::string_view("init")));
+  // Every byte value round-trips: the real payload is a big-endian tick, whose
+  // high byte is routinely above 0x7f.
+  irs::bstring input_payload;
+  for (size_t byte = 0; byte != 256; ++byte) {
+    input_payload.push_back(static_cast<irs::byte_type>(byte));
+  }
   bool payload_provider_result{false};
   writer_options.meta_payload_provider =
     [&payload_provider_result, &payload_committed_tick, &input_payload](

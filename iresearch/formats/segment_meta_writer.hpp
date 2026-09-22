@@ -42,13 +42,13 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
   static constexpr uint64_t kNoParent = std::numeric_limits<uint64_t>::max();
 
   static constexpr duckdb::field_id_t kFieldParent = 0;
-  static constexpr duckdb::field_id_t kFieldName = 1;
-  static constexpr duckdb::field_id_t kFieldVersion = 2;
-  static constexpr duckdb::field_id_t kFieldLiveDocsCount = 3;
-  static constexpr duckdb::field_id_t kFieldRemovalCount = 4;
-  static constexpr duckdb::field_id_t kFieldUncommittedCount = 5;
-  static constexpr duckdb::field_id_t kFieldByteSize = 6;
-  static constexpr duckdb::field_id_t kFieldFiles = 7;
+  static constexpr duckdb::field_id_t kFieldFiles = 1;
+  static constexpr duckdb::field_id_t kFieldName = 2;
+  static constexpr duckdb::field_id_t kFieldVersion = 3;
+  static constexpr duckdb::field_id_t kFieldLiveDocsCount = 4;
+  static constexpr duckdb::field_id_t kFieldRemovalCount = 5;
+  static constexpr duckdb::field_id_t kFieldUncommittedCount = 6;
+  static constexpr duckdb::field_id_t kFieldByteSize = 7;
 
   void write(Directory& dir, std::string& filename, SegmentMeta& meta) final {
     Write(dir, filename, meta, nullptr, kNoParent);
@@ -149,6 +149,12 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
   meta_out.Begin();
   meta_out.WritePropertyWithDefault<uint64_t>(kFieldParent, "parent", parent,
                                               kNoParent);
+  if (!append) {
+    meta_out.WriteList(kFieldFiles, "files", files.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         list.WriteElement<std::string>(files[i]);
+                       });
+  }
   meta_out.WriteProperty<std::string>(kFieldName, "name", meta.name);
   meta_out.WriteProperty<uint64_t>(kFieldVersion, "version", meta.version);
   meta_out.WriteProperty<uint32_t>(kFieldLiveDocsCount, "live_docs_count",
@@ -159,10 +165,6 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     kFieldUncommittedCount, "uncommitted_count", UncommittedCount(meta), 0);
   meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
                                    size_without_mask);
-  meta_out.WriteList(kFieldFiles, "files", files.size(),
-                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                       list.WriteElement<std::string>(files[i]);
-                     });
   meta_out.End();
 
   out->WriteU64(mask_size);

@@ -38,8 +38,7 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   static constexpr duckdb::field_id_t kFieldGen = 0;
   static constexpr duckdb::field_id_t kFieldSegCounter = 1;
   static constexpr duckdb::field_id_t kFieldSegments = 2;
-  static constexpr duckdb::field_id_t kFieldPayloadSize = 3;
-  static constexpr duckdb::field_id_t kFieldPayload = 4;
+  static constexpr duckdb::field_id_t kFieldPayload = 3;
 
   static constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
   static constexpr duckdb::field_id_t kSegmentFieldCodec = 1;
@@ -109,10 +108,11 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
 
     if (meta.payload.has_value()) {
       const auto& payload = *meta.payload;
-      meta_out.WriteProperty<uint64_t>(kFieldPayloadSize, "payload_size",
-                                       payload.size());
-      meta_out.WriteProperty(kFieldPayload, "payload", payload.data(),
-                             payload.size());
+      meta_out.WriteList(
+        kFieldPayload, "payload", payload.size(),
+        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          list.WriteElement<char>(static_cast<char>(payload[i]));
+        });
     }
 
     meta_out.End();

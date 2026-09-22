@@ -24,7 +24,6 @@
 
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/make.hpp"
 #include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
@@ -43,10 +42,6 @@ uint32_t MaskedCount(const SubReader& segment) noexcept {
   return meta.docs_count - meta.live_docs_count;
 }
 
-// The mask only ever sits in a MustNot bucket, where a child is asked to probe,
-// to fill a window, or to count itself. So those are the three plans it has;
-// the other four say that this query kind has none, which is what a caller that
-// wanted to lead a scan or produce a score would have to be told.
 class MaskQuery : public QueryBuilder {
  public:
   MaskQuery(const SubReader& segment, uint32_t masked) noexcept
@@ -61,13 +56,7 @@ class MaskQuery : public QueryBuilder {
     return memory::make_managed<fill::Impl<fill::DocsMask>>(_segment);
   }
 
-  count::Root::ptr PlanCount(const count::Context& ctx) const final {
-    SDB_ASSERT(ctx.table == nullptr);
-    const auto& meta = _segment.Meta();
-    return count::MakeMaskCount(_segment.docs_mask(), meta.uncommitted_begin,
-                                static_cast<doc_id_t>(meta.docs_count));
-  }
-
+  count::Root::ptr PlanCount(const count::Context&) const final { return {}; }
   docs::Root::ptr PlanDocs(const docs::Context&) const final { return {}; }
   hits::Root::ptr PlanScored(const hits::Context&) const final { return {}; }
   top::Root::ptr PlanTop(const top::Context&) const final { return {}; }

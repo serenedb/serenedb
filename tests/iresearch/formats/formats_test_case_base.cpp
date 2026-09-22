@@ -35,6 +35,7 @@
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
@@ -1066,6 +1067,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.byte_size = 666;
     meta.version = 100;
     meta.files.emplace_back("file1");
+    meta.files.emplace_back("file2");
+
+    const std::vector<std::string> data_files{"file1", "file2"};
 
     auto mask = scattered(irs::doc_limits::min(), 3);
     ASSERT_LT(irs::SegmentMetaWriterImpl::kMinChainBytes,
@@ -1087,7 +1091,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     flush(nullptr, 0);
     ASSERT_EQ(1, meta.docs_mask_chain);
-    ASSERT_EQ(std::vector<std::string>{"file1"}, meta.files);
+    ASSERT_EQ(data_files, meta.files);
 
     const auto first_patch = scattered(2, 9);
     mask.Merge(first_patch);
@@ -1103,11 +1107,33 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     flush(&second_patch, 101);
     ASSERT_EQ(3, meta.docs_mask_chain);
 
-    const std::vector<std::string> expected_files{
-      "file1",
-      irs::FileName(meta.name, 100, irs::SegmentMetaWriterImpl::kFormatExt),
-      irs::FileName(meta.name, 101, irs::SegmentMetaWriterImpl::kFormatExt)};
+    auto expected_files = data_files;
+    expected_files.emplace_back(
+      irs::FileName(meta.name, 100, irs::SegmentMetaWriterImpl::kFormatExt));
+    expected_files.emplace_back(
+      irs::FileName(meta.name, 101, irs::SegmentMetaWriterImpl::kFormatExt));
     ASSERT_EQ(expected_files, meta.files);
+
+    // Only the root of the chain carries the file list; the links inherit it
+    // along the same walk that merges their patches.
+    auto link_of = [&](uint64_t version, std::vector<std::string>& files) {
+      const auto file = irs::FileName(meta.name, version,
+                                      irs::SegmentMetaWriterImpl::kFormatExt);
+      auto in = dir().open(file, irs::IOAdvice::NORMAL);
+      EXPECT_NE(nullptr, in);
+      return irs::ReadLink(*in, irs::ReadMaskSize(*in, file), files);
+    };
+
+    {
+      std::vector<std::string> head_files;
+      ASSERT_EQ(101, link_of(105, head_files));
+      ASSERT_TRUE(head_files.empty());
+
+      std::vector<std::string> root_files;
+      ASSERT_EQ(irs::SegmentMetaWriterImpl::kNoParent,
+                link_of(100, root_files));
+      ASSERT_EQ(data_files, root_files);
+    }
 
     {
       irs::SegmentMeta read_meta;
@@ -1320,6 +1346,10 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
 
     duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
     meta_out.Begin();
+    meta_out.WriteList(Writer::kFieldFiles, "files", meta.files.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         list.WriteElement<std::string>(meta.files[i]);
+                       });
     meta_out.WriteProperty<std::string>(Writer::kFieldName, "name", meta.name);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldVersion, "version",
                                      meta.version);
@@ -1327,12 +1357,8 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
                                      "live_docs_count", meta.live_docs_count);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size",
                                      meta.byte_size);
-    meta_out.WriteList(Writer::kFieldFiles, "files", meta.files.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteElement<std::string>(meta.files[i]);
-                       });
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldFiles + 1, "from_the_future",
-                                     123);
+    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
+                                     "from_the_future", 123);
     meta_out.End();
 
     out->WriteU64(0);

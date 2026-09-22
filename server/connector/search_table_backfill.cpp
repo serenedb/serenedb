@@ -104,12 +104,12 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target) {
   const auto* col_reader = sub.GetColReader();
-  SDB_ENSURE(col_reader != nullptr,
+  SDB_ENSURE(col_reader,
              "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
   const auto* mask = sub.docs_mask();
-  if (mask != nullptr && mask->empty()) {
+  if (mask && mask->empty()) {
     mask = nullptr;
   }
   const uint64_t docs = sub.Meta().docs_count;
@@ -122,7 +122,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     const auto produced = scanner.Scan(row, take, chunk);
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetCardinality(produced);
-    if (mask != nullptr) {
+    if (mask) {
       duckdb::idx_t keep = 0;
       for (duckdb::idx_t i = 0; i < produced; ++i) {
         const auto doc =
@@ -215,11 +215,11 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       slice{slice_in},
       progress{progress_in} {}
 
-  void ExecuteTask() override {
+  void ExecuteTask() final {
     for (const auto* sub : slice.segments) {
       const auto fed =
         FeedSegment(context, *sub, slice.source, *slice.sink, target);
-      if (progress != nullptr) {
+      if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
       }
@@ -236,7 +236,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
     }
   }
 
-  std::string TaskType() const override { return "SearchBackfillSlice"; }
+  std::string TaskType() const final { return "SearchBackfillSlice"; }
 
   duckdb::ClientContext& context;
   const SearchBackfillTarget& target;
@@ -414,7 +414,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     if (group.empty()) {
       break;
     }
-    if (progress != nullptr && !counted) {
+    if (progress && !counted) {
       // Exact, unlike the transactional path's planner estimate.
       pg::ProgressMetrics::Set(progress->tuples_total,
                                static_cast<int64_t>(live));

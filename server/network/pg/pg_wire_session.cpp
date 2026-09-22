@@ -1050,7 +1050,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                            duckdb::Identifier{std::string{UserName()}});
   const auto* login_role =
     entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
-  if (login_role != nullptr && login_role->HasValidUntil() &&
+  if (login_role && login_role->HasValidUntil() &&
       duckdb::Timestamp::GetCurrentTimestamp().value >=
         login_role->ValidUntil()) {
     WriteFatalResponse(
@@ -1478,7 +1478,7 @@ yaclib::Task<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
   // caller owns the waiter (DriveToResult, spanning the following
   // FinishWireDrain too) we skip the self arm/disarm so the whole drive is one
   // armed span.
-  const bool arm = own_waiter && wire != nullptr;
+  const bool arm = own_waiter && wire;
   if (arm) {
     this->ArmSendWaiter();
   }
@@ -1488,7 +1488,7 @@ yaclib::Task<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
     }
   };
   for (;;) {
-    if (wire != nullptr) {
+    if (wire) {
       DrainWire(*wire);
     }
     const auto status =
@@ -1500,7 +1500,7 @@ yaclib::Task<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
     // (checked here, before any Park, so the sink's block-wake cannot be lost)
     // so the caller emits PortalSuspended; a re-Execute raises the budget and
     // resumes this same pending.
-    if (wire != nullptr && wire->paged &&
+    if (wire && wire->paged &&
         wire->rows.load(std::memory_order_relaxed) >=
           wire->row_budget.load(std::memory_order_relaxed)) {
       co_return status;
@@ -2158,7 +2158,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   // bound statement is COMMIT/ROLLBACK.
   const auto* unbound = statement.Unbound();
   const bool is_txn_exit = statement.GetKind() == Statement::Kind::Prepared &&
-                           unbound != nullptr && IsTransactionExit(*unbound);
+                           unbound && IsTransactionExit(*unbound);
   if (_txn_state->StatusByte() == 'E' && !is_txn_exit) {
     ThrowAbortedTransaction();
   }
@@ -2320,7 +2320,7 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
     // Find (not FindOrThrow): the anon slot always exists but an unbound anon
     // portal (no stmt) is "does not exist" too, so both misses share one throw.
     Portal* portal = _proto.portals.Find(name);
-    if (portal == nullptr || portal->stmt == nullptr) {
+    if (!portal || !portal->stmt) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                       ERR_MSG("portal \"", name, "\" does not exist"));
     }
@@ -2570,12 +2570,12 @@ void PgWireSession<Kind>::HandleClose(std::string_view payload) {
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::Run() {
   auto self = this->shared_from_this();
-  if (_active != nullptr) {
+  if (_active) {
     _active->fetch_add(1, std::memory_order_relaxed);
   }
   metrics::Add(metrics::Gauge::PgConnections);
   absl::Cleanup conn_guard = [this] {
-    if (_active != nullptr) {
+    if (_active) {
       _active->fetch_sub(1, std::memory_order_relaxed);
     }
     metrics::Sub(metrics::Gauge::PgConnections);
@@ -2686,7 +2686,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       it->second = user->second;
     }
 
-    if (_max_conn != 0 && _active != nullptr &&
+    if (_max_conn != 0 && _active &&
         _active->load(std::memory_order_relaxed) > _max_conn) {
       WriteFatalResponse(this->_send,
                          SQL_ERROR_DATA(ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),

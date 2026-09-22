@@ -71,7 +71,7 @@ duckdb::LogicalType MakeModifierTSQueryType() {
 struct TSQueryCastData final : duckdb::BoundCastData {
   TSQueryParts parts;
 
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<TSQueryCastData>(*this);
   }
 };

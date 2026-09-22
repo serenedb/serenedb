@@ -119,13 +119,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->queries.resize(state->total_segments);
     const bool seeks_one_term =
       absl::c_any_of(ss.ts_dict.requests, [](const TsDictRequest& req) {
-        return req.having_filter == nullptr &&
+        return !req.having_filter &&
                req.term_uses != TsDictTermUses::None &&
                (req.term_uses & TsDictTermUses::Full) == TsDictTermUses::None;
       });
     state->splittable =
       !seeks_one_term &&
-      (ss.search.filter != nullptr || !state->col_filters.empty() ||
+      (ss.search.filter || !state->col_filters.empty() ||
        absl::c_any_of(*state->reader, [](const auto& seg) {
          return seg.live_docs_count() != seg.docs_count();
        }));
@@ -196,7 +196,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     } else if (ss.score.order) {
       state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
     }
-    state->stats_stage = state->scorer_obj != nullptr &&
+    state->stats_stage = state->scorer_obj &&
                          state->total_segments != 0 && !ss.score.vector;
   }
 
@@ -377,7 +377,7 @@ void IResearchSetScanOrder(
                          ? bd.relation.ScannedIndex().FindColumnInfo(col_id)
                          : nullptr;
     const bool stored =
-      bd.relation.IsSearchTable() || (info != nullptr && info->IsStored());
+      bd.relation.IsSearchTable() || (info && info->IsStored());
     if (stored && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,

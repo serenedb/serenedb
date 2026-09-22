@@ -259,7 +259,7 @@ bool IsStructuralAnalyzer(const duckdb::ParsedExpression& expr) {
 // A stage is a template call, an SQL function call, a lambda, a union list or
 // a stored dictionary name; only the first two are plain calls.
 bool IsStageExpression(const duckdb::ParsedExpression& expr) {
-  return IsStructuralAnalyzer(expr) || AsCall(expr) != nullptr;
+  return IsStructuralAnalyzer(expr) || AsCall(expr);
 }
 
 std::string SuggestionHint(std::span<const std::string_view> known,

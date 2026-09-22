@@ -325,7 +325,7 @@ irs::bstring ExpectedTerm(const T& value) {
 }
 
 std::string ScorerName(const irs::Scorer* scorer) {
-  if (scorer == nullptr) {
+  if (!scorer) {
     return "none";
   }
   return scorer == &irs::ForceConstScore() ? "const" : "other";

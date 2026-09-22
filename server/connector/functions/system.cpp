@@ -223,7 +223,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                  // and own no rows of their own; the cast is the filter.
                  const auto* table =
                    dynamic_cast<const duckdb::TableCatalogEntry*>(&entry);
-                 if (table == nullptr) {
+                 if (!table) {
                    return;
                  }
                  if (const auto* search =
@@ -241,7 +241,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                    return;
                  }
                  auto* index = dynamic_cast<duckdb::DuckIndexEntry*>(&entry);
-                 if (index != nullptr && connector::IsInvertedIndex(*index)) {
+                 if (index && connector::IsInvertedIndex(*index)) {
                    bytes += IndexEntryBytes(context, *index);
                  }
                });
@@ -651,7 +651,7 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context, uint64_t oid,
     ThrowNoRelationWithOid(oid);
   }
   auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
-  if (table_only && table == nullptr) {
+  if (table_only && !table) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
       ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a table"));
@@ -659,7 +659,7 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context, uint64_t oid,
   if (fork != "main") {
     return 0;
   }
-  if (table != nullptr) {
+  if (table) {
     return catalog::RelationDataBytes(context, *table);
   }
   if (auto* index = dynamic_cast<duckdb::DuckIndexEntry*>(entry.get())) {
@@ -674,7 +674,7 @@ int64_t GetRelationTotalSize(duckdb::ClientContext& context, uint64_t oid) {
     ThrowNoRelationWithOid(oid);
   }
   auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
-  if (table == nullptr) {
+  if (!table) {
     return GetRelationForkSize(context, oid, "main");
   }
   return catalog::RelationDataBytes(context, *table) +
@@ -687,8 +687,7 @@ int64_t GetTableIndexesSize(duckdb::ClientContext& context, uint64_t oid) {
     ThrowNoRelationWithOid(oid);
   }
   auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
-  return table == nullptr ? 0
-                          : catalog::TableIndexesTotalBytes(context, *table);
+  return table ? catalog::TableIndexesTotalBytes(context, *table) : 0;
 }
 
 // pg_database_size(name) -> bigint
@@ -855,7 +854,7 @@ bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
 // a null makes the caller answer NULL rather than false.
 const duckdb::Permissions* RelationPermissions(
   const duckdb::CatalogEntry* entry) {
-  if (entry == nullptr) {
+  if (!entry) {
     return nullptr;
   }
   if (entry->type != duckdb::CatalogType::TABLE_ENTRY &&
@@ -973,7 +972,7 @@ bool HasTablePrivilegeByOidImpl(duckdb::ClientContext& context,
   is_null = false;
   const auto* perm =
     RelationPermissions(RelationEntryByOid(context, table_id).get());
-  if (perm == nullptr) {
+  if (!perm) {
     is_null = true;
     return false;
   }
@@ -1408,7 +1407,7 @@ bool PgHasRoleImpl(const auth::RoleGraph& roles, duckdb::idx_t member,
                    duckdb::idx_t target, std::string_view priv_text) {
   const auto mask = ParseRolePrivs(priv_text);
   const auto* role = roles.Find(member);
-  if (role != nullptr && role->is_superuser) {
+  if (role && role->is_superuser) {
     return mask.usage || mask.member || mask.set || mask.admin;
   }
   if (member == target) {
@@ -1843,7 +1842,7 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
       const auto* perm = RelationPermissions(
         RelationEntryByOid(state.GetContext(), static_cast<uint64_t>(toid))
           .get());
-      if (perm == nullptr) {
+      if (!perm) {
         return duckdb::nullopt;
       }
       try {

@@ -350,7 +350,7 @@ struct FilterPrinter {
       const auto kind = FieldKind(run.front().field);
       SDB_ASSERT(kind != Kind::Null || run.size() == 1);
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
-          Explicit(run.front().scorer) != nullptr) {
+          Explicit(run.front().scorer)) {
         const std::string_view quote = kind == Kind::String ? "'" : "";
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
@@ -380,7 +380,7 @@ struct FilterPrinter {
     }
     const auto& child = *filters.front();
     return child.type() == Type<All>::id() && child.GetBoost() == kNoBoost &&
-           child.GetScorer() == nullptr;
+           !child.GetScorer();
   }
 
   ExplainNode BuildBool(const BooleanFilter& filter) const {
@@ -484,9 +484,9 @@ struct FilterPrinter {
       const auto& f = downCast<const ByNestedFilter>(filter);
       auto& [parent, child, match, _] = f.options();
       ExplainNode node{"Nested"};
-      if (auto* range = std::get_if<Match>(&match); range != nullptr) {
+      if (auto* range = std::get_if<Match>(&match)) {
         node.attributes["Match"] = absl::StrCat(range->min, ", ", range->max);
-      } else if (std::get_if<irs::MatchProvider>(&match) != nullptr) {
+      } else if (std::get_if<irs::MatchProvider>(&match)) {
         node.attributes["Match"] = "<Predicate>";
       }
       node.children.push_back(Build(*child));

@@ -52,7 +52,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto* stats = bind.search.snapshot->reader.GetColumnStats(col_id);
-  if (stats == nullptr) {
+  if (!stats) {
     return nullptr;
   }
   if (!input.column_index.HasChildren()) {

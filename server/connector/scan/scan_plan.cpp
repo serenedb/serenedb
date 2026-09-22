@@ -537,7 +537,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       continue;
     }
     if (in_output(proj) ||
-        (state.pushed_filters != nullptr &&
+        (state.pushed_filters &&
          state.pushed_filters->HasFilter(duckdb::ProjectionIndex{proj}))) {
       state.needs_lookup = true;
     } else {
@@ -580,7 +580,7 @@ void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
   if (!g.ScanScore()) {
     return;
   }
-  SDB_ASSERT(scores != nullptr);
+  SDB_ASSERT(scores);
   auto& score_out = output.data[g.score_output_idx];
   const auto emit = ScoreEmitOf(g);
   if (emit == ScoreEmit::Identity) {
@@ -683,7 +683,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   }
   f.pk_column = nullptr;
   const auto batch = f.hit_batcher->Emit(output);
-  if (batch.pk != nullptr) {
+  if (batch.pk) {
     SDB_IF_FAILURE("SearchPkFetchFault") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }

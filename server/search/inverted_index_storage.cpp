@@ -361,19 +361,7 @@ void InvertedIndexStorage::CheckpointRefresh() {
 
 InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
-  Stats stats;
-  auto& reader = inverted_index_snapshot->reader;
-  SDB_ASSERT(reader);
-  auto& segments = reader->Meta().index_meta.segments;
-  stats.numSegments = segments.size();
-  stats.numDocs = reader->docs_count();
-  stats.numLiveDocs = reader->live_docs_count();
-  stats.numFiles = 1 + stats.numSegments;
-  for (const auto& segment : segments) {
-    const auto& meta = segment.meta;
-    stats.indexSize += meta.byte_size;
-    stats.numFiles += meta.files.size();
-  }
+  auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
   stats.numBufferedDocs = _writer->BufferedDocs();
   _maintenance.Fill(stats);
   return stats;
@@ -548,7 +536,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     });
     // get new reader
     auto reader = _writer->GetSnapshot();
-    SDB_ASSERT(reader != nullptr);
+    SDB_ASSERT(reader);
     std::move(refresh_guard).Cancel();
     if (!were_changes) {
       SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),

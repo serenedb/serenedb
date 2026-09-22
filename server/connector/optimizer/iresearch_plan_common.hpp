@@ -74,8 +74,10 @@ struct ResolvedProjection {
 
 ResolvedProjection WalkProjections(duckdb::LogicalOperator& root,
                                    duckdb::ColumnBinding binding);
-duckdb::ColumnBinding ResolveBindingThroughProjections(
-  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding);
+inline duckdb::ColumnBinding ResolveBindingThroughProjections(
+  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding) {
+  return WalkProjections(root, binding).binding;
+}
 std::optional<FoundScanColumn> ResolveIResearchScanColumn(
   duckdb::LogicalOperator& root, duckdb::ColumnBinding binding);
 

@@ -128,18 +128,18 @@ class ConnectionContext final : public query::Transaction {
   }
 
   bool HasNotices() const {
-    return _notices.load(std::memory_order_relaxed) != nullptr;
+    return _notices.load(std::memory_order_relaxed);
   }
 
   template<typename Fn>
   void ConsumeNotices(Fn&& fn) {
     auto* node = _notices.exchange(nullptr, std::memory_order_acquire);
     NoticeNode* fifo = nullptr;
-    while (node != nullptr) {
+    while (node) {
       auto* next = std::exchange(node->next, fifo);
       fifo = std::exchange(node, next);
     }
-    while (fifo != nullptr) {
+    while (fifo) {
       fn(fifo->data);
       delete std::exchange(fifo, fifo->next);
     }

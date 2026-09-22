@@ -101,7 +101,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
                  io, exprs, db) {}
 
   duckdb::ErrorData Append(duckdb::IndexLock&, duckdb::DataChunk& chunk,
-                           duckdb::Vector& row_ids) override {
+                           duckdb::Vector& row_ids) final {
     Log().Record(ProbeEvent::Append, chunk, row_ids);
     return {};
   }
@@ -111,13 +111,13 @@ class ProbeIndex final : public duckdb::BoundIndex {
     return {};
   }
   void Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
-              duckdb::Vector& row_ids) override {
+              duckdb::Vector& row_ids) final {
     Log().Record(ProbeEvent::Delete, chunk, row_ids);
   }
   idx_t TryDelete(
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
-    duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override {
+    duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final {
     Delete(l, chunk, row_ids);
     if (deleted_sel) {
       for (duckdb::idx_t i = 0; i < chunk.size(); ++i) {
@@ -127,19 +127,19 @@ class ProbeIndex final : public duckdb::BoundIndex {
     return chunk.size();
   }
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType, idx_t,
-                                            duckdb::DataChunk&) override {
+                                            duckdb::DataChunk&) final {
     return "probe constraint violation";
   }
-  void ResetStorage(duckdb::IndexLock&) override {}
-  bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {
+  void ResetStorage(duckdb::IndexLock&) final {}
+  bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) final {
     return true;
   }
-  void Vacuum(duckdb::IndexLock&) override {}
-  idx_t GetInMemorySize(duckdb::IndexLock&) override { return 0; }
-  void Verify(duckdb::IndexLock&) override {}
-  std::string ToString(duckdb::IndexLock&, bool) override { return "probe"; }
-  void VerifyAllocations(duckdb::IndexLock&) override {}
-  void VerifyBuffers(duckdb::IndexLock&) override {}
+  void Vacuum(duckdb::IndexLock&) final {}
+  idx_t GetInMemorySize(duckdb::IndexLock&) final { return 0; }
+  void Verify(duckdb::IndexLock&) final {}
+  std::string ToString(duckdb::IndexLock&, bool) final { return "probe"; }
+  void VerifyAllocations(duckdb::IndexLock&) final {}
+  void VerifyBuffers(duckdb::IndexLock&) final {}
   // The index data lives outside duckdb storage; one empty allocator entry
   // makes the info IsValid() for WAL/checkpoint round-trips.
   duckdb::IndexStorageInfo FabricateStorageInfo() const {
@@ -149,7 +149,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
   }
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext,
-    const duckdb::case_insensitive_map_t<duckdb::Value>&) override {
+    const duckdb::case_insensitive_map_t<duckdb::Value>&) final {
     return FabricateStorageInfo();
   }
   duckdb::IndexStorageInfo SerializeToWAL(
@@ -212,7 +212,7 @@ void RegisterProbeIndexType(duckdb::DatabaseInstance& db) {
 
 class IndexLifecycleTest : public ::testing::Test {
  protected:
-  void SetUp() override {
+  void SetUp() final {
     _dir = std::filesystem::temp_directory_path() /
            ("sdb_index_lifecycle_" + std::to_string(::getpid()));
     std::filesystem::remove_all(_dir);
@@ -221,7 +221,7 @@ class IndexLifecycleTest : public ::testing::Test {
     Log().create_instance_calls = 0;
     Open();
   }
-  void TearDown() override {
+  void TearDown() final {
     _conn.reset();
     _db.reset();
     std::filesystem::remove_all(_dir);

@@ -58,7 +58,7 @@ struct LocalTableChangesEntry {
                          const duckdb::vector<duckdb::LogicalType>& types,
                          duckdb::DataChunk& chunk, uint64_t pk_base) {
     auto& op = CurrentInsertRun();
-    if (op.collection == nullptr) {
+    if (!op.collection) {
       op.collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
       op.pk_segments = std::make_unique<std::vector<SearchDbWal::InlinePk>>();
     }

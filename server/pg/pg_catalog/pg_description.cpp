@@ -93,7 +93,7 @@ MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
           return;
         }
         auto* view_entry = dynamic_cast<duckdb::ViewCatalogEntry*>(&entry);
-        if (view_entry == nullptr) {
+        if (!view_entry) {
           return;
         }
         const auto view_id = view_entry->oid;

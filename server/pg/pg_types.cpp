@@ -50,11 +50,11 @@ namespace {
 // serenedb identity, and nothing pg-shaped to resolve against.
 duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
   duckdb::ClientContext* context) {
-  if (context == nullptr) {
+  if (!context) {
     return nullptr;
   }
   auto* conn = connector::GetSereneDBContextPtr(*context);
-  if (conn == nullptr) {
+  if (!conn) {
     return nullptr;
   }
   return duckdb::Catalog::GetCatalog(*context,

@@ -348,7 +348,7 @@ class SystemTableSnapshot final {
 };
 
 template<typename T>
-class SystemTable : public VirtualTable {
+class SystemTable final : public VirtualTable {
  public:
   constexpr SystemTable() {
     _id = T::kId;

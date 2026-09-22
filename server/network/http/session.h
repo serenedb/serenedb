@@ -151,15 +151,15 @@ class HttpSession final
   void OnStop() {}
 
   // --- http::ResponseSink (handler-side backpressure) ----------------------
-  yaclib::Task<> Drain() override { return AwaitSendBelowHighWater(); }
-  bool Broken() const noexcept override { return SendBroken(); }
+  yaclib::Task<> Drain() final { return AwaitSendBelowHighWater(); }
+  bool Broken() const noexcept final { return SendBroken(); }
 
   // --- RequestContext -------------------------------------------------------
   // First use sets up the full SereneDB client state (like pg-wire's
   // SetupConnection, minus the wire collector): server-side functions reach
   // ConnectionContext through GetSereneDBContext. The user is whoever
   // authenticated the request that first touched the connection.
-  duckdb::Connection& Connection() override {
+  duckdb::Connection& Connection() final {
     if (!_conn) {
       const auto dbname = irs::StaticStrings::kDefaultDatabase;
       auto& cluster = catalog::ClusterOf();
@@ -209,7 +209,7 @@ class HttpSession final
   // Connection().Query() would instead pin this scheduler worker for the
   // whole query and starve the pool under concurrent requests.
   yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
-    std::string sql, bool /*writes*/) override {
+    std::string sql, bool /*writes*/) final {
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
     // THROW_SQL_ERROR), preserving the typed exception so the handlers'
@@ -262,7 +262,7 @@ class HttpSession final
     }
   }
 
-  std::string_view User() const override { return _user; }
+  std::string_view User() const final { return _user; }
 
  private:
   using Transport<Kind, HttpSession<Kind>>::_socket;
@@ -356,12 +356,12 @@ yaclib::Task<bool> HttpSession<Kind>::Negotiate() {
 template<SocketKind Kind>
 yaclib::Task<> HttpSession<Kind>::Run() {
   auto self = this->shared_from_this();
-  if (_active != nullptr) {
+  if (_active) {
     _active->fetch_add(1, std::memory_order_relaxed);
   }
   metrics::Add(metrics::Gauge::HttpConnections);
   absl::Cleanup conn_guard = [this] {
-    if (_active != nullptr) {
+    if (_active) {
       _active->fetch_sub(1, std::memory_order_relaxed);
     }
     metrics::Sub(metrics::Gauge::HttpConnections);
@@ -530,7 +530,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
 
-      if (_max_conn != 0 && _active != nullptr &&
+      if (_max_conn != 0 && _active &&
           _active->load(std::memory_order_relaxed) > _max_conn) {
         writer.Fixed(http::HttpStatus::ServiceUnavailable,
                      http::kJsonContentType,

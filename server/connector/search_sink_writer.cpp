@@ -704,7 +704,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
     _pk_column_writer =
       EnsureColumnWriter(term_dict::kPKFieldId, pk.column->GetType());
   }
-  if (_pk_column_writer && pk.column) {
+  if (_pk_column_writer) {
     AppendPkColumn(*pk.column, batch_size);
   }
   if (_pk_policy.index_term) {

@@ -62,7 +62,7 @@ struct SearchSpec {
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   search::InvertedIndexSnapshotPtr snapshot;
 
-  bool MatchAll() const noexcept { return filter == nullptr; }
+  bool MatchAll() const noexcept { return !filter; }
 };
 
 struct ScoreSpec {

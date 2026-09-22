@@ -1412,7 +1412,7 @@ const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
   // Lazy: only record-typed results pay for the cache; flat-typed queries
   // (the overwhelming majority) skip a per-query map allocation.
-  if (context.types_cache == nullptr) {
+  if (!context.types_cache) {
     context.types_cache = std::make_unique<TypesSerializationCache>();
   }
   auto [it, inserted] = context.types_cache->try_emplace(&struct_type);

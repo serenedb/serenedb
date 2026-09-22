@@ -109,30 +109,6 @@ std::vector<connector::ColumnId> BuildProjectedColumnIds(
   return projected_ids;
 }
 
-irs::field_id ResolveAnnTargetFieldId(
-  const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data,
-  duckdb::ClientContext& client_context) {
-  if (col_arg.GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-      col_arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
-    if (const auto id =
-          bind_data.ColumnIdByName(col_arg.GetName().GetIdentifierName());
-        id != connector::kInvalidColumnId) {
-      return id;
-    }
-  }
-  if (SingleReferencedTableIndex(col_arg) != get.table_index) {
-    return irs::field_limits::invalid();
-  }
-  auto normalized = connector::NormalizeBoundExpression(
-    col_arg, bind_data.RelationId(), BuildProjectedColumnIds(get, bind_data),
-    client_context);
-  auto serialized = connector::SerializeBoundExpression(*normalized);
-  return bind_data.relation.inverted_config->FindFieldIdByExpression(
-    serialized);
-}
-
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op) {
   if (op.type != duckdb::LogicalOperatorType::LOGICAL_GET) {
     return std::nullopt;
@@ -200,11 +176,6 @@ ResolvedProjection WalkProjections(duckdb::LogicalOperator& root,
     binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().Binding();
   }
   return {binding, nullptr};
-}
-
-duckdb::ColumnBinding ResolveBindingThroughProjections(
-  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding) {
-  return WalkProjections(root, binding).binding;
 }
 
 std::optional<FoundScanColumn> ResolveIResearchScanColumn(
@@ -729,7 +700,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   }
 
   const auto& index = found.bind_data->relation.inverted_config;
-  const auto* col_info = index ? index->FindColumnInfo(target_col_id) : nullptr;
+  const auto* col_info = index->FindColumnInfo(target_col_id);
   if (!col_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -942,16 +913,16 @@ std::optional<duckdb::ColumnBinding> ScoreSideBinding(
     return x;
   };
   e = strip_casts(e);
-  if (e != nullptr &&
+  if (e &&
       e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& fn = e->Cast<duckdb::BoundFunctionExpression>();
-    if (fn.Function().GetName().GetIdentifierName() == "-" &&
+    if (fn.Function().GetName() == "-" &&
         fn.GetChildren().size() == 1) {
       negated = true;
       e = strip_casts(fn.GetChildren()[0].get());
     }
   }
-  if (e == nullptr ||
+  if (!e ||
       e->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return std::nullopt;
   }
@@ -1115,9 +1086,6 @@ void IResearchPushdownComplexFilter(
   }
   auto& bind_data = bind_data_ptr->Cast<connector::ScanBindData>();
   auto& ss = bind_data;
-  if (!bind_data.relation.inverted_config) {
-    return;
-  }
   if (ss.ts_dict.Active()) {
     ClaimTsDictFilter(filters, get, bind_data, ss, context);
     return;

@@ -145,9 +145,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // second entry here would re-enter the catalog sets this walk is inside.
   auto count_store_rows = [](duckdb::TableCatalogEntry& table) -> float {
     auto* duck = dynamic_cast<duckdb::DuckTableEntry*>(&table);
-    return duck == nullptr
-             ? 0.0F
-             : static_cast<float>(duck->GetStorage().GetTotalRows());
+    return duck ? static_cast<float>(duck->GetStorage().GetTotalRows())
+                : 0.0F;
   };
   // The two facts a relation's row needs from outside its own definition:
   // whether anything indexes it, and -- for the index rows below -- who owns
@@ -185,8 +184,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           const duckdb::DependencyDependentFlags& flags) {
         if (flags.IsOwnedBy() &&
             object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
-            dynamic_cast<const catalog::SearchTableEntry*>(&dependent) !=
-              nullptr) {
+            dynamic_cast<const catalog::SearchTableEntry*>(&dependent)) {
           generated_pk_sequences.insert(object.oid);
         }
       });
@@ -202,7 +200,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         const auto schema_id =
           entry.Cast<duckdb::StandardEntry>().ParentSchemaOid();
         auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(&entry);
-        if (table != nullptr) {
+        if (table) {
           relation_owners.emplace((*table).oid, table->permissions.owner);
           tables.emplace_back(schema_id, table);
           auto row = MakeBaseRow(schema_id, (*table).oid,
@@ -225,7 +223,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         }
         const auto* view_entry =
           dynamic_cast<const duckdb::ViewCatalogEntry*>(&entry);
-        if (view_entry == nullptr) {
+        if (!view_entry) {
           return;
         }
         const auto view_id = view_entry->oid;

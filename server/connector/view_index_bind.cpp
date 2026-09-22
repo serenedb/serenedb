@@ -212,9 +212,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = view_base.names;
-  info->SetQualifiedName(duckdb::QualifiedName(
-    view.ParentCatalog().GetName(), view.ParentSchemaName(),
-    info->GetQualifiedName().Name()));
+  info->SetQualifiedName(info->GetQualifiedName().WithQualification(
+    {view.ParentCatalog().GetName(), view.ParentSchemaName()}));
 
   auto projection = duckdb::make_uniq<duckdb::LogicalProjection>(
     kept_index, std::move(select_list));
@@ -308,9 +307,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = get.names;
-  info->SetQualifiedName(duckdb::QualifiedName(
-    table.ParentCatalog().GetName(), table.ParentSchemaName(),
-    info->GetQualifiedName().Name()));
+  info->SetQualifiedName(info->GetQualifiedName().WithQualification(
+    {table.ParentCatalog().GetName(), table.ParentSchemaName()}));
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);

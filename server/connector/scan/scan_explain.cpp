@@ -404,7 +404,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
       has_lookup = true;
     }
   }
-  bool count_only = input.projected_column_ids != nullptr;
+  bool count_only = input.projected_column_ids;
   if (count_only) {
     const auto& column_ids = *input.projected_column_ids;
     const bool use_projection = input.projected_filter_prune &&

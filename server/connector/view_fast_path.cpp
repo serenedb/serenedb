@@ -29,6 +29,7 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -169,12 +170,6 @@ const RegistryEntry* LookupRegistry(std::string_view function_name) {
     }
   }
   return nullptr;
-}
-
-bool LooksLikeGlob(std::string_view path) noexcept {
-  return path.find('*') != std::string_view::npos ||
-         path.find('?') != std::string_view::npos ||
-         path.find('[') != std::string_view::npos;
 }
 
 duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
@@ -574,7 +569,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   out.function_name = std::move(canonical);
   out.args = std::move(args);
   out.named_params = std::move(named_params);
-  out.is_glob = LooksLikeGlob(out.args[0].GetValue<std::string>());
+  out.is_glob =
+    duckdb::FileSystem::HasGlob(out.args[0].GetValue<std::string>());
   out.projection_columns = std::move(projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
   out.supports_filters = entry->supports_filters;
@@ -675,7 +671,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
     if (fn.get_virtual_columns && bind_data) {
       fn.get_virtual_columns(context, bind_data.get());
     }
-    if (fp.function_name == "iceberg_scan" && bind_data) {
+    if (fp.function_name == "iceberg_scan") {
       EnableIcebergSort(bind_data.get());
     }
     return bind_data;
@@ -719,7 +715,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   if (reader.get_virtual_columns && bind_data) {
     reader.get_virtual_columns(context, bind_data.get());
   }
-  if (fp.function_name == "iceberg_scan" && bind_data) {
+  if (fp.function_name == "iceberg_scan") {
     EnableIcebergSort(bind_data.get());
   }
 

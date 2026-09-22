@@ -50,7 +50,7 @@ struct OffsetsBindData final : duckdb::FunctionData {
   size_t limit = 0;
   std::shared_ptr<irs::Filter> stored_filter;
 
-  bool IsStandalone() const noexcept { return dict_tokenizer != nullptr; }
+  bool IsStandalone() const noexcept { return dict_tokenizer; }
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
   bool Equals(const duckdb::FunctionData& other) const final;

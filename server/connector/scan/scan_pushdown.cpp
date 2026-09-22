@@ -105,7 +105,7 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   }
   const auto* info =
     bind.relation.ScannedIndex().FindColumnInfo(bind.columns.ids[bind_col]);
-  return info != nullptr && info->store_values;
+  return info && info->store_values;
 }
 
 duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(

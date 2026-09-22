@@ -1344,7 +1344,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
   const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
-  if (node.GetScorer() != nullptr) {
+  if (node.GetScorer()) {
     return !irs::IsConstScoreSingleton(node.GetScorer());
   }
   for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {

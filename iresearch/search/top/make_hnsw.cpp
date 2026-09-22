@@ -99,9 +99,14 @@ class HnswHits : public Root {
   doc_id_t _docs[kScoreBlock];
 };
 
+
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+  // A table that folded into the search has been applied; one that did not
+  // (a predicate on the score) narrows the hits.
+  auto* const narrow =
+    ctx.table != nullptr && !ctx.table->Foldable() ? ctx.table : nullptr;
   auto hits = query.RunSearch(ctx.table);
   if (hits.empty()) {
     // Nothing matched -- a part of a split scan whose doc range holds no row
@@ -110,17 +115,13 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
     // fail the query.
     return MakeEmpty();
   }
-  // A table that folded into the search has been applied; one that did not
-  // (a predicate on the score) narrows the hits.
-  auto* const table =
-    ctx.table != nullptr && !ctx.table->Foldable() ? ctx.table : nullptr;
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
-                                        ctx.fetcher, table, args);
+                                        ctx.fetcher, narrow, args);
 }
 
 }  // namespace irs::top

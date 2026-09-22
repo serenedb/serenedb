@@ -77,12 +77,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
     doc_id_t first = doc_limits::min(),
     doc_id_t last = doc_limits::eof()) const;
 
-  // Whether this query answers its filter by scanning the admitted rows
-  // rather than walking the graph. Only a scan is decomposable by doc range:
-  // a walk moves through the whole graph, so one worker's range says nothing
-  // about where the walk goes. Folding the set to decide costs more than
-  // either plan, so the answer comes from a bounded sample.
-  bool ScansFilter(detail::TableFilter* table) const;
 
   // How many docs a scan would score, when scanning is how this query would
   // answer its inner filter; nullopt when it would walk the graph, has no

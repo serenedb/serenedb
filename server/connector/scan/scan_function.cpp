@@ -139,41 +139,6 @@ std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
   return std::vector<float>{data, data + vs.dims};
 }
 
-// Whether a vector-scored scan may be cut into row-group units.
-//
-// Only a filtered graph search that answers by *scanning* the rows its
-// predicate admits can be: it reads them in doc order, so one worker's range
-// is a self-contained piece of the same answer. A walk moves through the whole
-// graph and a doc range says nothing about where it goes, so a walk stays one
-// unit. The question is asked once, of a throwaway prepare of the widest
-// segment, because the answer is a property of the query and the predicate
-// rather than of any one segment.
-bool VectorScanSplits(ScanGlobalState& g, duckdb::ClientContext& context) {
-  if (g.total_segments == 0 || g.filter == nullptr ||
-      g.Bind().score.vector->kind != irs::AnnKind::Hnsw) {
-    return false;
-  }
-  uint32_t widest = 0;
-  for (uint32_t si = 1; si < g.total_segments; ++si) {
-    if ((*g.reader)[si].docs_count() > (*g.reader)[widest].docs_count()) {
-      widest = si;
-    }
-  }
-  const auto& seg = (*g.reader)[widest];
-  auto probe = g.filter->PrepareSegment(seg, {.needs_terms = false});
-  if (!probe) {
-    return false;
-  }
-  const auto* hnsw = dynamic_cast<const irs::HnswQuery*>(probe.get());
-  if (hnsw == nullptr) {
-    return false;
-  }
-  // A predicate only the columnstore answers carries no bound of its own, so
-  // the scan's side is sampled rather than decoded -- decoding it here is most
-  // of the work the plan is trying to decide about.
-  const auto table_rows = EstimateColFilterRows(seg, g);
-  return hnsw->ScanCandidates(FairShare(context, 16), table_rows).has_value();
-}
 
 }  // namespace
 
@@ -328,7 +293,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   state->splittable =
     !(ss.search.filter && HasNested(*ss.search.filter)) &&
-    (!ss.score.vector || VectorScanSplits(*state, context));
+    // A vector scan stays one unit. Letting it into the row-group split was
+    // measured on wiki-1m, eight segments, one client: p99 got worse on 18 of
+    // 25 groups and better on 1, and turning only the split back off returned
+    // it to parity (2 better, 4 worse -- noise). These queries are 1.5 to 8 ms,
+    // and claiming units, the merge barrier and a fresh set per range cost
+    // more than the cores can win back. The exclusion is not an oversight.
+    !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
     BuildClaimPlan(*state, context);

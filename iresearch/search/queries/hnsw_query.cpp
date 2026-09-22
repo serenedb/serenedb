@@ -689,40 +689,6 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   return matches;
 }
 
-bool HnswQuery::ScansFilter(detail::TableFilter* table) const {
-  if (table != nullptr && !table->Foldable()) {
-    table = nullptr;
-  }
-  if (_ef == 0 || (_inner == nullptr && table == nullptr)) {
-    return false;  // a radius search, or nothing to filter by
-  }
-  switch (_filter_mode) {
-    case HnswFilterMode::Scan:
-      return true;
-    case HnswFilterMode::Walk:
-    case HnswFilterMode::Prune:
-    case HnswFilterMode::TwoHop:
-    case HnswFilterMode::Bridge:
-      // A forced walk still falls back to the scan when it overspends, but a
-      // fallback is not a plan: splitting on it would commit every worker to
-      // a range before the walk has had its chance.
-      return false;
-    case HnswFilterMode::Auto:
-      break;
-  }
-  const auto& graph = _data->graph;
-  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  // The same sample `RunFiltered` decides on, so the caller's split and the
-  // search's own plan cannot disagree about which one this query is.
-  uint64_t matches = 0;
-  if (table != nullptr) {
-    auto probe = MakeSet(_inner.get(), table, docs_count);
-    matches = probe.EstimateCount(kCountSampleWindows);
-  } else {
-    matches = _inner->EstimateMax();
-  }
-  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size);
-}
 
 std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
                                            doc_id_t first,

@@ -20,6 +20,12 @@ READ_JOBS = (("search_bm25", 20), ("search_ann", 20), ("search_hybrid", 10),
              ("lookup", 8), ("facet", 4), ("count_filtered", 3))
 WRITE_JOBS = (("ingest_batch", 15), ("delete_docs", 4), ("update_docs", 3),
               ("metrics_probe", 1))
+# One ingest in BULK_EVERY is a bulk load: BULK_ROWS rows arriving as several
+# files, the way a real backfill lands. Same op kind as an ordinary batch, so
+# a run whose cap blocks the big ones does not look like it lost coverage.
+BULK_EVERY = 8
+BULK_ROWS = (8000, 12000)
+BULK_CHUNK = 2000
 
 
 class WorkloadOp(ops_mod.Op):
@@ -149,9 +155,9 @@ class Workload:
             cur.execute(f"CREATE SCHEMA {self.server}.{self.schema}")
             cur.execute(f"CREATE TABLE {self.table} (id INTEGER, category TEXT, body TEXT, "
                         f"ver INTEGER, emb FLOAT[])")
-            cur.execute(f"CREATE TEXT SEARCH DICTIONARY {self.dictionary} (template = 'text', "
-                        f"locale = 'en_US.UTF-8', case = 'none', stemming = false, "
-                        f"accent = false, frequency = true, position = true)")
+            cur.execute(f"CREATE TEXT SEARCH DICTIONARY {self.dictionary} AS "
+                        f"split_text() | normalize_tokens('en_US.UTF-8', accent := false) "
+                        f"WITH (frequency, position)")
             cur.execute(self.ingest_sql(1, self.seed_docs))
             cur.execute(f"CREATE VIEW {self.view} AS SELECT id, category, body, ver, "
                         f"emb::FLOAT[{self.dim}] AS emb FROM {self.table}")
@@ -197,7 +203,9 @@ class Workload:
 
     def build(self, kind, rng):
         if kind == "ingest_batch":
-            n = 20 + rng.below(181)
+            bulk = rng.below(BULK_EVERY) == 0
+            n = (BULK_ROWS[0] + rng.below(BULK_ROWS[1] - BULK_ROWS[0] + 1)
+                 if bulk else 20 + rng.below(181))
             with self.lock:
                 if len(self.docs) + n > self.docs_cap:
                     return self.build("delete_docs", rng)
@@ -209,7 +217,12 @@ class Workload:
                     for i in range(first, first + n):
                         self.docs[i] = 0
                     self.summary["ingested"] += n
-            return WorkloadOp(kind, [self.ingest_sql(first, n)], apply)
+            # A bulk load arrives as several files rather than one huge
+            # statement, which is both how a real one lands and what gives the
+            # reindex something to diff.
+            step = BULK_CHUNK if bulk else n
+            return WorkloadOp(kind, [self.ingest_sql(first + off, min(step, n - off))
+                                     for off in range(0, n, step)], apply)
         if kind == "delete_docs":
             ids = self._sample_alive(rng, 1 + rng.below(5))
             if not ids:

@@ -303,7 +303,12 @@ class Chaos:
                 # back: a concurrent worker commits, the process aborts, and the
                 # broker's connection drops mid-SET. That is the crash we asked
                 # for, not a failure to arm -- so check before giving up, or the
-                # server is left dead and reported as an unexplained exit.
+                # server is left dead and reported as an unexplained exit. The
+                # socket closes before the process is reaped, so let the exit
+                # land instead of sampling once.
+                grace = time.monotonic() + 10.0
+                while self.server.running() and time.monotonic() < grace:
+                    time.sleep(0.2)
                 if not self.server.running():
                     self.result.timeline.append({
                         "fault": name,

@@ -233,6 +233,8 @@ def main(argv=None):
             found = workload.check(label)
             print(f"[stress] workload check {label}: {'ok' if not found else f'{len(found)} finding(s)'} "
                   f"in {time.monotonic() - started:.0f}s, {workload.summary}")
+            for f in found:
+                print(f"[stress]   {f['kind']}: {f['detail']}")
             return found
         finally:
             quiesce.resume(pause_event)

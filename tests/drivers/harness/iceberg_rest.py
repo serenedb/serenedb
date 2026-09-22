@@ -19,6 +19,15 @@ def _docker(*args, check=True, capture=False):
                           stderr=subprocess.PIPE if capture else subprocess.DEVNULL)
 
 
+def _reachable(host, port, timeout=2.0):
+    import socket as _s
+    try:
+        with _s.create_connection((host, port), timeout):
+            return True
+    except OSError:
+        return False
+
+
 class IcebergRestFixture:
     def __init__(self, prefix="sdbstress"):
         tag = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(4))
@@ -75,8 +84,16 @@ class IcebergRestFixture:
             if time.time() > deadline:
                 raise RuntimeError("iceberg-rest did not answer /v1/config")
             time.sleep(1)
+        direct = _docker(
+            "inspect", "-f",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            self.minio, capture=True).stdout.strip()
+        if direct and _reachable(direct, 9000):
+            minio_host, minio_port = direct, 9000
+        else:
+            minio_host = "localhost"
         self.env = {
-            "MINIO_HOST": "localhost", "MINIO_PORT": str(minio_port),
+            "MINIO_HOST": minio_host, "MINIO_PORT": str(minio_port),
             "MINIO_ACCESS_KEY": access, "MINIO_SECRET_KEY": secret, "MINIO_BUCKET": bucket,
             "ICEBERG_REST_URL": url, "ICEBERG_WAREHOUSE": "demo",
         }

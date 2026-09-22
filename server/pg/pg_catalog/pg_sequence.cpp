@@ -57,7 +57,7 @@ MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
 
   auto result = CreateColumns<PgSequence>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], 0, row, *sdb::auth::RolesOf(&context));
+    WriteData(result, values[row], 0, row, Roles());
   }
   return {std::move(result), values.size()};
 }

@@ -43,8 +43,6 @@ struct PKColumn {
   duckdb::LogicalType type;
 };
 
-std::vector<PKColumn> PKColumns(const duckdb::TableCatalogEntry& entry);
-
 void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats);

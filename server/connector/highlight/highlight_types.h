@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <cstdint>
 #include <string>
 #include <utility>

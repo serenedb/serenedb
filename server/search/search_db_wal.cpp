@@ -605,17 +605,7 @@ void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
 
 void SearchDbWal::OnShardCommit(duckdb::idx_t table_id,
                                 uint64_t committed_tick) {
-  {
-    absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id];
-    cur = std::max(cur, committed_tick);
-  }
-  {
-    absl::MutexLock lock(&_append_mu);
-    if (_tick.load(std::memory_order_relaxed) < committed_tick) {
-      _tick.store(committed_tick, std::memory_order_relaxed);
-    }
-  }
+  RegisterShard(table_id, committed_tick);
   RunGc();
 }
 
@@ -820,10 +810,7 @@ void VisitInlineSegments(
       if (off == 0 && seg_off == 0 && take == n) {
         emit(chunk, segments[seg].base);
       } else {
-        duckdb::SelectionVector sel(take);
-        for (duckdb::idx_t r = 0; r < take; ++r) {
-          sel.set_index(r, off + r);
-        }
+        duckdb::SelectionVector sel(off, take);
         duckdb::DataChunk slice;
         slice.InitializeEmpty(cdc.Types());
         slice.Slice(chunk, sel, take);

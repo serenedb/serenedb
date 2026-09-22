@@ -250,8 +250,7 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
   auto binder = Binder::CreateBinder(*context);
   ConstantBinder cb(*binder, *context, "optimize_top_k");
   auto bound = cb.Bind(fn_expr);
-  if (!bound ||
-      bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+  if (bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("'", what, "' did not bind to a scorer function: '", input, "'"));

@@ -569,7 +569,7 @@ struct FilterPrinter {
 };
 
 std::string IdentityField(sdb::connector::ColumnId id) {
-  return absl::StrCat(static_cast<irs::field_id>(id));
+  return absl::StrCat(id);
 }
 
 Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }

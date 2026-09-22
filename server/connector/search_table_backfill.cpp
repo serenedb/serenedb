@@ -85,7 +85,7 @@ void InitRowSource(duckdb::ClientContext& context,
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
     source.projections.push_back(irs::ColumnstoreProjection{
       .output_slot = i,
-      .column_id = static_cast<irs::field_id>(target.column_ids[i])});
+      .column_id = target.column_ids[i]});
   }
   // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
   // by definition), read here so each rebuilt row keeps its identity.
@@ -115,8 +115,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    const auto take = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row));
+    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
     auto& chunk = source.chunk;
     chunk.Reset();
     const auto produced = scanner.Scan(row, take, chunk);

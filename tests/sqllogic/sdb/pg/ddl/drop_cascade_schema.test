@@ -240,16 +240,22 @@ count
 0
 
 
-statement error db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
+statement error
 DROP SCHEMA pg_catalog;
+----
+db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 
 
-statement error db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
+statement error
 DROP SCHEMA pg_catalog CASCADE;
+----
+db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 
 
-statement error db error: ERROR: Cannot drop entry "information_schema" because it is an internal system entry
+statement error
 DROP SCHEMA information_schema;
+----
+db error: ERROR: Cannot drop entry "information_schema" because it is an internal system entry
 
 
 statement ok

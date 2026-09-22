@@ -147,7 +147,7 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
   static search::ColumnTokenizer AnalyzerProvider(irs::field_id) {
-    static catalog::Tokenizer gStringTokenizer(
+    static catalog::Tokenizer gKeywordTokenizer(
       ObjectId{12345}, {},
       irs::analysis::TokenizerConfig{.config =
                                        irs::KeywordTokenizer::Options{}});

@@ -36,18 +36,6 @@ std::vector<duckdb::LogicalIndex> KeyColumns(
     entry.GetColumns());
 }
 
-std::vector<PKColumn> PKColumns(const duckdb::TableCatalogEntry& entry) {
-  const auto& columns = entry.GetColumns();
-  const auto keys = KeyColumns(entry);
-  std::vector<PKColumn> out;
-  out.reserve(keys.size());
-  for (const auto key : keys) {
-    out.push_back(
-      {.input_col_idx = key.index, .type = columns.GetColumn(key).Type()});
-  }
-  return out;
-}
-
 void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats) {

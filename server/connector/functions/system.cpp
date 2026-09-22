@@ -519,10 +519,9 @@ void SearchPathCanonicalFunction(duckdb::DataChunk& args,
   result.Reference(duckdb::Value{std::move(str)}, duckdb::count_t(args.size()));
 }
 
-// num_nonnulls(...) -> int
-// Ported from PG: counts non-null arguments.
-void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                         duckdb::Vector& result) {
+template<bool kCountNulls>
+void CountNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
   const auto count = args.size();
   const auto ncols = args.ColumnCount();
   std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
@@ -532,39 +531,30 @@ void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   auto out = duckdb::FlatVector::Writer<int32_t>(result, count);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
-    int32_t non_nulls = 0;
+    int32_t matched = 0;
     for (duckdb::idx_t col = 0; col < ncols; col++) {
       const auto idx = vdata[col].sel->get_index(row);
-      if (vdata[col].validity.RowIsValid(idx)) {
-        non_nulls++;
+      if (vdata[col].validity.RowIsValid(idx) != kCountNulls) {
+        matched++;
       }
     }
-    out.WriteValue(non_nulls);
+    out.WriteValue(matched);
   }
+}
+
+// num_nonnulls(...) -> int
+// Ported from PG: counts non-null arguments.
+void NumNonNullsFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  CountNullsFunction<false>(args, state, result);
 }
 
 // num_nulls(...) -> int
 // Ported from PG: counts null arguments.
-void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
-  const auto count = args.size();
-  const auto ncols = args.ColumnCount();
-  std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
-  for (duckdb::idx_t col = 0; col < ncols; col++) {
-    args.data[col].ToUnifiedFormat(count, vdata[col]);
-  }
-  auto out = duckdb::FlatVector::Writer<int32_t>(result, count);
-
-  for (duckdb::idx_t row = 0; row < count; row++) {
-    int32_t nulls = 0;
-    for (duckdb::idx_t col = 0; col < ncols; col++) {
-      const auto idx = vdata[col].sel->get_index(row);
-      if (!vdata[col].validity.RowIsValid(idx)) {
-        nulls++;
-      }
-    }
-    out.WriteValue(nulls);
-  }
+  CountNullsFunction<true>(args, state, result);
 }
 
 // --- pg_typeof ---
@@ -1570,9 +1560,6 @@ bool HasColumnPrivByAttnum(duckdb::ClientContext& context,
                            duckdb::idx_t role_id,
                            const duckdb::TableCatalogEntry& table,
                            int64_t attnum, std::string_view priv) {
-  if (!AttnumExists(table, attnum)) {
-    return false;
-  }
   return ColumnPrivHeld(
     context, role_id, table,
     table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)), priv);

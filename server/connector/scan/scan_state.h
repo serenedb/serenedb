@@ -111,7 +111,6 @@ struct SegmentWork {
   }
 
   uint32_t rg_count = 0;
-  bool live = false;
   std::atomic_uint64_t rgs{0};
   std::atomic_uint32_t done_rgs{0};
   std::vector<ScanUnit> ordered_units;
@@ -128,8 +127,6 @@ class ScanBarrier {
     _total = total;
     _arrived.store(0, std::memory_order_relaxed);
   }
-
-  uint32_t Total() const noexcept { return _total; }
 
   bool Arrive() noexcept {
     return _arrived.fetch_add(1, std::memory_order_acq_rel) + 1 == _total;

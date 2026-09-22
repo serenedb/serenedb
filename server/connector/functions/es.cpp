@@ -262,7 +262,7 @@ struct EsOnceState final : duckdb::GlobalTableFunctionState {
 duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
   duckdb::TableFunctionBindInput& input) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
-  if (input.inputs.empty() || input.inputs[0].IsNull()) {
+  if (input.inputs[0].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
   }
@@ -577,7 +577,7 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
           }
           first = false;
           const auto& storage =
-            irs::utils::downCast<catalog::InvertedIndexEntry>(index).Storage();
+            index.Cast<catalog::InvertedIndexEntry>().Storage();
           if (auto snapshot =
                 storage ? storage->GetInvertedIndexSnapshot() : nullptr) {
             docs_count = snapshot->reader.live_docs_count();
@@ -1146,7 +1146,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
-  if (!input.inputs.empty() && !input.inputs[0].IsNull()) {
+  if (!input.inputs[0].IsNull()) {
     data->index = input.inputs[0].GetValue<std::string>();
   }
   return_types.push_back(duckdb::LogicalType::BOOLEAN);

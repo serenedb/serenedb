@@ -1247,13 +1247,7 @@ struct UuidBinCore {
 };
 
 template<WrapContext InContainer>
-struct JsonTextCore {
-  using Value = duckdb::string_t;
-  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
-    EmitTextItem<InContainer>(ctx,
-                              std::string_view{raw.GetData(), raw.GetSize()});
-  }
-};
+using JsonTextCore = VarcharTextCore<InContainer>;
 
 struct JsonBinCore {
   using Value = duckdb::string_t;

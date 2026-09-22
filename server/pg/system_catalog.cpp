@@ -284,11 +284,11 @@ void VisitSystemTables(
 }
 
 void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor) {
-  for (const auto& [name, view] : gPgCatalogViews) {
+  for (const auto& [_, view] : gPgCatalogViews) {
     SDB_ASSERT(view.info);
     visitor(view, kPgCatalogSchema);
   }
-  for (const auto& [name, view] : gInfoSchemaViews) {
+  for (const auto& [_, view] : gInfoSchemaViews) {
     SDB_ASSERT(view.info);
     visitor(view, kPgInformationSchema);
   }

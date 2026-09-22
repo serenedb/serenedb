@@ -243,17 +243,14 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       auto& cf = state.col_filters.emplace_back();
       cf.field = col_id;
       cf.filter = &entry.Filter();
-      cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
-        *duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
-                                                       "BuildTableFilter")
-           .expr,
-        duckdb::DynamicFilterScalarFun::NAME);
-      cf.zonemap_only =
-        duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
-          entry.Filter());
       const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
                             entry.Filter(), "BuildTableFilter")
                             .expr;
+      cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
+        expr, duckdb::DynamicFilterScalarFun::NAME);
+      cf.zonemap_only =
+        duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
+          entry.Filter());
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
       cf.not_null = MakeNotNullReplacement(entry.Filter(),
@@ -674,7 +671,7 @@ void BuildOffsetsEntries(FetchLocalState& f,
   }
 }
 
-duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
+duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output) {
   SDB_IF_FAILURE("SearchIncludeFetchFault") {
     if (!g.cs_projections.empty()) {

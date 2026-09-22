@@ -427,7 +427,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
       bind.relation.kind == ScanEntryKind::InvertedIndex) {
     const auto& column_ids = *input.projected_column_ids;
     for (const auto& entry : *input.filters) {
-      const auto proj = static_cast<duckdb::idx_t>(entry.GetIndex());
+      const duckdb::idx_t proj = entry.GetIndex();
       if (proj >= column_ids.size() || column_ids[proj].IsVirtualColumn()) {
         continue;
       }

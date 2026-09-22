@@ -323,7 +323,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
     work.rgs.store(SegmentWork::Pack(0, work.rg_count),
                    std::memory_order_relaxed);
-    work.live = true;
     total_rgs += work.rg_count;
   }
   g.live_segments = static_cast<uint32_t>(g.segment_order.size());

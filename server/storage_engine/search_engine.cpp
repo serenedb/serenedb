@@ -73,8 +73,7 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  return std::max<uint32_t>(
-    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
+  return static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget());
 }
 
 const irs::AnnBuildEnv& AnnBuildEnv() {

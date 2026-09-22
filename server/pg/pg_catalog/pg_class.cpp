@@ -215,7 +215,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
             table->GetConstraints(), [](const auto& constraint) {
               return constraint->type == duckdb::ConstraintType::CHECK;
             }));
-          row.relhasindex = indexed_relations.contains((*table).oid);
+          row.relhasindex = indexed_relations.contains(table->oid);
           row.reltuples = count_store_rows(*table);
           row.relacl = {table->permissions.acl};
           values.push_back(std::move(row));

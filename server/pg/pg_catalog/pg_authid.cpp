@@ -59,7 +59,7 @@ MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
             values.push_back(PgAuthid{
               .oid = role.oid,
               .rolname = role.name.GetIdentifierName(),
-              .rolsuper = HasOption(options, RoleOption::Superuser),
+              .rolsuper = role.IsSuperuser(),
               .rolinherit = HasOption(options, RoleOption::Inherit),
               .rolcreaterole = HasOption(options, RoleOption::CreateRole),
               .rolcreatedb = HasOption(options, RoleOption::CreateDb),

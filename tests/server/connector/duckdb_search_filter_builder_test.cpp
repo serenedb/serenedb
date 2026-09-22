@@ -154,7 +154,7 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<search::ColumnTokenizer(uint64_t)>;
 
 search::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12345}, {},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
   auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
@@ -164,7 +164,7 @@ search::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 
 template<irs::IndexFeatures Features>
 search::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12346}, {},
     irs::analysis::TokenizerConfig{.config =
                                      irs::analysis::TextTokenizer::Options{}});
@@ -192,7 +192,7 @@ search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] search::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
   irs::analysis::WildcardTokenizer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
@@ -210,7 +210,7 @@ search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
 }
 
-[[maybe_unused]] search::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     ObjectId{12349}, {},
     irs::analysis::TokenizerConfig{

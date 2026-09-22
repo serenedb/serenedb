@@ -41,7 +41,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
   auto& cluster = catalog::ClusterOf();
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
                  .GetEntry(cluster.LoginTransaction(),
-                           duckdb::Identifier{std::string{user}});
+                           duckdb::Identifier{user});
   if (!entry) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),

@@ -149,9 +149,6 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
       const auto& constraints = table.GetConstraints();
       for (size_t position = 0; position != constraints.size(); ++position) {
         const auto& constraint = constraints[position];
-        if (constraint->type == duckdb::ConstraintType::INVALID) {
-          continue;
-        }
         // One row per foreign key, on the table that states it, as postgres
         // has it -- the referenced table's reciprocal entry is not a row.
         if (constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&

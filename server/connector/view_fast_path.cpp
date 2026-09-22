@@ -288,10 +288,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   if (select_node.select_list.empty()) {
     return std::nullopt;
   }
-  if (select_node.select_list.size() == 1 &&
-      select_node.select_list[0]->GetExpressionClass() ==
+  if (select_node.select_list.size() != 1 ||
+      select_node.select_list[0]->GetExpressionClass() !=
         duckdb::ExpressionClass::STAR) {
-  } else {
     for (const auto& item : select_node.select_list) {
       const duckdb::ParsedExpression* cur = item.get();
       while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
@@ -327,6 +326,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     }
     auto& entry = generic->Cast<duckdb::TableCatalogEntry>();
     const auto cat_type = entry.ParentCatalog().GetCatalogType();
+    const CatalogTableRef table_ref{
+      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+      .schema = entry.ParentSchemaName().GetIdentifierName(),
+      .table = entry.name.GetIdentifierName()};
     if (cat_type == "iceberg") {
       const auto* registry_entry = LookupRegistry("iceberg_scan");
       if (!registry_entry) {
@@ -334,10 +337,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = std::string{registry_entry->function_name};
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchemaName().GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = table_ref;
       out.is_glob = true;
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
@@ -353,10 +353,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = "read_duckdb";
-      out.catalog_ref =
-        CatalogTableRef{.catalog = src_catalog.GetName().GetIdentifierName(),
-                        .schema = entry.ParentSchemaName().GetIdentifierName(),
-                        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = table_ref;
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = PkSpec::DuckDBRowId;
       // Attached duckdb table: materialized via DataTable::LookupScan, which
@@ -368,10 +365,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // Views over a serenedb table ride the same rowid-keyed machinery as
       // views over an attached database.
       ViewFastPath out;
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchemaName().GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = table_ref;
       out.pk_spec = PkSpec::DuckDBRowId;
       out.supports_filters = true;
       // Only the check that every projected name is one of the relation's
@@ -400,16 +394,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     if (!is_postgres && cat_type != "clickhouse") {
       return std::nullopt;
     }
-    const CatalogTableRef ext_ref{
-      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-      .schema = entry.ParentSchemaName().GetIdentifierName(),
-      .table = entry.name.GetIdentifierName()};
     // Exactly one of the branches below returns, so each may consume
     // projection_columns.
     auto external_fast_path = [&](PkSpec spec,
                                   std::vector<ExternalKeyColumn> keys = {}) {
       ViewFastPath out;
-      out.catalog_ref = ext_ref;
+      out.catalog_ref = table_ref;
       out.pk_spec = spec;
       out.key_columns = std::move(keys);
       out.projection_columns = std::move(projection_columns);

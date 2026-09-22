@@ -157,22 +157,19 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
   }
 }
 
-void EmitColumnsForSystemTable(const VirtualTable& table,
-                               duckdb::ClientContext& context,
-                               std::vector<PgAttribute>& values) {
-  auto row_type = table.RowType();
+void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
+                       duckdb::ClientContext& context,
+                       std::vector<PgAttribute>& values) {
   if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
     return;
   }
-  auto& children = duckdb::StructType::GetChildTypes(row_type);
-
+  const auto& children = duckdb::StructType::GetChildTypes(row_type);
   for (size_t i = 0; i < children.size(); ++i) {
     auto& child_type = children[i].second;
     auto type_oid = Type2Oid(child_type, &context);
     auto phys = GetPhysicalInfo(type_oid);
-
     PgAttribute row{
-      .attrelid = table.Id(),
+      .attrelid = relid,
       .attname = children[i].first.GetIdentifierName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
@@ -197,48 +194,6 @@ void EmitColumnsForSystemTable(const VirtualTable& table,
   }
 }
 
-// Emit pg_attribute rows for composite (record) types so that drivers can
-// introspect the field list via the standard `attrelid = $oid` lookup. The
-// synthetic relid we use is the type's own OID (matching what pg_type.typrelid
-// reports).
-void EmitColumnsForCompositeType(const duckdb::TypeCatalogEntry& type,
-                                 duckdb::ClientContext& context,
-                                 std::vector<PgAttribute>& values) {
-  if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
-    return;
-  }
-  const auto& children = duckdb::StructType::GetChildTypes(type.user_type);
-  const auto type_oid = type.oid;
-  for (size_t i = 0; i < children.size(); ++i) {
-    auto& child_type = children[i].second;
-    auto type_id = Type2Oid(child_type, &context);
-    auto phys = GetPhysicalInfo(type_id);
-    PgAttribute row{
-      .attrelid = type_oid,
-      .attname = children[i].first.GetIdentifierName(),
-      .atttypid = type_id,
-      .attlen = phys.attlen,
-      .attnum = static_cast<int16_t>(i + 1),
-      .atttypmod = -1,
-      .attndims = 0,
-      .attbyval = phys.attbyval,
-      .attalign = phys.attalign,
-      .attstorage = phys.attstorage,
-      .attcompression = PgAttribute::Attcompression::None,
-      .attnotnull = false,
-      .atthasdef = false,
-      .atthasmissing = false,
-      .attidentity = PgAttribute::Attidentity::None,
-      .attgenerated = PgAttribute::Attgenerated::None,
-      .attisdropped = false,
-      .attislocal = true,
-      .attinhcount = 0,
-      .attcollation = GetCollationForType(type_id),
-    };
-    values.push_back(std::move(row));
-  }
-}
-
 }  // namespace
 
 template<>
@@ -250,13 +205,17 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       EmitColumnsForTable(table, context, values);
     });
+  // Emit pg_attribute rows for composite (record) types so that drivers can
+  // introspect the field list via the standard `attrelid = $oid` lookup. The
+  // synthetic relid is the type's own OID (matching what pg_type.typrelid
+  // reports).
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TypeCatalogEntry& type) {
-      EmitColumnsForCompositeType(type, context, values);
+      EmitStructColumns(type.oid, type.user_type, context, values);
     });
 
   VisitSystemTables([&](const VirtualTable& table, Oid /*schema_oid*/) {
-    EmitColumnsForSystemTable(table, context, values);
+    EmitStructColumns(table.Id(), table.RowType(), context, values);
   });
 
   auto result = CreateColumns<PgAttribute>(values.size());

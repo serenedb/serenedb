@@ -62,7 +62,7 @@ bool TypeIsComplete(const duckdb::LogicalType& type) {
     case MAP:
     case UNION:
     case ENUM:
-      return static_cast<bool>(type.AuxInfo());
+      return type.AuxInfo();
     case LIST:
       return type.AuxInfo() &&
              TypeIsComplete(duckdb::ListType::GetChildType(type));

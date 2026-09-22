@@ -691,9 +691,7 @@ catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
                                         irs::CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
-  if (_document) {
-    _document.reset();
-  }
+  _document.reset();
   _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
@@ -755,7 +753,7 @@ irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsureColumnWriter(
   if (!col_writer) {
     return nullptr;
   }
-  auto [it, inserted] = _column_writers.try_emplace(field_id, nullptr);
+  auto it = _column_writers.try_emplace(field_id, nullptr).first;
   if (!it->second) {
     it->second = &col_writer->OpenColumn(field_id, type);
   }
@@ -883,8 +881,7 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   const auto write_column = [&](ColumnId col_id,
                                 const duckdb::LogicalType& type,
                                 const duckdb::Vector& vec) {
-    sink.AppendToColumn(static_cast<irs::field_id>(col_id), type, vec,
-                        num_rows);
+    sink.AppendToColumn(col_id, type, vec, num_rows);
     for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }
@@ -923,8 +920,7 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     auto& key = row_keys[row];
     key.clear();
     primary_key::AppendGenerated(key, pk_base + row);
-    key_views.push_back(
-      duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())});
+    key_views.push_back(duckdb::string_t{key});
     ids[row] = static_cast<int64_t>(pk_base + row);
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);

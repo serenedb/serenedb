@@ -108,18 +108,8 @@ void VisitBuiltinFunctions(
     if (!schema) {
       return;
     }
-    schema->Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY,
-                 [&](duckdb::CatalogEntry& entry) {
-                   if (entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-                     collect(entry);
-                   }
-                 });
-    schema->Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-                 [&](duckdb::CatalogEntry& entry) {
-                   if (entry.type != duckdb::CatalogType::MACRO_ENTRY) {
-                     collect(entry);
-                   }
-                 });
+    schema->Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
+    schema->Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
     schema->Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
   };
   visit_schema(system_catalog, duckdb::Identifier::DefaultSchema());

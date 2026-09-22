@@ -104,10 +104,6 @@ class SearchSinkInsertBaseImpl {
     std::vector<IndexedExpression>&& indexed_exprs = {},
     std::shared_ptr<const catalog::InvertedIndexConfig> config = {});
 
-  void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
-    _trx = &trx;
-  }
-
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
                 irs::CommitOnFlush* commit_on_flush = nullptr);
 
@@ -288,10 +284,6 @@ class SearchSinkDeleteBaseImpl {
  public:
   explicit SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
 
-  void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
-    _trx = &trx;
-  }
-
   void InitImpl(size_t batch_size);
 
   void FinishImpl();
@@ -325,7 +317,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final {
     if (_indexed.contains(col.id)) {
-      SwitchFieldImpl(static_cast<irs::field_id>(col.id), col.type, vec, count);
+      SwitchFieldImpl(col.id, col.type, vec, count);
     }
     return false;
   }

@@ -144,7 +144,7 @@ void VisitDatabase(duckdb::ClientContext& context,
   auto& cluster = catalog::ClusterOf(context);
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
                  .GetEntry(cluster.GetCatalogTransaction(context),
-                           duckdb::Identifier{database.GetName()});
+                           database.GetName());
   if (!entry) {
     return;
   }

@@ -131,9 +131,6 @@ void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
   });
 }
 
-template<typename T>
-duckdb::LogicalType GetFieldType();
-
 // Write a single field value into a DuckDB Vector at the given row.
 template<typename Field>
 void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
@@ -175,11 +172,9 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
     duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
       static_cast<int64_t>(field);
   } else if constexpr (std::is_same_v<Field, int64_t>) {
-    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
-      static_cast<int64_t>(field);
+    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, uint64_t>) {
-    duckdb::FlatVector::GetDataMutable<uint64_t>(vec)[row] =
-      static_cast<uint64_t>(field);
+    duckdb::FlatVector::GetDataMutable<uint64_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, float>) {
     duckdb::FlatVector::GetDataMutable<float>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, double>) {
@@ -368,7 +363,7 @@ class SystemTable final : public VirtualTable {
       duckdb::child_list_t<duckdb::LogicalType> children;
       children.reserve(boost::pfr::tuple_size_v<T>);
       boost::pfr::for_each_field_with_name(
-        T{}, [&]<typename Field>(std::string_view name, const Field& field) {
+        T{}, [&]<typename Field>(std::string_view name, const Field&) {
           children.emplace_back(name, GetFieldType<Field>());
         });
       return duckdb::LogicalType::STRUCT(std::move(children));

@@ -74,10 +74,6 @@ struct ScoreSpec {
   size_t top_offset = 0;
   bool top_n_consumed = false;
   float static_floor = std::numeric_limits<float>::lowest();
-
-  bool Ranked() const noexcept {
-    return text.has_value() || vector.has_value();
-  }
 };
 
 struct ScanOrderSpec {
@@ -198,7 +194,6 @@ struct ScanBindData final : duckdb::FunctionData {
   using ColumnVisitor =
     std::function<void(ColumnId, const duckdb::LogicalType&)>;
 
-  ColumnId ColumnIdByName(std::string_view name) const;
   std::string_view ColumnNameById(ColumnId col_id) const;
   duckdb::LogicalType ColumnTypeById(ColumnId col_id) const;
   std::string DisplayColumnName(ColumnId col_id) const;

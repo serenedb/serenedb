@@ -92,7 +92,6 @@ class ConnectionContext final : public query::Transaction {
   // plan for. Its statements must reach duckdb's native catalog paths, not the
   // serenedb mutators that emitted them.
   bool IsStorageConnection() const noexcept { return _storage_connection; }
-  void MarkStorageConnection() noexcept { _storage_connection = true; }
 
   bool IsSystemWriter() const noexcept { return _system_writer; }
   void MarkSystemWriter() noexcept { _system_writer = true; }

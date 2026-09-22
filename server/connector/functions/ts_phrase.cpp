@@ -42,16 +42,6 @@
 namespace sdb::connector {
 namespace {
 
-bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
-    return false;
-  }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back, nullptr, false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
-}
-
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
                          std::optional<size_t> arg_index = std::nullopt) {

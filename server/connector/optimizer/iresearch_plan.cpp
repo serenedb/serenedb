@@ -931,9 +931,8 @@ std::optional<duckdb::ColumnBinding> ScoreSideBinding(
 
 bool TryClaimAnnRange(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
-  duckdb::LogicalGet& get, connector::ScanBindData& bind_data,
+  duckdb::LogicalGet& get, connector::ScanBindData& scan,
   duckdb::ClientContext& context) {
-  auto& scan = bind_data;
   if (!scan.score.vector ||
       scan.score.vector->natural_order != duckdb::OrderType::ASCENDING ||
       scan.score.vector->radius != std::numeric_limits<float>::max()) {
@@ -959,7 +958,7 @@ bool TryClaimAnnRange(
     // Find the side that resolves to the score column (bare or `-(score)`); the
     // other side is the bound.
     const auto is_score = [&](const std::optional<duckdb::ColumnBinding>& b) {
-      return b && ResolveColumnId(*b, bind_data, get) ==
+      return b && ResolveColumnId(*b, scan, get) ==
                     connector::kInvertedIndexScoreId;
     };
     bool negated = false;
@@ -1020,10 +1019,9 @@ bool TryClaimAnnRange(
 
 bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
-  connector::ScanBindData& bind_data, const SearchGetters& getters,
+  connector::ScanBindData& scan, const SearchGetters& getters,
   duckdb::ClientContext& context) {
   auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
-  auto& scan = bind_data;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
@@ -1081,20 +1079,19 @@ void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data_ptr,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
-  if (filters.empty() || !bind_data_ptr) {
+  if (filters.empty()) {
     return;
   }
   auto& bind_data = bind_data_ptr->Cast<connector::ScanBindData>();
-  auto& ss = bind_data;
-  if (ss.ts_dict.Active()) {
-    ClaimTsDictFilter(filters, get, bind_data, ss, context);
+  if (bind_data.ts_dict.Active()) {
+    ClaimTsDictFilter(filters, get, bind_data, bind_data, context);
     return;
   }
-  if (ss.search.filter) {
+  if (bind_data.search.filter) {
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty() || ss.IsHnswScored()) {
+  if (filters.empty() || bind_data.IsHnswScored()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data, context);

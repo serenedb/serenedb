@@ -60,7 +60,7 @@ MaterializedData SystemTableSnapshot<PgAggregate>::GetTableData() {
       .aggfinalmodify = PgAggregate::Aggfinalmodify::ReadOnly,
       .aggmfinalmodify = PgAggregate::Aggfinalmodify::ReadOnly,
       .aggsortop = 0,
-      .aggtranstype = static_cast<Oid>(PgTypeOID::kInternal),
+      .aggtranstype = PgTypeOID::kInternal,
       .aggtransspace = 0,
       .aggmtranstype = 0,
       .aggmtransspace = 0,

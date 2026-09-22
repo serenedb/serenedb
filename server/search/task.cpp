@@ -120,14 +120,14 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
     if (attached->oid != idx.GetDatabaseId()) {
       continue;
     }
-    const auto entry = attached->GetCatalog()
-                         .Cast<catalog::SereneDBCatalog>()
-                         .FindIn<duckdb::DuckIndexEntry>(nullptr, idx.GetId());
+    const auto entry =
+      attached->GetCatalog()
+        .Cast<catalog::SereneDBCatalog>()
+        .FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
     if (!entry) {
       break;
     }
-    std::shared_ptr<const irs::IndexFieldOptions> options =
-      entry->Cast<catalog::InvertedIndexEntry>().Config();
+    std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
     const auto* raw = options.get();
     return {
       .alive = true, .keepalive = std::move(options), .field_options = raw};

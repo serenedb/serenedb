@@ -128,9 +128,8 @@ constexpr TsDictColInfo TsDictColFor(TsDictColKind kind) {
 
 std::string TsDictColName(const connector::ScanBindData& bind_data,
                           irs::field_id field_id, TsDictColKind kind) {
-  return absl::StrCat(
-    TsDictColFor(kind).prefix,
-    bind_data.DisplayColumnName(static_cast<connector::ColumnId>(field_id)));
+  return absl::StrCat(TsDictColFor(kind).prefix,
+                      bind_data.DisplayColumnName(field_id));
 }
 
 constexpr std::optional<std::pair<TsDictColKind, std::string_view>> TsDictFnFor(
@@ -272,7 +271,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                     ERR_MSG(fn, "(): column not found in index"));
   }
   const auto& index = found.bind_data->relation.inverted_config;
-  const auto* info = index ? index->FindColumnInfo(col_id) : nullptr;
+  const auto* info = index->FindColumnInfo(col_id);
   const auto& col_type = col_ref->GetReturnType();
   const auto text_type = [&] {
     switch (col_type.id()) {
@@ -734,9 +733,6 @@ class TsDictFacetPushdown {
   const catalog::InvertedIndexConfig* ColumnIndex() const {
     return _index;
   }
-  const catalog::InvertedIndexConfig& FacetIndex() const {
-    return _index ? *_index : *_keys.front().index;
-  }
   bool ResolveExpressionKey(const duckdb::Expression& expr,
                             TsDictFacetKey& key);
   bool ResolveKeys();
@@ -896,9 +892,6 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
     return std::nullopt;
   }
   const auto& index = found.bind_data->relation.inverted_config;
-  if (!index) {
-    return std::nullopt;
-  }
   const auto field_id = index->TermField(col_id);
   if (!index->IsKeywordField(field_id)) {
     return std::nullopt;

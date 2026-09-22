@@ -70,8 +70,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : bind.search.snapshot->reader) {
-        if (const auto* field =
-              segment.field(static_cast<irs::field_id>(req.field_id))) {
+        if (const auto* field = segment.field(req.field_id)) {
           terms += field->size();
         }
       }
@@ -174,23 +173,6 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
     return view->id == o.view->id;
   }
   return relation.table_entry.get() == o.relation.table_entry.get();
-}
-
-ColumnId ScanBindData::ColumnIdByName(std::string_view name) const {
-  if (view) {
-    const auto& names = view->column_names;
-    for (size_t i = 0; i < names.size(); ++i) {
-      if (names[i] == name) {
-        return static_cast<ColumnId>(i);
-      }
-    }
-    return kInvalidColumnId;
-  }
-  const auto& entry_columns = relation.table_entry->GetColumns();
-  const duckdb::Identifier key{name};
-  return entry_columns.ColumnExists(key)
-           ? ColumnId{entry_columns.GetColumn(key).Oid()}
-           : kInvalidColumnId;
 }
 
 std::string_view ScanBindData::ColumnNameById(ColumnId col_id) const {

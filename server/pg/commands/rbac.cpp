@@ -459,8 +459,7 @@ void RegisterRbacFunctions(duckdb::DatabaseInstance& db) {
 
 std::string SetRole(ConnectionContext& ctx, std::string_view name) {
   if (name.empty() || absl::EqualsIgnoreCase(name, "none")) {
-    ctx.SetEffectiveRole(ctx.GetSessionRoleId());
-    RefreshSuperuser(ctx);
+    ResetRole(ctx);
     return "none";
   }
   auto s = SessionOf(ctx.GetClientContext());

@@ -60,14 +60,7 @@
 namespace sdb::connector {
 
 duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
-  auto copy = duckdb::make_uniq<OffsetsBindData>();
-  copy->config = config;
-  copy->tokenizers = tokenizers;
-  copy->column_id = column_id;
-  copy->dict_tokenizer = dict_tokenizer;
-  copy->limit = limit;
-  copy->stored_filter = stored_filter;
-  return copy;
+  return duckdb::make_uniq<OffsetsBindData>(*this);
 }
 
 bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {

@@ -44,7 +44,7 @@ static constexpr size_t kSqlStateSize = 5;
 // Unpack MAKE_SQLSTATE code.
 template<typename T>
 void UnpackSqlState(T& buf, int sql_state) {
-  if constexpr (requires(T c) { std::size(buf); }) {
+  if constexpr (requires { std::size(buf); }) {
     SDB_ASSERT(std::size(buf) >= kSqlStateSize);
   }
 

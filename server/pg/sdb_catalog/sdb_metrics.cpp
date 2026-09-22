@@ -98,10 +98,9 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   }
 
   const auto wal_first = values.size();
-  auto& storage_manager =
-    duckdb::Catalog::GetCatalog(_context, duckdb::Identifier::InvalidCatalog())
-      .GetAttached()
-      .GetStorageManager();
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(_context, duckdb::Identifier::InvalidCatalog());
+  auto& storage_manager = catalog.GetAttached().GetStorageManager();
   auto wal = storage_manager.GetWAL();
   values.emplace_back("catalog_wal_appended_bytes",
                       wal ? wal->GetTotalWritten() : 0,
@@ -112,8 +111,6 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   auto& context = _context;
-  auto& catalog =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
   const auto emit = [&](const Stats& stats, Oid relation_id) {
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
@@ -127,14 +124,14 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     if (!index || !index->Storage()) {
       return;
     }
-    emit(index->Storage()->GetStats(), static_cast<Oid>(index->oid));
+    emit(index->Storage()->GetStats(), index->oid);
   };
   const auto visit_table = [&](duckdb::CatalogEntry& entry) {
     const auto* table = dynamic_cast<const catalog::SearchTableEntry*>(&entry);
     if (!table) {
       return;
     }
-    emit(table->Storage()->GetStats(), static_cast<Oid>(table->oid));
+    emit(table->Storage()->GetStats(), table->oid);
   };
   VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
     schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);

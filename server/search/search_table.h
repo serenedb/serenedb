@@ -53,7 +53,7 @@
 
 namespace sdb::search {
 
-class SearchTable : public std::enable_shared_from_this<SearchTable> {
+class SearchTable final : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the

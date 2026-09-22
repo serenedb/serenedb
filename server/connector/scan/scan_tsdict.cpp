@@ -589,7 +589,7 @@ bool TsDictLocalState::NextField() {
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
-        _counts = _g ? CountsFor(*_g) : nullptr;
+        _counts = CountsFor(*_g);
         if (!emitting) {
           BindTermCounts(*reader);
         }

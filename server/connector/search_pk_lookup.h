@@ -49,8 +49,7 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   if (!col_reader) {
     return {nullptr, nullptr};
   }
-  const auto* pk_col =
-    col_reader->Column(static_cast<irs::field_id>(kGeneratedPKId));
+  const auto* pk_col = col_reader->Column(kGeneratedPKId);
   if (!pk_col) {
     return {nullptr, nullptr};
   }

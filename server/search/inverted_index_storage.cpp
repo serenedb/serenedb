@@ -584,9 +584,6 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
 
 void InvertedIndexStorage::FinishCreation() {
   std::lock_guard lock{_refresh_mutex};
-  if (_phase == Phase::Active) {
-    return;
-  }
   _phase = Phase::Active;
 }
 

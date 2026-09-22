@@ -302,8 +302,6 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   return out;
 }
 
-namespace {}  // namespace
-
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
   if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
       parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {

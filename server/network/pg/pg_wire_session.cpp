@@ -385,23 +385,6 @@ yaclib::Task<Frame> PgWireSession<Kind>::AwaitFrame(FrameKind kind,
   }
 }
 
-// COPY-feeder frames: same consumer role, woken via _copy_gate (the feeder is
-// io-pinned and not a duckdb task).
-template<SocketKind Kind>
-yaclib::Task<Frame> PgWireSession<Kind>::FeedFrame(FrameKind kind,
-                                                   uint32_t max_len) {
-  for (;;) {
-    if (auto frame = _frames.TryAssemble(kind, max_len);
-        frame.status != FrameStatus::NeedMore) {
-      co_return frame;
-    }
-    if (this->SendBroken()) {
-      co_return Frame{.status = FrameStatus::Malformed};
-    }
-    co_await _copy_gate.Wait(*this->_ioexec);
-  }
-}
-
 template<SocketKind Kind>
 std::string_view PgWireSession<Kind>::DatabaseName() const {
   const auto it = _params.find("database");

@@ -69,11 +69,11 @@ constexpr const char* kIndexIdOption = "sdb_index_id";
 
 duckdb::idx_t IdOption(const duckdb::case_insensitive_map_t<duckdb::Value>& o,
                        const char* key) {
-  const auto it = o.find(key);
-  if (it == o.end() || it->second.IsNull()) {
+  const auto* value = catalog::FindOption(o, key);
+  if (!value || value->IsNull()) {
     return 0;
   }
-  return it->second.GetValue<uint64_t>();
+  return value->GetValue<uint64_t>();
 }
 
 duckdb::IndexStorageInfo StorageRecord(const InvertedStoreIndex& index) {
@@ -187,8 +187,7 @@ void InvertedStoreIndex::WriteChunk(DuckDBSearchSinkInsertWriter& writer,
     for (duckdb::idx_t i = 0; i < count; ++i) {
       primary_key::AppendSigned(row_keys[i],
                                 row_data[row_fmt.sel->get_index(i)]);
-      key_views[i] = duckdb::string_t{
-        row_keys[i].data(), static_cast<uint32_t>(row_keys[i].size())};
+      key_views[i] = duckdb::string_t{row_keys[i]};
     }
     std::vector<ExpressionValue> values;
     values.reserve(keys.size());

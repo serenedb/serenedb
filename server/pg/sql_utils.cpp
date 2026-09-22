@@ -38,7 +38,7 @@ namespace sdb::pg {
 int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
                          duckdb::idx_t column_id) {
   for (const auto& column : table.GetColumns().Logical()) {
-    if (static_cast<duckdb::idx_t>(column.Oid()) == column_id) {
+    if (column.Oid() == column_id) {
       return static_cast<int16_t>(column.Logical().index + 1);
     }
   }

@@ -323,7 +323,7 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
-                                           const duckdb::LogicalType& source,
+                                           const duckdb::LogicalType&,
                                            const duckdb::LogicalType& target) {
   return {TSQueryBoostCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};

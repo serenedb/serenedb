@@ -156,16 +156,22 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                                         expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // Each DELETE op replays as one removal batch on the shared trx; feeding it
-    // in manifest order keeps the `_queries` ordering vs surrounding inserts.
+    // Each DELETE op replays as one removal batch on the shared trx; the record
+    // orders it against the surrounding rows, which is what reproduces the
+    // `_queries` stamping. Rowids are re-encoded here, the way they were when
+    // the rows were written.
     auto replay_delete = [&](uint64_t tick, ObjectId table_id,
-                             std::span<const std::string_view> pks) {
-      if (pks.empty()) {
+                             std::span<const int64_t> rows) {
+      if (rows.empty()) {
         return;
       }
       auto& ctx = ensure_ctx(table_id);
-      ctx.delete_sink->InitImpl(pks.size());
-      for (auto pk : pks) {
+      ctx.delete_sink->InitImpl(rows.size());
+      std::string pk;
+      for (const auto row : rows) {
+        pk.clear();
+        catalog::duckdb_primary_key::AppendGenerated(
+          pk, static_cast<uint64_t>(row));
         ctx.delete_sink->DeleteRowImpl(pk);
       }
       ctx.delete_sink->FinishImpl();

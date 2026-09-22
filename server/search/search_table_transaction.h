@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/column_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
@@ -44,6 +45,11 @@ class SearchTable;
 struct SearchShardWrites {
   std::shared_ptr<SearchTable> shard;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
+  // The transaction the write buffer flushes into once it has overrun, owned by
+  // `transactions` above. Exclusive, so its segments can be named in the
+  // record, and flushed to disk exactly once -- at commit, which is all
+  // FlushAndFsync permits. Null while the buffer has never overrun.
+  irs::IndexWriter::Transaction* buffer_trx = nullptr;
   // The writer-generation slot this transaction registered in on `shard`,
   // released when the transaction settles. -1 until it registers.
   int writer_slot = -1;
@@ -87,10 +93,26 @@ class SearchTableTransaction {
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
+                            std::span<const catalog::ColumnId> column_ids,
                             duckdb::DataChunk& chunk, uint64_t pk_base);
 
+  // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
+  uint64_t BufferedBytes(ObjectId shard_id) const noexcept {
+    auto it = _changes.find(shard_id);
+    return it == _changes.end() ? 0 : it->second.BufferedBytes();
+  }
+
+  // Replays the whole buffer -- rows and removals, in issue order -- into the
+  // shard's exclusive transaction, creating it on first use, and empties the
+  // row buffer. The rows become that transaction's to make durable, so the
+  // record stops carrying a copy of them; the removals stay buffered, since
+  // the record has to carry those either way.
+  void FlushBuffer(const std::shared_ptr<SearchTable>& shard,
+                   duckdb::ClientContext& context);
+
+  // Rowids to remove, in issue order with the buffered rows.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
-                        std::span<const std::string> pks);
+                        std::span<const int64_t> rows);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          bool clears_shard);
@@ -112,6 +134,13 @@ class SearchTableTransaction {
 
   void RegisterFlush() noexcept;
 
+  // Replays whatever is left in every shard's buffer: into the exclusive
+  // transaction if the buffer ever overran, otherwise into a pooled one, whose
+  // rows the record then carries inline. Must run while the engine transaction
+  // is open (building a sink reads the catalog) and before Commit, which
+  // measures the tick band off the transactions' query counts.
+  void FlushPending(duckdb::ClientContext& context);
+
   void Commit();
 
   void Abort() noexcept;
@@ -129,6 +158,17 @@ class SearchTableTransaction {
   // Releases every writer registration this transaction holds. Idempotent, so
   // Commit / Abort / the destructor can all call it.
   void ReleaseWriters() noexcept;
+
+  // Replays a buffer into `trx` in issue order, rows and removals interleaved
+  // by watermark. Leaves the buffer untouched; the caller decides whether the
+  // rows are now somebody else's to make durable.
+  static void ReplayBuffer(SearchTable& shard, LocalTableChangesEntry& entry,
+                           irs::IndexWriter::Transaction& trx,
+                           duckdb::ClientContext& context);
+
+  // The shard's exclusive buffer transaction, created on first overrun.
+  irs::IndexWriter::Transaction& EnsureBufferTransaction(
+    const std::shared_ptr<SearchTable>& shard);
 
   irs::containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>

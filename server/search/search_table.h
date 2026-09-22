@@ -93,6 +93,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId GetTableId() const noexcept { return _table_id; }
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
   ObjectId GetDbId() const noexcept { return _db_id; }
+  uint64_t GetWriteBufferMaxBytes() const noexcept {
+    return _segment_memory_max / 2;
+  }
 
   // The merged per-field index config: PRIMARY KEY columns (term-indexed +
   // still stored, so PK predicates push down) unioned with every declared

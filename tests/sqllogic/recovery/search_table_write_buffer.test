@@ -1,0 +1,285 @@
+control substitution on
+
+# Compaction off: it would merge the segments the write buffer produced back
+# together within a second, and the counts below are what prove where the rows
+# went.
+# The write buffer is half segment_memory_max, so 2MB here gives a 1MB buffer:
+# a few buffer-manager blocks, big enough that a one-row statement stays
+# buffered, small enough that a few thousand rows overrun it. Being a table
+# property it also survives the restarts below, which a session SET would not.
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE wbuf(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+RESET sdb_faults;
+
+# Single-threaded, so the insert takes the serial path the write buffer governs
+# -- a parallel insert already writes its own segments and never fills it.
+statement ok
+SET threads = 1;
+
+
+###############################################################################
+# 1. A statement that overruns the buffer is correct: the rows handed to a
+#    segment and any left buffered add up to the whole insert, none twice.
+###############################################################################
+
+statement ok
+INSERT INTO wbuf SELECT i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wbuf;
+
+query
+SELECT count(*) AS n, min(a) AS lo, max(a) AS hi, count(DISTINCT a) AS d FROM wbuf;
+----
+n	lo	hi	d
+5000	0	4999	5000
+
+
+###############################################################################
+# 2. Several statements in one transaction share ONE buffer and, once it has
+#    overrun, one exclusive transaction -- flushed exactly once at commit. So
+#    the whole transaction lands in a single segment however many statements it
+#    took. Draining has to EMPTY the buffer for that to hold: leaving it full
+#    would put every later statement over the limit on its first chunk and give
+#    each its own segment, which is what the count below pins down.
+###############################################################################
+
+statement ok
+CREATE TABLE wmulti(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO wmulti SELECT i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
+
+statement ok
+INSERT INTO wmulti VALUES (900001, 'x');
+
+statement ok
+INSERT INTO wmulti VALUES (900002, 'x');
+
+statement ok
+INSERT INTO wmulti VALUES (900003, 'x');
+
+statement ok
+INSERT INTO wmulti VALUES (900004, 'x');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) wmulti;
+
+query
+SELECT count(*) AS n, count(DISTINCT a) AS d FROM wmulti;
+----
+n	d
+5004	5004
+
+query
+SELECT count(DISTINCT segment_id) AS segs FROM pragma_storage_info('wmulti');
+----
+segs
+1
+
+statement ok
+DROP TABLE wmulti;
+
+
+###############################################################################
+# 2b. An op is fed to iresearch exactly once, however many times the buffer
+#     overruns. A TRUNCATE replayed a second time would be re-issued against a
+#     higher tick and remove the rows the previous replay had just fed, so this
+#     reloads a non-empty table with more rows than the buffer holds and pins
+#     down that every one of them survives.
+###############################################################################
+
+statement ok
+CREATE TABLE wtrunc(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO wtrunc SELECT i, 'seed' || i || repeat('x', 200) FROM range(3000) t(i);
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE wtrunc;
+
+statement ok
+INSERT INTO wtrunc SELECT i, 'p1_' || i || repeat('x', 200) FROM range(10000, 15000) t(i);
+
+statement ok
+INSERT INTO wtrunc SELECT i, 'p2_' || i || repeat('x', 200) FROM range(20000, 25000) t(i);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) wtrunc;
+
+# Neither the seed rows nor either statement's rows may be missing: 10000 total,
+# 5000 from each statement, and nothing left over from before the TRUNCATE.
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE b LIKE 'p1!_%' ESCAPE '!') AS p1,
+       count(*) FILTER (WHERE b LIKE 'p2!_%' ESCAPE '!') AS p2,
+       count(*) FILTER (WHERE b LIKE 'seed%') AS seed
+FROM wtrunc;
+----
+n	p1	p2	seed
+10000	5000	5000	0
+
+statement ok
+DROP TABLE wtrunc;
+
+
+###############################################################################
+# 3. A statement small enough to stay buffered never reaches iresearch until
+#    commit feeds it, so it has to survive a crash after the WAL commit like
+#    any other write.
+###############################################################################
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO wbuf VALUES (20001, 'small_a'), (20002, 'small_b');
+
+# --- restart ---
+connection small_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, max(a) AS hi FROM wbuf;
+----
+n	hi
+5002	20002
+
+connection small_after
+query
+SELECT b FROM wbuf WHERE a = 20002;
+----
+b
+small_b
+
+connection small_after
+statement ok
+VACUUM (REFRESH_TABLE) wbuf;
+
+
+###############################################################################
+# 4. Crash AFTER the WAL commit on a statement that overran the buffer: the
+#    rows come back from the segment the record names, not from a copy of them
+#    in the record.
+###############################################################################
+
+connection small_after
+statement ok
+SET threads = 1;
+
+connection small_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection small_after
+statement error connection closed
+INSERT INTO wbuf SELECT i, 'v' || i || repeat('x', 200) FROM range(10000, 16000) t(i);
+
+# --- restart ---
+connection after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT a) AS d FROM wbuf;
+----
+n	d
+11002	11002
+
+connection after_commit
+query
+SELECT left(b, 6) AS head, length(b) AS len FROM wbuf WHERE a = 15999;
+----
+head	len
+v15999	206
+
+connection after_commit
+statement ok
+VACUUM (REFRESH_TABLE) wbuf;
+
+
+###############################################################################
+# 5. Crash BEFORE the WAL commit: the whole statement is lost, including the
+#    segment already flushed and fsynced for it. Nothing references that file,
+#    so its rows must not reappear; the cleanup sweep reclaims it.
+###############################################################################
+
+connection after_commit
+statement ok
+SET threads = 1;
+
+connection after_commit
+statement ok
+SET sdb_faults = 'crash_before_search_wal_commit';
+
+connection after_commit
+statement error connection closed
+INSERT INTO wbuf SELECT i, 'v' || i || repeat('x', 200) FROM range(20000, 26000) t(i);
+
+# --- restart ---
+connection before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT a) AS d FROM wbuf;
+----
+n	d
+11002	11002
+
+
+###############################################################################
+# 6. A buffered statement that cannot be fed at commit FAILS -- it does not take
+#    the server down. Feeding tokenizes, reads the catalog and evaluates
+#    expressions, any of which can throw, and it runs from a pre-commit hook;
+#    DuckDB turns a refusal there into a rollback. Nothing reached the WAL, so
+#    the rows are simply gone and the connection stays usable.
+###############################################################################
+
+connection before_commit
+statement ok
+SET sdb_faults = 'search_feed_pending_fails';
+
+connection before_commit
+statement error intentional debug error
+INSERT INTO wbuf VALUES (30001, 'never');
+
+connection before_commit
+statement ok
+RESET sdb_faults;
+
+# Same connection, so the server is still up and the transaction only failed.
+connection before_commit
+query
+SELECT count(*) AS n, count(DISTINCT a) AS d FROM wbuf;
+----
+n	d
+11002	11002
+
+connection before_commit
+statement ok
+INSERT INTO wbuf VALUES (30002, 'after_failure');
+
+connection before_commit
+statement ok
+VACUUM (REFRESH_TABLE) wbuf;
+
+connection before_commit
+query
+SELECT count(*) AS n, max(a) AS hi FROM wbuf;
+----
+n	hi
+11003	30002
+
+connection before_commit
+statement ok
+DROP TABLE wbuf;

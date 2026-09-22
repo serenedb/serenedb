@@ -58,7 +58,11 @@ class Transaction : public Config {
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the engine commit.
-  void PreCommit() noexcept;
+  // May throw: a hook that refuses the commit rolls the transaction back the
+  // way a failed commit does (TransactionContext::Commit), which is what we
+  // want if the buffered rows cannot be fed -- nothing has reached the WAL
+  // yet, so the statement just fails.
+  void PreCommit();
   // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept;
 

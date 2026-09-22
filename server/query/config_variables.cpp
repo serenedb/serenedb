@@ -607,8 +607,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::UBIGINT,
         "In-memory bytes an inverted-index or search-table segment writer "
         "fills before rolling over to a new on-disk segment (also the CREATE "
-        "INDEX backfill commit cadence). Per-object WITH (segment_memory_max = "
-        "...) overrides. Default 268435456 (256MB).",
+        "INDEX backfill commit cadence, and half of it is the write buffer a "
+        "serial search-table statement fills before it starts feeding the "
+        "index as it goes). Per-object WITH (segment_memory_max = ...) "
+        "overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexOptions{}.segment_memory_max);

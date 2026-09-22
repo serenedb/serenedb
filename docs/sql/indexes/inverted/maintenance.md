@@ -75,6 +75,29 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 - **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting.
 - **Build then index** — for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Top-K** — set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> … LIMIT k`.
+- **Write memory** — [`segment_memory_max`](#write-memory) bounds what a write holds in memory, and sets the segment size it produces.
+
+## Write memory {#write-memory}
+
+Memory held while writing to a search table is bounded by `segment_memory_max` — default 256 MB, set per table with `WITH (segment_memory_max = …)` or per session with `SET`. Estimate the peak for one writing transaction as:
+
+| Write | Peak memory |
+| :--- | :--- |
+| Serial `INSERT` / `UPDATE` | ≈ 1.5 × `segment_memory_max` |
+| Parallel `INSERT` | ≈ `segment_memory_max` × threads |
+
+Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
+
+```sql
+CREATE TABLE docs (id BIGINT, body TEXT)
+  WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB
+```
+
+<DocCallout type="attention">
+
+`DELETE` is not covered by this bound: a removed row is remembered until the transaction commits, so a very large `DELETE` in a single transaction holds memory proportional to the number of rows it removes. Split it across transactions if that matters.
+
+</DocCallout>
 
 ## Session settings {#session-settings}
 

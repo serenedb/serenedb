@@ -105,11 +105,11 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
   while (!work.empty()) {
     const auto* node = graph.Find(work.back());
     work.pop_back();
-    if (node == nullptr) {
+    if (!node) {
       continue;
     }
     for (const auto& edge : node->member_of) {
-      if ((option == nullptr || edge.*option) && graph.Find(edge.role) &&
+      if ((!option || edge.*option) && graph.Find(edge.role) &&
           seen.insert(edge.role).second) {
         work.push_back(edge.role);
       }
@@ -165,7 +165,7 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
 }
 
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
-  if (context == nullptr) {
+  if (!context) {
     auto& cluster = catalog::ClusterOf();
     return BuildRoleGraph(cluster, cluster.LoginTransaction());
   }

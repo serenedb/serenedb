@@ -55,7 +55,7 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   }
 };
 
-struct SearchDeleteSourceState : duckdb::GlobalSourceState {
+struct SearchDeleteSourceState final : duckdb::GlobalSourceState {
   bool finished = false;
   duckdb::ColumnDataScanState scan;
 };
@@ -180,9 +180,7 @@ duckdb::SourceResultType SereneDBSearchDelete::GetDataInternal(
   source.finished = true;
 
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0,
-                 duckdb::Value::BIGINT(
-                   sink_state->Cast<SearchTableDeleteState>().delete_count));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

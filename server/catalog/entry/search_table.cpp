@@ -125,8 +125,8 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   for (const auto index : connector::primary_key::KeyColumns(table)) {
     const auto column = table.GetColumn(index).Oid();
     config->fields.emplace(column,
-                           InvertedIndexField{.indexed_term_dict = true});
-    config->keys.push_back({.field_id = column, .column_id = column});
+                           InvertedIndexField{{.indexed_term_dict = true}});
+    config->keys.push_back({{.field_id = column, .column_id = column}, {}});
   }
   return config;
 }

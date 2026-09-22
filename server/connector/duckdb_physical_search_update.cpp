@@ -44,7 +44,7 @@
 namespace sdb::connector {
 namespace {
 
-struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
+struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
@@ -62,7 +62,7 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
-struct SearchUpdateSourceState : duckdb::GlobalSourceState {
+struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
   bool finished = false;
   duckdb::ColumnDataScanState scan;
 };
@@ -196,7 +196,7 @@ duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchUpdate::GetGlobalSourceState(
   duckdb::ClientContext& /*context*/) const {
   auto state = duckdb::make_uniq<SearchUpdateSourceState>();
-  if (sink_state != nullptr) {
+  if (sink_state) {
     auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
     if (gstate.returned) {
       gstate.returned->InitializeScan(state->scan);

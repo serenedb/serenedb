@@ -70,19 +70,7 @@ struct ColumnTokenizer {
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
-struct InvertedIndexField {
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id synthetic_column = irs::field_limits::invalid();
-  search::Features features;
-  bool store_values = false;
-  bool indexed_term_dict = false;
-  bool whole_value = false;
-  bool is_keyword = false;
-  irs::ColumnOptions column_options;
-  duckdb::idx_t text_dictionary = 0;
-
+struct InvertedIndexField : persistence::FieldRecord {
   bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
@@ -113,12 +101,7 @@ inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
 inline constexpr std::string_view kHNSWKind = "hnsw";
 
-struct InvertedIndexKey {
-  irs::field_id field_id = irs::field_limits::invalid();
-  irs::field_id column_id = irs::field_limits::invalid();
-  // INVALID for a bare column, which indexes under the column's own type.
-  duckdb::LogicalType type;
-  std::string normalized_expression;
+struct InvertedIndexKey : persistence::KeyRecord {
   std::string expression_text;
 };
 

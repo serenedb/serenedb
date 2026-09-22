@@ -31,7 +31,7 @@ struct DataDirectory;
 }  // namespace sdb::catalog
 namespace sdb::connector {
 
-class SereneDBStorageExtension : public duckdb::StorageExtension {
+class SereneDBStorageExtension final : public duckdb::StorageExtension {
  public:
   explicit SereneDBStorageExtension(
     duckdb::shared_ptr<catalog::DataDirectory> layout);

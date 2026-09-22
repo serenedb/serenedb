@@ -100,10 +100,10 @@ struct PgTextCopyBindData final : public duckdb::FunctionData {
       delim{delim},
       null_str{std::move(null_str)} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<PgTextCopyBindData>(sql_types, delim, null_str);
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<PgTextCopyBindData>();
     return sql_types == o.sql_types && delim == o.delim &&
            null_str == o.null_str;

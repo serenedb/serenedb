@@ -101,7 +101,7 @@ std::optional<Verb> ParseOption(std::string_view option) {
   return std::nullopt;
 }
 
-struct VacuumBindData : public duckdb::FunctionData {
+struct VacuumBindData final : public duckdb::FunctionData {
   std::string option;
   std::string name;
   std::string schema;
@@ -233,7 +233,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
   for (auto& attached :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     auto& db_catalog = attached->GetCatalog();
-    if (dynamic_cast<catalog::SereneDBCatalog*>(&db_catalog) != nullptr) {
+    if (dynamic_cast<catalog::SereneDBCatalog*>(&db_catalog)) {
       out.emplace_back(db_catalog);
     }
   }

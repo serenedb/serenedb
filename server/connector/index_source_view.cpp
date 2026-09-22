@@ -171,7 +171,7 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
                                       duckdb::idx_t row_count) {
   const bool has_cast =
     std::any_of(_cast_executors.begin(), _cast_executors.end(),
-                [](const auto& e) { return e != nullptr; });
+                [](const auto& e) { return static_cast<bool>(e); });
   if (!has_cast || row_count == 0) {
     return;
   }

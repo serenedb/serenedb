@@ -155,25 +155,23 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
   auto copy = FoldConstantCasts(expr.Copy(), context);
-  auto visit = [&](auto& self, duckdb::Expression& e) -> void {
-    e.SetAlias("");
-    e.SetQueryLocation(duckdb::optional_idx{});
-    if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-      auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
-      const auto idx = cref.Binding().column_index.GetIndex();
-      SDB_ASSERT(idx < col_index_to_id.size());
-      const auto col_id = col_index_to_id[idx];
-      cref.BindingMutable() = duckdb::ColumnBinding(
-        duckdb::TableIndex(table_id),
-        duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
-    } else if (e.GetExpressionClass() ==
-               duckdb::ExpressionClass::BOUND_FUNCTION) {
-      e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
-    }
-    duckdb::ExpressionIterator::EnumerateChildren(
-      e, [&](duckdb::Expression& child) { self(self, child); });
-  };
-  visit(visit, *copy);
+  duckdb::ExpressionIterator::EnumerateExpression(
+    copy, [&](duckdb::Expression& e) {
+      e.SetAlias("");
+      e.SetQueryLocation(duckdb::optional_idx{});
+      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
+        const auto idx = cref.Binding().column_index.GetIndex();
+        SDB_ASSERT(idx < col_index_to_id.size());
+        const auto col_id = col_index_to_id[idx];
+        cref.BindingMutable() = duckdb::ColumnBinding(
+          duckdb::TableIndex(table_id),
+          duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
+      } else if (e.GetExpressionClass() ==
+                 duckdb::ExpressionClass::BOUND_FUNCTION) {
+        e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
+      }
+    });
   return copy;
 }
 
@@ -181,18 +179,11 @@ std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr) {
   constexpr size_t kReserved = 8;
   std::vector<ColumnId> out;
   out.reserve(kReserved);
-  auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
-    if (node.GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    expr, [&](const duckdb::BoundColumnRefExpression& ref) {
       out.push_back(
-        static_cast<ColumnId>(node.Cast<duckdb::BoundColumnRefExpression>()
-                                .Binding()
-                                .column_index.GetIndex()));
-    }
-    duckdb::ExpressionIterator::EnumerateChildren(
-      node, [&](const duckdb::Expression& child) { self(self, child); });
-  };
-  visit(visit, expr);
+        static_cast<ColumnId>(ref.Binding().column_index.GetIndex()));
+    });
   std::ranges::sort(out);
   out.erase(std::ranges::unique(out).begin(), out.end());
   return out;

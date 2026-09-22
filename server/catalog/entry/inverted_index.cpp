@@ -109,34 +109,16 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   config->top_k_scorer = std::move(data.top_k_scorer);
   config->fields.reserve(data.fields.size());
   for (auto& [field_id, record] : data.fields) {
-    config->fields.emplace(field_id,
-                           InvertedIndexField{
-                             .numeric_field_id = record.numeric_field_id,
-                             .bool_field_id = record.bool_field_id,
-                             .null_field_id = record.null_field_id,
-                             .synthetic_column = record.synthetic_column,
-                             .features = record.features,
-                             .store_values = record.store_values,
-                             .indexed_term_dict = record.indexed_term_dict,
-                             .whole_value = record.whole_value,
-                             .is_keyword = record.is_keyword,
-                             .column_options = record.column_options,
-                             .text_dictionary = record.text_dictionary,
-                           });
+    config->fields.emplace(field_id, InvertedIndexField{std::move(record)});
   }
   config->keys.reserve(data.keys.size());
   for (auto& record : data.keys) {
     const auto slot = config->keys.size();
     const bool has_expression = !record.normalized_expression.empty();
-    config->keys.push_back({
-      .field_id = record.field_id,
-      .column_id = record.column_id,
-      .type = std::move(record.type),
-      .normalized_expression = std::move(record.normalized_expression),
-      .expression_text = has_expression && slot < parsed_expressions.size()
-                           ? parsed_expressions[slot]->ToString()
-                           : std::string{},
-    });
+    config->keys.push_back(
+      {std::move(record), has_expression && slot < parsed_expressions.size()
+                            ? parsed_expressions[slot]->ToString()
+                            : std::string{}});
   }
   return config;
 }
@@ -420,29 +402,11 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
                                       .top_k_scorer = _config->top_k_scorer};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
-    data.keys.push_back({
-      .field_id = key.field_id,
-      .column_id = key.column_id,
-      .type = key.type,
-      .normalized_expression = key.normalized_expression,
-    });
+    data.keys.push_back(key);
   }
   data.fields.reserve(_config->fields.size());
   for (const auto& [field_id, field] : _config->fields) {
-    data.fields.emplace(field_id,
-                        persistence::FieldRecord{
-                          .numeric_field_id = field.numeric_field_id,
-                          .bool_field_id = field.bool_field_id,
-                          .null_field_id = field.null_field_id,
-                          .synthetic_column = field.synthetic_column,
-                          .features = field.features,
-                          .store_values = field.store_values,
-                          .indexed_term_dict = field.indexed_term_dict,
-                          .whole_value = field.whole_value,
-                          .is_keyword = field.is_keyword,
-                          .column_options = field.column_options,
-                          .text_dictionary = field.text_dictionary,
-                        });
+    data.fields.emplace(field_id, field);
   }
   return data;
 }

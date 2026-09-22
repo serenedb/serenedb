@@ -62,10 +62,10 @@ struct PgBinaryCopyBindData final : public duckdb::FunctionData {
   explicit PgBinaryCopyBindData(duckdb::vector<duckdb::LogicalType> types)
     : sql_types{std::move(types)} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<PgBinaryCopyBindData>(sql_types);
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     return sql_types == other.Cast<PgBinaryCopyBindData>().sql_types;
   }
 

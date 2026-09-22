@@ -59,7 +59,7 @@
 namespace sdb::connector {
 namespace {
 
-struct SearchInsertGlobalState : duckdb::GlobalSinkState {
+struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   duckdb::Catalog* catalog = nullptr;
   duckdb::idx_t table_id = 0;
@@ -79,12 +79,12 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   bool ctas_mode = false;
 };
 
-struct SearchInsertSourceState : duckdb::GlobalSourceState {
+struct SearchInsertSourceState final : duckdb::GlobalSourceState {
   bool finished = false;
   duckdb::ColumnDataScanState scan;
 };
 
-struct SearchInsertLocalState : duckdb::LocalSinkState {
+struct SearchInsertLocalState final : duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   bool bulk = false;
@@ -187,7 +187,7 @@ SereneDBSearchInsert::GetLocalSinkState(
     sink_state ? &sink_state->Cast<SearchInsertGlobalState>() : nullptr;
   auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
 
-  if (gstate == nullptr || gstate->search_table == nullptr) {
+  if (!gstate || !gstate->search_table) {
     lstate->no_op = true;
     return lstate;
   }
@@ -316,7 +316,7 @@ duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchInsert::GetGlobalSourceState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertSourceState>();
-  if (_return_chunk && sink_state != nullptr) {
+  if (_return_chunk && sink_state) {
     sink_state->Cast<SearchInsertGlobalState>().returned->InitializeScan(
       state->scan);
   }

@@ -103,7 +103,7 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
     : DefaultGenerator{catalog}, _schema{schema}, _set{set} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
-    duckdb::CatalogTransaction, const duckdb::Identifier& name) override {
+    duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
     const auto& schema = _schema.name.GetIdentifierName();
     const auto& entry = name.GetIdentifierName();
     if (_set != duckdb::CatalogType::TABLE_ENTRY) {
@@ -116,7 +116,7 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
     return MakeView(catalog, _schema, pg::GetSystemView(schema, entry));
   }
 
-  duckdb::vector<duckdb::Identifier> GetDefaultEntries() override {
+  duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
     duckdb::vector<duckdb::Identifier> names;
     const auto& schema = _schema.name.GetIdentifierName();
     if (_set != duckdb::CatalogType::TABLE_ENTRY) {

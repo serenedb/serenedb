@@ -98,7 +98,7 @@ enum class PkShape : uint8_t {
   Struct,
 };
 
-struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
+struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t database_id;
   duckdb::idx_t index_id;
   std::string schema_name;
@@ -136,7 +136,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   pg::ProgressMetrics* progress = nullptr;
 };
 
-struct CreateIndexLocalState : public duckdb::LocalSinkState {
+struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
@@ -152,7 +152,7 @@ struct CreateIndexLocalState : public duckdb::LocalSinkState {
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 };
 
-struct CreateIndexSourceState : public duckdb::GlobalSourceState {
+struct CreateIndexSourceState final : public duckdb::GlobalSourceState {
   bool finished = false;
 };
 

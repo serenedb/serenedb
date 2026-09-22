@@ -57,7 +57,7 @@ struct RoleGraph {
 
   std::string_view NameOf(duckdb::idx_t role) const {
     const auto* node = Find(role);
-    return node == nullptr ? std::string_view{} : std::string_view{node->name};
+    return node ? std::string_view{node->name} : std::string_view{};
   }
 };
 

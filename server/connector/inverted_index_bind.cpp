@@ -876,7 +876,7 @@ struct KeyOpclass {
     nullptr;
 
   bool HasParentheses() const noexcept {
-    return options != nullptr && options->has_value();
+    return options && options->has_value();
   }
   bool IsBuiltin(std::string_view builtin) const noexcept {
     return HasParentheses() && name == builtin;

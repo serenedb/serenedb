@@ -1058,7 +1058,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
                     observe);
 }
 
-struct ReindexBindData : public duckdb::FunctionData {
+struct ReindexBindData final : public duckdb::FunctionData {
   std::string name;
   std::string schema;
   std::string catalog;
@@ -1098,7 +1098,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ReindexBind(
   return data;
 }
 
-struct ReindexGlobalState : public duckdb::GlobalTableFunctionState {
+struct ReindexGlobalState final : public duckdb::GlobalTableFunctionState {
   bool done = false;
 };
 

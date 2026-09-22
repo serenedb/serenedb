@@ -293,7 +293,7 @@ ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
 
 bool IsStorageStatement(duckdb::ClientContext& context) {
   auto* ctx = GetSereneDBContextPtr(context);
-  return ctx != nullptr && ctx->IsStorageConnection();
+  return ctx && ctx->IsStorageConnection();
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

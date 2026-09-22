@@ -144,11 +144,13 @@ void SegmentWriter::FlushFields(FlushState& state,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
-    _col_writer->Commit(buffered_docs());
+    constexpr auto kNoCancel = [] { return true; };
+    _col_writer->Commit(buffered_docs(), kNoCancel);
     if (_ann_env != nullptr) {
-      GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
+      GetBlocking(_col_writer->ComputeAnn(_ann_env, kNoCancel).ToFuture());
     } else {
-      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
+      GetReady(
+        _col_writer->ComputeAnn(/*env=*/nullptr, kNoCancel).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();

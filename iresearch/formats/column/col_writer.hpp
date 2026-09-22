@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
@@ -78,9 +80,10 @@ class ColWriter final {
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
-  void Commit(uint64_t target_row);
+  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
 
-  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env);
+  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
+                                absl::FunctionRef<bool()> progress);
 
   void Rollback() noexcept;
 

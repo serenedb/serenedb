@@ -38,6 +38,112 @@
 
 namespace sdb::connector {
 
+namespace {
+
+std::atomic<uint32_t>& InFlightScans() noexcept {
+  static std::atomic<uint32_t> count{0};
+  return count;
+}
+
+}  // namespace
+
+ScanInFlight::ScanInFlight() noexcept {
+  InFlightScans().fetch_add(1, std::memory_order_relaxed);
+}
+
+ScanInFlight::~ScanInFlight() {
+  InFlightScans().fetch_sub(1, std::memory_order_relaxed);
+}
+
+uint32_t FairShare(duckdb::ClientContext& context, uint32_t cap) noexcept {
+  // This scan's share of the machine: the cores it may spread over, capped so
+  // an idle server never picks a plan that costs many times the CPU of the one
+  // a busy server would pick. Dividing by the scans already running assumes
+  // the cores they hold are not free, which they are not.
+  const auto busy =
+    std::max<uint32_t>(1, InFlightScans().load(std::memory_order_relaxed));
+  const auto threads = static_cast<uint32_t>(
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+  return std::clamp<uint32_t>(threads / busy, 1, cap);
+}
+
+std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
+                                              ScanGlobalState& g) {
+  if (g.col_filters.empty()) {
+    return std::nullopt;
+  }
+  const auto* col_reader = seg.GetColReader();
+  if (col_reader == nullptr) {
+    return std::nullopt;
+  }
+  irs::ColFilterStateCache states;
+  irs::ColFilterClassification cls;
+  ClassifySegmentColFilters(seg, g, states, cls);
+  if (cls.segment_dead) {
+    return uint64_t{0};
+  }
+  if (cls.active.empty()) {
+    return std::nullopt;
+  }
+  for (const auto& spec : cls.active) {
+    // A score predicate needs scores the sample does not have.
+    if (spec.is_score) {
+      return std::nullopt;
+    }
+  }
+  const uint64_t rows = seg.docs_count();
+  if (rows == 0) {
+    return uint64_t{0};
+  }
+
+  ColFilterVerify verify;
+  verify.Begin(seg, cls.active, *g.client_context, states);
+
+  constexpr uint32_t kSampleWindows = 8;
+  constexpr auto kWords = static_cast<uint32_t>(irs::detail::kWindowWords);
+  const uint64_t total_words = (rows + 63) / 64;
+  const auto windows =
+    static_cast<uint32_t>((total_words + kWords - 1) / kWords);
+  const uint32_t take = std::min(kSampleWindows, windows);
+  const uint32_t stride = windows / take;
+
+  std::array<uint64_t, kWords> mask{};
+  uint64_t seen = 0;
+  uint64_t passed = 0;
+  for (uint32_t i = 0; i < take; ++i) {
+    const uint64_t first_word = uint64_t{stride} * i * kWords;
+    if (first_word >= total_words) {
+      break;
+    }
+    const auto words =
+      static_cast<uint32_t>(std::min<uint64_t>(kWords, total_words - first_word));
+    std::fill_n(mask.data(), words, ~uint64_t{0});
+    // No bit may name a doc past the segment's end: the filter reads the docs the bits name.
+    const uint64_t last_doc = (first_word + words) * 64;
+    if (last_doc > rows) {
+      const auto extra = static_cast<unsigned>(last_doc - rows);
+      mask[words - 1] &= ~uint64_t{0} >> extra;
+    }
+    const auto base =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(first_word * 64);
+    uint64_t bits = 0;
+    for (uint32_t w = 0; w < words; ++w) {
+      bits += static_cast<uint64_t>(std::popcount(mask[w]));
+    }
+    passed += verify.Narrow(base, mask.data(), nullptr, words);
+    seen += bits;
+  }
+  if (seen == 0) {
+    return std::nullopt;
+  }
+  // Round the share up, then cap at the segment: an underestimate would make the scan look cheaper
+  // than it is, which is the one error the caller cannot recover from.
+  const auto share = static_cast<long double>(passed) / static_cast<long double>(seen);
+  const auto est = static_cast<uint64_t>(
+    std::ceil(share * static_cast<long double>(rows) * 1.125L));
+  return std::min<uint64_t>(est, rows);
+}
+
 irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
   if (unit.whole) {
     return {};

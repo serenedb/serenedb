@@ -72,8 +72,17 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   // callers, each running one `part`: only a scan can be split that way, so a
   // split query scans (the caller asked for it because ScanCandidates said a
   // scan is how this query answers its filter).
-  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
-                                  uint32_t part = 0, uint32_t parts = 1) const;
+  std::vector<ScoreDoc> RunSearch(
+    detail::TableFilter* table = nullptr,
+    doc_id_t first = doc_limits::min(),
+    doc_id_t last = doc_limits::eof()) const;
+
+  // Whether this query answers its filter by scanning the admitted rows
+  // rather than walking the graph. Only a scan is decomposable by doc range:
+  // a walk moves through the whole graph, so one worker's range says nothing
+  // about where the walk goes. Folding the set to decide costs more than
+  // either plan, so the answer comes from a bounded sample.
+  bool ScansFilter(detail::TableFilter* table) const;
 
   // How many docs a scan would score, when scanning is how this query would
   // answer its inner filter; nullopt when it would walk the graph, has no
@@ -95,18 +104,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  private:
   template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
-                   HnswSearchScratch& scratch, uint32_t part,
-                   uint32_t parts) const;
-
-  // The docs the predicate admits, folded once for all the parts of a split
-  // scan: every part would otherwise fold the set from the first doc up to the
-  // end of its own range, which is most of the work of the scan itself.
-  std::span<const uint64_t> FoldOnce(detail::TableFilter* table,
-                                     doc_id_t docs_count) const;
-
-  mutable std::mutex _fold_lock;
-  mutable std::vector<uint64_t> _folded;
-  mutable bool _folded_done = false;
+                   HnswSearchScratch& scratch, doc_id_t first,
+                   doc_id_t last) const;
 
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;

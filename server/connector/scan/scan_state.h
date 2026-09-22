@@ -48,6 +48,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/scan/col_filter_verify.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_plan.h"
 
 namespace irs {
 
@@ -162,6 +163,9 @@ struct ScanMetrics {
 };
 
 struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
+  // Held for the scan's lifetime so a concurrent scan's plan knows this one
+  // is using cores; see FairShare.
+  ScanInFlight in_flight;
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;

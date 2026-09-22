@@ -26,12 +26,29 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <string_view>
 #include <vector>
 
 namespace sdb::connector {
 
 struct ScanGlobalState;
+
+// Counts the scans running now, so a plan sized for an idle machine is not
+// chosen on a busy one. One per scan, for the scan's lifetime.
+struct ScanInFlight {
+  ScanInFlight() noexcept;
+  ~ScanInFlight();
+  ScanInFlight(const ScanInFlight&) = delete;
+  ScanInFlight& operator=(const ScanInFlight&) = delete;
+};
+
+uint32_t FairShare(duckdb::ClientContext& context, uint32_t cap) noexcept;
+
+// An upper bound on the rows this segment's column predicates admit, measured
+// on a sample of the predicate rather than by decoding the column.
+std::optional<uint64_t> EstimateColFilterRows(const irs::SubReader& seg,
+                                              ScanGlobalState& g);
 struct ScanBindData;
 enum class ScanShape : uint8_t;
 

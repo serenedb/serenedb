@@ -58,8 +58,19 @@ class HnswHits : public Root {
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
-    for (size_t i = 0, total = _hits.size(); i < total;) {
+    // The hits are ascending by doc, so a window of them is a run: a caller
+    // that splits a segment by row group asks for its range and no other.
+    // Scoring the whole segment for every range would be quadratic in the
+    // parts, and the assert that used to stand here only holds while a vector
+    // scan cannot be split at all.
+    auto lo = std::ranges::lower_bound(_hits, min, {}, &ScoreDoc::doc);
+    const auto hi = doc_limits::eof(max)
+                      ? _hits.end()
+                      : std::ranges::lower_bound(lo, _hits.end(), max, {},
+                                                 &ScoreDoc::doc);
+    const size_t first = static_cast<size_t>(lo - _hits.begin());
+    const size_t total = static_cast<size_t>(hi - _hits.begin());
+    for (size_t i = first; i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
       for (uint32_t j = 0; j < n; ++j) {

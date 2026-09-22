@@ -378,7 +378,7 @@ inline constexpr long double kProbeFoldRatio = 4096;
 inline constexpr uint32_t kCountSampleWindows = 8;
 
 // The rows a two-pass scan scores in full, as a multiple of the beam: the
-// `keep` of HnswScanWords.
+// `keep` of the scan.
 inline constexpr long double kScanPrefixPool = 8;
 
 // What one scanned row costs against one walked candidate. They are not the
@@ -451,40 +451,6 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   s.batch.clear();
 }
 
-// Top-`ef` over the set's docs, no graph: every match is scored once, in
-// batches so the distance kernel and the quantizer's early exit apply.
-// The rows a split scan's part reads, gathered from the folded set.
-inline void HnswCollectRange(std::span<const uint64_t> words,
-                             const HnswGraph& graph, doc_id_t first,
-                             doc_id_t last, std::vector<uint32_t>& out) {
-  constexpr auto kBits = detail::LazyBitset::kBits;
-  constexpr auto kMin = detail::LazyBitset::kMin;
-  out.clear();
-  const auto size = graph.Size();
-  const auto stop = std::min<uint64_t>(last - kMin, words.size() * kBits);
-  for (auto bit = static_cast<uint64_t>(first - kMin); bit < stop;) {
-    const auto word_idx = bit / kBits;
-    auto word = words[word_idx] & (~uint64_t{0} << (bit % kBits));
-    const auto word_end = (word_idx + 1) * kBits;
-    if (word_end > stop) {
-      const auto keep = kBits - (word_end - stop);
-      word &= keep == kBits ? ~uint64_t{0} : ((uint64_t{1} << keep) - 1);
-    }
-    while (word != 0) {
-      const auto node =
-        static_cast<uint32_t>(word_idx * kBits + std::countr_zero(word));
-      word &= word - 1;
-      if (node >= size) {
-        return;
-      }
-      // A row without a vector owns a node id but no place in the graph.
-      if (graph.LevelOf(node) != 0) {
-        out.push_back(node);
-      }
-    }
-    bit = word_end;
-  }
-}
 
 // Two passes over the part's rows when the codes are long enough that reading
 // a quarter of one ranks it well: the first scores every row on that prefix
@@ -519,112 +485,7 @@ void HnswScanPrefix(std::span<const uint32_t> rows, Dist& dist, uint32_t ef,
   }
 }
 
-// The doc range holding one part's share of a folded set's rows.
-//
-// Splitting by doc id assumes the predicate is spread evenly over the segment.
-// An attribute that runs in blocks -- a language, a tenant, a day -- breaks
-// that: one part is handed every matching row and the rest none, so the split
-// costs coordination and buys no parallelism, and the query still waits on the
-// one worker doing all the work. The set is folded before the parts run, so
-// the boundaries can be read off it instead.
-inline std::pair<doc_id_t, doc_id_t> HnswPartRange(
-  std::span<const uint64_t> words, uint32_t part, uint32_t parts,
-  doc_id_t docs_count) {
-  constexpr auto kBits = detail::LazyBitset::kBits;
-  constexpr auto kMin = detail::LazyBitset::kMin;
-  const auto end = static_cast<doc_id_t>(kMin + docs_count);
-  uint64_t total = 0;
-  for (const auto w : words) {
-    total += static_cast<uint64_t>(std::popcount(w));
-  }
-  if (total == 0) {
-    return {end, end};
-  }
-  // The first word past the `want`-th set bit. Consecutive parts ask for
-  // consecutive `want`s, so they share a boundary exactly and together cover
-  // every word.
-  const auto boundary = [&](uint64_t want) -> size_t {
-    if (want == 0) {
-      return 0;
-    }
-    uint64_t seen = 0;
-    for (size_t i = 0; i < words.size(); ++i) {
-      seen += static_cast<uint64_t>(std::popcount(words[i]));
-      if (seen >= want) {
-        return i + 1;
-      }
-    }
-    return words.size();
-  };
-  const auto lo = boundary(total * part / parts);
-  const auto hi =
-    part + 1 == parts ? words.size() : boundary(total * (part + 1) / parts);
-  const auto doc = [&](size_t word) {
-    // Clamped before the narrowing: a segment whose last word sits past the
-    // doc id range would otherwise wrap into a doc near the start.
-    const auto at = uint64_t{kMin} + uint64_t{word} * kBits;
-    return static_cast<doc_id_t>(std::min<uint64_t>(end, at));
-  };
-  return {doc(lo), doc(hi)};
-}
-
-// Top-`ef` over the docs a folded set names within [first, last): the same
-// scan, reading bits that are already there rather than filling them.
-template<typename Dist>
-void HnswScanWords(std::span<const uint64_t> words, const HnswGraph& graph,
-                   Dist& dist, uint32_t ef, HnswSearchScratch& s,
-                   doc_id_t first, doc_id_t last) {
-  // A pool wide enough that the rows the prefix pass drops were never
-  // contenders, and enough rows for its second read of the best of them to be
-  // worth the first read of all of them.
-  const auto keep = std::max<uint32_t>(8 * ef, 128);
-  if (dist.PrefixDims() != 0) {
-    HnswCollectRange(words, graph, first, last, s.rows);
-    if (s.rows.size() > 2 * static_cast<size_t>(keep)) {
-      HnswScanPrefix(std::span<const uint32_t>{s.rows}, dist, ef, s, keep);
-      return;
-    }
-  }
-  constexpr size_t kBatch = 256;
-  constexpr auto kBits = detail::LazyBitset::kBits;
-  constexpr auto kMin = detail::LazyBitset::kMin;
-  s.nearest.clear();
-  s.batch.clear();
-  const auto size = graph.Size();
-  const auto stop = std::min<uint64_t>(last - kMin, words.size() * kBits);
-  for (auto bit = static_cast<uint64_t>(first - kMin); bit < stop;) {
-    const auto word_idx = bit / kBits;
-    auto word = words[word_idx] & (~uint64_t{0} << (bit % kBits));
-    const auto word_end = (word_idx + 1) * kBits;
-    if (word_end > stop) {
-      const auto keep = kBits - (word_end - stop);
-      word &= keep == kBits ? ~uint64_t{0} : ((uint64_t{1} << keep) - 1);
-    }
-    while (word != 0) {
-      const auto node =
-        static_cast<uint32_t>(word_idx * kBits + std::countr_zero(word));
-      word &= word - 1;
-      if (node >= size) {
-        bit = stop;
-        word = 0;
-        break;
-      }
-      // A row without a vector owns a node id but no place in the graph.
-      if (graph.LevelOf(node) == 0) {
-        continue;
-      }
-      s.batch.push_back(node);
-      if (s.batch.size() == kBatch) {
-        HnswAdmit(dist, ef, s);
-      }
-    }
-    bit = word_end;
-  }
-  if (!s.batch.empty()) {
-    HnswAdmit(dist, ef, s);
-  }
-}
-
+// Top-`ef` over the docs the set names within [first, last).
 template<typename Dist>
 void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
                   uint32_t ef, HnswSearchScratch& s, doc_id_t first,
@@ -659,23 +520,23 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
 
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
-                            HnswSearchScratch& scratch, uint32_t part,
-                            uint32_t parts) const {
+                            HnswSearchScratch& scratch, doc_id_t first,
+                            doc_id_t last) const {
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  // One part of a split query: its rows are the part's doc range, and a split
-  // is only asked for where the answer is a scan (a walk moves through the
-  // whole graph, so it cannot be cut into doc ranges).
-  const auto per = (docs_count + parts - 1) / std::max<uint32_t>(parts, 1);
-  const auto first =
-    doc_limits::min() + std::min<doc_id_t>(docs_count, per * part);
-  const auto last =
-    doc_limits::min() + std::min<doc_id_t>(docs_count, per * (part + 1));
-  if (parts > 1) {
-    const auto words = FoldOnce(table, docs_count);
-    const auto [begin, stop] = HnswPartRange(words, part, parts, docs_count);
-    HnswScanWords(words, graph, dist, _ef, scratch, begin, stop);
+  const auto end = doc_limits::min() + docs_count;
+  first = std::clamp(first, doc_limits::min(), end);
+  last = doc_limits::eof(last) ? end : std::clamp(last, first, end);
+  // A range narrower than the segment is one worker's share of a split scan.
+  // The caller only splits where the answer is a scan -- a walk moves through
+  // the whole graph, so a doc range says nothing about where it goes -- and
+  // the ranges come from the scan's row-group units, which its work stealing
+  // rebalances. That is cheaper than folding the whole segment up front to
+  // cut it into equal-popcount parts, which is most of the scan's own work.
+  if (first != doc_limits::min() || last != end) {
+    auto set = MakeSet(_inner.get(), table, docs_count);
+    HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
     return;
   }
   // Which plan answers this decides how the set is built, so the count comes first and costs
@@ -784,20 +645,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
 }
 
-std::span<const uint64_t> HnswQuery::FoldOnce(detail::TableFilter* table,
-                                              doc_id_t docs_count) const {
-  std::lock_guard<std::mutex> lock{_fold_lock};
-  if (!_folded_done) {
-    auto set = MakeSet(_inner.get(), table, docs_count);
-    set.Reach(set.End());
-    const auto words =
-      (set.End() - detail::LazyBitset::kMin + detail::LazyBitset::kBits - 1) /
-      detail::LazyBitset::kBits;
-    _folded.assign(set.Words(), set.Words() + words);
-    _folded_done = true;
-  }
-  return _folded;
-}
 
 std::optional<uint64_t> HnswQuery::ScanCandidates(
   uint32_t parallel, std::optional<uint64_t> table_rows) const {
@@ -824,7 +671,7 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
     return std::nullopt;
   }
   // The two-pass scan applies to a quantized index whose codes are long
-  // enough for a quarter of one to be fewer cache lines (HnswScanWords).
+  // enough for a quarter of one to be fewer cache lines.
   const bool prefix = _codebook != nullptr && _d >= 512;
   // Whether to scan is decided on one thread's work, not on the cores the
   // split might get. Dividing the scan's side by them assumes cores that are
@@ -842,25 +689,64 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   return matches;
 }
 
+bool HnswQuery::ScansFilter(detail::TableFilter* table) const {
+  if (table != nullptr && !table->Foldable()) {
+    table = nullptr;
+  }
+  if (_ef == 0 || (_inner == nullptr && table == nullptr)) {
+    return false;  // a radius search, or nothing to filter by
+  }
+  switch (_filter_mode) {
+    case HnswFilterMode::Scan:
+      return true;
+    case HnswFilterMode::Walk:
+    case HnswFilterMode::Prune:
+    case HnswFilterMode::TwoHop:
+    case HnswFilterMode::Bridge:
+      // A forced walk still falls back to the scan when it overspends, but a
+      // fallback is not a plan: splitting on it would commit every worker to
+      // a range before the walk has had its chance.
+      return false;
+    case HnswFilterMode::Auto:
+      break;
+  }
+  const auto& graph = _data->graph;
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
+  // The same sample `RunFiltered` decides on, so the caller's split and the
+  // search's own plan cannot disagree about which one this query is.
+  uint64_t matches = 0;
+  if (table != nullptr) {
+    auto probe = MakeSet(_inner.get(), table, docs_count);
+    matches = probe.EstimateCount(kCountSampleWindows);
+  } else {
+    matches = _inner->EstimateMax();
+  }
+  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size);
+}
+
 std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
-                                           uint32_t part,
-                                           uint32_t parts) const {
+                                           doc_id_t first,
+                                           doc_id_t last) const {
   auto& scratch = ThreadScratch();
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
   }
-  if (parts > 1 && _inner == nullptr && table == nullptr) {
+  const auto end =
+    doc_limits::min() + static_cast<doc_id_t>(_segment.docs_count());
+  const bool whole = first <= doc_limits::min() &&
+                     (doc_limits::eof(last) || last >= end);
+  if (!whole && _inner == nullptr && table == nullptr) {
     // Nothing to split by doc range after all (the table filter turned out not
-    // to fold): the whole search is one part's, the rest answer nothing.
-    if (part != 0) {
+    // to fold), so the whole answer belongs to the range that starts the
+    // segment and the rest answer nothing.
+    if (first > doc_limits::min()) {
       return {};
     }
-    parts = 1;
   }
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                [&](auto& dist) {
                  if (_inner != nullptr || table != nullptr) {
-                   RunFiltered(dist, table, scratch, part, parts);
+                   RunFiltered(dist, table, scratch, first, last);
                    return;
                  }
                  if (_ef != 0) {

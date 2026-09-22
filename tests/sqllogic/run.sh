@@ -494,6 +494,7 @@ PYEOF
 launch_iceberg_rest() {
 	if [[ -n "${ICEBERG_REST_URL:-}" ]]; then
 		echo "iceberg-rest provided by the environment (${ICEBERG_REST_URL})."
+		export_iceberg_local_vars
 		return
 	fi
 	local prefix
@@ -576,6 +577,12 @@ launch_iceberg_rest() {
 
 	echo "iceberg-rest running (url=$ICEBERG_REST_URL)."
 	echo
+	export_iceberg_local_vars
+}
+
+export_iceberg_local_vars() {
+	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_storage (TYPE S3, KEY_ID '${MINIO_ACCESS_KEY}', SECRET '${MINIO_SECRET_KEY}', ENDPOINT '${MINIO_HOST}:${MINIO_PORT}', URL_STYLE 'path', USE_SSL false, SCOPE 's3://${MINIO_BUCKET}/warehouse/');"
+	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', endpoint '${ICEBERG_REST_URL}', authorization_type 'none'"
 }
 
 # Launches an Ollama server and pulls a small embedding model. Ollama exposes

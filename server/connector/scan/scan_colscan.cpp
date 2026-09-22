@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/detail/window.hpp>
+#include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/full_scanner.h"
@@ -48,22 +50,44 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
   l.scanner = slot.get();
 }
 
-duckdb::idx_t LiveRows(std::span<const irs::doc_id_t> dead, size_t& at,
-                       irs::doc_id_t first, irs::doc_id_t last,
-                       duckdb::SelectionVector& sel) {
+constexpr uint32_t kMaskBits = 64;
+
+uint64_t DeadWord(const uint64_t* words, uint32_t count, int64_t at,
+                  uint32_t len) noexcept {
+  const auto word = irs::detail::WordAt(words, count, at);
+  return len == kMaskBits ? word : word & ((uint64_t{1} << len) - 1);
+}
+
+duckdb::idx_t LiveRows(const ColScanLocalState& l, irs::doc_id_t first,
+                       duckdb::idx_t take, duckdb::SelectionVector& sel) {
+  const auto base = static_cast<int64_t>(first - irs::doc_limits::min());
+  auto* const out = sel.data();
   duckdb::idx_t live = 0;
-  auto doc = first;
-  for (; at != dead.size() && dead[at] < last; ++at) {
-    SDB_ASSERT(dead[at] >= doc);
-    for (; doc != dead[at]; ++doc) {
-      sel.set_index(live++, doc - first);
-    }
-    ++doc;
-  }
-  for (; doc != last; ++doc) {
-    sel.set_index(live++, doc - first);
+  for (duckdb::idx_t at = 0; at < take; at += kMaskBits) {
+    const auto len =
+      static_cast<uint32_t>(std::min<duckdb::idx_t>(kMaskBits, take - at));
+    const auto dead = DeadWord(l.mask_words, l.mask_word_count,
+                               base + static_cast<int64_t>(at), len);
+    const auto alive =
+      ~dead & (len == kMaskBits ? ~uint64_t{0} : ((uint64_t{1} << len) - 1));
+    live = static_cast<duckdb::idx_t>(
+      irs::MaterializeWord(static_cast<uint32_t>(at), alive, out + live) - out);
   }
   return live;
+}
+
+bool HasDead(const ColScanLocalState& l, irs::doc_id_t first,
+             duckdb::idx_t take) noexcept {
+  const auto base = static_cast<int64_t>(first - irs::doc_limits::min());
+  for (duckdb::idx_t at = 0; at < take; at += kMaskBits) {
+    const auto len =
+      static_cast<uint32_t>(std::min<duckdb::idx_t>(kMaskBits, take - at));
+    if (DeadWord(l.mask_words, l.mask_word_count,
+                 base + static_cast<int64_t>(at), len) != 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
@@ -79,14 +103,10 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
     const auto first =
       irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-    const auto last = first + static_cast<irs::doc_id_t>(take);
-    while (l.dead_at != l.dead.size() && l.dead[l.dead_at] < first) {
-      ++l.dead_at;
-    }
     duckdb::idx_t produced;
-    if (l.dead_at != l.dead.size() && l.dead[l.dead_at] < last) {
+    if (l.mask_words != nullptr && HasDead(l, first, take)) {
       l.live_sel.Initialize(l.live_sel_data);
-      const auto live = LiveRows(l.dead, l.dead_at, first, last, l.live_sel);
+      const auto live = LiveRows(l, first, take, l.live_sel);
       produced = scanner.Scan(l.doc_cursor, take, output, &l.live_sel, live);
     } else {
       produced = scanner.Scan(l.doc_cursor, take, output);
@@ -103,30 +123,13 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
 
 }  // namespace
 
-void BuildDeadRows(ScanGlobalState& g) {
-  const auto& reader = *g.reader;
-  g.dead_rows.resize(reader.size());
-  for (const auto seg : g.segment_order) {
-    const auto* mask = reader[seg].docs_mask();
-    if (mask == nullptr || mask->Empty()) {
-      continue;
-    }
-    auto& dead = g.dead_rows[seg];
-    dead.reserve(mask->Count());
-    irs::DocumentMask::Iterator it{mask};
-    for (auto doc = it.Seek(irs::doc_limits::min()); !irs::doc_limits::eof(doc);
-         doc = it.Next()) {
-      dead.push_back(doc);
-    }
-  }
-}
-
 void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
                 ScanGlobalState& g, ColScanLocalState& l,
                 duckdb::DataChunk& output) {
   if (!l.live_sel_data) {
+    // MaterializeWord writes up to 8 slots past the produced count.
     l.live_sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE + 8);
   }
   for (;;) {
     if (l.has_unit) {
@@ -153,15 +156,10 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         std::min<uint64_t>(docs, uint64_t{l.unit.rg_begin} * g.rg_size);
       l.doc_end = std::min<uint64_t>(docs, uint64_t{l.unit.rg_end} * g.rg_size);
     }
-    l.dead = g.dead_rows[l.unit.seg];
-    if (l.unit.whole) {
-      l.dead_at = 0;
-    } else {
-      const auto from =
-        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-      l.dead_at = static_cast<size_t>(
-        std::lower_bound(l.dead.begin(), l.dead.end(), from) - l.dead.begin());
-    }
+    const auto* mask = sub.docs_mask();
+    l.mask_words = mask != nullptr ? mask->Words() : nullptr;
+    l.mask_word_count =
+      mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0;
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

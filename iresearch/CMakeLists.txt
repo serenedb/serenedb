@@ -188,7 +188,6 @@ set(IResearch_core_sources
     ./search/probe/make_posting_scored.cpp
     ./search/probe/make_single_posting_scored.cpp
     ./search/probe/make_all_docs.cpp
-    ./search/probe/make_docs_mask.cpp
     ./search/probe/make_all_scored.cpp
     ./search/probe/make_boolean.cpp
     ./search/probe/make_boolean_sparse.cpp
@@ -227,7 +226,6 @@ set(IResearch_core_sources
     ./search/fill/make_single_posting_docs.cpp
     ./search/fill/make_single_posting_scored.cpp
     ./search/fill/make_all_docs.cpp
-    ./search/fill/make_docs_mask.cpp
     ./search/fill/make_all_scored.cpp
     ./search/fill/make_boolean.cpp
     ./search/fill/make_boolean_scored.cpp

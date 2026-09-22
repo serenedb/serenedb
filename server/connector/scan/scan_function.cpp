@@ -226,10 +226,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   BuildClaimPlan(*state, context);
 
-  if (state->shape == ScanShape::ColScan) {
-    BuildDeadRows(*state);
-  }
-
   if (state->scorer_obj && (!ss.score.vector || !ss.score.text)) {
     state->collect_threads = std::max<uint32_t>(1, state->workers);
     state->stats_arena.emplace(duckdb::Allocator::Get(context));

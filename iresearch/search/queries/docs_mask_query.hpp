@@ -20,22 +20,10 @@
 
 #pragma once
 
-#include <cstdint>
-
-#include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class DocsMaskQuery : public QueryBuilderImpl<DocsMaskQuery> {
- public:
-  DocsMaskQuery(const SubReader& segment, uint32_t masked) noexcept
-    : QueryBuilderImpl{segment, masked, QueryKind::Other} {}
-
-  void Visit(PreparedStateVisitor&, score_t) const final {}
-
-  score_t Boost() const noexcept final { return kNoBoost; }
-};
 
 QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
                                const SubReader& segment,

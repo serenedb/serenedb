@@ -12516,7 +12516,7 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
   ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
 }
 
-TEST_P(IndexTestCase11, docs_mask_small_stays_inline) {
+TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
@@ -12533,21 +12533,18 @@ TEST_P(IndexTestCase11, docs_mask_small_stays_inline) {
   }
   writer->RefreshCommit();
 
-  auto mask_files = [&] {
+  auto mask_chain = [&] {
     auto snapshot = writer->GetSnapshot();
     EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_files;
+    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
   };
-  ASSERT_EQ(0, mask_files());
+  ASSERT_EQ(0, mask_chain());
 
   auto current_mask = [&] {
     auto snapshot = writer->GetSnapshot();
     return snapshot.Meta().index_meta.segments[0].meta.docs_mask;
   };
 
-  // A mask this small costs less to carry inside the `.sm` than a file of its
-  // own would cost in header and footer, so it never gets one -- and with no
-  // chain there is nothing to patch either.
   const std::array<std::string_view, 3> removed{"A", "B", "C"};
   for (size_t i = 0; i < removed.size(); ++i) {
     {
@@ -12556,10 +12553,11 @@ TEST_P(IndexTestCase11, docs_mask_small_stays_inline) {
       trx.Commit();
     }
     writer->RefreshCommit();
-    ASSERT_EQ(0, mask_files()) << "after removing " << removed[i];
+    ASSERT_EQ(1, mask_chain()) << "after removing " << removed[i];
     const auto mask = current_mask();
     ASSERT_NE(nullptr, mask);
-    ASSERT_LE(mask->ByteSize(), irs::SegmentMetaWriterImpl::kMaxInlineBytes);
+    ASSERT_LE(mask->Compress().getSizeInBytes(),
+              irs::SegmentMetaWriterImpl::kMinChainBytes);
     ASSERT_EQ(i + 1, mask->Count()) << "after removing " << removed[i];
   }
 
@@ -12628,10 +12626,10 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
   InsertBucketDocs(*writer, kDocs, kBuckets);
   writer->RefreshCommit();
 
-  auto mask_files = [&] {
+  auto mask_chain = [&] {
     auto snapshot = writer->GetSnapshot();
     EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_files;
+    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
   };
 
   for (uint32_t round = 0; round <= kCap; ++round) {
@@ -12648,7 +12646,7 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
 
     // The chain grows to the cap, then the next write collapses it to a base.
     const auto expected = round + 1 <= kCap ? round + 1 : 1;
-    ASSERT_EQ(expected, mask_files()) << "after round " << round;
+    ASSERT_EQ(expected, mask_chain()) << "after round " << round;
   }
 
   auto reader = irs::DirectoryReader(directory, nullptr,
@@ -12661,11 +12659,11 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
   ASSERT_LT(reader[0].live_docs_count(), kDocs);
 }
 
-TEST_P(IndexTestCase11, docs_mask_file_survives_cleanup) {
-  // Enough scattered removals to put the mask over kMaxInlineBytes, which is
-  // what gives it a file of its own to be collected.
-  constexpr size_t kDocs = 4000;
-  constexpr size_t kBuckets = 4;
+TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
+  constexpr uint32_t kCap = irs::SegmentMetaWriterImpl::kMaxMaskFiles;
+  constexpr size_t kDocs = 10000;
+  constexpr size_t kBuckets = 20;
+  constexpr size_t kFirstRound = 6;
   const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
 
   auto& directory = dir();
@@ -12673,30 +12671,56 @@ TEST_P(IndexTestCase11, docs_mask_file_survives_cleanup) {
   InsertBucketDocs(*writer, kDocs, kBuckets);
   writer->RefreshCommit();
 
-  {
-    auto trx = writer->GetBatch();
-    trx.Remove(MakeByTerm(kGrpFieldId, "g0"));
-    trx.Commit();
+  auto remove_round = [&](uint32_t round) {
+    {
+      auto trx = writer->GetBatch();
+      const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
+      const size_t last = round == 0 ? kFirstRound : first + 1;
+      for (size_t b = first; b < last; ++b) {
+        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
+      }
+      trx.Commit();
+    }
+    writer->RefreshCommit();
+  };
+
+  auto segment_meta = [&] {
+    auto snapshot = writer->GetSnapshot();
+    EXPECT_EQ(1, snapshot.size());
+    return snapshot.Meta().index_meta.segments[0].meta;
+  };
+
+  auto exists = [&](std::string_view file) {
+    bool result = false;
+    EXPECT_TRUE(directory.exists(result, file));
+    return result;
+  };
+
+  remove_round(0);
+  ASSERT_EQ(1, segment_meta().docs_mask_chain);
+
+  std::vector<std::string> links;
+  for (uint32_t round = 1; round < kCap; ++round) {
+    remove_round(round);
+    const auto meta = segment_meta();
+    ASSERT_EQ(round + 1, meta.docs_mask_chain) << "after round " << round;
+    links.emplace_back(meta.files.back());
+    ASSERT_TRUE(links.back().ends_with(".sm"));
+    ASSERT_TRUE(exists(links.back()));
   }
-  writer->RefreshCommit();
-
-  auto snapshot = writer->GetSnapshot();
-  ASSERT_EQ(1, snapshot.size());
-  const auto& meta = snapshot.Meta().index_meta.segments[0].meta;
-  ASSERT_EQ(1, meta.docs_mask_files);
-  ASSERT_EQ(meta.version, meta.docs_mask_head);
-  const auto mask_file = meta.files.back();
-  ASSERT_TRUE(mask_file.ends_with(".dm"));
-
-  bool exists = false;
-  ASSERT_TRUE(directory.exists(exists, mask_file));
-  ASSERT_TRUE(exists);
 
   irs::directory_utils::RemoveAllUnreferenced(directory);
+  for (const auto& link : links) {
+    ASSERT_TRUE(exists(link)) << "linked " << link << " was collected";
+  }
 
-  exists = false;
-  ASSERT_TRUE(directory.exists(exists, mask_file));
-  ASSERT_TRUE(exists) << "mask file " << mask_file << " was collected";
+  remove_round(kCap);
+  ASSERT_EQ(1, segment_meta().docs_mask_chain);
+
+  irs::directory_utils::RemoveAllUnreferenced(directory);
+  for (const auto& link : links) {
+    ASSERT_FALSE(exists(link)) << "orphaned " << link << " was not collected";
+  }
 
   auto reader = irs::DirectoryReader(directory, nullptr,
                                      irs::tests::DefaultReaderOptions());

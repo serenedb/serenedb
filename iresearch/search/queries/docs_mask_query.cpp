@@ -24,7 +24,12 @@
 
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/make.hpp"
+#include "iresearch/search/fill/docs_mask.hpp"
+#include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/probe/docs_mask.hpp"
+#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -37,6 +42,41 @@ uint32_t MaskedCount(const SubReader& segment) noexcept {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   return meta.docs_count - meta.live_docs_count;
 }
+
+// The mask only ever sits in a MustNot bucket, where a child is asked to probe,
+// to fill a window, or to count itself. So those are the three plans it has;
+// the other four say that this query kind has none, which is what a caller that
+// wanted to lead a scan or produce a score would have to be told.
+class MaskQuery : public QueryBuilder {
+ public:
+  MaskQuery(const SubReader& segment, uint32_t masked) noexcept
+    : QueryBuilder{segment, masked, QueryKind::Other} {}
+
+  probe::Node::ptr PlanProbe(const detail::ScoredCtx&, uint64_t) const final {
+    return memory::make_managed<probe::Impl<probe::DocsMask>>(_segment);
+  }
+
+  fill::Node::ptr PlanFill(const detail::ScoredCtx&,
+                           ScoreMergeType) const final {
+    return memory::make_managed<fill::Impl<fill::DocsMask>>(_segment);
+  }
+
+  count::Root::ptr PlanCount(const count::Context& ctx) const final {
+    SDB_ASSERT(ctx.table == nullptr);
+    const auto& meta = _segment.Meta();
+    return count::MakeMaskCount(_segment.docs_mask(), meta.uncommitted_begin,
+                                static_cast<doc_id_t>(meta.docs_count));
+  }
+
+  docs::Root::ptr PlanDocs(const docs::Context&) const final { return {}; }
+  hits::Root::ptr PlanScored(const hits::Context&) const final { return {}; }
+  top::Root::ptr PlanTop(const top::Context&) const final { return {}; }
+  lead::Node::ptr PlanLead(const detail::ScoredCtx&) const final { return {}; }
+
+  void Visit(PreparedStateVisitor&, score_t) const final {}
+
+  score_t Boost() const noexcept final { return kNoBoost; }
+};
 
 }  // namespace
 
@@ -55,7 +95,7 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
   BooleanBuilder builder{
     segment, memory, 0, kNoBoost, ScoreMergeType::Sum, collector, needs_terms};
   builder.Add(std::move(query), Occur::Must);
-  builder.Add(memory::make_tracked<DocsMaskQuery>(memory, segment, masked),
+  builder.Add(memory::make_tracked<MaskQuery>(memory, segment, masked),
               Occur::MustNot);
   return builder.Finish();
 }

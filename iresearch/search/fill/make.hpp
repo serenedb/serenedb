@@ -32,7 +32,6 @@
 
 namespace irs::fill {
 
-Node::ptr Make(const DocsMaskQuery& query);
 Node::ptr Make(const TermQuery& query);
 Node::ptr Make(const MultiTermQuery& query);
 Node::ptr Make(const FixedPhraseQuery& query);
@@ -49,11 +48,6 @@ Node::ptr Make(const BooleanQuery& query);
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query);
 
-inline Node::ptr Make(const DocsMaskQuery&, const detail::ScoredCtx&,
-                      ScoreMergeType) {
-  SDB_ASSERT(false);
-  return {};
-}
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,

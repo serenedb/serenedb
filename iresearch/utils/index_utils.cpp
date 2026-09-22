@@ -450,8 +450,9 @@ void FlushIndexSegment(Directory& dir, IndexSegment& segment,
 
 void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
                             const DocumentMask& patch) {
+  const auto parent = segment.meta.version;
   auto writer = PrepareFlush(segment, true);
-  writer->WritePatch(dir, segment.filename, segment.meta, patch);
+  writer->WritePatch(dir, segment.filename, segment.meta, patch, parent);
 }
 
 }  // namespace irs::index_utils

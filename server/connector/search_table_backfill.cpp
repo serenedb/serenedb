@@ -126,7 +126,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
       for (duckdb::idx_t i = 0; i < produced; ++i) {
         const auto doc =
           static_cast<irs::doc_id_t>(row + i + irs::doc_limits::min());
-        if (!it_mask.Probe(doc)) {
+        if (!it_mask.Contains(doc)) {
           source.live.set_index(keep++, i);
         }
       }

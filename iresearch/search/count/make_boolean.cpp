@@ -55,7 +55,8 @@ Root::ptr Api::MakeNegation(
     }
   }
   if (!excluded) {
-    return {};
+    return detail::builder::MakeSparseNegation<Api>(
+      exclude_terms, exclude_filters, segment, candidates, ctx);
   }
   return memory::make_managed<Subtract>(
     MakeAllCount(static_cast<doc_id_t>(segment.docs_count())),

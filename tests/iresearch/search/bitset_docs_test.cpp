@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <bit>
 #include <iresearch/index/document_mask.hpp>
+#include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/docs/boolean_bitset.hpp>
@@ -801,21 +802,42 @@ irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
 
 irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
                                irs::doc_id_t uncommitted) {
-  return irs::probe::DocsMask{irs::DocumentMask::Iterator{mask, uncommitted}};
+  return irs::probe::DocsMask{mask, uncommitted};
 }
 
 }  // namespace
 
-TEST(docs_mask_test, probe_reports_the_next_deleted_doc) {
+TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
   const auto removals = MakeMask({3, 64, 4999});
   auto probe = ProbeOver(&removals, irs::doc_limits::eof());
 
+  // A hit answers with the target itself; a miss answers with a bound that
+  // nothing between it and the target is deleted, not with the next deletion.
   ASSERT_EQ(3, probe.Probe(1));
   ASSERT_EQ(3, probe.Probe(3));
   ASSERT_EQ(64, probe.Probe(4));
   ASSERT_EQ(64, probe.Probe(64));
-  ASSERT_EQ(4999, probe.Probe(65));
-  ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(5000)));
+  ASSERT_EQ(129, probe.Probe(65));
+  ASSERT_EQ(4999, probe.Probe(4993));
+  ASSERT_LT(5000, probe.Probe(5000));
+  ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(100000)));
+
+  ASSERT_TRUE(probe.Test(3));
+  ASSERT_TRUE(probe.Test(64));
+  ASSERT_TRUE(probe.Test(4999));
+  ASSERT_FALSE(probe.Test(1));
+  ASSERT_FALSE(probe.Test(65));
+  ASSERT_FALSE(probe.Test(5000));
+}
+
+TEST(docs_mask_test, probe_is_stateless_under_arbitrary_order) {
+  const auto removals = MakeMask({3, 64, 4999});
+  auto probe = ProbeOver(&removals, irs::doc_limits::eof());
+
+  ASSERT_EQ(4999, probe.Probe(4999));
+  ASSERT_EQ(3, probe.Probe(1));
+  ASSERT_EQ(64, probe.Probe(64));
+  ASSERT_EQ(4999, probe.Probe(4999));
 }
 
 TEST(docs_mask_test, probe_without_removals_excludes_nothing) {
@@ -830,8 +852,13 @@ TEST(docs_mask_test, probe_treats_the_uncommitted_tail_as_deleted) {
   auto probe = ProbeOver(&removals, 5000);
 
   ASSERT_EQ(3, probe.Probe(1));
-  ASSERT_EQ(5000, probe.Probe(4));
+  ASSERT_EQ(65, probe.Probe(4));
+  ASSERT_EQ(5000, probe.Probe(4992));
   ASSERT_EQ(6000, probe.Probe(6000));
+
+  ASSERT_TRUE(probe.Test(5000));
+  ASSERT_TRUE(probe.Test(6000));
+  ASSERT_FALSE(probe.Test(4));
 }
 
 TEST(docs_mask_test, tail_only_probe_starts_at_the_bound) {
@@ -869,6 +896,71 @@ TEST(docs_mask_test, fill_covers_the_uncommitted_tail) {
   ASSERT_TRUE(irs::CheckBit(words[1], 5));
   ASSERT_TRUE(irs::CheckBit(words[1], 63));
   ASSERT_EQ(1 + 2 * kBits, next);
+}
+
+TEST(docs_mask_count_test, whole_segment_matches_the_removal_count) {
+  constexpr irs::doc_id_t kDocs = 5000;
+  const auto removals = MakeMask({1, 63, 64, 65, 4096, 4999});
+  auto count =
+    irs::count::MakeMaskCount(&removals, irs::doc_limits::eof(), kDocs);
+
+  ASSERT_EQ(removals.Count(),
+            count->Run(irs::doc_limits::min(), irs::doc_limits::min() + kDocs));
+}
+
+TEST(docs_mask_count_test, disjoint_ranges_sum_to_the_whole) {
+  constexpr irs::doc_id_t kDocs = 5000;
+  constexpr irs::doc_id_t kEnd = irs::doc_limits::min() + kDocs;
+  const auto removals = MakeMask({1, 63, 64, 65, 127, 128, 4096, 4999});
+  auto count =
+    irs::count::MakeMaskCount(&removals, irs::doc_limits::eof(), kDocs);
+
+  // Straddles word boundaries on purpose: 65 and 129 are the first docs of
+  // words 1 and 2.
+  for (const irs::doc_id_t split : {2u, 65u, 100u, 129u, 4096u}) {
+    const auto lhs = count->Run(irs::doc_limits::min(), split);
+    const auto rhs = count->Run(split, kEnd);
+    ASSERT_EQ(removals.Count(), lhs + rhs) << "split at " << split;
+  }
+}
+
+TEST(docs_mask_count_test, counts_the_uncommitted_tail) {
+  constexpr irs::doc_id_t kDocs = 200;
+  constexpr irs::doc_id_t kEnd = irs::doc_limits::min() + kDocs;
+  constexpr irs::doc_id_t kUncommitted = 150;
+  auto count = irs::count::MakeMaskCount(nullptr, kUncommitted, kDocs);
+
+  ASSERT_EQ(kEnd - kUncommitted, count->Run(irs::doc_limits::min(), kEnd));
+  ASSERT_EQ(0, count->Run(irs::doc_limits::min(), kUncommitted));
+  ASSERT_EQ(kEnd - kUncommitted, count->Run(kUncommitted, kEnd));
+  ASSERT_EQ(10, count->Run(kUncommitted, kUncommitted + 10));
+}
+
+TEST(docs_mask_count_test, mask_and_tail_do_not_overlap) {
+  constexpr irs::doc_id_t kDocs = 300;
+  constexpr irs::doc_id_t kEnd = irs::doc_limits::min() + kDocs;
+  constexpr irs::doc_id_t kUncommitted = 200;
+  auto removals = MakeMask({3, 64, 199});
+  auto count = irs::count::MakeMaskCount(&removals, kUncommitted, kDocs);
+
+  ASSERT_EQ(removals.Count() + (kEnd - kUncommitted),
+            count->Run(irs::doc_limits::min(), kEnd));
+
+  uint64_t sum = 0;
+  for (irs::doc_id_t at = irs::doc_limits::min(); at < kEnd; at += 37) {
+    sum += count->Run(at, std::min<irs::doc_id_t>(at + 37, kEnd));
+  }
+  ASSERT_EQ(removals.Count() + (kEnd - kUncommitted), sum);
+}
+
+TEST(docs_mask_count_test, clamps_to_the_segment_end) {
+  constexpr irs::doc_id_t kDocs = 100;
+  const auto removals = MakeMask({3});
+  auto count =
+    irs::count::MakeMaskCount(&removals, irs::doc_limits::eof(), kDocs);
+
+  ASSERT_EQ(1, count->Run(irs::doc_limits::min(), 100000));
+  ASSERT_EQ(0, count->Run(irs::doc_limits::min() + kDocs, 100000));
 }
 
 TEST(docs_mask_test, truncate_drops_everything_from_the_bound_on) {

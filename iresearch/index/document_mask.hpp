@@ -48,7 +48,7 @@ class DocumentMask final {
              (_bits == nullptr || roaring::api::bitset_empty(_bits));
     }
 
-    bool Probe(doc_id_t doc) const noexcept {
+    bool Contains(doc_id_t doc) const noexcept {
       return doc >= _uncommitted ||
              (_bits != nullptr && roaring::api::bitset_get(_bits, doc - kBase));
     }

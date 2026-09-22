@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,23 +22,27 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/binary_serializer.hpp>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 
 struct IndexMetaWriterImpl final : public IndexMetaWriter {
-  static constexpr std::string_view kFormatName = "iresearch_10_index_meta";
   static constexpr std::string_view kFormatPrefix = "segments_";
   static constexpr std::string_view kFormatPrefixTmp = "pending_segments_";
 
-  static constexpr int32_t kFormatVersion = 0;
+  static constexpr duckdb::field_id_t kFieldGen = 0;
+  static constexpr duckdb::field_id_t kFieldSegCounter = 1;
+  static constexpr duckdb::field_id_t kFieldSegments = 2;
+  static constexpr duckdb::field_id_t kFieldPayloadSize = 3;
+  static constexpr duckdb::field_id_t kFieldPayload = 4;
 
-  enum {
-    kHasPayload = 1,
-  };
+  static constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
+  static constexpr duckdb::field_id_t kSegmentFieldCodec = 1;
 
   static std::string FileName(uint64_t gen) {
     return FileName(kFormatPrefix, gen);
@@ -86,26 +89,33 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
   }
 
   {
-    format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
-    out->WriteV64(meta.gen);
-    out->WriteU64(meta.seg_counter);
-    SDB_ASSERT(meta.segments.size() <= std::numeric_limits<uint32_t>::max());
-    out->WriteV32(static_cast<uint32_t>(meta.segments.size()));
+    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
+    meta_out.Begin();
+    meta_out.WriteProperty<uint64_t>(kFieldGen, "gen", meta.gen);
+    meta_out.WriteProperty<uint64_t>(kFieldSegCounter, "seg_counter",
+                                     meta.seg_counter);
+    meta_out.WriteList(kFieldSegments, "segments", meta.segments.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         const auto& segment = meta.segments[i];
+                         list.WriteObject([&](duckdb::Serializer& obj) {
+                           obj.WriteProperty<std::string>(kSegmentFieldFilename,
+                                                          "filename",
+                                                          segment.filename);
+                           obj.WriteProperty<std::string>(
+                             kSegmentFieldCodec, "codec",
+                             std::string{segment.meta.codec->type()().name()});
+                         });
+                       });
 
-    for (const auto& segment : meta.segments) {
-      WriteStr(*out, segment.filename);
-      WriteStr(*out, segment.meta.codec->type()().name());
+    if (meta.payload.has_value()) {
+      const auto& payload = *meta.payload;
+      meta_out.WriteProperty<uint64_t>(kFieldPayloadSize, "payload_size",
+                                       payload.size());
+      meta_out.WriteProperty(kFieldPayload, "payload", payload.data(),
+                             payload.size());
     }
 
-    const auto payload = GetPayload(meta);
-    const uint8_t flags = IsNull(payload) ? 0 : kHasPayload;
-    out->WriteByte(flags);
-
-    if (flags == kHasPayload) {
-      WriteStr(*out, payload);
-    }
-
-    format_utils::WriteFooter(*out);
+    meta_out.End();
   }  // Important to close output here
 
   // Only noexcept operations below

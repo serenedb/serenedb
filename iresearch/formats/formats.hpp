@@ -248,7 +248,8 @@ struct SegmentMetaWriter : memory::Managed {
                      SegmentMeta& meta) = 0;
 
   virtual void WritePatch(Directory& dir, std::string& filename,
-                          SegmentMeta& meta, const DocumentMask& patch) = 0;
+                          SegmentMeta& meta, const DocumentMask& patch,
+                          uint64_t parent) = 0;
 };
 
 struct SegmentMetaReader : memory::Managed {

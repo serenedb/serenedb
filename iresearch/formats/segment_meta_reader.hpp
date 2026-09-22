@@ -23,12 +23,13 @@
 
 #pragma once
 
-#include <span>
+#include <algorithm>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/segment_meta_writer.hpp"
-#include "iresearch/store/store_utils.hpp"
 
 namespace irs {
 
@@ -37,19 +38,42 @@ struct SegmentMetaReaderImpl : public SegmentMetaReader {
             std::string_view filename = {}) final;  // null == use meta
 };
 
-inline std::vector<std::string> ReadStrings(DataInput& in) {
-  const size_t size = in.ReadV32();
+inline uint64_t ReadMaskSize(IndexInput& in, std::string_view file) {
+  const auto length = in.Length();
 
-  if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
-    throw IoError{absl::StrCat("Too many strings to read: ", size)};
+  if (length < sizeof(uint64_t)) [[unlikely]] {
+    throw IndexError{absl::StrCat("Truncated segment meta of ", length,
+                                  " byte(s), path: ", file)};
   }
 
-  std::vector<std::string> strings(size);
-  for (auto& s : strings) {
-    s = ReadString<std::string>(in);
+  in.Seek(length - sizeof(uint64_t));
+  const auto mask_size = static_cast<uint64_t>(in.ReadI64());
+
+  if (mask_size > length - sizeof(uint64_t)) [[unlikely]] {
+    throw IndexError{absl::StrCat("Corrupted segment meta, path: ", file,
+                                  ", mask size(", mask_size,
+                                  ") is out of file of ", length, " byte(s)")};
   }
 
-  return strings;
+  return mask_size;
+}
+
+inline void ReadDocumentMask(IndexInput& in, uint64_t mask_size,
+                             DocumentMask& mask) {
+  in.Seek(0);
+  bstring blob(mask_size, 0);
+  in.ReadData(blob.data(), mask_size);
+  mask.Merge(DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
+                                blob.size()));
+}
+
+inline uint64_t ReadParent(IndexInput& in, uint64_t mask_size) {
+  in.Seek(mask_size);
+  duckdb::BinaryDeserializer meta_in{in};
+  meta_in.Begin();
+  return meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
+    SegmentMetaWriterImpl::kFieldParent, "parent",
+    SegmentMetaWriterImpl::kNoParent);
 }
 
 inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
@@ -58,105 +82,125 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
                                   ? FileName<SegmentMetaWriter>(meta)
                                   : std::string{filename};
 
-  auto in = dir.open(meta_file, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+  auto in = dir.open(meta_file, IOAdvice::SEQUENTIAL);
 
   if (!in) [[unlikely]] {
     throw IoError{absl::StrCat("Failed to open file, path: ", meta_file)};
   }
 
-  const auto checksum = format_utils::Checksum(*in);
+  const auto mask_size = ReadMaskSize(*in, meta_file);
 
-  format_utils::CheckHeader(*in, SegmentMetaWriterImpl::kFormatName,
-                            SegmentMetaWriterImpl::kFormatVersion);
-  auto name = ReadString<std::string>(*in);
-  const auto segment_version = in->ReadV64();
-  const auto live_docs_count = in->ReadV32();
-  const auto mask_count = in->ReadV32();
-  doc_id_t uncommitted_count = 0;
-  doc_id_t scattered_count = 0;
-  uint32_t docs_mask_files = 0;
-  uint64_t docs_mask_head = 0;
-  std::string inline_mask;
-  if (mask_count != 0) {
-    uncommitted_count = in->ReadV32();
-    docs_mask_files = in->ReadV32();
-    SDB_ASSERT(mask_count >= uncommitted_count);
-    scattered_count = mask_count - uncommitted_count;
-    if (docs_mask_files != 0) {
-      docs_mask_head = in->ReadV64();
-    } else if (scattered_count != 0) {
-      inline_mask = ReadString<std::string>(*in);
-    }
-  }
-  const auto docs_count = live_docs_count + mask_count;
-  const auto uncommitted_begin =
-    uncommitted_count == 0
-      ? doc_limits::eof()
-      : static_cast<doc_id_t>(docs_count + doc_limits::min() -
-                              uncommitted_count);
-  const auto size = in->ReadV64();
-  auto files = ReadStrings(*in);
-  format_utils::CheckFooter(*in, checksum);
+  in->Seek(mask_size);
 
-  if (docs_mask_head > segment_version || docs_mask_files > docs_mask_head + 1)
-    [[unlikely]] {
+  duckdb::BinaryDeserializer meta_in{*in};
+  meta_in.Begin();
+  const auto parent = meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
+    SegmentMetaWriterImpl::kFieldParent, "parent",
+    SegmentMetaWriterImpl::kNoParent);
+  auto name = meta_in.ReadProperty<std::string>(
+    SegmentMetaWriterImpl::kFieldName, "name");
+  const auto segment_version = meta_in.ReadProperty<uint64_t>(
+    SegmentMetaWriterImpl::kFieldVersion, "version");
+  const auto live_docs_count = meta_in.ReadProperty<uint32_t>(
+    SegmentMetaWriterImpl::kFieldLiveDocsCount, "live_docs_count");
+  const auto mask_count = meta_in.ReadPropertyWithExplicitDefault<uint32_t>(
+    SegmentMetaWriterImpl::kFieldRemovalCount, "removal_count", 0);
+  const auto uncommitted_count =
+    meta_in.ReadPropertyWithExplicitDefault<uint32_t>(
+      SegmentMetaWriterImpl::kFieldUncommittedCount, "uncommitted_count", 0);
+  const auto size = meta_in.ReadProperty<uint64_t>(
+    SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
+  std::vector<std::string> files;
+  meta_in.ReadList(SegmentMetaWriterImpl::kFieldFiles, "files",
+                   [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                     files.emplace_back(list.ReadElement<std::string>());
+                   });
+
+  if (mask_count < uncommitted_count) [[unlikely]] {
     throw IndexError{absl::StrCat(
-      "While reading segment meta '", name, "', error: invalid mask chain of ",
-      docs_mask_files, " file(s) with head(", docs_mask_head, ") and version(",
-      segment_version, ")")};
+      "While reading segment meta '", name, "', error: uncommitted_count(",
+      uncommitted_count, ") > removal_count(", mask_count, ")")};
   }
+  const auto scattered_count = mask_count - uncommitted_count;
 
-  std::shared_ptr<DocumentMask> docs_mask;
-  uint64_t docs_mask_size = 0;
-
-  if (!inline_mask.empty()) {
-    docs_mask = std::make_shared<DocumentMask>(
-      DocumentMask::Read(inline_mask.data(), inline_mask.size()));
-  } else if (docs_mask_files != 0) {
-    DocumentMask builder;
-    auto version = docs_mask_head;
-    auto at = files.size() + docs_mask_files;
-    files.resize(at);
-
-    for (uint32_t i = 0; i < docs_mask_files; ++i) {
-      auto& file = files[--at];
-      file = irs::FileName(name, version, DocsMaskWriter::kFormatExt);
-
-      auto mask_in = dir.open(file, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
-
-      if (!mask_in) [[unlikely]] {
-        throw IoError{absl::StrCat("Failed to open file, path: ", file)};
-      }
-
-      const auto parent = mask_in->ReadV64();
-
-      if ((parent == 0) != (i + 1 == docs_mask_files) || parent > version)
-        [[unlikely]] {
-        throw IndexError{absl::StrCat("Corrupted document mask chain of '",
-                                      name, "', broken at file: ", file)};
-      }
-
-      const auto blob = ReadString<std::string>(*mask_in);
-
-      docs_mask_size += mask_in->Length();
-      builder.Merge(DocumentMask::Read(blob.data(), blob.size()));
-      version -= parent;
-    }
-
-    builder.Trim();
-    docs_mask = std::make_shared<DocumentMask>(std::move(builder));
-  }
-
-  if (docs_mask && docs_mask->Count() != scattered_count) [[unlikely]] {
-    throw IndexError{absl::StrCat("Corrupted document mask, expected ",
-                                  scattered_count, " masked documents, got ",
-                                  docs_mask->Count())};
-  }
+  const auto docs_count = live_docs_count + mask_count;
 
   if (docs_count < live_docs_count) [[unlikely]] {
     throw IndexError{absl::StrCat(
       "While reading segment meta '", name, "', error: docs_count(", docs_count,
       ") > live_docs_count(", live_docs_count, ")")};
+  }
+
+  const auto uncommitted_begin =
+    uncommitted_count == 0
+      ? doc_limits::eof()
+      : static_cast<doc_id_t>(docs_count + doc_limits::min() -
+                              uncommitted_count);
+
+  if (mask_size == 0 && parent != SegmentMetaWriterImpl::kNoParent)
+    [[unlikely]] {
+    throw IndexError{absl::StrCat("Corrupted document mask chain of '", name,
+                                  "', maskless head links to ", parent)};
+  }
+
+  std::shared_ptr<DocumentMask> docs_mask;
+  uint64_t docs_mask_size = 0;
+  uint32_t docs_mask_chain = 0;
+
+  if (mask_size != 0) {
+    DocumentMask builder;
+    ReadDocumentMask(*in, mask_size, builder);
+    docs_mask_size = mask_size;
+    docs_mask_chain = 1;
+
+    const auto first_link = files.size();
+    auto version = segment_version;
+    auto link = parent;
+
+    while (link != SegmentMetaWriterImpl::kNoParent) {
+      if (link >= version ||
+          docs_mask_chain == SegmentMetaWriterImpl::kMaxMaskFiles)
+        [[unlikely]] {
+        throw IndexError{absl::StrCat(
+          "Corrupted document mask chain of '", name, "', ", docs_mask_chain,
+          " link(s) deep at version(", version, ") links to ", link)};
+      }
+
+      auto file = irs::FileName(name, link, SegmentMetaWriterImpl::kFormatExt);
+
+      auto mask_in = dir.open(file, IOAdvice::SEQUENTIAL);
+
+      if (!mask_in) [[unlikely]] {
+        throw IoError{absl::StrCat("Failed to open file, path: ", file)};
+      }
+
+      const auto link_size = ReadMaskSize(*mask_in, file);
+
+      if (link_size == 0) [[unlikely]] {
+        throw IndexError{absl::StrCat("Corrupted document mask chain of '",
+                                      name, "', maskless link: ", file)};
+      }
+
+      const auto next = ReadParent(*mask_in, link_size);
+      ReadDocumentMask(*mask_in, link_size, builder);
+
+      docs_mask_size += link_size;
+      ++docs_mask_chain;
+      files.emplace_back(std::move(file));
+      version = link;
+      link = next;
+    }
+
+    std::reverse(files.begin() + static_cast<ptrdiff_t>(first_link),
+                 files.end());
+    builder.Trim();
+    docs_mask = std::make_shared<DocumentMask>(std::move(builder));
+  }
+
+  if ((docs_mask ? docs_mask->Count() : 0) != scattered_count) [[unlikely]] {
+    throw IndexError{absl::StrCat("Corrupted document mask, expected ",
+                                  scattered_count, " masked documents, got ",
+                                  docs_mask ? docs_mask->Count() : 0)};
   }
 
   // ...........................................................................
@@ -170,8 +214,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   meta.uncommitted_begin = uncommitted_begin;
   meta.docs_mask = std::move(docs_mask);
   meta.docs_mask_size = docs_mask_size;
-  meta.docs_mask_files = docs_mask_files;
-  meta.docs_mask_head = docs_mask_head;
+  meta.docs_mask_chain = docs_mask_chain;
   meta.byte_size = size + docs_mask_size;
   meta.files = std::move(files);
 }

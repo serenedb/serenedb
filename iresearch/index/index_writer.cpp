@@ -144,7 +144,7 @@ bool RemoveFromSegment(DocumentMask& deleted_docs,
        !doc_limits::eof(doc_id) && doc_id < uncommitted_begin;
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
-    if (it_mask.Probe(doc_id)) {
+    if (it_mask.Contains(doc_id)) {
       continue;
     }
     modified |= deleted_docs.Add(doc_id);
@@ -425,18 +425,13 @@ std::vector<std::string_view> GetFilesToSync(
 
   std::vector<std::string_view> files_to_sync;
   // +1 for index meta
-  files_to_sync.reserve(1 + 2 * partial_sync.size() +
+  files_to_sync.reserve(1 + partial_sync.size() +
                         full_sync_count * kMaxFilesPerSegment);
 
   for (auto sync : partial_sync) {
     SDB_ASSERT(sync.segment_index < partial_sync_threshold);
     const auto& segment = segments[sync.segment_index];
     files_to_sync.emplace_back(segment.filename);
-    const auto& files = segment.meta.files;
-    SDB_ASSERT(segment.meta.docs_mask_files <= files.size());
-    if (segment.meta.docs_mask_files != 0) {
-      files_to_sync.emplace_back(files.back());
-    }
   }
 
   std::for_each(segments.begin() + partial_sync_threshold, segments.end(),

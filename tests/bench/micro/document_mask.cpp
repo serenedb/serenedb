@@ -171,8 +171,7 @@ class DocumentMaskArm {
     : _mask{MakeMask(deleted)} {}
 
   irs::probe::DocsMask Probes() const noexcept {
-    return irs::probe::DocsMask{
-      irs::DocumentMask::Iterator{&_mask, irs::doc_limits::eof()}};
+    return irs::probe::DocsMask{&_mask, irs::doc_limits::eof()};
   }
 
   irs::fill::DocsMask Fills() const noexcept {

@@ -50,7 +50,6 @@ class HnswQuery;
 class KnnVectorQuery;
 class RangeVectorQuery;
 class BooleanQuery;
-class DocsMaskQuery;
 struct EmptyQueryBuilder;
 
 template<typename Parser, typename Acceptor>

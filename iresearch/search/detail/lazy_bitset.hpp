@@ -172,7 +172,7 @@ class LazyBitset {
         const auto bit = static_cast<size_t>(std::countr_zero(rest));
         rest &= rest - 1;
         const auto doc = static_cast<doc_id_t>(kMin + w * kBits + bit);
-        if (_it_mask.Probe(doc)) {
+        if (_it_mask.Contains(doc)) {
           UnsetBit(words[w], bit);
         }
       }

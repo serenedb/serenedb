@@ -134,31 +134,6 @@ action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash
-statement count 1
-INSERT INTO vkh.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
-
-connection after_crash
-query
-SELECT * FROM serenedb_reindex('vkh_idx');
-----
-action	files_added	files_changed	files_removed	files_rescanned
-delta	1	0	0	0
-
-connection after_crash
-query
-SELECT count(*) FROM vkh_idx WHERE body @@ ts_phrase('fox');
-----
-count
-1155
-
-connection after_crash
-query
-SELECT id FROM vkh_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
-----
-id
-4618
-
-connection after_crash
 statement ok
 SET sdb_faults = 'shutdown_on_packet';
 
@@ -168,6 +143,39 @@ SELECT 1;
 
 connection after_shutdown
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2;
+----
+id
+4616
+4612
+
+connection after_shutdown
+query
+SELECT * FROM serenedb_reindex('vkh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_shutdown
+statement count 1
+INSERT INTO vkh.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
+
+connection after_shutdown
+query
+SELECT * FROM serenedb_reindex('vkh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_shutdown
+query
+SELECT count(*) FROM vkh_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1155
+
+connection after_shutdown
+query
 SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2;
 ----
 id

@@ -79,56 +79,63 @@ body
 doc 4617 blue cat
 
 connection after_crash
-statement count 1
-INSERT INTO vkhl.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
-
-connection after_crash
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
-----
-count
-1155
-
-connection after_crash
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
-----
-id
-4618
-
-connection after_crash
-statement count 1
-DELETE FROM vkhl.${__DATABASE__}.docs WHERE id = 4;
-
-connection after_crash
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
-----
-count
-1154
-
-connection after_crash
-query
-SELECT count(*) FROM vkhl_idx WHERE id = 4;
-----
-count
-0
-
-connection after_crash
-query
-SELECT id FROM vkhl_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 2;
-----
-id
-8
-12
-
-connection after_crash
 statement ok
 SET sdb_faults = 'shutdown_on_packet';
 
 connection after_crash
 statement error connection closed
 SELECT 1;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_shutdown
+query
+SELECT body FROM vkhl_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+connection after_shutdown
+statement count 1
+INSERT INTO vkhl.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1155
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+4618
+
+connection after_shutdown
+statement count 1
+DELETE FROM vkhl.${__DATABASE__}.docs WHERE id = 4;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_shutdown
+query
+SELECT id FROM vkhl_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 2;
+----
+id
+8
+12
 
 connection after_shutdown
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION

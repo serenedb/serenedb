@@ -219,7 +219,8 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   return ComputeAnn(env, kNoCancel);
 }
 
-bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress) {
+bool ColWriter::Commit(uint64_t target_row,
+                       absl::FunctionRef<bool()> progress) {
   if (_committed) {
     return true;
   }

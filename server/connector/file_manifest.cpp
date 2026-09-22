@@ -32,6 +32,7 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/serializer.hpp>
 
 #include "core/deletes/iceberg_deletion_vector.hpp"
@@ -46,15 +47,12 @@ namespace sdb::search {
 void FileManifest::Serialize(irs::bstring& out) const {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer serializer{stream};
-  if (version != 0) {
-    // Iceberg persists as the version alone: the pin is the identity, and
-    // the id baseline is not reconstructible across restarts anyway (delta
-    // re-stamps make ids path-dependent) -- a moved pin after a restart
-    // takes the rebuild road.
+  SDB_IF_FAILURE("manifest_version_only") {
     irs::utils::WriteTuple(serializer, FileManifest{.version = version});
-  } else {
-    irs::utils::WriteTuple(serializer, *this);
+    out.append(stream.GetData(), stream.GetPosition());
+    return;
   }
+  irs::utils::WriteTuple(serializer, *this);
   out.append(stream.GetData(), stream.GetPosition());
 }
 

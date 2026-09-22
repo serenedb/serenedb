@@ -1,0 +1,263 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET vml_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vml_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.v2 (id INTEGER, body TEXT);
+
+statement count 3000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.v2 SELECT s, 'doc ' || s FROM generate_series(1, 3000) t(s);
+
+statement ok
+CREATE VIEW vml_v2 AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.v2;
+
+statement ok
+CREATE INDEX vml_v2_idx ON vml_v2 USING inverted(id, body vml_en) WITH (compaction_interval=0);
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2 WHERE id = 1;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v2_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+query
+SELECT count(*) FROM vml_v2_idx WHERE id = 1;
+----
+count
+0
+
+query
+SELECT count(*) FROM vml_v2_idx;
+----
+count
+2999
+
+statement count 5
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2 WHERE id IN (2, 700, 1500, 2300, 3000);
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v2_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+query
+SELECT count(*) FROM vml_v2_idx WHERE id IN (2, 700, 1500, 2300, 3000);
+----
+count
+0
+
+query
+SELECT count(*) FROM vml_v2_idx;
+----
+count
+2994
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.v2 SET body = 'doc 5 prime' WHERE id = 5;
+
+query
+SELECT action FROM serenedb_reindex('vml_v2_idx');
+----
+action
+delta
+
+query
+SELECT body FROM vml_v2_idx WHERE id = 5;
+----
+body
+doc 5 prime
+
+query
+SELECT count(*) FROM vml_v2_idx;
+----
+count
+2994
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vml_v2_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.v2)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.v2 EXCEPT SELECT id, body FROM vml_v2_idx)
+);
+----
+count
+0
+
+statement count 2994
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2;
+
+query
+SELECT action FROM serenedb_reindex('vml_v2_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vml_v2_idx;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vml_v2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.v3 (id INTEGER, body TEXT) WITH ('format-version' = 3);
+
+statement count 3000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.v3 SELECT s, 'doc ' || s FROM generate_series(1, 3000) t(s);
+
+statement ok
+CREATE VIEW vml_v3 AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.v3;
+
+statement ok
+CREATE INDEX vml_v3_idx ON vml_v3 USING inverted(id, body vml_en) WITH (compaction_interval=0);
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3 WHERE id = 1;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v3_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+query
+SELECT count(*) FROM vml_v3_idx WHERE id = 1;
+----
+count
+0
+
+query
+SELECT count(*) FROM vml_v3_idx;
+----
+count
+2999
+
+statement count 5
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3 WHERE id IN (2, 700, 1500, 2300, 3000);
+
+query
+SELECT action FROM serenedb_reindex('vml_v3_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vml_v3_idx WHERE id IN (2, 700, 1500, 2300, 3000);
+----
+count
+0
+
+query
+SELECT count(*) FROM vml_v3_idx;
+----
+count
+2994
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.v3 SET body = 'doc 5 prime' WHERE id = 5;
+
+query
+SELECT action FROM serenedb_reindex('vml_v3_idx');
+----
+action
+delta
+
+query
+SELECT body FROM vml_v3_idx WHERE id = 5;
+----
+body
+doc 5 prime
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vml_v3_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.v3)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.v3 EXCEPT SELECT id, body FROM vml_v3_idx)
+);
+----
+count
+0
+
+statement count 2994
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3;
+
+query
+SELECT action FROM serenedb_reindex('vml_v3_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vml_v3_idx;
+----
+count
+0
+
+statement ok
+DROP INDEX vml_v2_idx;
+
+statement ok
+DROP INDEX vml_v3_idx;
+
+statement ok
+DROP VIEW vml_v2;
+
+statement ok
+DROP VIEW vml_v3;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.v2;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.v3;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET vml_${__DATABASE__};

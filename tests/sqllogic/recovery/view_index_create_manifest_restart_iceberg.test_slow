@@ -1,0 +1,101 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vimp FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vimp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vimp.${__DATABASE__};
+
+statement ok
+CREATE TABLE vimp.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vimp.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'the manifest rides the backfill'), (3, 'the manifest survives the crash');
+
+statement ok
+CREATE VIEW vimp_v AS SELECT * FROM vimp.${__DATABASE__}.t;
+
+statement ok
+SET sdb_faults = 'refresh_before_manifest_publish';
+
+statement ok
+CREATE INDEX vimp_idx ON vimp_v USING inverted(id, body vimp_en);
+
+statement ok
+SET sdb_faults = '-refresh_before_manifest_publish';
+
+query
+SELECT id FROM vimp_idx WHERE body @@ ts_phrase('manifest') ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vimp_idx WHERE body @@ ts_phrase('manifest');
+----
+count
+2
+
+connection after_crash
+query
+SELECT id FROM vimp_idx WHERE body @@ ts_phrase('manifest') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT body FROM vimp_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vimp_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement ok
+DROP INDEX vimp_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vimp_v;
+
+connection after_crash
+statement ok
+DROP TABLE vimp.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vimp.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vimp;

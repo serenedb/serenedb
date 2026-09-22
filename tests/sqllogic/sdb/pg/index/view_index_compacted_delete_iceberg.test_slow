@@ -1,0 +1,336 @@
+control substitution on
+
+# A delta masks a changed file by re-paying its whole dead-row set, seeking each
+# dead row's primary-key term in turn. Compaction physically drops the terms of
+# rows masked earlier, so those seeks miss -- and a seek that does not land on
+# its term advances the iterator internally. Reusing it for the remaining dead
+# rows of the file then skips one, and the row stays in the index for good.
+#
+# No background loop and no timing: the reindex and the compaction are both
+# explicit, so the sequence below either loses row 1908 or it does not.
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER cmd FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE SCHEMA cmd.${__DATABASE__};
+
+statement ok
+CREATE TABLE cmd.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cmd_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# One file per snapshot, so a file's rows are a contiguous key range and the
+# merged term dictionary spans several blocks.
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1, 175) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(176, 350) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(351, 525) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(526, 700) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(701, 875) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(876, 1050) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1051, 1225) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1226, 1400) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1401, 1575) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1576, 1750) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1751, 1925) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(1926, 2100) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2101, 2275) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2276, 2450) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2451, 2625) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2626, 2800) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2801, 2975) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(2976, 3150) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(3151, 3325) t(s);
+
+statement count 175
+INSERT INTO cmd.${__DATABASE__}.t SELECT s, 'doc ' || s FROM generate_series(3326, 3500) t(s);
+
+statement ok
+CREATE VIEW cmd_v AS SELECT * FROM cmd.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX cmd_idx ON cmd_v USING inverted(id, body cmd_en) WITH (reindex_interval=0, compaction_interval=0);
+
+query
+SELECT count(*) FROM cmd_idx;
+----
+count
+3500
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1327, 618, 1618);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2667, 198, 297);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (3364, 2195, 386);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1498, 2388, 238);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2079, 880, 154);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (353, 1777, 1713);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (287, 986, 372);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2258, 1739, 243);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (3387, 2317, 508);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (915, 2584, 2570);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (254, 2364, 2399);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1625, 204, 906);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (191, 2281, 546);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1187, 1717, 591);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2215, 483, 2339);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1264, 2295, 3343);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2794, 741, 423);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2383, 2340, 2617);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (770, 1526, 400);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2244, 2917, 258);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2312, 245, 2536);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (844, 2034, 2787);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2178, 1752, 3184);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+statement count 3
+DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1287, 1908, 1857);
+
+statement ok
+CALL serenedb_reindex('cmd_idx');
+
+statement ok
+VACUUM (COMPACT_INDEX) cmd_idx;
+
+query
+SELECT count(*) FROM (SELECT id FROM cmd_idx EXCEPT SELECT id FROM cmd.${__DATABASE__}.t);
+----
+count
+0
+
+query
+SELECT count(*) FROM cmd_idx;
+----
+count
+3428

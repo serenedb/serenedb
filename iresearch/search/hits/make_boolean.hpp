@@ -77,16 +77,13 @@ struct Api {
                                     const SubReader& segment,
                                     const TermReader& own,
                                     const irs::detail::ScoreRecipe& recipe) {
-    return MakePrepared(ctx, [&](auto table) -> Result {
-      auto root = memory::make_managed<
-        Posting<Input, utils::Empty, Exclude, decltype(table)>>(
-        table, std::piecewise_construct, std::forward_as_tuple(),
-        std::forward<ExcludeArgs>(negated));
-      root->Prepare(posting.state.cookie, doc, segment, own,
-                    recipe.Args(posting.stats, posting.boost),
-                    irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
-      return root;
-    });
+    auto root = memory::make_managed<Posting<Input, utils::Empty, Exclude>>(
+      std::piecewise_construct, std::forward_as_tuple(),
+      std::forward<ExcludeArgs>(negated));
+    root->Prepare(posting.state.cookie, doc, segment, own,
+                  recipe.Args(posting.stats, posting.boost),
+                  irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
+    return root;
   }
 
   static score_t Base(score_t absorbed) noexcept { return absorbed; }

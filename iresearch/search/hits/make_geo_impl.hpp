@@ -39,12 +39,7 @@ Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
                                             .stats = record.stats,
                                             .fetcher = &ctx.fetcher,
                                             .boost = query.Boost()});
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeGeo<FilteredConstantWalk, Root::ptr>(
-      query, 0, ctx.table, value);
-  }
-  return irs::detail::MakeGeo<PlainConstantWalk, Root::ptr>(
-    query, 0, utils::Empty{}, value);
+  return irs::detail::MakeGeo<ConstantWalk, Root::ptr>(query, 0, value);
 }
 
 }  // namespace irs::hits

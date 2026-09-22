@@ -35,18 +35,11 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
                                      .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
-      if (ctx.table != nullptr) {
-        return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
-                                             irs::detail::RadiusGate<Inclusive>,
-                                             Rescore, lead::TwoPhaseScored>(
-          query, *query.State().reader, score, query.Threshold(),
-          std::move(inner), ctx.table, ctx.fetcher);
-      }
-      return irs::detail::MakeVectorScored<PlainWalk, Root::ptr,
+      return irs::detail::MakeVectorScored<Walk, Root::ptr,
                                            irs::detail::RadiusGate<Inclusive>,
                                            Rescore, lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), utils::Empty{}, ctx.fetcher);
+        std::move(inner), ctx.fetcher);
     });
   });
 }
@@ -63,18 +56,10 @@ Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
                                      .boost = query.Boost()};
   const auto& field = *query.State().reader;
   return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
-    if (ctx.table != nullptr) {
-      return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
-                                           irs::detail::AcceptAll, Rescore,
-                                           lead::TwoPhaseScored>(
-        query, field, score, irs::detail::Unbounded(), std::move(inner),
-        ctx.table, ctx.fetcher);
-    }
-    return irs::detail::MakeVectorScored<PlainWalk, Root::ptr,
-                                         irs::detail::AcceptAll, Rescore,
-                                         lead::TwoPhaseScored>(
+    return irs::detail::MakeVectorScored<
+      Walk, Root::ptr, irs::detail::AcceptAll, Rescore, lead::TwoPhaseScored>(
       query, field, score, irs::detail::Unbounded(), std::move(inner),
-      utils::Empty{}, ctx.fetcher);
+      ctx.fetcher);
   });
 }
 

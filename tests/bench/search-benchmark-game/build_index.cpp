@@ -24,6 +24,7 @@
 #include <iostream>  // std::cin
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/remap_executable.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
 #include "executor.h"
@@ -31,6 +32,7 @@
 #include "insert_field.hpp"
 
 int main(int argc, const char* argv[]) {
+  irs::RemapExecutable();
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
   // before main returns -- duckdb's BlockAllocator dtor reads a

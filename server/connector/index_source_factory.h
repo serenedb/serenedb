@@ -35,10 +35,10 @@ class ClientContext;
 }  // namespace duckdb
 namespace sdb::connector {
 
-struct SereneDBScanBindData;
+struct ScanBindData;
 
 std::unique_ptr<irs::IndexSource> MakeIndexSource(
-  duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
+  duckdb::ClientContext& context, const ScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::ColumnId> bind_column_ids,

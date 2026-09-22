@@ -20,6 +20,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/flags/flag.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +30,7 @@
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/remap_executable.hpp>
 #include <utility>
 
 #include "catalog/ddl/catalog.h"
@@ -45,6 +47,12 @@
 #include "server/utils/app_server.h"
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
+
+ABSL_FLAG(bool, remap_executable, true,
+          "Copy the server's machine code into anonymous huge-page memory at "
+          "startup and pre-read its read-only data, so the first queries after "
+          "a cold start pay no code page faults. Turn off when profiling with "
+          "perf, which symbolizes only file-backed code.");
 
 namespace {
 
@@ -228,11 +236,18 @@ int main(int argc, char* argv[]) {
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
+  const auto remap = absl::GetFlag(FLAGS_remap_executable)
+                       ? irs::RemapExecutable()
+                       : irs::ExecutableRemap{.skipped = "disabled"};
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   server::query::RegisterServerExtensions(engine.instance());
 
   sdb::app::InitProcess(argv[0]);
+  SDB_INFO(STARTUP, "executable memory: ", remap.remapped >> 20,
+           " MB of machine code remapped into anonymous huge-page memory, ",
+           remap.populated >> 20, " MB of read-only mappings pre-read",
+           remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
   sdb::app::ShutdownGlobals();
 

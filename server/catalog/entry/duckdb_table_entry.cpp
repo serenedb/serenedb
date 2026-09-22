@@ -48,7 +48,8 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_function.h"
+#include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_function.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
@@ -341,16 +342,18 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
     auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
       catalog::IdOf(*this),
       [&] { return GetSearchData()->GetDirectoryReader(); });
-    auto data = duckdb::make_uniq<connector::TableScanBindData>();
+    auto data = duckdb::make_uniq<connector::ScanBindData>();
     for (const auto& col : GetColumns().Logical()) {
-      data->column_ids.emplace_back(col.CatalogOid());
-      data->column_types.push_back(col.Type());
+      data->columns.ids.emplace_back(col.CatalogOid());
+      data->columns.types.push_back(col.Type());
     }
-    data->table_entry = this;
-    data->entry_kind = connector::ScanEntryKind::SearchTable;
-    data->topk_scorer = SearchOptions().topk_scorer;
-    data->lookup_label = "search";
-    data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+    data->relation.table_entry = this;
+    data->relation.kind = connector::ScanEntryKind::SearchTable;
+    auto options = SearchOptions();
+    data->relation.row_group_size = options.row_group_size;
+    data->score.prune = std::move(options.topk_scorer);
+    data->lookup.label = "search";
+    data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
     bind_data = std::move(data);
     return connector::CreateIResearchScanFunction();

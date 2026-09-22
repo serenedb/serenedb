@@ -31,9 +31,9 @@
 
 namespace irs::top {
 
-template<typename InputType, typename Table>
-class TermBlock : public irs::detail::PostingBatch<InputType, Table, true> {
-  using Base = irs::detail::PostingBatch<InputType, Table, true>;
+template<typename InputType>
+class TermBlock : public irs::detail::PostingBatch<InputType, true> {
+  using Base = irs::detail::PostingBatch<InputType, true>;
 
   using Base::_left_in_list;
   using Base::kBlock;

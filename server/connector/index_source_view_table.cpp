@@ -224,7 +224,7 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   _tf_target.SetCardinality(rows);
 
   RunCastPass(output, rows);
-  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  GatherNonLookupColumns(output, rows);
   return rows;
 }
 

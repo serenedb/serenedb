@@ -44,9 +44,9 @@ Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
   if (!conjunction) {
     return {};
   }
-  const uint64_t total = uint64_t{rarest->state.cookie.docs_count} +
-                         uint64_t{densest->state.cookie.docs_count};
-  return memory::make_managed<Subtract>(total, std::move(conjunction));
+  return memory::make_managed<Subtract>(
+    MakeSum(MakeTermCount(*rarest, ctx), MakeTermCount(*densest, ctx)),
+    std::move(conjunction), ctx.partial);
 }
 
 }  // namespace irs::count

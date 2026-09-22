@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="258" viewBox="0 0 900 258" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" role="img" aria-label="Median query latency: SereneDB 31 ms, Quickwit 78 ms, Elasticsearch 86 ms, OpenSearch 195 ms, ParadeDB 368 ms, ClickHouse 482 ms; Time to load 1B rows: SereneDB 5m 10s, Quickwit 1h 52m, Elasticsearch 3h 19m, OpenSearch 3h 13m, ParadeDB 3h 28m, ClickHouse 6m 35s; On disk: SereneDB 120 GB, Quickwit 138 GB, Elasticsearch 165 GB, OpenSearch 147 GB, ParadeDB 1.18 TB, ClickHouse 204 GB">
+  <text x="100" y="89.5" text-anchor="end" fill="#ffffff" font-size="13" font-weight="700">SereneDB</text>
+  <text x="100" y="119.5" text-anchor="end" fill="#c3c2b7" font-size="13" font-weight="400">Quickwit</text>
+  <text x="100" y="149.5" text-anchor="end" fill="#c3c2b7" font-size="13" font-weight="400">Elasticsearch</text>
+  <text x="100" y="179.5" text-anchor="end" fill="#c3c2b7" font-size="13" font-weight="400">OpenSearch</text>
+  <text x="100" y="209.5" text-anchor="end" fill="#c3c2b7" font-size="13" font-weight="400">ParadeDB</text>
+  <text x="100" y="239.5" text-anchor="end" fill="#c3c2b7" font-size="13" font-weight="400">ClickHouse</text>
+  <text x="112" y="22" fill="#ffffff" font-size="15" font-weight="700">Median query latency</text>
+  <text x="112" y="40" fill="#898781" font-size="12">1B rows, warm cache, lower is better</text>
+  <line x1="106" y1="68" x2="106" y2="248" stroke="#383835" stroke-width="1"/>
+  <path d="M112.0,76 H118.3 A4.0,4.0 0 0 1 122.3,80.0 V90.0 A4.0,4.0 0 0 1 118.3,94 H112.0 Z" fill="#8B5CFF"/>
+  <text x="130.3" y="89.5" fill="#ffffff" font-size="13" font-weight="700">31 ms</text>
+  <path d="M112.0,106 H133.9 A4.0,4.0 0 0 1 137.9,110.0 V120.0 A4.0,4.0 0 0 1 133.9,124 H112.0 Z" fill="#8C8A82"/>
+  <text x="145.9" y="119.5" fill="#c3c2b7" font-size="13" font-weight="400">78 ms</text>
+  <path d="M112.0,136 H136.5 A4.0,4.0 0 0 1 140.5,140.0 V150.0 A4.0,4.0 0 0 1 136.5,154 H112.0 Z" fill="#8C8A82"/>
+  <text x="148.5" y="149.5" fill="#c3c2b7" font-size="13" font-weight="400">86 ms</text>
+  <path d="M112.0,166 H172.7 A4.0,4.0 0 0 1 176.7,170.0 V180.0 A4.0,4.0 0 0 1 172.7,184 H112.0 Z" fill="#8C8A82"/>
+  <text x="184.7" y="179.5" fill="#c3c2b7" font-size="13" font-weight="400">195 ms</text>
+  <path d="M112.0,196 H230.2 A4.0,4.0 0 0 1 234.2,200.0 V210.0 A4.0,4.0 0 0 1 230.2,214 H112.0 Z" fill="#8C8A82"/>
+  <text x="242.2" y="209.5" fill="#c3c2b7" font-size="13" font-weight="400">368 ms</text>
+  <path d="M112.0,226 H268.0 A4.0,4.0 0 0 1 272.0,230.0 V240.0 A4.0,4.0 0 0 1 268.0,244 H112.0 Z" fill="#8C8A82"/>
+  <text x="280.0" y="239.5" fill="#c3c2b7" font-size="13" font-weight="400">482 ms</text>
+  <text x="374" y="22" fill="#ffffff" font-size="15" font-weight="700">Time to load 1B rows</text>
+  <text x="374" y="40" fill="#898781" font-size="12">lower is better</text>
+  <line x1="368" y1="68" x2="368" y2="248" stroke="#383835" stroke-width="1"/>
+  <path d="M374.0,76 H374.0 A4.0,4.0 0 0 1 378.0,80.0 V90.0 A4.0,4.0 0 0 1 374.0,94 H374.0 Z" fill="#8B5CFF"/>
+  <text x="386.0" y="89.5" fill="#ffffff" font-size="13" font-weight="700">5m 10s</text>
+  <path d="M374.0,106 H456.3 A4.0,4.0 0 0 1 460.3,110.0 V120.0 A4.0,4.0 0 0 1 456.3,124 H374.0 Z" fill="#8C8A82"/>
+  <text x="468.3" y="119.5" fill="#c3c2b7" font-size="13" font-weight="400">1h 52m</text>
+  <path d="M374.0,136 H522.6 A4.0,4.0 0 0 1 526.6,140.0 V150.0 A4.0,4.0 0 0 1 522.6,154 H374.0 Z" fill="#8C8A82"/>
+  <text x="534.6" y="149.5" fill="#c3c2b7" font-size="13" font-weight="400">3h 19m</text>
+  <path d="M374.0,166 H518.5 A4.0,4.0 0 0 1 522.5,170.0 V180.0 A4.0,4.0 0 0 1 518.5,184 H374.0 Z" fill="#8C8A82"/>
+  <text x="530.5" y="179.5" fill="#c3c2b7" font-size="13" font-weight="400">3h 13m</text>
+  <path d="M374.0,196 H530.0 A4.0,4.0 0 0 1 534.0,200.0 V210.0 A4.0,4.0 0 0 1 530.0,214 H374.0 Z" fill="#8C8A82"/>
+  <text x="542.0" y="209.5" fill="#c3c2b7" font-size="13" font-weight="400">3h 28m</text>
+  <path d="M374.0,226 H375.1 A4.0,4.0 0 0 1 379.1,230.0 V240.0 A4.0,4.0 0 0 1 375.1,244 H374.0 Z" fill="#8C8A82"/>
+  <text x="387.1" y="239.5" fill="#c3c2b7" font-size="13" font-weight="400">6m 35s</text>
+  <text x="636" y="22" fill="#ffffff" font-size="15" font-weight="700">On disk</text>
+  <text x="636" y="40" fill="#898781" font-size="12">lower is better</text>
+  <line x1="630" y1="68" x2="630" y2="248" stroke="#383835" stroke-width="1"/>
+  <path d="M636.0,76 H648.3 A4.0,4.0 0 0 1 652.3,80.0 V90.0 A4.0,4.0 0 0 1 648.3,94 H636.0 Z" fill="#8B5CFF"/>
+  <text x="660.3" y="89.5" fill="#ffffff" font-size="13" font-weight="700">120 GB</text>
+  <path d="M636.0,106 H650.7 A4.0,4.0 0 0 1 654.7,110.0 V120.0 A4.0,4.0 0 0 1 650.7,124 H636.0 Z" fill="#8C8A82"/>
+  <text x="662.7" y="119.5" fill="#c3c2b7" font-size="13" font-weight="400">138 GB</text>
+  <path d="M636.0,136 H654.3 A4.0,4.0 0 0 1 658.3,140.0 V150.0 A4.0,4.0 0 0 1 654.3,154 H636.0 Z" fill="#8C8A82"/>
+  <text x="666.3" y="149.5" fill="#c3c2b7" font-size="13" font-weight="400">165 GB</text>
+  <path d="M636.0,166 H651.9 A4.0,4.0 0 0 1 655.9,170.0 V180.0 A4.0,4.0 0 0 1 651.9,184 H636.0 Z" fill="#8C8A82"/>
+  <text x="663.9" y="179.5" fill="#c3c2b7" font-size="13" font-weight="400">147 GB</text>
+  <path d="M636.0,196 H792.0 A4.0,4.0 0 0 1 796.0,200.0 V210.0 A4.0,4.0 0 0 1 792.0,214 H636.0 Z" fill="#8C8A82"/>
+  <text x="804.0" y="209.5" fill="#c3c2b7" font-size="13" font-weight="400">1.18 TB</text>
+  <path d="M636.0,226 H659.7 A4.0,4.0 0 0 1 663.7,230.0 V240.0 A4.0,4.0 0 0 1 659.7,244 H636.0 Z" fill="#8C8A82"/>
+  <text x="671.7" y="239.5" fill="#c3c2b7" font-size="13" font-weight="400">204 GB</text>
+</svg>

@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <utility>
+#include <memory>
+#include <vector>
 
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
@@ -37,9 +38,9 @@ class TermCountsOf : public TermCounts {
                IndexFeatures layout, bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
-  uint64_t Count(const PostingMeta& term) final {
+  uint64_t Count(const PostingMeta& term, doc_id_t min, doc_id_t max) final {
     SDB_ASSERT(term.docs_count != 0);
-    detail::CountAgainst sink{_set};
+    detail::CountAgainst sink{_set, min, max};
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
@@ -47,6 +48,28 @@ class TermCountsOf : public TermCounts {
                   FeaturesHaveFreq(_layout), sink);
     }
     return sink.Total();
+  }
+
+  bool Any(uint32_t ordinal, const PostingMeta& term, doc_id_t min,
+           doc_id_t max) final {
+    SDB_ASSERT(term.docs_count != 0);
+    if (term.docs_count == 1) {
+      const auto doc = doc_limits::min() + term.doc_delta;
+      return doc >= min && doc < max && _set.Contains(doc);
+    }
+    if (ordinal == kNoOrdinal) {
+      detail::PostingProbe<Input> posting{term, *_doc, _layout, _bounds};
+      return Scan(posting, min, max);
+    }
+    if (_probes.size() <= ordinal) {
+      _probes.resize(ordinal + 1);
+    }
+    auto& slot = _probes[ordinal];
+    if (!slot) {
+      slot = std::make_unique<detail::PostingProbe<Input>>(term, *_doc, _layout,
+                                                           _bounds);
+    }
+    return Scan(*slot, min, max);
   }
 
   bool Any(const PostingMeta& term) final {
@@ -73,7 +96,27 @@ class TermCountsOf : public TermCounts {
   }
 
  private:
+  IRS_FORCE_INLINE bool Scan(detail::PostingProbe<Input>& posting, doc_id_t min,
+                             doc_id_t max) {
+    auto doc = min;
+    for (;;) {
+      doc = posting.Probe(doc);
+      if (doc >= max) {
+        return false;
+      }
+      const auto next = _set.Probe(doc);
+      if (next == doc) {
+        return true;
+      }
+      if (next >= max) {
+        return false;
+      }
+      doc = next;
+    }
+  }
+
   detail::LazyBitset& _set;
+  std::vector<std::unique_ptr<detail::PostingProbe<Input>>> _probes;
   detail::PostingReader<Input> _reader;
   const IndexInput* _doc;
   IndexFeatures _layout;

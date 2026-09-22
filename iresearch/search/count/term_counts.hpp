@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -37,7 +38,13 @@ namespace irs::count {
 struct TermCounts : memory::Managed {
   using ptr = memory::managed_ptr<TermCounts>;
 
-  virtual uint64_t Count(const PostingMeta& term) = 0;
+  static constexpr uint32_t kNoOrdinal = std::numeric_limits<uint32_t>::max();
+
+  virtual uint64_t Count(const PostingMeta& term, doc_id_t min,
+                         doc_id_t max) = 0;
+
+  virtual bool Any(uint32_t ordinal, const PostingMeta& term, doc_id_t min,
+                   doc_id_t max) = 0;
 
   virtual bool Any(const PostingMeta& term) = 0;
 };

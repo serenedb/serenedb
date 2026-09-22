@@ -41,7 +41,7 @@ constexpr bool valid(uint64_t addr) noexcept { return invalid() != addr; }
 namespace doc_limits {
 
 constexpr doc_id_t eof() noexcept {
-  return std::numeric_limits<doc_id_t>::max();
+  return std::numeric_limits<int32_t>::max();
 }
 constexpr bool eof(doc_id_t id) noexcept { return eof() == id; }
 constexpr doc_id_t invalid() noexcept { return 0; }
@@ -56,6 +56,15 @@ inline constexpr uint32_t kScoresSlack = 8;
 inline constexpr uint32_t kMinCapacity = kBlockSize;
 
 }  // namespace doc_limits
+
+struct DocRange {
+  doc_id_t begin = doc_limits::min();
+  doc_id_t end = doc_limits::eof();
+
+  constexpr bool Contains(doc_id_t doc) const noexcept {
+    return begin <= doc && doc < end;
+  }
+};
 
 template<typename T, size_t Size, size_t Slack>
 class ABSL_CACHELINE_ALIGNED SlackBuf {

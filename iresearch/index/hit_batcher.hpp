@@ -33,25 +33,12 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
-#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-class HitBatcher : public irs::detail::DeadRuns {
+class HitBatcher {
  public:
-  irs::doc_id_t Live(irs::doc_id_t doc) final {
-    SDB_ASSERT(!_filters.Empty());
-    const auto dead = _filters.DeadUntil(doc - irs::doc_limits::min());
-    return dead == 0
-             ? doc
-             : irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead);
-  }
-
-  irs::detail::DeadRuns* Skipper() noexcept {
-    return _filters.Empty() ? nullptr : this;
-  }
-
   HitBatcher(std::span<const ColumnstoreProjection> projections,
              irs::field_id pk_field_id, bool track_scores);
 
@@ -70,6 +57,10 @@ class HitBatcher : public irs::detail::DeadRuns {
                     duckdb::ClientContext* context,
                     ColFilterStateCache* states = nullptr,
                     std::span<const ColFilterSpec> filters = {});
+
+  bool Bound(uint32_t seg_idx) const noexcept {
+    return _bound && _seg_idx == seg_idx;
+  }
 
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /
@@ -94,6 +85,8 @@ class HitBatcher : public irs::detail::DeadRuns {
   uint32_t Segment() const noexcept { return _seg_idx; }
 
   bool Ready() const noexcept { return _ready != Pending::None; }
+  duckdb::idx_t Len() const noexcept { return _len; }
+
   bool Empty() const noexcept {
     return _ready == Pending::None && _len == 0 && !_compact;
   }
@@ -162,7 +155,7 @@ class HitBatcher : public irs::detail::DeadRuns {
   }
   // Row-group window end for a group starting at `row`: the segment's row-group
   // boundary (if any) capped to a single output vector.
-  uint64_t RgEndFor(uint64_t row) const noexcept;
+  uint64_t RgEndFor(uint64_t row) noexcept;
 
   std::span<const ColumnstoreProjection> _projections;
   const irs::field_id _pk_field_id;
@@ -173,7 +166,9 @@ class HitBatcher : public irs::detail::DeadRuns {
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 
-  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docs;
+  irs::SlackBuf<irs::doc_id_t, STANDARD_VECTOR_SIZE,
+                irs::doc_limits::kDocsSlack>
+    _docs;
   // Score staging IS the output: the emitted batch's chunk References the
   // staged vector (no copy), so batches ping-pong between two cache-backed
   // buffers -- Compact() flips and carries the leftover tail across.
@@ -183,6 +178,8 @@ class HitBatcher : public irs::detail::DeadRuns {
   duckdb::idx_t _group = 0;
   duckdb::idx_t _batch = 0;
   uint64_t _group_rg_end = 0;
+  uint64_t _rg_cache_begin = 1;
+  uint64_t _rg_cache_end = 0;
 
   // Codec scans may zero-copy the output (e.g. FixedSizeScan SetData's the
   // vector straight at the pinned block), so every batch goes through
@@ -203,6 +200,7 @@ class HitBatcher : public irs::detail::DeadRuns {
   Pending _ready = Pending::None;
   bool _compact = false;
   bool _compact_dense = false;
+  bool _bound = false;
 };
 
 }  // namespace irs

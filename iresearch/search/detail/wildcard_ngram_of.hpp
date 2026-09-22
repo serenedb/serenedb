@@ -162,7 +162,8 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
         std::forward_as_tuple(terms.size(),
                               [&](Leaf& leaf, size_t i) {
                                 leaf.Prepare(terms[i].cookie, *DocOf(*field),
-                                             BoundsOf(*field), FreqOf(*field));
+                                             LayoutOf(*field), BoundsOf(*field),
+                                             FreqOf(*field));
                               }),
         std::forward_as_tuple());
     });

@@ -30,18 +30,24 @@ namespace irs::count {
 
 class Subtract : public Root {
  public:
-  Subtract(uint64_t total, Root::ptr excluded) noexcept
-    : _total{total}, _excluded{std::move(excluded)} {}
+  Subtract(Root::ptr total, Root::ptr excluded, bool partial) noexcept
+    : _total{std::move(total)},
+      _excluded{std::move(excluded)},
+      _partial{partial} {}
 
-  uint64_t Run() final {
-    const auto count = _excluded->Run();
-    SDB_ASSERT(count <= _total);
-    return _total - count;
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    const auto total = _total->Run(min, max);
+    const auto excluded = _excluded->Run(min, max);
+    SDB_ASSERT(_partial || excluded <= total);
+    return total - excluded;
   }
 
+  uint64_t Finish() final { return _total->Finish() - _excluded->Finish(); }
+
  private:
-  uint64_t _total;
+  Root::ptr _total;
   Root::ptr _excluded;
+  bool _partial;
 };
 
 }  // namespace irs::count

@@ -42,8 +42,8 @@ class SinglePosting : public Root {
     _score = irs::detail::SingleDocScore(segment, field, _doc, meta.freq, args);
   }
 
-  void Run(LoserScoreCollector& collector) final {
-    if (!doc_limits::valid(_doc)) {
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    if (!doc_limits::valid(_doc) || _doc < min || _doc >= max) {
       return;
     }
     _admit.Add(collector, _score, _doc);

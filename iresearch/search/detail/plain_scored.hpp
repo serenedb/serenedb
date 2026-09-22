@@ -44,13 +44,13 @@ class PlainFillScored {
   PlainFillScored() = default;
 
   PlainFillScored(const PostingMeta& meta, const IndexInput& doc_in,
-                  bool has_score_bounds, bool has_freq) {
-    Prepare(meta, doc_in, has_score_bounds, has_freq);
+                  IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+    Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
-    _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
+               IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+    _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -81,7 +81,7 @@ class ConstFillScored {
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
     _value = ConstantTermOf(segment, field, args);
-    _leaf.Prepare(meta, doc_in, has_score_bounds,
+    _leaf.Prepare(meta, doc_in, field.meta().index_features, has_score_bounds,
                   FeaturesHaveFreq(field.meta().index_features));
   }
 
@@ -105,8 +105,8 @@ class PlainCountScored {
   PlainCountScored() = default;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               bool has_score_bounds, bool has_freq) {
-    _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
+               IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+    _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
@@ -147,7 +147,7 @@ class ConstCountScored {
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
     _value = ConstantTermOf(segment, field, args);
-    _leaf.Prepare(meta, doc_in, has_score_bounds,
+    _leaf.Prepare(meta, doc_in, field.meta().index_features, has_score_bounds,
                   FeaturesHaveFreq(field.meta().index_features));
   }
 

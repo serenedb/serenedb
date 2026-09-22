@@ -65,12 +65,13 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
     }
 
     this->OpenInput(meta, doc_in, has_score_bounds);
+    this->ArmWalk(meta, field.meta().index_features, has_score_bounds);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
                  uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT window) {
     SDB_ASSERT(min < max);
-    if (_doc >= max) {
+    if (!this->Start(min, max)) {
       return _doc;
     }
     const auto* const end = std::cend(_docs);

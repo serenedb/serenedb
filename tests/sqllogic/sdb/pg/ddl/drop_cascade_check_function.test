@@ -10,8 +10,10 @@ statement count 1
 INSERT INTO iceberg_snapshots VALUES (1);
 
 
-statement error (?i)(check|constraint|violates)
+statement error
 INSERT INTO iceberg_snapshots VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table iceberg_snapshots with expression CHECK(iceberg_is_valid_snapshot_id(id))
 
 
 statement error
@@ -68,12 +70,16 @@ statement count 1
 INSERT INTO clickclack_query_logs VALUES (5);
 
 
-statement error (?i)(check|constraint|violates)
+statement error
 INSERT INTO clickclack_query_logs VALUES (0);
+----
+db error: ERROR: CHECK constraint failed on table clickclack_query_logs with expression CHECK(clickclack_nonzero_qps(id))
 
 
-statement error (?i)(check|constraint|violates)
+statement error
 INSERT INTO clickclack_query_logs VALUES (200);
+----
+db error: ERROR: CHECK constraint failed on table clickclack_query_logs with expression CHECK(clickclack_small_qps(id))
 
 
 statement error
@@ -93,8 +99,10 @@ statement count 1
 INSERT INTO clickclack_query_logs VALUES (0);
 
 
-statement error (?i)(check|constraint|violates)
+statement error
 INSERT INTO clickclack_query_logs VALUES (200);
+----
+db error: ERROR: CHECK constraint failed on table clickclack_query_logs with expression CHECK(clickclack_small_qps(id))
 
 
 statement ok

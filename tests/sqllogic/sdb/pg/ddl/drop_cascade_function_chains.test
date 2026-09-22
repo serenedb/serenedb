@@ -374,16 +374,22 @@ CREATE TABLE vedernikoff_iceberg_t_charlie (
 );
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_alpha with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_bravo with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_charlie with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 statement error

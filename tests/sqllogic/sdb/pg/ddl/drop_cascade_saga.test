@@ -357,8 +357,14 @@ INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_round1');
 
 
 # Plain DROP SCHEMA on the resumes schema is refused (not empty).
-statement error (?i)
+statement error
 DROP SCHEMA vedernikoff_resumes;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_resumes" because there are entries that depend on it.
+sequence "shared_id_seq" depends on schema "vedernikoff_resumes".
+table "candidates" depends on sequence "shared_id_seq".
+table "candidates" depends on sequence "shared_id_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
@@ -427,8 +433,10 @@ statement count 1
 INSERT INTO vedernikoff_iceberg_audit.runs VALUES (1, 42);
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_audit.runs VALUES (2, -5);
+----
+db error: ERROR: CHECK constraint failed on table runs with expression CHECK(vedernikoff_ml_paper.is_positive(score))
 
 
 # Plain DROP fails: the CHECK constraint depends on the function.
@@ -495,8 +503,13 @@ next_token
 
 
 # Refused without CASCADE: the function depends on the sequence schema.
-statement error (?i)
+statement error
 DROP SCHEMA vedernikoff_solid_module;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_solid_module" because there are entries that depend on it.
+sequence "token_seq" depends on schema "vedernikoff_solid_module".
+macro function "next_token" depends on sequence "token_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
@@ -823,12 +836,20 @@ statement ok
 CREATE TABLE vedernikoff_clickclack_offsite.itinerary (id INT, slot TEXT);
 
 
-statement error (?i)
+statement error
 DROP SCHEMA vedernikoff_clickclack_offsite;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offsite" because there are entries that depend on it.
+table "itinerary" depends on schema "vedernikoff_clickclack_offsite".
+Use DROP...CASCADE to drop all dependents.
 
 
-statement error (?i)
+statement error
 DROP SCHEMA vedernikoff_clickclack_offsite RESTRICT;
+----
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offsite" because there are entries that depend on it.
+table "itinerary" depends on schema "vedernikoff_clickclack_offsite".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
@@ -1122,16 +1143,22 @@ CREATE TABLE vedernikoff_iceberg_t_gamma (
 
 
 # Constraints are enforced.
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_alpha with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_beta VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_beta with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_gamma VALUES (10000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_gamma with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 # RESTRICT refuses.

@@ -981,13 +981,14 @@ statement error
 SELECT ts_offsets(name, 'body', ts_phrase('x'))
 FROM (VALUES ('standalone_dict')) t(name)
 ----
-must be a constant expression
+db error: ERROR: ts_offsets(): dict must be a constant expression
+
 
 # Unknown dict resolves to an error at bind.
 statement error
 SELECT ts_offsets('no_such_dict', 'body', ts_phrase('x'))
 ----
-not found
+db error: ERROR: ts_offsets(): text search dictionary not found: no_such_dict
 
 
 # --- Standalone OFFSETS with richer TSQUERY constructs ---

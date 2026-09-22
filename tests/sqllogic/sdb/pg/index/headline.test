@@ -157,7 +157,7 @@ statement error
 SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
                     'NotARealOption=bar')
 ----
-ts_highlight: option "notarealoption" not recognized
+db error: ERROR: ts_highlight: option "notarealoption" not recognized
 
 
 # --- Bad options: typo near a real option ---
@@ -167,7 +167,7 @@ statement error
 SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
                     'MaxWord=10')
 ----
-did you mean "maxwords"
+db error: ERROR: ts_highlight: option "maxword" not recognized, did you mean "maxwords"?
 
 
 # --- Bad options: non-numeric MaxWords (type-conversion fails) ---
@@ -176,7 +176,7 @@ statement error
 SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
                     'MaxWords=abc')
 ----
-invalid value for ts_highlight parameter "maxwords": "abc"
+db error: ERROR: invalid value for ts_highlight parameter "maxwords": "abc"
 
 
 # --- Bad options: zero MaxWords (constraint fn rejects) ---
@@ -185,7 +185,7 @@ statement error
 SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
                     'MaxWords=0')
 ----
-"maxwords" must be a positive integer
+db error: ERROR: "maxwords" must be a positive integer
 
 
 # --- Non-foldable options rejected at bind time ---
@@ -197,7 +197,7 @@ statement error
 SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER], opts)
 FROM (VALUES ('HighlightAll=true')) AS t(opts)
 ----
-ts_highlight: options must be a constant expression
+db error: ERROR: ts_highlight: options must be a constant expression
 
 
 # --- Bad offsets: odd-length array ---
@@ -205,7 +205,7 @@ ts_highlight: options must be a constant expression
 statement error
 SELECT ts_highlight('foo bar', ARRAY[0::INTEGER, 3::INTEGER, 5::INTEGER])
 ----
-offsets array must contain an even number of elements
+db error: ERROR: ts_highlight: offsets array must contain an even number of elements
 
 
 # --- Offset validation: malformed/inconsistent input is rejected ---
@@ -215,21 +215,24 @@ statement error
 SELECT ts_highlight('the quick brown fox',
                     ARRAY[(-5)::INTEGER, 10::INTEGER])
 ----
-malformed offset pair
+db error: ERROR: ts_highlight: malformed offset pair (start=4294967291, end=10); expected non-negative start <= end
+
 
 # start > end
 statement error
 SELECT ts_highlight('the quick brown fox',
                     ARRAY[5::INTEGER, 3::INTEGER])
 ----
-malformed offset pair
+db error: ERROR: ts_highlight: malformed offset pair (start=5, end=3); expected non-negative start <= end
+
 
 # start past document size
 statement error
 SELECT ts_highlight('the quick brown fox',
                     ARRAY[100::INTEGER, 200::INTEGER])
 ----
-past document size
+db error: ERROR: ts_highlight: offset start (100) past document size (19)
+
 
 # Out-of-order: must be sorted ascending by start. The diagnostic
 # reports both the offending start and its predecessor so callers can
@@ -238,7 +241,7 @@ statement error
 SELECT ts_highlight('the quick brown fox jumps over the lazy dog',
                     ARRAY[16::INTEGER, 19::INTEGER, 4::INTEGER, 9::INTEGER])
 ----
-ts_highlight: offsets array must be sorted ascending by start; saw start=4 after start=16
+db error: ERROR: ts_highlight: offsets array must be sorted ascending by start; saw start=4 after start=16
 
 
 # --- Non-foldable inputs (doc + offsets from a table) ---
@@ -514,7 +517,7 @@ id	ts_highlight
 statement error
 SELECT ts_highlight(body) FROM hl_docs WHERE body LIKE '%fox%'
 ----
-requires an inverted index scan
+db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
 
 
 # Error: virtual-column form without a WHERE predicate on the FTS column.
@@ -524,7 +527,7 @@ requires an inverted index scan
 statement error
 SELECT ts_highlight(body) FROM hl_docs_idx
 ----
-requires an inverted index scan
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 # Error: virtual-column form with a literal first arg (no col-ref). The
@@ -535,7 +538,7 @@ requires an inverted index scan
 statement error
 SELECT ts_highlight('arbitrary text')
 ----
-ts_offsets\(\) first argument must be a column reference
+db error: ERROR: ts_offsets() first argument must be a column reference
 
 
 # Multiple ts_highlight(body) calls in the same SELECT -- both produce
@@ -937,13 +940,15 @@ statement error
 SELECT ts_highlight(name, 'body', ts_phrase('x'))
 FROM (VALUES ('hl_inplace_dict')) t(name)
 ----
-must be a constant expression
+db error: ERROR: ts_offsets(): dict must be a constant expression
+
 
 # Unknown dict resolves to an error at bind.
 statement error
 SELECT ts_highlight('no_such_dict', 'body', ts_phrase('x'))
 ----
-not found
+db error: ERROR: ts_offsets(): text search dictionary not found: no_such_dict
+
 
 # Per-row body from a table -- the bind data is shared across rows;
 # the runtime builds one mini-segment per chunk over all body values.

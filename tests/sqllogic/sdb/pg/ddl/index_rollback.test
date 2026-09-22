@@ -89,8 +89,10 @@ n
 1
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_t VALUES (4, 30, 'delta');
+----
+db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +132,10 @@ kept
 
 
 # The ART is still on the relation: the key is still enforced.
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_t VALUES (5, 30, 'echo');
+----
+db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 # ... and a non-conflicting row still lands and is still found.
@@ -159,8 +163,10 @@ comment
 committed
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_t VALUES (6, 50, 'foxtrot');
+----
+db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +201,10 @@ relname
 ixrb_rank_idx
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_t VALUES (7, 50, 'golf');
+----
+db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
 
 
 statement ok
@@ -270,8 +278,10 @@ ixrb_at_rank_idx
 
 
 # ... and the UNIQUE one is still physically attached.
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_at VALUES (3, 10, 300, 'charlie');
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
 
 
 statement ok
@@ -300,8 +310,10 @@ data_type
 bigint
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixrb_at VALUES (4, 30, 400, 'delta');
+----
+db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
 
 
 statement ok

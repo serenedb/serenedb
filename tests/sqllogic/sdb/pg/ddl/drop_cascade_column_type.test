@@ -54,8 +54,11 @@ count
 2
 
 
-statement error (?i)(column|referenced).*c.*
+statement error
 SELECT c FROM iceberg_manifests;
+----
+db error: ERROR: Referenced column "c" not found in FROM clause!
+Candidate bindings: "id"
 
 
 query
@@ -102,12 +105,18 @@ id	label
 1	lamp
 
 
-statement error (?i)(column|referenced).*s1.*
+statement error
 SELECT s1 FROM clickclack_workers;
+----
+db error: ERROR: Referenced column "s1" not found in FROM clause!
+Candidate bindings: "id"
 
 
-statement error (?i)(column|referenced).*s2.*
+statement error
 SELECT s2 FROM clickclack_workers;
+----
+db error: ERROR: Referenced column "s2" not found in FROM clause!
+Candidate bindings: "id"
 
 
 statement ok
@@ -161,12 +170,18 @@ id
 1
 
 
-statement error (?i)(column|referenced).*p.*
+statement error
 SELECT p FROM mop_applications;
+----
+db error: ERROR: Referenced column "p" not found in FROM clause!
+Candidate bindings: "id"
 
 
-statement error (?i)(column|referenced).*p.*
+statement error
 SELECT p FROM mop_recruiter_calls;
+----
+db error: ERROR: Referenced column "p" not found in FROM clause!
+Candidate bindings: "id"
 
 
 statement ok
@@ -288,8 +303,11 @@ n
 1
 
 
-statement error (?i)(column|referenced).*state.*
+statement error
 SELECT state FROM vedernikoff_manifests;
+----
+db error: ERROR: Referenced column "state" not found in FROM clause!
+Candidate bindings: "body"
 
 
 statement ok

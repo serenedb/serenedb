@@ -124,24 +124,34 @@ id	v
 1028	r5a
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_dashboards (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_dashboards.id
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_ingest_jobs (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_ingest_jobs.id
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_query_plans (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_query_plans.id
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_error_log (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_error_log.id
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_audit (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_audit.id
 
 
 statement count 1

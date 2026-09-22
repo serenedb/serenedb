@@ -111,8 +111,10 @@ id	v
 100	a
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO mop_applications (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: mop_applications.id
 
 
 statement count 1

@@ -18,8 +18,10 @@ CREATE UNIQUE INDEX ixdg_rank_idx ON ixdg_t (rank);
 
 # The index enforces before the transaction, so the checks after it mean
 # something.
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixdg_t VALUES (3, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
 
 
 statement ok
@@ -43,8 +45,10 @@ n
 
 
 # So did the physical half: the key is enforced again.
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixdg_t VALUES (3, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
 
 
 query
@@ -102,8 +106,10 @@ statement ok
 INSERT INTO ixdg_ok VALUES (1, 10);
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO ixdg_ok VALUES (2, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
 
 
 statement ok

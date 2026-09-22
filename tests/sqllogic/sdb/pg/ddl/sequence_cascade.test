@@ -95,8 +95,10 @@ statement count 1
 INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_dashboards_audit (payload) VALUES ('would-have-been-default');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_dashboards_audit.id
 
 
 statement ok
@@ -180,16 +182,20 @@ statement count 1
 INSERT INTO iceberg_partitions (id, v) VALUES (500, 'explicit-iceberg_partitions');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO iceberg_partitions (v) VALUES ('omitted');
+----
+db error: ERROR: NOT NULL constraint failed: iceberg_partitions.id
 
 
 statement count 1
 INSERT INTO iceberg_audits (id, v) VALUES (501, 'explicit-iceberg_audits');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO iceberg_audits (v) VALUES ('omitted');
+----
+db error: ERROR: NOT NULL constraint failed: iceberg_audits.id
 
 
 statement ok

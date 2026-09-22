@@ -142,9 +142,9 @@ void VisitDatabase(duckdb::ClientContext& context,
             emitter.Entry(PgForeignServer::kId, entry);
           });
   auto& cluster = catalog::ClusterOf(context);
-  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                 .GetEntry(cluster.GetCatalogTransaction(context),
-                           database.GetName());
+  auto entry =
+    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(context), database.GetName());
   if (!entry) {
     return;
   }

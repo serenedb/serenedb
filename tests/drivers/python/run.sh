@@ -15,15 +15,17 @@ fi
 # If anything is missing, fall back to:
 #   1. a venv (if python3-venv is available), or
 #   2. a system-wide pip install with --break-system-packages (last resort).
-need_install=0
-for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg; do
-	if ! python3 -c "import $mod" 2>/dev/null; then
-		need_install=1
-		break
-	fi
-done
+missing_module() {
+	for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf; do
+		if ! python3 -c "import $mod" 2>/dev/null; then
+			echo "$mod"
+			return 0
+		fi
+	done
+	return 1
+}
 
-if [[ $need_install -eq 1 ]]; then
+if missing_module >/dev/null; then
 	VENV="${SCRIPT_DIR}/.venv"
 	if [[ ! -d "$VENV" ]] && python3 -m venv --help >/dev/null 2>&1; then
 		python3 -m venv --system-site-packages "$VENV" 2>/dev/null || true
@@ -40,9 +42,13 @@ if [[ $need_install -eq 1 ]]; then
 	fi
 	# Final fallback: install system-wide. The build image runs as root with
 	# a throwaway filesystem, so --break-system-packages is fine for CI.
-	if ! python3 -c "import pytest" 2>/dev/null; then
+	if mod=$(missing_module); then
+		echo "[python] $mod missing, installing requirements system-wide"
 		python3 -m pip install --quiet --break-system-packages \
 			-r "$SCRIPT_DIR/requirements.txt"
+	fi
+	if mod=$(missing_module); then
+		echo "[python] $mod still missing after install" >&2
 	fi
 fi
 
@@ -74,7 +80,7 @@ if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
 else
 	pytest_args=(-q)
 fi
-for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains; do
+for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"
@@ -90,6 +96,22 @@ done
 # when the binary isn't present. Regenerate with: cli_help.py override.
 echo "[python][cli_help] check"
 if ! python3 "${SCRIPT_DIR}/cli_help.py" check; then
+	final=1
+fi
+
+# OTLP protobuf fixtures: the committed .pb files must match what the
+# official opentelemetry-proto bindings produce from the .json sources,
+# so the server's decoder is checked against an independent encoder.
+# Regenerate with: scripts/otel/fixtures.py generate.
+echo "[python][otel_fixtures] check"
+if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/fixtures.py" check; then
+	final=1
+fi
+
+# The sqllogic include must match the canonical OTel DDL it is generated from.
+# Regenerate with: scripts/otel/schema.py generate.
+echo "[python][otel_schema] check"
+if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/schema.py" check; then
 	final=1
 fi
 

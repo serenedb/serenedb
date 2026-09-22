@@ -1,0 +1,94 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "checkout"}}
+      ]},
+      "scopeMetrics": [
+        {
+          "scope": {"name": "runtime", "version": "1.0"},
+          "metrics": [
+            {
+              "name": "process.memory.usage",
+              "description": "resident set size",
+              "unit": "By",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1788868800000000000",
+                    "asInt": "1048576",
+                    "attributes": [
+                      {"key": "pool", "value": {"stringValue": "heap"}}
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "http.server.request_count",
+              "unit": "{request}",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1788865200000000000",
+                    "timeUnixNano": "1788868800000000000",
+                    "asDouble": 42,
+                    "attributes": [
+                      {"key": "http.status_code", "value": {"intValue": "200"}}
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "http.server.duration",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1788868800000000000",
+                    "count": "10",
+                    "sum": 55,
+                    "bucketCounts": ["1", "2", "7"],
+                    "explicitBounds": [1, 5],
+                    "min": 0.5,
+                    "max": 9,
+                    "exemplars": [
+                      {
+                        "timeUnixNano": "1788868800000000000",
+                        "asDouble": 8.5,
+                        "traceId": "0af7651916cd43dd8448eb211c80319c",
+                        "spanId": "b7ad6b7169203331",
+                        "filteredAttributes": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "rpc.duration",
+              "unit": "s",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1788868800000000000",
+                    "count": "3",
+                    "sum": 1.5,
+                    "quantileValues": [
+                      {"quantile": 0.5, "value": 0.4},
+                      {"quantile": 0.99, "value": 1.1}
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

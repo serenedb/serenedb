@@ -88,8 +88,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
-    duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info) final {
+    duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) final {
     return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
   }
 

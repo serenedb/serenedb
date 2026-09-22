@@ -26,6 +26,7 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <string>
+#include <string_view>
 
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
@@ -50,8 +51,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
   }
 
-  void FinalizeLoad(
-    duckdb::optional_ptr<duckdb::ClientContext> context) final;
+  void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
 
@@ -73,5 +73,12 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
+
+inline duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
+  std::string_view name) {
+  auto& cluster = ClusterOf();
+  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{name});
+}
 
 }  // namespace sdb::catalog

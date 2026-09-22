@@ -42,14 +42,12 @@ namespace sdb::optimizer {
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
 
-connector::ColumnId ResolveColumnId(
-  duckdb::ColumnBinding binding,
-  const connector::ScanBindData& bind_data,
-  const duckdb::LogicalGet& get);
+connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
+                                    const connector::ScanBindData& bind_data,
+                                    const duckdb::LogicalGet& get);
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
-  const duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data);
+  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data);
 
 struct FoundScan {
   duckdb::LogicalGet* get;

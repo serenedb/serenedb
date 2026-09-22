@@ -218,9 +218,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   // answer, and it is the only one available.
   duckdb::Identifier GetTableName() const final;
 
-  duckdb::Identifier GetSchemaName() const final {
-    return ParentSchemaName();
-  }
+  duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 

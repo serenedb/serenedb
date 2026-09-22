@@ -46,7 +46,6 @@ namespace sdb::catalog {
 class SearchTableEntry;
 
 }  // namespace sdb::catalog
-
 namespace sdb::connector {
 
 struct OffsetsBindData;

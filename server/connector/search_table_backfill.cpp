@@ -84,8 +84,7 @@ void InitRowSource(duckdb::ClientContext& context,
   duckdb::vector<duckdb::LogicalType> types = target.column_types;
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
     source.projections.push_back(irs::ColumnstoreProjection{
-      .output_slot = i,
-      .column_id = target.column_ids[i]});
+      .output_slot = i, .column_id = target.column_ids[i]});
   }
   // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
   // by definition), read here so each rebuilt row keeps its identity.
@@ -104,8 +103,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target) {
   const auto* col_reader = sub.GetColReader();
-  SDB_ENSURE(col_reader,
-             "search-table build: segment has no columnstore");
+  SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
   const auto* mask = sub.docs_mask();

@@ -1,3 +1,4 @@
+
 <div align=center>
 
 <picture align=center>
@@ -18,9 +19,36 @@ SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics**
 
 Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
 
-## Benchmarks
+<div align=center>
+<a href="https://www.producthunt.com/posts/serenedb-krummelanke?utm_source=badge-featured&amp;utm_medium=badge">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1250875&amp;theme=dark">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1250875&amp;theme=light">
+    <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=POST_ID&amp;theme=light" alt="SereneDB - Ultra-Fast Search &amp; Analytics Database | Product Hunt" height="46"/>
+  </picture>
+</a>
+</div>
 
-* [SearchBench](https://serenedb.com/searchbench) - open benchmark for search and analytics: SereneDB, Elastic, OpenSearch, ParadeDB, ArangoDB
+
+## Open Benchmarks
+
+### 10x faster than ClickHouse on [10 billion OpenTelemetry logs](https://serenedb.com/searchbench?dataset=otel_logs_10b&include=SereneDB,ClickHouse,ClickHouse-sorted&run=hot)
+
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="resources/images/searchbench-10b-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="resources/images/searchbench-10b-light.svg">
+    <img alt="SearchBench at 10B rows." src="resources/images/searchbench-10b-light.svg">
+</picture>
+
+### [1 billion OpenTelemetry logs](https://playground.serenedb.com/searchbench?s=eyJ2IjoxLCJkIjoib3RlbF9sb2dzXzFiIiwidGgiOiJsaWdodCJ9)
+
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="resources/images/searchbench-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="resources/images/searchbench-light.svg">
+    <img alt="SearchBench at 1B rows." src="resources/images/searchbench-light.svg">
+</picture>
+
+* [SearchBench](https://serenedb.com/searchbench) - open benchmark for search and analytics: SereneDB, ClickHouse, Elastic, OpenSearch, ParadeDB
 * [Search Benchmark, The Game](https://serenedb.com/search-benchmark-game) - low-level search engine benchmark: [IResearch](iresearch/README.md), Lucene, Tantivy
 
 ## Links

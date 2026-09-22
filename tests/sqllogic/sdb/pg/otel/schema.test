@@ -1,0 +1,876 @@
+include schema.inc
+
+include schema.inc
+
+query
+SELECT tablename FROM pg_tables WHERE tablename LIKE 'otel%' ORDER BY 1;
+----
+tablename
+otel_logs
+otel_metrics_exponential_histogram
+otel_metrics_gauge
+otel_metrics_histogram
+otel_metrics_sum
+otel_metrics_summary
+otel_traces
+
+query
+SELECT indexname FROM pg_indexes WHERE indexname LIKE 'otel%' ORDER BY 1;
+----
+indexname
+otel_logs_idx
+otel_metrics_exponential_histogram_idx
+otel_metrics_gauge_idx
+otel_metrics_histogram_idx
+otel_metrics_sum_idx
+otel_metrics_summary_idx
+otel_traces_idx
+
+statement error
+ALTER TABLE otel_logs ADD COLUMN extra VARCHAR;
+----
+db error: ERROR: Unsupported alter type for catalog entry!
+
+
+statement error
+ALTER TABLE otel_logs DROP COLUMN body;
+----
+db error: ERROR: Unsupported alter type for catalog entry!
+
+
+statement error
+ALTER TABLE otel_logs ALTER COLUMN body TYPE TEXT;
+----
+db error: ERROR: Unsupported alter type for catalog entry!
+
+
+statement ok
+ALTER TABLE otel_logs RENAME TO otel_logs_renamed;
+
+statement ok
+ALTER TABLE otel_logs_renamed RENAME TO otel_logs;
+
+statement error
+CREATE TABLE otel_probe_bad (a VARCHAR) WITH (storage = 'search', row_group_size = 1024);
+----
+db error: ERROR: invalid value for parameter "row_group_size": "1024" (must be a positive multiple of the vector size 2048)
+
+
+statement ok
+CREATE TABLE otel_probe (a VARCHAR) WITH (storage = 'search');
+
+statement error
+CREATE INDEX otel_probe_idx ON otel_probe USING inverted (a) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+----
+db error: ERROR: optimize_top_k is a table option on a search-backed table
+HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+
+
+statement ok
+DROP TABLE otel_probe;
+
+statement ok
+INSERT INTO otel_logs ("timestamp", observed_timestamp, trace_id, span_id, trace_flags,
+                       severity_text, severity_number, service_name, event_name, body,
+                       resource_schema_url, scope_schema_url, scope_name, scope_version,
+                       resource_attributes, scope_attributes, log_attributes)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:10.000000123',
+        TIMESTAMP_NS '2026-09-08 12:00:10.000000456',
+        '0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', 1,
+        'ERROR', 17, 'checkout', NULL,
+        'connection reset by peer /api/v1/users?id=42 from 10.0.0.7:5432 (took 12ms)',
+        'https://opentelemetry.io/schemas/1.30.0', NULL, 'io.grpc.Client', '1.62.2',
+        '{"service.name":"checkout"}', NULL, '{"http.status_code":"502"}'),
+       (TIMESTAMP_NS '2026-09-08 12:00:10.000000124',
+        NULL, NULL, NULL, 0, 'INFO', 9, 'cart', NULL,
+        'healthcheck ok', NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+       (TIMESTAMP_NS '2026-09-09 01:00:00',
+        NULL, NULL, NULL, 0, 'WARN', 13, 'checkout', 'cache.evict',
+        'connection reset while draining pool', NULL, NULL, NULL, NULL, NULL, NULL,
+        '{"http.status_code":"503"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+query
+SELECT epoch_ns("timestamp") AS ts FROM otel_logs ORDER BY 1;
+----
+ts
+1788868810000000123
+1788868810000000124
+1788915600000000000
+
+query
+SELECT count(*) AS n FROM otel_logs
+WHERE "timestamp" @@ ts_between(TIMESTAMP_NS '2026-09-08 12:00:10.000000123',
+                                TIMESTAMP_NS '2026-09-08 12:00:10.000000124', true, false);
+----
+n
+1
+
+query
+SELECT service_name, severity_text FROM otel_logs
+WHERE body @@ websearch_to_tsquery('"connection reset" -healthcheck')
+  AND "timestamp" @@ ts_between(TIMESTAMP_NS '2026-09-08 00:00:00',
+                                TIMESTAMP_NS '2026-09-09 00:00:00', true, false)
+ORDER BY BM25(otel_logs.tableoid) DESC;
+----
+service_name	severity_text
+checkout	ERROR
+
+query
+SELECT unnest(ts_dict_agg(severity_text)) AS severity,
+       unnest(ts_dict_count(severity_text)) AS n
+FROM otel_logs ORDER BY 1;
+----
+severity	n
+ERROR	1
+INFO	1
+WARN	1
+
+query
+SELECT unnest(ts_dict_agg(service_name)) AS service,
+       unnest(ts_dict_count(service_name)) AS n
+FROM otel_logs WHERE body @@ 'reset' ORDER BY 1;
+----
+service	n
+checkout	2
+
+query
+SELECT service_name FROM otel_logs WHERE trace_id @@ '0af7651916cd43dd8448eb211c80319c';
+----
+service_name
+checkout
+
+query
+SELECT severity_text FROM otel_logs WHERE severity_number @@ ts_ge(13) ORDER BY 1;
+----
+severity_text
+ERROR
+WARN
+
+query
+SELECT body FROM otel_logs
+WHERE service_name @@ 'checkout' AND log_attributes ->> 'http.status_code' = '502';
+----
+body
+connection reset by peer /api/v1/users?id=42 from 10.0.0.7:5432 (took 12ms)
+
+query
+SELECT event_name FROM otel_logs WHERE event_name @@ 'cache.evict';
+----
+event_name
+cache.evict
+
+query
+SELECT date_trunc('day', "timestamp") AS day, count(*) AS n
+FROM otel_logs GROUP BY 1 ORDER BY 1;
+----
+day	n
+2026-09-08 00:00:00	2
+2026-09-09 00:00:00	1
+
+query
+SELECT list_sort(ts_lexize('otel_body_dict', 'ERROR io.grpc.Client 10.0.0.7:5432 took 12ms')) AS tokens;
+----
+tokens
+{10.0.0.7,12ms,5432,error,io.grpc.client,took}
+
+statement ok
+INSERT INTO otel_traces ("timestamp", end_timestamp, trace_id, span_id, parent_span_id,
+                         trace_state, span_name, span_kind, service_name, duration_ns,
+                         status_code, status_message, resource_schema_url, scope_schema_url,
+                         scope_name, scope_version, resource_attributes, scope_attributes,
+                         span_attributes, events, links, event_names, link_trace_ids)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00.000000000',
+        TIMESTAMP_NS '2026-09-08 12:00:00.150000000',
+        '0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', NULL,
+        'rojo=00f067aa0ba902b7', 'GET /checkout', 'Server', 'checkout', 150000000,
+        'Error', 'upstream timed out', 'https://opentelemetry.io/schemas/1.30.0', NULL,
+        'io.opentelemetry.http', '1.0.0', '{"service.name":"checkout"}', NULL,
+        '{"http.method":"GET","http.route":"/checkout"}',
+        '[{"timestamp":"2026-09-08T12:00:00.100000000Z","name":"exception","attributes":{"exception.type":"TimeoutError"}}]',
+        '[{"trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","span_id":"00f067aa0ba902b7","trace_state":"","attributes":{}}]',
+        ARRAY['exception'], ARRAY['1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6']),
+       (TIMESTAMP_NS '2026-09-08 12:00:00.010000000',
+        TIMESTAMP_NS '2026-09-08 12:00:00.012000000',
+        '0af7651916cd43dd8448eb211c80319c', 'c1ad6b7169203332', 'b7ad6b7169203331',
+        NULL, 'SELECT orders', 'Client', 'checkout', 2000000,
+        'Ok', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        '{"db.system":"postgresql"}', '[]', '[]',
+        ARRAY[]::VARCHAR[], ARRAY[]::VARCHAR[]),
+       (TIMESTAMP_NS '2026-09-08 12:00:05.000000000',
+        TIMESTAMP_NS '2026-09-08 12:00:05.300000000',
+        '9fa1c3e5b7d90123456789abcdef0123', 'd2be7c8270314443', NULL,
+        NULL, 'POST /cart', 'Server', 'cart', 300000000,
+        'Unset', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        '{}', '[]', '[]', ARRAY[]::VARCHAR[], ARRAY[]::VARCHAR[]);
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+query
+SELECT span_id, span_name, duration_ns FROM otel_traces
+WHERE trace_id @@ '0af7651916cd43dd8448eb211c80319c' ORDER BY "timestamp";
+----
+span_id	span_name	duration_ns
+b7ad6b7169203331	GET /checkout	150000000
+c1ad6b7169203332	SELECT orders	2000000
+
+query
+SELECT trace_id, span_name FROM otel_traces WHERE event_names @@ 'exception';
+----
+trace_id	span_name
+0af7651916cd43dd8448eb211c80319c	GET /checkout
+
+query
+SELECT span_id FROM otel_traces WHERE link_trace_ids @@ '1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6';
+----
+span_id
+b7ad6b7169203331
+
+query
+SELECT span_name, duration_ns FROM otel_traces WHERE duration_ns @@ ts_gt(100000000) ORDER BY 1;
+----
+span_name	duration_ns
+GET /checkout	150000000
+POST /cart	300000000
+
+query
+SELECT service_name, span_name FROM otel_traces WHERE span_kind @@ 'Server' ORDER BY 1, 2;
+----
+service_name	span_name
+cart	POST /cart
+checkout	GET /checkout
+
+query
+SELECT span_name FROM otel_traces WHERE status_code @@ 'Error';
+----
+span_name
+GET /checkout
+
+query
+SELECT unnest(ts_dict_agg(service_name)) AS service,
+       unnest(ts_dict_count(service_name)) AS n
+FROM otel_traces ORDER BY 1;
+----
+service	n
+cart	1
+checkout	2
+
+query
+SELECT span_attributes ->> 'db.system' AS db FROM otel_traces WHERE span_name @@ 'SELECT orders';
+----
+db
+postgresql
+
+query
+SELECT events -> 0 ->> 'name' AS event FROM otel_traces WHERE event_names @@ 'exception';
+----
+event
+exception
+
+query
+SELECT service_name, count(*) FILTER (WHERE status_code = 'Error')::DOUBLE / count(*) AS error_rate
+FROM otel_traces GROUP BY 1 ORDER BY 1;
+----
+service_name	error_rate
+cart	0
+checkout	0.5
+
+statement ok
+INSERT INTO otel_metrics_gauge ("timestamp", start_timestamp, service_name, metric_name,
+                                metric_description, metric_unit, resource_schema_url,
+                                scope_schema_url, scope_name, scope_version,
+                                resource_attributes, scope_attributes, attributes, flags,
+                                value, exemplars)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'checkout', 'process.memory.usage',
+        'resident set size', 'By', NULL, NULL, 'runtime', '1.0',
+        '{"service.name":"checkout"}', NULL, '{"pool":"heap"}', 0, 1.048576e6, NULL);
+
+statement ok
+INSERT INTO otel_metrics_sum ("timestamp", start_timestamp, service_name, metric_name,
+                              metric_description, metric_unit, resource_schema_url,
+                              scope_schema_url, scope_name, scope_version,
+                              resource_attributes, scope_attributes, attributes, flags,
+                              value, aggregation_temporality, is_monotonic, exemplars)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', TIMESTAMP_NS '2026-09-08 11:00:00',
+        'checkout', 'http.server.request_count', NULL, '{request}', NULL, NULL, NULL, NULL,
+        NULL, NULL, '{"http.status_code":"200"}', 0, 42, 'Cumulative', true, NULL),
+       (TIMESTAMP_NS '2026-09-08 12:01:00', TIMESTAMP_NS '2026-09-08 11:00:00',
+        'checkout', 'http.server.request_count', NULL, '{request}', NULL, NULL, NULL, NULL,
+        NULL, NULL, '{"http.status_code":"500"}', 0, 3, 'Cumulative', true, NULL);
+
+statement ok
+INSERT INTO otel_metrics_histogram ("timestamp", start_timestamp, service_name, metric_name,
+                                    metric_description, metric_unit, resource_schema_url,
+                                    scope_schema_url, scope_name, scope_version,
+                                    resource_attributes, scope_attributes, attributes, flags,
+                                    count, sum, bucket_counts, explicit_bounds, bucket_values,
+                                    min, max, aggregation_temporality, exemplars)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'checkout', 'http.server.duration',
+        NULL, 'ms', NULL, NULL, NULL, NULL, NULL, NULL, '{}', 0,
+        10, 55.0, ARRAY[1, 2, 7]::BIGINT[], ARRAY[1.0, 5.0]::DOUBLE PRECISION[], NULL,
+        0.5, 9.0, 'Cumulative',
+        '[{"timestamp":"2026-09-08T12:00:00Z","value":8.5,"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331","filtered_attributes":{}}]');
+
+statement ok
+INSERT INTO otel_metrics_exponential_histogram ("timestamp", start_timestamp, service_name,
+                                                metric_name, metric_description, metric_unit,
+                                                resource_schema_url, scope_schema_url,
+                                                scope_name, scope_version, resource_attributes,
+                                                scope_attributes, attributes, flags,
+                                                count, sum, scale, zero_count,
+                                                positive_offset, positive_bucket_counts,
+                                                negative_offset, negative_bucket_counts,
+                                                min, max, aggregation_temporality, exemplars)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'cart', 'rpc.client.duration',
+        NULL, 'ms', NULL, NULL, NULL, NULL, NULL, NULL, '{}', 0,
+        6, 12.5, 2, 1, 3, ARRAY[1, 2, 2]::BIGINT[], -2, ARRAY[0]::BIGINT[],
+        0.1, 4.0, 'Delta', NULL);
+
+statement ok
+INSERT INTO otel_metrics_summary ("timestamp", start_timestamp, service_name, metric_name,
+                                  metric_description, metric_unit, resource_schema_url,
+                                  scope_schema_url, scope_name, scope_version,
+                                  resource_attributes, scope_attributes, attributes, flags,
+                                  count, sum, quantiles, values)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'cart', 'rpc.duration',
+        NULL, 's', NULL, NULL, NULL, NULL, NULL, NULL, '{}', 0,
+        3, 1.5, ARRAY[0.5, 0.99]::DOUBLE PRECISION[], ARRAY[0.4, 1.1]::DOUBLE PRECISION[]);
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_gauge;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_sum;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_histogram;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_summary;
+
+query
+SELECT metric_name, metric_unit, value, attributes ->> 'pool' AS pool
+FROM otel_metrics_gauge WHERE metric_name @@ 'process.memory.usage';
+----
+metric_name	metric_unit	value	pool
+process.memory.usage	By	1048576	heap
+
+query
+SELECT metric_name, date_trunc('minute', "timestamp") AS minute, sum(value) AS total
+FROM otel_metrics_sum
+WHERE metric_name @@ 'http.server.request_count'
+  AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
+GROUP BY 1, 2 ORDER BY 1, 2;
+----
+metric_name	minute	total
+http.server.request_count	2026-09-08 12:00:00	42
+http.server.request_count	2026-09-08 12:01:00	3
+
+query
+SELECT count, sum, bucket_counts, explicit_bounds, bucket_values, min, max,
+       aggregation_temporality
+FROM otel_metrics_histogram WHERE service_name @@ 'checkout';
+----
+count	sum	bucket_counts	explicit_bounds	bucket_values	min	max	aggregation_temporality
+10	55	{1,2,7}	{1,5}	NULL	0.5	9	Cumulative
+
+query
+SELECT exemplars -> 0 ->> 'trace_id' AS trace_id FROM otel_metrics_histogram;
+----
+trace_id
+0af7651916cd43dd8448eb211c80319c
+
+query
+SELECT scale, zero_count, positive_offset, positive_bucket_counts,
+       negative_offset, negative_bucket_counts, aggregation_temporality
+FROM otel_metrics_exponential_histogram;
+----
+scale	zero_count	positive_offset	positive_bucket_counts	negative_offset	negative_bucket_counts	aggregation_temporality
+2	1	3	{1,2,2}	-2	{0}	Delta
+
+query
+SELECT count, sum, quantiles, values FROM otel_metrics_summary;
+----
+count	sum	quantiles	values
+3	1.5	{0.5,0.99}	{0.4,1.1}
+
+query
+SELECT unnest(ts_dict_agg(metric_name)) AS metric,
+       unnest(ts_dict_count(metric_name)) AS n
+FROM otel_metrics_sum ORDER BY 1;
+----
+metric	n
+http.server.request_count	2
+
+query
+SELECT metric_name FROM otel_metrics_sum
+WHERE "timestamp" @@ ts_between(TIMESTAMP_NS '2026-09-08 12:00:30',
+                                TIMESTAMP_NS '2026-09-08 12:02:00', true, false);
+----
+metric_name
+http.server.request_count
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}},{"key":"k8s.pod","value":{"stringValue":"checkout-7d9f"}}]},"schemaUrl":"https://opentelemetry.io/schemas/1.30.0","scopeLogs":[{"scope":{"name":"io.grpc.Client","version":"1.62.2","attributes":[{"key":"library.stability","value":{"stringValue":"stable"}}]},"schemaUrl":"https://opentelemetry.io/schemas/1.30.0","logRecords":[{"timeUnixNano":"1788868810000000123","observedTimeUnixNano":"1788868810000000456","severityNumber":17,"severityText":"ERROR","body":{"stringValue":"connection reset by peer"},"attributes":[{"key":"http.status_code","value":{"intValue":"502"}},{"key":"http.method","value":{"stringValue":"GET"}}],"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","flags":1}]}]}]}');
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":[{"resource":{"attributes":[]},"scopeLogs":[{"scope":{},"logRecords":[{"timeUnixNano":"1788868800000000000","body":{"stringValue":"every AnyValue shape"},"attributes":[{"key":"a.string","value":{"stringValue":"text"}},{"key":"b.bool","value":{"boolValue":true}},{"key":"c.int","value":{"intValue":"-9007199254740993"}},{"key":"d.double","value":{"doubleValue":0.1}},{"key":"e.bytes","value":{"bytesValue":"3q2+7w=="}},{"key":"f.array","value":{"arrayValue":{"values":[{"stringValue":"x"},{"intValue":"2"},{"boolValue":false}]}}},{"key":"g.map","value":{"kvlistValue":{"values":[{"key":"inner.key","value":{"stringValue":"inner"}},{"key":"inner.nested","value":{"kvlistValue":{"values":[{"key":"deep","value":{"intValue":"1"}}]}}}]}}},{"key":"h.empty","value":{}}]}]}]}]}');
+
+statement count 2
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"cart"}}]},"scopeLogs":[{"scope":{},"logRecords":[{"timeUnixNano":"0","observedTimeUnixNano":"1788868800000000000","traceId":"00000000000000000000000000000000","spanId":"0000000000000000","severityNumber":0,"severityText":"","body":{"stringValue":"fell back to observed time"}},{"observedTimeUnixNano":"1788868800000000001","body":{"kvlistValue":{"values":[{"key":"event","value":{"stringValue":"checkout"}},{"key":"amount","value":{"doubleValue":12.5}}]}},"attributes":[{"key":"event.name","value":{"stringValue":"cart.checkout"}}]}]}]}]}');
+
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeSpans":[{"scope":{"name":"io.opentelemetry.http","version":"1.0.0"},"spans":[{"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","traceState":"rojo=00f067aa0ba902b7","name":"GET /checkout","kind":2,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800150000000","attributes":[{"key":"http.method","value":{"stringValue":"GET"}}],"events":[{"timeUnixNano":"1788868800100000000","name":"exception","attributes":[{"key":"exception.type","value":{"stringValue":"TimeoutError"}}],"droppedAttributesCount":0}],"links":[{"traceId":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","spanId":"00f067aa0ba902b7","traceState":"","attributes":[]}],"status":{"code":2,"message":"upstream timed out"}},{"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"c1ad6b7169203332","parentSpanId":"b7ad6b7169203331","name":"SELECT orders","kind":3,"startTimeUnixNano":"1788868800010000000","endTimeUnixNano":"1788868800012000000","attributes":[{"key":"db.system","value":{"stringValue":"postgresql"}}]}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_gauge SELECT * FROM otel_parse_metrics_gauge('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_sum SELECT * FROM otel_parse_metrics_sum('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_histogram SELECT * FROM otel_parse_metrics_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
+
+statement count 0
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otel_parse_metrics_exponential_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_summary SELECT * FROM otel_parse_metrics_summary('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_gauge;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_sum;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_histogram;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_summary;
+
+query
+SELECT epoch_ns("timestamp") AS ts, epoch_ns(observed_timestamp) AS observed,
+       trace_id, span_id, trace_flags, severity_text, severity_number,
+       service_name, body, resource_schema_url, scope_name, scope_version
+FROM otel_logs WHERE body @@ 'reset' ORDER BY 9, 1;
+----
+ts	observed	trace_id	span_id	trace_flags	severity_text	severity_number	service_name	body	resource_schema_url	scope_name	scope_version
+1788868810000000123	1788868810000000456	0af7651916cd43dd8448eb211c80319c	b7ad6b7169203331	1	ERROR	17	checkout	connection reset by peer	https://opentelemetry.io/schemas/1.30.0	io.grpc.Client	1.62.2
+1788868810000000123	1788868810000000456	0af7651916cd43dd8448eb211c80319c	b7ad6b7169203331	1	ERROR	17	checkout	connection reset by peer /api/v1/users?id=42 from 10.0.0.7:5432 (took 12ms)	https://opentelemetry.io/schemas/1.30.0	io.grpc.Client	1.62.2
+1788915600000000000	NULL	NULL	NULL	0	WARN	13	checkout	connection reset while draining pool	NULL	NULL	NULL
+
+query
+SELECT resource_attributes, scope_attributes, log_attributes
+FROM otel_logs WHERE body @@ 'reset' ORDER BY 3, 1;
+----
+resource_attributes	scope_attributes	log_attributes
+{"k8s.pod":"checkout-7d9f","service.name":"checkout"}	{"library.stability":"stable"}	{"http.method":"GET","http.status_code":502}
+{"service.name":"checkout"}	NULL	{"http.status_code":"502"}
+NULL	NULL	{"http.status_code":"503"}
+
+query
+SELECT log_attributes FROM otel_logs WHERE body @@ 'anyvalue';
+----
+log_attributes
+{"a.string":"text","b.bool":true,"c.int":-9007199254740993,"d.double":0.1,"e.bytes":"3q2+7w==","f.array":["x",2,false],"g.map":{"inner.key":"inner","inner.nested":{"deep":1}},"h.empty":null}
+
+query
+SELECT epoch_ns("timestamp") AS ts, service_name, event_name, body,
+       trace_id IS NULL AS no_trace, span_id IS NULL AS no_span
+FROM otel_logs WHERE service_name @@ 'cart' ORDER BY 1;
+----
+ts	service_name	event_name	body	no_trace	no_span
+1788868800000000000	cart	NULL	fell back to observed time	t	t
+1788868800000000001	cart	cart.checkout	{"amount":12.5,"event":"checkout"}	t	t
+1788868810000000124	cart	NULL	healthcheck ok	t	t
+
+query
+SELECT span_id, span_name, span_kind, status_code, status_message, duration_ns,
+       parent_span_id, trace_state
+FROM otel_traces ORDER BY "timestamp", span_id, status_code;
+----
+span_id	span_name	span_kind	status_code	status_message	duration_ns	parent_span_id	trace_state
+b7ad6b7169203331	GET /checkout	Server	Error	upstream timed out	150000000	NULL	rojo=00f067aa0ba902b7
+b7ad6b7169203331	GET /checkout	Server	Error	upstream timed out	150000000	NULL	rojo=00f067aa0ba902b7
+c1ad6b7169203332	SELECT orders	Client	Ok	NULL	2000000	b7ad6b7169203331	NULL
+c1ad6b7169203332	SELECT orders	Client	Unset	NULL	2000000	b7ad6b7169203331	NULL
+d2be7c8270314443	POST /cart	Server	Unset	NULL	300000000	NULL	NULL
+
+query
+SELECT events, links, event_names, link_trace_ids
+FROM otel_traces WHERE event_names @@ 'exception' ORDER BY 1;
+----
+events	links	event_names	link_trace_ids
+[{"attributes":{"exception.type":"TimeoutError"},"dropped_attributes_count":0,"name":"exception","timestamp":"2026-09-08T12:00:00.100000000Z"}]	[{"attributes":{},"span_id":"00f067aa0ba902b7","trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","trace_state":null}]	{exception}	{1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6}
+[{"timestamp":"2026-09-08T12:00:00.100000000Z","name":"exception","attributes":{"exception.type":"TimeoutError"}}]	[{"trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","span_id":"00f067aa0ba902b7","trace_state":"","attributes":{}}]	{exception}	{1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6}
+
+query
+SELECT metric_name, metric_unit, value, attributes
+FROM otel_metrics_gauge ORDER BY 1, 3, 4;
+----
+metric_name	metric_unit	value	attributes
+process.memory.usage	By	1048576	{"pool":"heap"}
+process.memory.usage	By	1048576	{"pool":"heap"}
+
+query
+SELECT metric_name, value, aggregation_temporality, is_monotonic, attributes,
+       epoch_ns(start_timestamp) AS start
+FROM otel_metrics_sum ORDER BY 5, 2;
+----
+metric_name	value	aggregation_temporality	is_monotonic	attributes	start
+http.server.request_count	42	Cumulative	t	{"http.status_code":"200"}	1788865200000000000
+http.server.request_count	3	Cumulative	t	{"http.status_code":"500"}	1788865200000000000
+http.server.request_count	42	Cumulative	t	{"http.status_code":200}	1788865200000000000
+
+query
+SELECT metric_name, count, sum, bucket_counts, explicit_bounds, min, max,
+       aggregation_temporality, exemplars
+FROM otel_metrics_histogram ORDER BY 9;
+----
+metric_name	count	sum	bucket_counts	explicit_bounds	min	max	aggregation_temporality	exemplars
+http.server.duration	10	55	{1,2,7}	{1,5}	0.5	9	Cumulative	[{"filtered_attributes":{},"span_id":"b7ad6b7169203331","timestamp":"2026-09-08T12:00:00.000000000Z","trace_id":"0af7651916cd43dd8448eb211c80319c","value":8.5}]
+http.server.duration	10	55	{1,2,7}	{1,5}	0.5	9	Cumulative	[{"timestamp":"2026-09-08T12:00:00Z","value":8.5,"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331","filtered_attributes":{}}]
+
+query
+SELECT metric_name, count, sum, quantiles, values
+FROM otel_metrics_summary ORDER BY 1, 2, 3;
+----
+metric_name	count	sum	quantiles	values
+rpc.duration	3	1.5	{0.5,0.99}	{0.4,1.1}
+rpc.duration	3	1.5	{0.5,0.99}	{0.4,1.1}
+
+statement error
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":');
+----
+db error: ERROR: OTLP/JSON: INCOMPLETE_ARRAY_OR_OBJECT: JSON document ended early in the middle of an object or array. This is a fatal and unrecoverable error.
+
+
+statement error
+SELECT * FROM otel_parse_logs(NULL);
+----
+db error: ERROR: OTLP payload cannot be NULL
+
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('CtICCjgKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0ChoKB2s4cy5wb2QSDwoNY2hlY2tvdXQtN2Q5ZhLsAQo3Cg5pby5ncnBjLkNsaWVudBIGMS42Mi4yGh0KEWxpYnJhcnkuc3RhYmlsaXR5EggKBnN0YWJsZRKHAQl7ZNNxtFbTGBARGgVFUlJPUioaChhjb25uZWN0aW9uIHJlc2V0IGJ5IHBlZXIyFwoQaHR0cC5zdGF0dXNfY29kZRIDGPYDMhQKC2h0dHAubWV0aG9kEgUKA0dFVEUBAAAAShAK92UZFs1D3YRI6yEcgDGcUgi3rWtxaSAzMVnIZdNxtFbTGBonaHR0cHM6Ly9vcGVudGVsZW1ldHJ5LmlvL3NjaGVtYXMvMS4zMC4wGidodHRwczovL29wZW50ZWxlbWV0cnkuaW8vc2NoZW1hcy8xLjMwLjA=', 'protobuf');
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('CvkBCgAS9AEKABLvAQkAgMcdslbTGCoWChRldmVyeSBBbnlWYWx1ZSBzaGFwZTISCghhLnN0cmluZxIGCgR0ZXh0MgwKBmIuYm9vbBICEAEyFAoFYy5pbnQSCxj/////////7/8BMhUKCGQuZG91YmxlEgkhmpmZmZmZuT8yEQoHZS5ieXRlcxIGOgTerb7vMhoKB2YuYXJyYXkSDyoNCgMKAXgKAhgCCgIQADJBCgVnLm1hcBI4MjYKFAoJaW5uZXIua2V5EgcKBWlubmVyCh4KDGlubmVyLm5lc3RlZBIOMgwKCgoEZGVlcBICGAEyCwoHaC5lbXB0eRIA', 'protobuf');
+
+statement count 2
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('CrwBChgKFgoMc2VydmljZS5uYW1lEgYKBGNhcnQSnwEKABJDKhwKGmZlbGwgYmFjayB0byBvYnNlcnZlZCB0aW1lShAAAAAAAAAAAAAAAAAAAAAAUggAAAAAAAAAAFkAgMcdslbTGBJWKiwyKgoTCgVldmVudBIKCghjaGVja291dAoTCgZhbW91bnQSCSEAAAAAAAApQDIdCgpldmVudC5uYW1lEg8KDWNhcnQuY2hlY2tvdXRZAYDHHbJW0xg=', 'protobuf');
+
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('CoQDChwKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0EuMCCh4KFWlvLm9wZW50ZWxlbWV0cnkuaHR0cBIFMS4wLjAS2gEKEAr3ZRkWzUPdhEjrIRyAMZwSCLeta3FpIDMxGhVyb2pvPTAwZjA2N2FhMGJhOTAyYjcqDUdFVCAvY2hlY2tvdXQwAjkAgMcdslbTGEGAUbgmslbTGEoUCgtodHRwLm1ldGhvZBIFCgNHRVRaNgkAYb0jslbTGBIJZXhjZXB0aW9uGiAKDmV4Y2VwdGlvbi50eXBlEg4KDFRpbWVvdXRFcnJvcmocChAbwtPk9aa3yNng8aKzxNXmEggA8GeqC6kCt3oWEhJ1cHN0cmVhbSB0aW1lZCBvdXQYAhJkChAK92UZFs1D3YRI6yEcgDGcEgjBrWtxaSAzMiIIt61rcWkgMzEqDVNFTEVDVCBvcmRlcnMwAzmAFmAeslbTGEEAm34eslbTGEoZCglkYi5zeXN0ZW0SDAoKcG9zdGdyZXNxbA==', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_gauge
+SELECT * FROM otel_parse_metrics_gauge('CvIDChwKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0EtEDCg4KB3J1bnRpbWUSAzEuMBJTChRwcm9jZXNzLm1lbW9yeS51c2FnZRIRcmVzaWRlbnQgc2V0IHNpemUaAkJ5KiQKIhkAgMcdslbTGDEAABAAAAAAADoOCgRwb29sEgYKBGhlYXASYgoZaHR0cC5zZXJ2ZXIucmVxdWVzdF9jb3VudBoJe3JlcXVlc3R9OjoKNBEA4A7ta1PTGBkAgMcdslbTGCEAAAAAAABFQDoXChBodHRwLnN0YXR1c19jb2RlEgMYyAEQAhgBEqsBChRodHRwLnNlcnZlci5kdXJhdGlvbhoCbXNKjgEKiQEZAIDHHbJW0xghCgAAAAAAAAApAAAAAACAS0AyGAEAAAAAAAAAAgAAAAAAAAAHAAAAAAAAADoQAAAAAAAA8D8AAAAAAAAUQEIuEQCAxx2yVtMYGQAAAAAAACFAIgi3rWtxaSAzMSoQCvdlGRbNQ92ESOshHIAxnFkAAAAAAADgP2EAAAAAAAAiQBACElgKDHJwYy5kdXJhdGlvbhoBc1pFCkMZAIDHHbJW0xghAwAAAAAAAAApAAAAAAAA+D8yEgkAAAAAAADgPxGamZmZmZnZPzISCa5H4XoUru8/EZqZmZmZmfE/', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_summary
+SELECT * FROM otel_parse_metrics_summary('CvIDChwKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0EtEDCg4KB3J1bnRpbWUSAzEuMBJTChRwcm9jZXNzLm1lbW9yeS51c2FnZRIRcmVzaWRlbnQgc2V0IHNpemUaAkJ5KiQKIhkAgMcdslbTGDEAABAAAAAAADoOCgRwb29sEgYKBGhlYXASYgoZaHR0cC5zZXJ2ZXIucmVxdWVzdF9jb3VudBoJe3JlcXVlc3R9OjoKNBEA4A7ta1PTGBkAgMcdslbTGCEAAAAAAABFQDoXChBodHRwLnN0YXR1c19jb2RlEgMYyAEQAhgBEqsBChRodHRwLnNlcnZlci5kdXJhdGlvbhoCbXNKjgEKiQEZAIDHHbJW0xghCgAAAAAAAAApAAAAAACAS0AyGAEAAAAAAAAAAgAAAAAAAAAHAAAAAAAAADoQAAAAAAAA8D8AAAAAAAAUQEIuEQCAxx2yVtMYGQAAAAAAACFAIgi3rWtxaSAzMSoQCvdlGRbNQ92ESOshHIAxnFkAAAAAAADgP2EAAAAAAAAiQBACElgKDHJwYy5kdXJhdGlvbhoBc1pFCkMZAIDHHbJW0xghAwAAAAAAAAApAAAAAAAA+D8yEgkAAAAAAADgPxGamZmZmZnZPzISCa5H4XoUru8/EZqZmZmZmfE/', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_gauge;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_summary;
+
+query
+SELECT count(*) AS shapes_from_both_decoders FROM (
+  SELECT concat_ws('|',
+                        coalesce(epoch_ns("timestamp")::VARCHAR, '~'),
+                        coalesce(epoch_ns(observed_timestamp)::VARCHAR, '~'),
+                        coalesce(trace_id::VARCHAR, '~'),
+                        coalesce(span_id::VARCHAR, '~'),
+                        coalesce(trace_flags::VARCHAR, '~'),
+                        coalesce(severity_text::VARCHAR, '~'),
+                        coalesce(severity_number::VARCHAR, '~'),
+                        coalesce(service_name::VARCHAR, '~'),
+                        coalesce(event_name::VARCHAR, '~'),
+                        coalesce(body::VARCHAR, '~'),
+                        coalesce(resource_schema_url::VARCHAR, '~'),
+                        coalesce(scope_schema_url::VARCHAR, '~'),
+                        coalesce(scope_name::VARCHAR, '~'),
+                        coalesce(scope_version::VARCHAR, '~'),
+                        coalesce(resource_attributes::VARCHAR, '~'),
+                        coalesce(scope_attributes::VARCHAR, '~'),
+                        coalesce(log_attributes::VARCHAR, '~')) AS row_key
+  FROM otel_logs GROUP BY 1 HAVING count(*) = 2
+);
+----
+shapes_from_both_decoders
+4
+
+query
+SELECT count(*) AS shapes_from_both_decoders FROM (
+  SELECT concat_ws('|',
+                        coalesce(epoch_ns("timestamp")::VARCHAR, '~'),
+                        coalesce(epoch_ns(end_timestamp)::VARCHAR, '~'),
+                        coalesce(trace_id::VARCHAR, '~'),
+                        coalesce(span_id::VARCHAR, '~'),
+                        coalesce(parent_span_id::VARCHAR, '~'),
+                        coalesce(trace_state::VARCHAR, '~'),
+                        coalesce(span_name::VARCHAR, '~'),
+                        coalesce(span_kind::VARCHAR, '~'),
+                        coalesce(service_name::VARCHAR, '~'),
+                        coalesce(duration_ns::VARCHAR, '~'),
+                        coalesce(status_code::VARCHAR, '~'),
+                        coalesce(status_message::VARCHAR, '~'),
+                        coalesce(span_attributes::VARCHAR, '~'),
+                        coalesce(events::VARCHAR, '~'),
+                        coalesce(links::VARCHAR, '~'),
+                        coalesce(event_names::VARCHAR, '~'),
+                        coalesce(link_trace_ids::VARCHAR, '~')) AS row_key
+  FROM otel_traces GROUP BY 1 HAVING count(*) = 2
+);
+----
+shapes_from_both_decoders
+2
+
+statement error
+SELECT * FROM otel_parse_logs('not base64 @@@', 'protobuf');
+----
+db error: ERROR: OTLP payload is not valid base64
+
+
+statement error
+SELECT * FROM otel_parse_logs('CtICCjgKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0ChoKB2s4cy5wb2QSDwoNY2hlY2tvdXQtN2Q5ZhLsAQo3Cg5pby5ncnBjLkNsaWVudBIGMS42Mi4yGh0KEWxpYnJhcnkuc3RhYmlsaXR5EggKBnN0YWJsZRKHAQl7ZNNxtFbTGBARGgVFUlJPUioaChhjb25uZWN0aW9uIHJlc2V0IGJ5IHBlZXIyFwoQaHR0cC5zdGF0dXNfY29kZRIDGPYDMhQKC2h0dHAubWV0aG9kEgUKA0dFVEUBAAAAShAK92UZFs1D3YRI6yEcgDGcUgi3rWtxaSAzMVnIZdNxtFbTGBonaHR0cHM6Ly9vcGVudGVsZW1ldHJ5LmlvL3NjaGVtYXMvMS4zMC4wGidodHRwczovL29wZW50ZWxlbWV0cnkuaW8vc2NoZW1hcy8xLjMwLjA=', 'yaml');
+----
+db error: ERROR: unknown OTLP encoding [yaml], expected json or protobuf
+
+
+statement count 4
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"alpha"}}]},"schemaUrl":"https://opentelemetry.io/schemas/1.30.0","scopeLogs":[{"scope":{"name":"s1","version":"1"},"logRecords":[{"timeUnixNano":"1788868800000000010","body":{"stringValue":"a-s1-1"}},{"timeUnixNano":"1788868800000000011","body":{"stringValue":"a-s1-2"}}]},{"scope":{"name":"s2"},"schemaUrl":"https://opentelemetry.io/schemas/1.31.0","logRecords":[{"timeUnixNano":"1788868800000000012","body":{"stringValue":"a-s2-1"}}]}]},{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"beta"}},{"key":"host.name","value":{"stringValue":"node-9"}}]},"scopeLogs":[{"scope":{},"logRecords":[{"timeUnixNano":"1788868800000000013","body":{"stringValue":"b-s0-1"},"severityNumber":21,"severityText":"FATAL"}]}]}]}');
+
+statement count 7
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"fanout"}}]},"scopeSpans":[{"scope":{"name":"kinds"},"spans":[{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000001","name":"unspecified","kind":0,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000001"},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000002","name":"internal","kind":1,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000002","status":{"code":1}},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000003","name":"server","kind":2,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000003","status":{"code":2,"message":"boom"}},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000004","name":"client","kind":3,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000004","status":{"code":0}},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000005","name":"producer","kind":4,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000005"},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000006","name":"consumer","kind":5,"startTimeUnixNano":"1788868800000000000","endTimeUnixNano":"1788868800000000006"},{"traceId":"aa000000000000000000000000000001","spanId":"aa00000000000007","name":"no end timestamp","kind":1,"startTimeUnixNano":"1788868800000000000"}]}]}]}');
+
+statement count 2
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otel_parse_metrics_exponential_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"cart"}}]},"scopeMetrics":[{"scope":{"name":"rpc","version":"2.1"},"metrics":[{"name":"rpc.client.duration","description":"client call duration","unit":"ms","exponentialHistogram":{"aggregationTemporality":1,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","count":"9","sum":12.5,"scale":-3,"zeroCount":"1","zeroThreshold":1e-06,"positive":{"offset":5,"bucketCounts":["1","2","2"]},"negative":{"offset":-7,"bucketCounts":["1","0","2"]},"min":0.1,"max":4.0,"flags":1,"attributes":[{"key":"rpc.system","value":{"stringValue":"grpc"}}],"exemplars":[{"timeUnixNano":"1788868800000000001","asInt":"3","traceId":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","spanId":"00f067aa0ba902b7","filteredAttributes":[{"key":"peer","value":{"stringValue":"10.0.0.7"}}]}]},{"timeUnixNano":"1788868860000000000","count":"0","scale":4,"zeroCount":"0","positive":{"offset":0,"bucketCounts":[]},"negative":{"offset":0,"bucketCounts":[]},"attributes":[]}]}}]}]}]}');
+
+statement count 3
+INSERT INTO otel_metrics_gauge SELECT * FROM otel_parse_metrics_gauge('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"payments"}}]},"scopeMetrics":[{"scope":{},"metrics":[{"name":"queue.depth","unit":"{item}","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"-9007199254740993","attributes":[{"key":"queue","value":{"stringValue":"a"}}]},{"timeUnixNano":"1788868800000000000","asDouble":0.5,"attributes":[{"key":"queue","value":{"stringValue":"b"}}]},{"timeUnixNano":"1788868860000000000","asInt":"0","attributes":[{"key":"queue","value":{"stringValue":"c"}}],"flags":1}]}},{"name":"jobs.completed","unit":"{job}","sum":{"aggregationTemporality":1,"isMonotonic":false,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asInt":"7"}]}},{"name":"batch.size","histogram":{"aggregationTemporality":1,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"0","bucketCounts":["0"],"explicitBounds":[]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_sum SELECT * FROM otel_parse_metrics_sum('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"payments"}}]},"scopeMetrics":[{"scope":{},"metrics":[{"name":"queue.depth","unit":"{item}","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"-9007199254740993","attributes":[{"key":"queue","value":{"stringValue":"a"}}]},{"timeUnixNano":"1788868800000000000","asDouble":0.5,"attributes":[{"key":"queue","value":{"stringValue":"b"}}]},{"timeUnixNano":"1788868860000000000","asInt":"0","attributes":[{"key":"queue","value":{"stringValue":"c"}}],"flags":1}]}},{"name":"jobs.completed","unit":"{job}","sum":{"aggregationTemporality":1,"isMonotonic":false,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asInt":"7"}]}},{"name":"batch.size","histogram":{"aggregationTemporality":1,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"0","bucketCounts":["0"],"explicitBounds":[]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_histogram
+SELECT * FROM otel_parse_metrics_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"payments"}}]},"scopeMetrics":[{"scope":{},"metrics":[{"name":"queue.depth","unit":"{item}","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"-9007199254740993","attributes":[{"key":"queue","value":{"stringValue":"a"}}]},{"timeUnixNano":"1788868800000000000","asDouble":0.5,"attributes":[{"key":"queue","value":{"stringValue":"b"}}]},{"timeUnixNano":"1788868860000000000","asInt":"0","attributes":[{"key":"queue","value":{"stringValue":"c"}}],"flags":1}]}},{"name":"jobs.completed","unit":"{job}","sum":{"aggregationTemporality":1,"isMonotonic":false,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asInt":"7"}]}},{"name":"batch.size","histogram":{"aggregationTemporality":1,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"0","bucketCounts":["0"],"explicitBounds":[]}]}}]}]}]}');
+
+statement count 4
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('Cr8BChkKFwoMc2VydmljZS5uYW1lEgcKBWFscGhhEjMKBwoCczESATESEwkKgMcdslbTGCoICgZhLXMxLTESEwkLgMcdslbTGCoICgZhLXMxLTISRAoECgJzMhITCQyAxx2yVtMYKggKBmEtczItMRonaHR0cHM6Ly9vcGVudGVsZW1ldHJ5LmlvL3NjaGVtYXMvMS4zMS4wGidodHRwczovL29wZW50ZWxlbWV0cnkuaW8vc2NoZW1hcy8xLjMwLjAKUwovChYKDHNlcnZpY2UubmFtZRIGCgRiZXRhChUKCWhvc3QubmFtZRIICgZub2RlLTkSIAoAEhwJDYDHHbJW0xgQFRoFRkFUQUwqCAoGYi1zMC0x', 'protobuf');
+
+statement count 7
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('CtgDChoKGAoMc2VydmljZS5uYW1lEggKBmZhbm91dBK5AwoHCgVraW5kcxI7ChCqAAAAAAAAAAAAAAAAAAABEgiqAAAAAAAAASoLdW5zcGVjaWZpZWQ5AIDHHbJW0xhBAYDHHbJW0xgSPgoQqgAAAAAAAAAAAAAAAAAAARIIqgAAAAAAAAIqCGludGVybmFsMAE5AIDHHbJW0xhBAoDHHbJW0xh6AhgBEkIKEKoAAAAAAAAAAAAAAAAAAAESCKoAAAAAAAADKgZzZXJ2ZXIwAjkAgMcdslbTGEEDgMcdslbTGHoIEgRib29tGAISOgoQqgAAAAAAAAAAAAAAAAAAARIIqgAAAAAAAAQqBmNsaWVudDADOQCAxx2yVtMYQQSAxx2yVtMYegASOgoQqgAAAAAAAAAAAAAAAAAAARIIqgAAAAAAAAUqCHByb2R1Y2VyMAQ5AIDHHbJW0xhBBYDHHbJW0xgSOgoQqgAAAAAAAAAAAAAAAAAAARIIqgAAAAAAAAYqCGNvbnN1bWVyMAU5AIDHHbJW0xhBBoDHHbJW0xgSOQoQqgAAAAAAAAAAAAAAAAAAARIIqgAAAAAAAAcqEG5vIGVuZCB0aW1lc3RhbXAwATkAgMcdslbTGA==', 'protobuf');
+
+statement count 2
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otel_parse_metrics_exponential_histogram('CqwCChgKFgoMc2VydmljZS5uYW1lEgYKBGNhcnQSjwIKCgoDcnBjEgMyLjESgAIKE3JwYy5jbGllbnQuZHVyYXRpb24SFGNsaWVudCBjYWxsIGR1cmF0aW9uGgJtc1LOAQq4AQoUCgpycGMuc3lzdGVtEgYKBGdycGMRAOAO7WtT0xgZAIDHHbJW0xghCQAAAAAAAAApAAAAAAAAKUAwBTkBAAAAAAAAAEIHCAoSAwECAkoHCA0SAwEAAlABWkIRAYDHHbJW0xgiCADwZ6oLqQK3KhAbwtPk9aa3yNng8aKzxNXmMQMAAAAAAAAAOhIKBHBlZXISCgoIMTAuMC4wLjdhmpmZmZmZuT9pAAAAAAAAEEBxje21oPfGsD4KDxkA2A4WwFbTGDAIQgBKABAB', 'protobuf');
+
+statement count 3
+INSERT INTO otel_metrics_gauge SELECT * FROM otel_parse_metrics_gauge('CoUCChwKGgoMc2VydmljZS5uYW1lEgoKCHBheW1lbnRzEuQBCgASfwoLcXVldWUuZGVwdGgaBntpdGVtfSpoCiAZAIDHHbJW0xgx////////3/86DAoFcXVldWUSAwoBYQogGQCAxx2yVtMYIQAAAAAAAOA/OgwKBXF1ZXVlEgMKAWIKIhkA2A4WwFbTGDEAAAAAAAAAADoMCgVxdWV1ZRIDCgFjQAESOAoOam9icy5jb21wbGV0ZWQaBXtqb2J9Oh8KGxEA4A7ta1PTGBkAgMcdslbTGDEHAAAAAAAAABABEiUKCmJhdGNoLnNpemVKFwoTGQCAxx2yVtMYMggAAAAAAAAAABAB', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_sum SELECT * FROM otel_parse_metrics_sum('CoUCChwKGgoMc2VydmljZS5uYW1lEgoKCHBheW1lbnRzEuQBCgASfwoLcXVldWUuZGVwdGgaBntpdGVtfSpoCiAZAIDHHbJW0xgx////////3/86DAoFcXVldWUSAwoBYQogGQCAxx2yVtMYIQAAAAAAAOA/OgwKBXF1ZXVlEgMKAWIKIhkA2A4WwFbTGDEAAAAAAAAAADoMCgVxdWV1ZRIDCgFjQAESOAoOam9icy5jb21wbGV0ZWQaBXtqb2J9Oh8KGxEA4A7ta1PTGBkAgMcdslbTGDEHAAAAAAAAABABEiUKCmJhdGNoLnNpemVKFwoTGQCAxx2yVtMYMggAAAAAAAAAABAB', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_histogram
+SELECT * FROM otel_parse_metrics_histogram('CoUCChwKGgoMc2VydmljZS5uYW1lEgoKCHBheW1lbnRzEuQBCgASfwoLcXVldWUuZGVwdGgaBntpdGVtfSpoCiAZAIDHHbJW0xgx////////3/86DAoFcXVldWUSAwoBYQogGQCAxx2yVtMYIQAAAAAAAOA/OgwKBXF1ZXVlEgMKAWIKIhkA2A4WwFbTGDEAAAAAAAAAADoMCgVxdWV1ZRIDCgFjQAESOAoOam9icy5jb21wbGV0ZWQaBXtqb2J9Oh8KGxEA4A7ta1PTGBkAgMcdslbTGDEHAAAAAAAAABABEiUKCmJhdGNoLnNpemVKFwoTGQCAxx2yVtMYMggAAAAAAAAAABAB', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_gauge;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_sum;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_histogram;
+
+query
+SELECT span_name, span_kind, status_code, status_message, duration_ns
+FROM otel_traces WHERE service_name = 'fanout' ORDER BY span_id;
+----
+span_name	span_kind	status_code	status_message	duration_ns
+unspecified	Unspecified	Unset	NULL	1
+unspecified	Unspecified	Unset	NULL	1
+internal	Internal	Ok	NULL	2
+internal	Internal	Ok	NULL	2
+server	Server	Error	boom	3
+server	Server	Error	boom	3
+client	Client	Unset	NULL	4
+client	Client	Unset	NULL	4
+producer	Producer	Unset	NULL	5
+producer	Producer	Unset	NULL	5
+consumer	Consumer	Unset	NULL	6
+consumer	Consumer	Unset	NULL	6
+no end timestamp	Internal	Unset	NULL	NULL
+no end timestamp	Internal	Unset	NULL	NULL
+
+query
+SELECT epoch_ns("timestamp") AS ts, count, sum, scale, zero_count,
+       positive_offset, positive_bucket_counts, negative_offset,
+       negative_bucket_counts, min, max, aggregation_temporality, flags,
+       attributes, exemplars
+FROM otel_metrics_exponential_histogram
+WHERE attributes ->> 'rpc.system' = 'grpc' ORDER BY 1;
+----
+ts	count	sum	scale	zero_count	positive_offset	positive_bucket_counts	negative_offset	negative_bucket_counts	min	max	aggregation_temporality	flags	attributes	exemplars
+1788868800000000000	9	12.5	-3	1	5	{1,2,2}	-7	{1,0,2}	0.1	4	Delta	1	{"rpc.system":"grpc"}	[{"filtered_attributes":{"peer":"10.0.0.7"},"span_id":"00f067aa0ba902b7","timestamp":"2026-09-08T12:00:00.000000001Z","trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","value":3.0}]
+1788868800000000000	9	12.5	-3	1	5	{1,2,2}	-7	{1,0,2}	0.1	4	Delta	1	{"rpc.system":"grpc"}	[{"filtered_attributes":{"peer":"10.0.0.7"},"span_id":"00f067aa0ba902b7","timestamp":"2026-09-08T12:00:00.000000001Z","trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","value":3.0}]
+
+query
+SELECT metric_name, value, attributes ->> 'queue' AS queue, flags
+FROM otel_metrics_gauge WHERE service_name = 'payments' ORDER BY 3;
+----
+metric_name	value	queue	flags
+queue.depth	-9007199254740992	a	0
+queue.depth	-9007199254740992	a	0
+queue.depth	0.5	b	0
+queue.depth	0.5	b	0
+queue.depth	0	c	1
+queue.depth	0	c	1
+
+query
+SELECT metric_name, value, aggregation_temporality, is_monotonic
+FROM otel_metrics_sum WHERE service_name = 'payments';
+----
+metric_name	value	aggregation_temporality	is_monotonic
+jobs.completed	7	Delta	f
+jobs.completed	7	Delta	f
+
+query
+SELECT metric_name, count, sum, bucket_counts, explicit_bounds
+FROM otel_metrics_histogram WHERE service_name = 'payments';
+----
+metric_name	count	sum	bucket_counts	explicit_bounds
+batch.size	0	NULL	{0}	{}
+batch.size	0	NULL	{0}	{}
+
+query
+SELECT count(*) AS shapes_from_both_decoders FROM (
+  SELECT concat_ws('|',
+                   coalesce(epoch_ns("timestamp")::VARCHAR, '~'),
+                   coalesce(metric_name, '~'),
+                   coalesce(count::VARCHAR, '~'),
+                   coalesce(sum::VARCHAR, '~'),
+                   coalesce(scale::VARCHAR, '~'),
+                   coalesce(zero_count::VARCHAR, '~'),
+                   coalesce(positive_offset::VARCHAR, '~'),
+                   coalesce(positive_bucket_counts::VARCHAR, '~'),
+                   coalesce(negative_offset::VARCHAR, '~'),
+                   coalesce(negative_bucket_counts::VARCHAR, '~'),
+                   coalesce(min::VARCHAR, '~'),
+                   coalesce(max::VARCHAR, '~'),
+                   coalesce(aggregation_temporality, '~'),
+                   coalesce(attributes::VARCHAR, '~'),
+                   coalesce(exemplars::VARCHAR, '~')) AS row_key
+  FROM otel_metrics_exponential_histogram GROUP BY 1 HAVING count(*) = 2
+);
+----
+shapes_from_both_decoders
+2
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeLogs":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"logRecords":[{"timeUnixNano":"1544712660300000000","observedTimeUnixNano":"1544712660300000000","severityNumber":10,"severityText":"Information","traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","body":{"stringValue":"Example log record"},"attributes":[{"key":"string.attribute","value":{"stringValue":"some string"}},{"key":"boolean.attribute","value":{"boolValue":true}},{"key":"int.attribute","value":{"intValue":"10"}},{"key":"double.attribute","value":{"doubleValue":637.704}},{"key":"array.attribute","value":{"arrayValue":{"values":[{"stringValue":"many"},{"stringValue":"values"}]}}},{"key":"map.attribute","value":{"kvlistValue":{"values":[{"key":"some.map.key","value":{"stringValue":"some value"}}]}}}]}]}]}]}');
+
+statement count 1
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeSpans":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"spans":[{"traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","parentSpanId":"EEE19B7EC3C1B173","name":"I''m a server span","startTimeUnixNano":"1544712660000000000","endTimeUnixNano":"1544712661000000000","kind":2,"attributes":[{"key":"my.span.attr","value":{"stringValue":"some value"}}]}]}]}]}');
+
+statement count 1
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otel_parse_metrics_exponential_histogram('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"my.service"}}]},"scopeMetrics":[{"scope":{"name":"my.library","version":"1.0.0","attributes":[{"key":"my.scope.attribute","value":{"stringValue":"some scope attribute"}}]},"metrics":[{"name":"my.counter","unit":"1","description":"I am a Counter","sum":{"aggregationTemporality":1,"isMonotonic":true,"dataPoints":[{"asDouble":5,"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","attributes":[{"key":"my.counter.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.gauge","unit":"1","description":"I am a Gauge","gauge":{"dataPoints":[{"asDouble":10,"timeUnixNano":"1544712660300000000","attributes":[{"key":"my.gauge.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.histogram","unit":"1","description":"I am a Histogram","histogram":{"aggregationTemporality":1,"dataPoints":[{"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","count":"2","sum":2,"bucketCounts":["1","1"],"explicitBounds":[1],"min":0,"max":2,"attributes":[{"key":"my.histogram.attr","value":{"stringValue":"some value"}}]}]}},{"name":"my.exponential.histogram","unit":"1","description":"I am an Exponential Histogram","exponentialHistogram":{"aggregationTemporality":1,"dataPoints":[{"startTimeUnixNano":"1544712660300000000","timeUnixNano":"1544712660300000000","count":"3","sum":10,"scale":0,"zeroCount":"1","positive":{"offset":1,"bucketCounts":["0","2"]},"min":0,"max":5,"zeroThreshold":0,"attributes":[{"key":"my.exponential.histogram.attr","value":{"stringValue":"some value"}}]}]}}]}]}]}');
+
+statement count 1
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('CogDCh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2US5QIKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEp8CCQDrOvX6628VEAoaC0luZm9ybWF0aW9uKhQKEkV4YW1wbGUgbG9nIHJlY29yZDIhChBzdHJpbmcuYXR0cmlidXRlEg0KC3NvbWUgc3RyaW5nMhcKEWJvb2xlYW4uYXR0cmlidXRlEgIQATITCg1pbnQuYXR0cmlidXRlEgIYCjIdChBkb3VibGUuYXR0cmlidXRlEgkhEoPAyqHtg0AyJwoPYXJyYXkuYXR0cmlidXRlEhQqEgoGCgRtYW55CggKBnZhbHVlczIxCg1tYXAuYXR0cmlidXRlEiAyHgocCgxzb21lLm1hcC5rZXkSDAoKc29tZSB2YWx1ZUoQW47/95gDgQPSabYzgT/GDFII7uGbfsPBsXRZAOs69frrbxU=', 'protobuf');
+
+statement count 1
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('CtMBCh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2USsAEKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEmsKEFuO//eYA4ED0mm2M4E/xgwSCO7hm37DwbF0Igju4Zt+w8GxcyoRSSdtIGEgc2VydmVyIHNwYW4wAjkASFnj+utvFUEAEvQe++tvFUocCgxteS5zcGFuLmF0dHISDAoKc29tZSB2YWx1ZQ==', 'protobuf');
+
+statement count 1
+INSERT INTO otel_metrics_exponential_histogram
+SELECT * FROM otel_parse_metrics_exponential_histogram('CvkECh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2US1gQKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEmMKCm15LmNvdW50ZXISDkkgYW0gYSBDb3VudGVyGgExOkIKPBEA6zr1+utvFRkA6zr1+utvFSEAAAAAAAAUQDofCg9teS5jb3VudGVyLmF0dHISDAoKc29tZSB2YWx1ZRABGAESUAoIbXkuZ2F1Z2USDEkgYW0gYSBHYXVnZRoBMSozCjEZAOs69frrbxUhAAAAAAAAJEA6HQoNbXkuZ2F1Z2UuYXR0chIMCgpzb21lIHZhbHVlEp4BCgxteS5oaXN0b2dyYW0SEEkgYW0gYSBIaXN0b2dyYW0aATFKeQp1EQDrOvX6628VGQDrOvX6628VIQIAAAAAAAAAKQAAAAAAAABAMhABAAAAAAAAAAEAAAAAAAAAOggAAAAAAADwP0ohChFteS5oaXN0b2dyYW0uYXR0chIMCgpzb21lIHZhbHVlWQAAAAAAAAAAYQAAAAAAAABAEAESuAEKGG15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbRIdSSBhbSBhbiBFeHBvbmVudGlhbCBIaXN0b2dyYW0aATFSegp2Ci0KHW15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbS5hdHRyEgwKCnNvbWUgdmFsdWURAOs69frrbxUZAOs69frrbxUhAwAAAAAAAAApAAAAAAAAJEA5AQAAAAAAAABCBggCEgIAAmEAAAAAAAAAAGkAAAAAAAAUQBAB', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+query
+SELECT trace_id, span_id, severity_text, severity_number, body, log_attributes
+FROM otel_logs WHERE body = 'Example log record' LIMIT 1;
+----
+trace_id	span_id	severity_text	severity_number	body	log_attributes
+5b8efff798038103d269b633813fc60c	eee19b7ec3c1b174	Information	10	Example log record	{"array.attribute":["many","values"],"boolean.attribute":true,"double.attribute":637.704,"int.attribute":10,"map.attribute":{"some.map.key":"some value"},"string.attribute":"some string"}
+
+query
+SELECT span_name, trace_id, span_id, parent_span_id, span_kind, duration_ns
+FROM otel_traces WHERE service_name = 'my.service' LIMIT 1;
+----
+span_name	trace_id	span_id	parent_span_id	span_kind	duration_ns
+I'm a server span	5b8efff798038103d269b633813fc60c	eee19b7ec3c1b174	eee19b7ec3c1b173	Server	1000000000
+
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"enumtest"}}]},"someUnknownResourceField":{"ignored":true},"scopeSpans":[{"scope":{"name":"names"},"spans":[{"traceId":"AABBCCDDEEFF00112233445566778899","spanId":"0011223344556677","name":"kind and status by name","kind":"SPAN_KIND_PRODUCER","startTimeUnixNano":"1544712660000000000","endTimeUnixNano":"1544712660000000005","status":{"code":"STATUS_CODE_ERROR","message":"named"},"futureField":42},{"trace_id":"aabbccddeeff00112233445566778899","span_id":"0011223344556678","name":"snake_case field names","kind":5,"start_time_unix_nano":"1544712660000000000","end_time_unix_nano":"1544712660000000009","status":{"code":1}}]}]}]}');
+
+statement count 2
+INSERT INTO otel_traces SELECT * FROM otel_parse_traces('Cs4BChwKGgoMc2VydmljZS5uYW1lEgoKCGVudW10ZXN0Eq0BCgcKBW5hbWVzElQKEKq7zN3u/wARIjNEVWZ3iJkSCAARIjNEVWZ3KhdraW5kIGFuZCBzdGF0dXMgYnkgbmFtZTAEOQBIWeP6628VQQVIWeP6628VegkSBW5hbWVkGAISTAoQqrvM3e7/ABEiM0RVZneImRIIABEiM0RVZngqFnNuYWtlX2Nhc2UgZmllbGQgbmFtZXMwBTkASFnj+utvFUEJSFnj+utvFXoCGAE=', 'protobuf');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_traces;
+
+query
+SELECT span_name, span_kind, status_code, status_message, trace_id, span_id,
+       duration_ns
+FROM otel_traces WHERE service_name = 'enumtest' ORDER BY span_id, span_name;
+----
+span_name	span_kind	status_code	status_message	trace_id	span_id	duration_ns
+kind and status by name	Producer	Error	named	aabbccddeeff00112233445566778899	0011223344556677	5
+kind and status by name	Producer	Error	named	aabbccddeeff00112233445566778899	0011223344556677	5
+snake_case field names	Consumer	Ok	NULL	aabbccddeeff00112233445566778899	0011223344556678	9
+snake_case field names	Consumer	Ok	NULL	aabbccddeeff00112233445566778899	0011223344556678	9
+
+statement ok
+INSERT INTO otel_logs ("timestamp", body) VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'x');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+statement ok
+CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted ("timestamp", body otel_body_dict);

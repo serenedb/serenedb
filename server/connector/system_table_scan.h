@@ -28,7 +28,6 @@ namespace sdb::catalog {
 class SystemTableEntry;
 
 }  // namespace sdb::catalog
-
 namespace sdb::connector {
 
 duckdb::TableFunction BindSystemTableScan(

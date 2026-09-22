@@ -119,16 +119,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->queries.resize(state->total_segments);
     const bool seeks_one_term =
       absl::c_any_of(ss.ts_dict.requests, [](const TsDictRequest& req) {
-        return !req.having_filter &&
-               req.term_uses != TsDictTermUses::None &&
+        return !req.having_filter && req.term_uses != TsDictTermUses::None &&
                (req.term_uses & TsDictTermUses::Full) == TsDictTermUses::None;
       });
     state->splittable =
-      !seeks_one_term &&
-      (ss.search.filter || !state->col_filters.empty() ||
-       absl::c_any_of(*state->reader, [](const auto& seg) {
-         return seg.live_docs_count() != seg.docs_count();
-       }));
+      !seeks_one_term && (ss.search.filter || !state->col_filters.empty() ||
+                          absl::c_any_of(*state->reader, [](const auto& seg) {
+                            return seg.live_docs_count() != seg.docs_count();
+                          }));
     ClassifySegments(*state);
     BuildClaimPlan(*state, context);
     if (state->splittable) {
@@ -196,8 +194,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     } else if (ss.score.order) {
       state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
     }
-    state->stats_stage = state->scorer_obj &&
-                         state->total_segments != 0 && !ss.score.vector;
+    state->stats_stage =
+      state->scorer_obj && state->total_segments != 0 && !ss.score.vector;
   }
 
   if (state->shape == ScanShape::TopK) {

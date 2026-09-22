@@ -129,8 +129,7 @@ OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered) {
 
 const irs::ColumnReader* OrderColumn(const ScanGlobalState& g, uint32_t seg) {
   const auto* col_reader = (*g.reader)[seg].GetColReader();
-  return col_reader ? col_reader->Column(g.Bind().scan_order->column)
-                    : nullptr;
+  return col_reader ? col_reader->Column(g.Bind().scan_order->column) : nullptr;
 }
 
 void BuildOrderedHeap(ScanGlobalState& g) {

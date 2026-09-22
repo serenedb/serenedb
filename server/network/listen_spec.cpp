@@ -142,6 +142,14 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
       }
       spec.apis.push_back(it->second);
     }
+  } else if (key == "db") {
+    if (!is_http) {
+      SDB_FATAL(GENERAL, "'db' is only valid on an http endpoint '", url, "'");
+    }
+    spec.database = PercentDecode(value);
+    if (spec.database.empty()) {
+      SDB_FATAL(GENERAL, "empty 'db' in endpoint '", url, "'");
+    }
   } else if (key == "mode") {
     if (!is_unix) {
       SDB_FATAL(GENERAL, "'mode' is only valid on a unix endpoint '", url, "'");

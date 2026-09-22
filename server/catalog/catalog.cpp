@@ -80,6 +80,7 @@
 #include "search/search_table.h"
 
 namespace sdb::catalog {
+
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
                      duckdb::DatabaseModificationType type) {

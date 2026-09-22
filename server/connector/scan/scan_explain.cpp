@@ -329,10 +329,10 @@ void ScanBindData::AppendSummary(
     if (!req.having_filter) {
       continue;
     }
-    auto key = ts_dict.requests.size() == 1
-                 ? std::string{"Index Filter"}
-                 : absl::StrCat("Index Filter(",
-                                DisplayColumnName(req.display_id), ")");
+    auto key =
+      ts_dict.requests.size() == 1
+        ? std::string{"Index Filter"}
+        : absl::StrCat("Index Filter(", DisplayColumnName(req.display_id), ")");
     out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
                                  *req.having_filter, name_of, kind_of)));
   }

@@ -224,6 +224,15 @@ Click **Run and Debug** on the left sidebar (Shift+Ctrl+D / Shift+Cmd+D). This a
   <img src="https://github.com/user-attachments/assets/fa246b5d-ebea-4598-8705-c252fbff5a0d" width="800" style="border-radius: 8px;">
 </p>
 
+### Sqllogic test highlighting
+
+`.test` files are Plain Text until you install the VSCode extension that ships
+with the runner: it colors SQL bodies as SQL, sqllogictest-rs directives as
+keywords, and `#` comments as comments. It lives beside the parser whose syntax
+it tracks, so the build-and-install steps -- including what to run when the
+`code` CLI is not on `$PATH`, as over SSH -- are in
+[`third_party/sqllogictest-rs/README.md`](third_party/sqllogictest-rs/README.md).
+
 ## C++ Code Style
 
 Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code.

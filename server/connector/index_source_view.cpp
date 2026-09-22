@@ -77,8 +77,8 @@ void ViewIndexSourceBase::InitProjection(
     if (_scratch_types[c] == _projected_types[c]) {
       continue;
     }
-    auto ref = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-      _scratch_types[c], c);
+    auto ref =
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(_scratch_types[c], c);
     auto cast_expr = duckdb::BoundCastExpression::AddCastToType(
       context, std::move(ref), _projected_types[c]);
     auto exec = duckdb::make_uniq<duckdb::ExpressionExecutor>(context);
@@ -168,9 +168,8 @@ void ViewIndexSourceBase::AliasOutput(duckdb::DataChunk& output) {
 
 void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
                                       duckdb::idx_t row_count) {
-  const bool has_cast =
-    absl::c_any_of(_cast_executors,
-                   [](const auto& e) { return static_cast<bool>(e); });
+  const bool has_cast = absl::c_any_of(
+    _cast_executors, [](const auto& e) { return static_cast<bool>(e); });
   if (!has_cast || row_count == 0) {
     return;
   }

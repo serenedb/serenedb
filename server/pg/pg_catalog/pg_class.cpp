@@ -145,8 +145,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // second entry here would re-enter the catalog sets this walk is inside.
   auto count_store_rows = [](duckdb::TableCatalogEntry& table) -> float {
     auto* duck = dynamic_cast<duckdb::DuckTableEntry*>(&table);
-    return duck ? static_cast<float>(duck->GetStorage().GetTotalRows())
-                : 0.0F;
+    return duck ? static_cast<float>(duck->GetStorage().GetTotalRows()) : 0.0F;
   };
   // The two facts a relation's row needs from outside its own definition:
   // whether anything indexes it, and -- for the index rows below -- who owns

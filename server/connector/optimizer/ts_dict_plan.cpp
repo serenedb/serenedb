@@ -730,9 +730,7 @@ class TsDictFacetPushdown {
 
   bool ShapeOk() const;
   bool AdoptScan(std::optional<FoundScan> here);
-  const catalog::InvertedIndexConfig* ColumnIndex() const {
-    return _index;
-  }
+  const catalog::InvertedIndexConfig* ColumnIndex() const { return _index; }
   bool ResolveExpressionKey(const duckdb::Expression& expr,
                             TsDictFacetKey& key);
   bool ResolveKeys();

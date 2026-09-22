@@ -45,18 +45,16 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/column_id.h"
-#include "connector/term_dict.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/scan/scan_state.h"
+#include "connector/term_dict.h"
 
 namespace sdb::connector {
 namespace {
 
-std::optional<duckdb::LogicalType> VirtualIndexColumnType(
-  ColumnId col_id) {
-  if (col_id == kInvertedIndexScoreId ||
-      col_id == kInvertedIndexTermScoreId) {
+std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
+  if (col_id == kInvertedIndexScoreId || col_id == kInvertedIndexTermScoreId) {
     return duckdb::LogicalType::FLOAT;
   }
   if (col_id == kInvertedIndexOffsetsId) {
@@ -485,8 +483,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.columns.ids[bind_col];
-      irs::ColumnstoreProjection cp{.output_slot = proj,
-                                    .column_id = col_id};
+      irs::ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -516,8 +513,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       if (!in_output(proj)) {
         continue;
       }
-      irs::ColumnstoreProjection cp{.output_slot = proj,
-                                    .column_id = col_id};
+      irs::ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -596,8 +592,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
   if (!hit_batcher) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
-      g.needs_lookup ? term_dict::kPKFieldId
-                     : irs::field_limits::invalid(),
+      g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
       g.ScanScore());
   }
 }

@@ -1,0 +1,41 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "checkout"}},
+          {"key": "k8s.pod", "value": {"stringValue": "checkout-7d9f"}}
+        ]
+      },
+      "schemaUrl": "https://opentelemetry.io/schemas/1.30.0",
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "io.grpc.Client",
+            "version": "1.62.2",
+            "attributes": [
+              {"key": "library.stability", "value": {"stringValue": "stable"}}
+            ]
+          },
+          "schemaUrl": "https://opentelemetry.io/schemas/1.30.0",
+          "logRecords": [
+            {
+              "timeUnixNano": "1788868810000000123",
+              "observedTimeUnixNano": "1788868810000000456",
+              "severityNumber": 17,
+              "severityText": "ERROR",
+              "body": {"stringValue": "connection reset by peer"},
+              "attributes": [
+                {"key": "http.status_code", "value": {"intValue": "502"}},
+                {"key": "http.method", "value": {"stringValue": "GET"}}
+              ],
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "b7ad6b7169203331",
+              "flags": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

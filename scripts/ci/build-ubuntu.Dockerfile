@@ -59,7 +59,8 @@ RUN \
     | tar -C /usr/local -xz && \
   python3 -m pip install --break-system-packages --no-cache-dir \
       pytest pyyaml \
-      "psycopg[binary]" psycopg2-binary asyncpg pytest-asyncio && \
+      "psycopg[binary]" psycopg2-binary asyncpg pytest-asyncio \
+      opentelemetry-proto && \
   Rscript -e 'install.packages("RPostgres", repos="https://cloud.r-project.org", quiet=TRUE)' && \
   Rscript -e 'library(RPostgres)' && \
   ln -sf /usr/bin/clang-21 /usr/bin/clang && \

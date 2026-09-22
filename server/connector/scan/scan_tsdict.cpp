@@ -171,13 +171,10 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
   };
   std::array<SlotKind, 5> kinds{{
     {kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
-    {kInvertedIndexTermRawId, &Req::term_raw_col_idx,
-     &Field::term_raw_slot},
-    {kInvertedIndexTermCountId, &Req::count_col_idx,
-     &Field::count_slot},
+    {kInvertedIndexTermRawId, &Req::term_raw_col_idx, &Field::term_raw_slot},
+    {kInvertedIndexTermCountId, &Req::count_col_idx, &Field::count_slot},
     {kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
-    {kInvertedIndexTermScoreId, &Req::score_col_idx,
-     &Field::score_slot},
+    {kInvertedIndexTermScoreId, &Req::score_col_idx, &Field::score_slot},
   }};
 
   duckdb::idx_t out_slot = 0;
@@ -429,8 +426,8 @@ void TsDictLocalState::StartUnit(ScanGlobalState& g) {
   }
   _bound_end = _range.end;
   _emit_fields = _next_field;
-  counting = !unit.whole && count_mode != CountMode::Meta &&
-             _emit_fields && _seg_idx < g.ts_dict_counts.size() &&
+  counting = !unit.whole && count_mode != CountMode::Meta && _emit_fields &&
+             _seg_idx < g.ts_dict_counts.size() &&
              !g.ts_dict_counts[_seg_idx].empty();
   if (!unit.whole && !counting) {
     _next_field = nullptr;
@@ -700,8 +697,8 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
   uint32_t nulls = 0;
   if (emitting && _from_counts) {
     nulls = !_counts ? 0
-                               : static_cast<uint32_t>(_counts->Nulls().load(
-                                   std::memory_order_relaxed));
+                     : static_cast<uint32_t>(
+                         _counts->Nulls().load(std::memory_order_relaxed));
   } else if (count_mode == CountMode::Meta) {
     nulls = static_cast<uint32_t>(reader->docs_count());
   } else {
@@ -753,8 +750,7 @@ void BuildTsDictCounts(ScanGlobalState& g) {
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
       const auto* terms = reader[seg].field(reqs[i].field_id);
-      per_field[i].Reset(
-        !terms ? 0 : static_cast<uint32_t>(terms->size()));
+      per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }
 }

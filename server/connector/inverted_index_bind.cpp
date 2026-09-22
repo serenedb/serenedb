@@ -1205,8 +1205,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type) {
-  const bool table_backed =
-    relation.type == duckdb::CatalogType::TABLE_ENTRY;
+  const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto config = std::make_shared<InvertedIndexConfig>();
   config->row_group_size =
     catalog::ResolveSettings(entry.options).row_group_size;

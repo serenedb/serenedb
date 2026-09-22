@@ -259,12 +259,7 @@ void LoadEmbeddedDocs() {
              "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
     return;
   }
-  auto& cluster = catalog::ClusterOf();
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(
-        cluster.LoginTransaction(),
-        duckdb::Identifier{std::string{irs::StaticStrings::kDefaultDatabase}});
+  auto database = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
   if (!database) {
     SDB_WARN(GENERAL, "embedded docs: default database not found");
     return;

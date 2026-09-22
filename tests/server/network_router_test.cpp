@@ -89,6 +89,39 @@ TEST(NetworkRouter, LiteralWildcardAndGroups) {
   EXPECT_EQ(request.Param("id"), "42");
 }
 
+TEST(NetworkRouter, LiteralRoutesWinOverParams) {
+  HttpRouter router;
+  // Registered AFTER the param route on purpose: one api's `/:index` must not
+  // swallow another's reserved path just by being registered first.
+  router.Add(HttpMethod::Put, "/:index", std::make_unique<NamedHandler>("put"));
+  router.Add(HttpMethod::Put, "/_mcp", std::make_unique<NamedHandler>("mcp"));
+  router.Add(HttpMethod::Post, "/_bulk",
+             std::make_unique<NamedHandler>("bulk"));
+  router.Add(HttpMethod::Post, "/:index/_doc",
+             std::make_unique<NamedHandler>("doc"));
+
+  HttpRequest request;
+  const auto* mcp = MatchRoute(router, HttpMethod::Put, "/_mcp", request);
+  ASSERT_NE(mcp, nullptr);
+  EXPECT_EQ(mcp->name, "mcp");
+
+  const auto* bulk = MatchRoute(router, HttpMethod::Post, "/_bulk", request);
+  ASSERT_NE(bulk, nullptr);
+  EXPECT_EQ(bulk->name, "bulk");
+
+  // No literal claims it, so a param captures it -- the handler decides
+  // whether the name is legal rather than the router answering 404.
+  const auto* put = MatchRoute(router, HttpMethod::Put, "/_leading", request);
+  ASSERT_NE(put, nullptr);
+  EXPECT_EQ(put->name, "put");
+  EXPECT_EQ(request.Param("index"), "_leading");
+
+  const auto* doc = MatchRoute(router, HttpMethod::Post, "/_odd/_doc", request);
+  ASSERT_NE(doc, nullptr);
+  EXPECT_EQ(doc->name, "doc");
+  EXPECT_EQ(request.Param("index"), "_odd");
+}
+
 TEST(NetworkRouter, MethodAndPathMismatch) {
   HttpRouter router;
   router.Add(HttpMethod::Get, "/:index/_search",

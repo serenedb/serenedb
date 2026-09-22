@@ -79,10 +79,9 @@ std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   return *bindings.begin();
 }
 
-connector::ColumnId ResolveColumnId(
-  duckdb::ColumnBinding binding,
-  const connector::ScanBindData& bind_data,
-  const duckdb::LogicalGet& get) {
+connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
+                                    const connector::ScanBindData& bind_data,
+                                    const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
     return connector::kInvalidColumnId;
   }
@@ -99,8 +98,7 @@ connector::ColumnId ResolveColumnId(
 }
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
-  const duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data) {
+  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data) {
   std::vector<connector::ColumnId> projected_ids(get.GetColumnIds().size());
   for (duckdb::idx_t i = 0; i < projected_ids.size(); ++i) {
     projected_ids[i] = ResolveColumnId(
@@ -395,10 +393,10 @@ bool TryFoldQueryVector(duckdb::ClientContext& context,
   return true;
 }
 
-irs::field_id ResolveAnnTargetFieldId(
-  const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data,
-  duckdb::ClientContext& client_context) {
+irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
+                                      const duckdb::LogicalGet& get,
+                                      const connector::ScanBindData& bind_data,
+                                      duckdb::ClientContext& client_context) {
   if (col_arg.GetExpressionClass() ==
       duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     const auto& ref = col_arg.Cast<duckdb::BoundColumnRefExpression>();
@@ -584,9 +582,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = found->bind_data->relation.inverted_config
-                    ->GetColumnOptions(call_field_id)
-                    .ann_info;
+  auto ann_info =
+    found->bind_data->relation.inverted_config->GetColumnOptions(call_field_id)
+      .ann_info;
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -913,11 +911,9 @@ std::optional<duckdb::ColumnBinding> ScoreSideBinding(
     return x;
   };
   e = strip_casts(e);
-  if (e &&
-      e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (e && e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& fn = e->Cast<duckdb::BoundFunctionExpression>();
-    if (fn.Function().GetName() == "-" &&
-        fn.GetChildren().size() == 1) {
+    if (fn.Function().GetName() == "-" && fn.GetChildren().size() == 1) {
       negated = true;
       e = strip_casts(fn.GetChildren()[0].get());
     }
@@ -958,8 +954,8 @@ bool TryClaimAnnRange(
     // Find the side that resolves to the score column (bare or `-(score)`); the
     // other side is the bound.
     const auto is_score = [&](const std::optional<duckdb::ColumnBinding>& b) {
-      return b && ResolveColumnId(*b, scan, get) ==
-                    connector::kInvertedIndexScoreId;
+      return b &&
+             ResolveColumnId(*b, scan, get) == connector::kInvertedIndexScoreId;
     };
     bool negated = false;
     bool score_on_left = true;

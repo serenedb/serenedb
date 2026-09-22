@@ -39,9 +39,9 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
   auto& cluster = catalog::ClusterOf();
-  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                 .GetEntry(cluster.LoginTransaction(),
-                           duckdb::Identifier{user});
+  auto entry =
+    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{user});
   if (!entry) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),

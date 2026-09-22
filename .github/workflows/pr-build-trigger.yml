@@ -38,6 +38,7 @@ jobs:
               '- [ ] Ignore diff, run everything',
               '- [ ] Extra ASAN (full suite set under ASAN, not just ours + drivers)',
               '- [ ] Extra TSAN (full suite set under TSAN, not just ours + drivers)',
+              '- [ ] BigLake tests (sqllogic + recovery + stress against the real catalog)',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
@@ -104,6 +105,7 @@ jobs:
             const everything = isChecked('Ignore diff, run everything');
             const extraAsan = isChecked('Extra ASAN');
             const extraTsan = isChecked('Extra TSAN');
+            const biglake = isChecked('BigLake tests');
 
             const { owner, repo } = context.repo;
             const statusContext = 'serenedb | build & test';
@@ -134,6 +136,7 @@ jobs:
                 EVERYTHING: everything.toString(),
                 EXTRA_ASAN: extraAsan.toString(),
                 EXTRA_TSAN: extraTsan.toString(),
+                BIGLAKE: biglake.toString(),
                 PR_SHA: sha,
                 PR_NUMBER: String(context.payload.issue.number),
                 BUILD_CONFIG: JSON.stringify({

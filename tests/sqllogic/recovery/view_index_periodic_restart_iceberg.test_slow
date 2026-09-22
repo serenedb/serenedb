@@ -1,0 +1,122 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vipr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS}, max_table_staleness '10 minutes');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vipr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vipr.${__DATABASE__};
+
+statement ok
+CREATE TABLE vipr.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vipr.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vipr_v AS SELECT * FROM vipr.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vipr_idx ON vipr_v USING inverted(id, body vipr_en) WITH (reindex_interval=200);
+
+query
+SELECT id FROM vipr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vipr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT body FROM vipr_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+connection after_crash
+statement count 1
+INSERT INTO vipr.${__DATABASE__}.t VALUES (4, 'after the restart too');
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vipr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+connection after_crash
+query
+SELECT body FROM vipr_idx WHERE id = 4;
+----
+body
+after the restart too
+
+connection after_crash
+statement count 1
+DELETE FROM vipr.${__DATABASE__}.t WHERE id = 2;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vipr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vipr_idx EXCEPT SELECT id, body FROM vipr.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, body FROM vipr.${__DATABASE__}.t EXCEPT SELECT id, body FROM vipr_idx)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+ALTER INDEX vipr_idx SET (reindex_interval=0);
+
+connection after_crash
+statement ok
+DROP INDEX vipr_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vipr_v;
+
+connection after_crash
+statement ok
+DROP TABLE vipr.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA vipr.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vipr;

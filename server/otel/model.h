@@ -566,7 +566,7 @@ enum class ExportRequestTag : uint32_t {
   ResourceRecords = 1,
 };
 
-// One decoded metrics payload, shared by the five otlp_metrics_* binds it
+// One decoded metrics payload, shared by the five otel_parse_metrics_* binds it
 // fans out into.
 struct DecodedMetrics;
 

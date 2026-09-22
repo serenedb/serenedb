@@ -49,7 +49,7 @@
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
-#include "connector/functions/otlp.h"
+#include "connector/functions/otel.h"
 #include "connector/functions/search.h"
 #include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
@@ -338,7 +338,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterEsFunctions(db);
 
-  connector::RegisterOtlpFunctions(db);
+  connector::RegisterOtelFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
 

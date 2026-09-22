@@ -9,7 +9,7 @@ target_sources(
         inout.cpp
         json.cpp
         math.cpp
-        otlp.cpp
+        otel.cpp
         string.cpp
         system.cpp
         minhash.cpp

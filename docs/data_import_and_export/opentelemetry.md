@@ -8,7 +8,7 @@ SereneDB stores OpenTelemetry logs, traces and metrics in a fixed set of
 without a second index relation to maintain.
 
 The schema ships in the repository as `resources/otel/otel_schema.sql`. Apply it
-with `psql`, or let the OTLP endpoint create it on first write.
+with `psql`, or let the `otel` listener create it at startup.
 
 ```bash
 psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f resources/otel/otel_schema.sql
@@ -16,11 +16,18 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f resources/otel/otel_schema.
 
 ## Receiving OTLP over HTTP
 
-Add an HTTP listener with the `otlp` API and SereneDB serves the three OTLP
+Add an HTTP listener with the `otel` API and SereneDB serves the three OTLP
 export endpoints directly — no collector component to install:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otlp'
+serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel'
+```
+
+By default the tables live in the default database. `db=` puts the listener
+— and with it the OTel schema — in another one, created if it does not exist:
+
+```bash
+serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel&db=telemetry'
 ```
 
 | Endpoint | Accepts | Writes to |
@@ -49,10 +56,10 @@ service:
 A successful export answers `200` with an empty `Export<Signal>ServiceResponse`
 (`{}`).
 
-The tables are created **at startup**, when a listener serves `?api=otlp` and
-the schema is not there yet — so a fresh database needs no setup step, and the
+The tables are created **at startup**, in the listener's database, when a
+listener serves `?api=otel` and the schema is not there yet — so a fresh database needs no setup step, and the
 first export lands in a schema that already exists. A server started without
-the `otlp` API creates nothing, and an export against a missing schema answers
+the `otel` API creates nothing, and an export against a missing schema answers
 `500` naming the absent relation rather than creating it behind your back.
 
 To run a schema of your own — extra promoted columns, expression indexes over
@@ -78,7 +85,7 @@ integers or as their proto value names, trace and span ids as hex, and unknown
 fields are skipped.
 
 Both decoders feed the same mapper, and the conformance fixtures ship as an
-`.otlp.json` and an `.otlp.pb` of the same payload: a test asserts that each
+`.json` and a `.pb` of the same payload: a test asserts that each
 row shape arrives twice, once per decoder.
 
 **No request compression yet.** A `Content-Encoding` header answers `400`, so

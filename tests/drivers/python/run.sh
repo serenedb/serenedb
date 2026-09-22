@@ -80,7 +80,7 @@ if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
 else
 	pytest_args=(-q)
 fi
-for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otlp_api; do
+for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"
@@ -99,19 +99,19 @@ if ! python3 "${SCRIPT_DIR}/cli_help.py" check; then
 	final=1
 fi
 
-# OTLP protobuf fixtures: the committed .otlp.pb files must match what the
-# official opentelemetry-proto bindings produce from the .otlp.json sources,
+# OTLP protobuf fixtures: the committed .pb files must match what the
+# official opentelemetry-proto bindings produce from the .json sources,
 # so the server's decoder is checked against an independent encoder.
-# Regenerate with: scripts/otel_fixtures.py generate.
+# Regenerate with: scripts/otel/fixtures.py generate.
 echo "[python][otel_fixtures] check"
-if ! python3 "${SCRIPT_DIR}/../../../scripts/otel_fixtures.py" check; then
+if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/fixtures.py" check; then
 	final=1
 fi
 
 # The sqllogic include must match the canonical OTel DDL it is generated from.
-# Regenerate with: scripts/otel_schema.py generate.
+# Regenerate with: scripts/otel/schema.py generate.
 echo "[python][otel_schema] check"
-if ! python3 "${SCRIPT_DIR}/../../../scripts/otel_schema.py" check; then
+if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/schema.py" check; then
 	final=1
 fi
 

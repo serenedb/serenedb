@@ -130,9 +130,9 @@ class ConnectionContext final : public query::Transaction {
   void SetResponseSink(std::string* sink) { _response_sink = sink; }
 
   // Set for the span of one OTLP metrics request: five tables, one decode.
-  const otel::DecodedMetrics* GetOtlpMetrics() const { return _otlp_metrics; }
-  void SetOtlpMetrics(const otel::DecodedMetrics* metrics) {
-    _otlp_metrics = metrics;
+  const otel::DecodedMetrics* GetOtelMetrics() const { return _otel_metrics; }
+  void SetOtelMetrics(const otel::DecodedMetrics* metrics) {
+    _otel_metrics = metrics;
   }
 
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
@@ -184,7 +184,7 @@ class ConnectionContext final : public query::Transaction {
   ObjectId _effective_role_id;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
-  const otel::DecodedMetrics* _otlp_metrics = nullptr;
+  const otel::DecodedMetrics* _otel_metrics = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

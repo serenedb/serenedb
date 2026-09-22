@@ -15,8 +15,8 @@ target_sources(
         http/es/dsl.cpp
         http/es/handlers.cpp
         http/mcp/handlers.cpp
-        http/otlp/handlers.cpp
-        http/otlp/schema.cpp
+        http/otel/handlers.cpp
+        http/otel/schema.cpp
         http/mcp/tools.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp

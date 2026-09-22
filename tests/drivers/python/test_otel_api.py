@@ -1,6 +1,6 @@
 """OTLP/HTTP API tests (POST /v1/logs, /v1/traces, /v1/metrics).
 
-Exercises the otlp_*() table functions through the thin HTTP handlers, using
+Exercises the otel_parse_*() table functions through the thin HTTP handlers, using
 the same conformance payloads the sqllogic contract test uses. Skipped
 wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 """
@@ -33,19 +33,19 @@ FIXTURES = (
 )
 
 SIGNALS = [
-    ("logs", "logs/basic.otlp.json"),
-    ("logs", "logs/anyvalue_types.otlp.json"),
-    ("logs", "logs/empty_ids_and_zero_timestamp.otlp.json"),
-    ("logs", "logs/multi_resource_scope.otlp.json"),
-    ("traces", "traces/span_with_events_and_links.otlp.json"),
-    ("traces", "traces/kinds_and_statuses.otlp.json"),
-    ("metrics", "metrics/mixed_batch.otlp.json"),
-    ("metrics", "metrics/exponential_histogram.otlp.json"),
-    ("metrics", "metrics/int_and_multi_datapoint.otlp.json"),
-    ("logs", "logs/upstream.otlp.json"),
-    ("traces", "traces/upstream.otlp.json"),
-    ("traces", "traces/enum_names_and_unknown_fields.otlp.json"),
-    ("metrics", "metrics/upstream.otlp.json"),
+    ("logs", "logs/basic.json"),
+    ("logs", "logs/anyvalue_types.json"),
+    ("logs", "logs/empty_ids_and_zero_timestamp.json"),
+    ("logs", "logs/multi_resource_scope.json"),
+    ("traces", "traces/span_with_events_and_links.json"),
+    ("traces", "traces/kinds_and_statuses.json"),
+    ("metrics", "metrics/mixed_batch.json"),
+    ("metrics", "metrics/exponential_histogram.json"),
+    ("metrics", "metrics/int_and_multi_datapoint.json"),
+    ("logs", "logs/upstream.json"),
+    ("traces", "traces/upstream.json"),
+    ("traces", "traces/enum_names_and_unknown_fields.json"),
+    ("metrics", "metrics/upstream.json"),
 ]
 
 
@@ -90,9 +90,9 @@ def test_json_export_accepts_conformance_fixture(conn, signal, fixture):
 
 @pytest.mark.parametrize("signal,fixture", SIGNALS)
 def test_protobuf_export_accepts_conformance_fixture(conn, signal, fixture):
-    wire = FIXTURES / fixture.replace(".otlp.json", ".otlp.pb")
+    wire = FIXTURES / fixture.replace(".json", ".pb")
     if not wire.exists():
-        pytest.skip(f"{wire.name} not generated; run scripts/otel_fixtures.py")
+        pytest.skip(f"{wire.name} not generated; run scripts/otel/fixtures.py")
     status, payload = _post(
         conn, f"/v1/{signal}", wire.read_bytes(), content_type="application/x-protobuf"
     )

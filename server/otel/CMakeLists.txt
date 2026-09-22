@@ -6,9 +6,9 @@ add_custom_command(
     OUTPUT ${SDB_OTEL_SCHEMA_HEADER}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SDB_OTEL_GENERATED_DIR}/otel
     COMMAND
-        ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/otel_schema.py embed
+        ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/otel/schema.py embed
         ${SDB_OTEL_SCHEMA_HEADER}
-    DEPENDS ${SDB_OTEL_SCHEMA_SQL} ${CMAKE_SOURCE_DIR}/scripts/otel_schema.py
+    DEPENDS ${SDB_OTEL_SCHEMA_SQL} ${CMAKE_SOURCE_DIR}/scripts/otel/schema.py
     COMMENT "Generating embedded OpenTelemetry schema"
     VERBATIM
 )

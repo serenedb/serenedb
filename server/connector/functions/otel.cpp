@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/functions/otlp.h"
+#include "connector/functions/otel.h"
 
 #include <absl/strings/escaping.h>
 
@@ -108,24 +108,24 @@ duckdb::Value NumberValue(
   return duckdb::Value{};
 }
 
-struct OtlpBindData final : duckdb::TableFunctionData {
+struct OtelBindData final : duckdb::TableFunctionData {
   std::string body;
   std::vector<Row> rows;
   irs::containers::FlatHashMap<std::string, size_t> columns;
   duckdb::vector<duckdb::LogicalType> types;
 };
 
-struct OtlpState final : duckdb::GlobalTableFunctionState {
+struct OtelState final : duckdb::GlobalTableFunctionState {
   size_t pos = 0;
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-    return duckdb::make_uniq<OtlpState>();
+    return duckdb::make_uniq<OtelState>();
   }
 };
 
 void BindTarget(duckdb::ClientContext& context, std::string_view table_name,
-                OtlpBindData& data,
+                OtelBindData& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::string>& names) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -447,8 +447,8 @@ void BuildMetricRows(const otel::ExportMetricsRequest& request,
   }
 }
 
-void Emit(duckdb::DataChunk& output, const OtlpBindData& data,
-          OtlpState& state) {
+void Emit(duckdb::DataChunk& output, const OtelBindData& data,
+          OtelState& state) {
   duckdb::idx_t emitted = 0;
   while (emitted < STANDARD_VECTOR_SIZE && state.pos < data.rows.size()) {
     for (duckdb::idx_t column = 0; column < output.ColumnCount(); ++column) {
@@ -472,21 +472,21 @@ void Emit(duckdb::DataChunk& output, const OtlpBindData& data,
 }
 
 template<const std::string_view& Table, auto Build>
-duckdb::unique_ptr<duckdb::FunctionData> OtlpBind(
+duckdb::unique_ptr<duckdb::FunctionData> OtelBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  auto data = duckdb::make_uniq<OtlpBindData>();
+  auto data = duckdb::make_uniq<OtelBindData>();
   BindTarget(context, Table, *data, return_types, names);
   data->body = ReadBodyArgument(input.inputs[0]);
   Build(context, data->body, ReadProtobufArgument(input.inputs), data->rows);
   return data;
 }
 
-void OtlpExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
+void OtelExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                  duckdb::DataChunk& output) {
-  Emit(output, input.bind_data->Cast<OtlpBindData>(),
-       input.global_state->Cast<OtlpState>());
+  Emit(output, input.bind_data->Cast<OtelBindData>(),
+       input.global_state->Cast<OtelState>());
 }
 
 void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
@@ -514,7 +514,7 @@ void BuildTraces(duckdb::ClientContext&, const std::string& body, bool protobuf,
 template<typename MetricShape>
 void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
                   bool protobuf, std::vector<Row>& rows) {
-  if (const auto* decoded = GetSereneDBContext(context).GetOtlpMetrics()) {
+  if (const auto* decoded = GetSereneDBContext(context).GetOtelMetrics()) {
     BuildMetricRows<MetricShape>(decoded->request, rows);
     return;
   }
@@ -537,34 +537,35 @@ constexpr std::string_view kSummaryTable = kOtelMetricTables[4];
 
 }  // namespace
 
-void RegisterOtlpFunctions(duckdb::DatabaseInstance& db) {
+void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 
   const auto add = [&](const char* name, auto bind) {
     loader.RegisterFunction(
       duckdb::TableFunction{name,
                             {duckdb::LogicalType::VARCHAR},
-                            OtlpExecute,
+                            OtelExecute,
                             bind,
-                            OtlpState::Init});
+                            OtelState::Init});
     loader.RegisterFunction(duckdb::TableFunction{
       name,
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      OtlpExecute,
+      OtelExecute,
       bind,
-      OtlpState::Init});
+      OtelState::Init});
   };
 
-  add("otlp_logs", OtlpBind<kLogsTable, BuildLogs>);
-  add("otlp_traces", OtlpBind<kTracesTable, BuildTraces>);
-  add("otlp_metrics_gauge", OtlpBind<kGaugeTable, BuildMetrics<GaugeShape>>);
-  add("otlp_metrics_sum", OtlpBind<kSumTable, BuildMetrics<SumShape>>);
-  add("otlp_metrics_histogram",
-      OtlpBind<kHistogramTable, BuildMetrics<HistogramShape>>);
-  add("otlp_metrics_exponential_histogram",
-      OtlpBind<kExponentialTable, BuildMetrics<ExponentialHistogramShape>>);
-  add("otlp_metrics_summary",
-      OtlpBind<kSummaryTable, BuildMetrics<SummaryShape>>);
+  add("otel_parse_logs", OtelBind<kLogsTable, BuildLogs>);
+  add("otel_parse_traces", OtelBind<kTracesTable, BuildTraces>);
+  add("otel_parse_metrics_gauge",
+      OtelBind<kGaugeTable, BuildMetrics<GaugeShape>>);
+  add("otel_parse_metrics_sum", OtelBind<kSumTable, BuildMetrics<SumShape>>);
+  add("otel_parse_metrics_histogram",
+      OtelBind<kHistogramTable, BuildMetrics<HistogramShape>>);
+  add("otel_parse_metrics_exponential_histogram",
+      OtelBind<kExponentialTable, BuildMetrics<ExponentialHistogramShape>>);
+  add("otel_parse_metrics_summary",
+      OtelBind<kSummaryTable, BuildMetrics<SummaryShape>>);
 }
 
 }  // namespace sdb::connector

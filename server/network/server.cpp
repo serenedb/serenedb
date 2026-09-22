@@ -40,8 +40,8 @@
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
 #include "network/http/mcp/handlers.h"
-#include "network/http/otlp/handlers.h"
-#include "network/http/otlp/schema.h"
+#include "network/http/otel/handlers.h"
+#include "network/http/otel/schema.h"
 #include "network/http/test/handlers.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
@@ -261,8 +261,8 @@ network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
       case network::HttpApi::Mcp:
         network::http::mcp::Register(router);
         break;
-      case network::HttpApi::Otlp:
-        network::http::otlp::Register(router);
+      case network::HttpApi::Otel:
+        otel::RegisterHandlers(router);
         break;
     }
   }
@@ -311,6 +311,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
+    deps.database = spec.database;
     deps.proxy = spec.proxy;
     acceptor = std::make_shared<
       network::Acceptor<network::HttpSession<network::SocketKind::Unix>>>(
@@ -377,6 +378,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
+    deps.database = spec.database;
     deps.proxy = spec.proxy;
     if (ssl != nullptr) {
       acceptor = std::make_shared<
@@ -420,11 +422,20 @@ void Server::StartIoPool() {
 void Server::StartListeners() {
   const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
-  const bool serves_otlp = absl::c_any_of(specs, [](const auto& spec) {
-    return absl::c_linear_search(spec.apis, network::HttpApi::Otlp);
-  });
-  if (serves_otlp) {
-    network::http::otlp::EnsureSchema();
+  for (const auto& spec : specs) {
+    if (spec.protocol != network::ListenProtocol::Http) {
+      continue;
+    }
+    const std::string_view database = spec.database.empty()
+                                        ? irs::StaticStrings::kDefaultDatabase
+                                        : spec.database;
+    if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
+      otel::EnsureSchema(database);
+    }
+    if (catalog::FindDatabase(nullptr, database) == nullptr) {
+      SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
+                "' does not exist");
+    }
   }
   for (const auto& spec : specs) {
     AddListener(spec);

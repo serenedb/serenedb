@@ -61,14 +61,14 @@ enum class HttpApi {
   Es,
   Test,
   Mcp,
-  Otlp,
+  Otel,
 };
 
 constexpr std::array<std::pair<std::string_view, HttpApi>, 4> kHttpApis{{
   {"es", HttpApi::Es},
   {"test", HttpApi::Test},
   {"mcp", HttpApi::Mcp},
-  {"otlp", HttpApi::Otlp},
+  {"otel", HttpApi::Otel},
 }};
 
 struct ListenSpec {
@@ -95,6 +95,9 @@ struct ListenSpec {
   std::string ca;
 
   std::vector<HttpApi> apis;
+  // http only: the database this listener's sessions work in (the OTel
+  // schema is created there); empty means the default database.
+  std::string database;
 
   std::optional<int> backlog;
   std::optional<bool> reuseport;

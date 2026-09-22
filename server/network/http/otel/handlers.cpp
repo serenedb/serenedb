@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "network/http/otlp/handlers.h"
+#include "network/http/otel/handlers.h"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/escaping.h>
@@ -36,7 +36,7 @@
 #include <string_view>
 
 #include "connector/duckdb_client_state.h"
-#include "connector/functions/otlp.h"
+#include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
 #include "otel/model.h"
@@ -49,7 +49,21 @@
 //
 // The failure body is google.rpc.Status:
 // https://github.com/googleapis/googleapis/blob/master/google/rpc/status.proto
-namespace sdb::network::http::otlp {
+namespace sdb::otel {
+
+using network::HttpHandler;
+using network::HttpHeader;
+using network::HttpMethod;
+using network::HttpRequest;
+using network::HttpRouter;
+using network::RequestContext;
+using network::http::FlattenBody;
+using network::http::HttpResponseWriter;
+using network::http::HttpStatus;
+using network::http::kJsonContentType;
+using network::http::SqlIdentifier;
+using network::http::SqlLiteral;
+
 namespace {
 
 inline constexpr std::string_view kProtobufContentType =
@@ -199,25 +213,25 @@ class ExportHandler final : public HttpHandler {
 
     // Metrics fan out into five tables; decoding per table would walk the
     // payload five times, so it is decoded once and left on the connection.
-    otel::DecodedMetrics decoded;
+    DecodedMetrics decoded;
     auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
     const absl::Cleanup clear_metrics = [&] {
-      sdb_ctx.SetOtlpMetrics(nullptr);
+      sdb_ctx.SetOtelMetrics(nullptr);
     };
     std::string body = protobuf ? absl::Base64Escape(raw) : raw;
     if (_targets.size() > 1) {
       try {
         if (protobuf) {
-          otel::DecodeMetricsRequest(raw, decoded.request);
+          DecodeMetricsRequest(raw, decoded.request);
         } else {
-          otel::ParseMetricsRequest(raw, decoded.request);
+          ParseMetricsRequest(raw, decoded.request);
         }
       } catch (const std::exception& error) {
         WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                     error.what(), protobuf);
         co_return {};
       }
-      sdb_ctx.SetOtlpMetrics(&decoded);
+      sdb_ctx.SetOtelMetrics(&decoded);
       body.clear();
     }
 
@@ -249,26 +263,27 @@ class ExportHandler final : public HttpHandler {
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 1>
   kLogTargets{{
-    {connector::kOtelLogsTable, "otlp_logs"},
+    {connector::kOtelLogsTable, "otel_parse_logs"},
   }};
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 1>
   kTraceTargets{{
-    {connector::kOtelTracesTable, "otlp_traces"},
+    {connector::kOtelTracesTable, "otel_parse_traces"},
   }};
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 5>
   kMetricTargets{{
-    {connector::kOtelMetricTables[0], "otlp_metrics_gauge"},
-    {connector::kOtelMetricTables[1], "otlp_metrics_sum"},
-    {connector::kOtelMetricTables[2], "otlp_metrics_histogram"},
-    {connector::kOtelMetricTables[3], "otlp_metrics_exponential_histogram"},
-    {connector::kOtelMetricTables[4], "otlp_metrics_summary"},
+    {connector::kOtelMetricTables[0], "otel_parse_metrics_gauge"},
+    {connector::kOtelMetricTables[1], "otel_parse_metrics_sum"},
+    {connector::kOtelMetricTables[2], "otel_parse_metrics_histogram"},
+    {connector::kOtelMetricTables[3],
+     "otel_parse_metrics_exponential_histogram"},
+    {connector::kOtelMetricTables[4], "otel_parse_metrics_summary"},
   }};
 
 }  // namespace
 
-void Register(HttpRouter& router) {
+void RegisterHandlers(HttpRouter& router) {
   router.Add(
     HttpMethod::Post, "/v1/logs",
     std::make_unique<ExportHandler>(kLogTargets, "rejectedLogRecords"));
@@ -279,4 +294,4 @@ void Register(HttpRouter& router) {
     std::make_unique<ExportHandler>(kMetricTargets, "rejectedDataPoints"));
 }
 
-}  // namespace sdb::network::http::otlp
+}  // namespace sdb::otel

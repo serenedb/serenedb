@@ -5,10 +5,10 @@ keeps a second copy of the DDL; the two forms other tools need are generated:
 
 | Artifact | Made by | Used by |
 |---|---|---|
-| `otel/schema_sql.h` | `scripts/otel_schema.py embed`, at build time | the server, to create the schema at startup |
-| `tests/sqllogic/sdb/pg/otel/schema.inc` | `scripts/otel_schema.py generate`, by hand | the sqllogic contract test |
+| `otel/schema_sql.h` | `scripts/otel/schema.py embed`, at build time | the server, to create the schema at startup |
+| `tests/sqllogic/sdb/pg/otel/schema.inc` | `scripts/otel/schema.py generate`, by hand | the sqllogic contract test |
 
-`scripts/otel_schema.py check` fails on drift and runs in CI.
+`scripts/otel/schema.py check` fails on drift and runs in CI.
 
 ## Tables
 
@@ -23,7 +23,7 @@ Attributes are promoted columns (`service_name`, `severity_text`, `span_kind`,
 
 ## Ingestion
 
-OTLP/HTTP on a listener with `?api=otlp`: `POST /v1/logs`, `/v1/traces`,
+OTLP/HTTP on a listener with `?api=otel`: `POST /v1/logs`, `/v1/traces`,
 `/v1/metrics`, in either `application/x-protobuf` or `application/json`.
 
 Both decoders fill the model in `server/otel/model.h`: `protobuf.cpp` reads

@@ -6,16 +6,16 @@ Nothing keeps its own copy: the server embeds it as a C++ header at build time,
 and the sqllogic contract test includes a generated `.inc`. Both are derived
 here so they cannot drift from the `.sql`.
 
-    scripts/otel_schema.py generate      # rewrite the sqllogic include
-    scripts/otel_schema.py check         # fail if that include has drifted
-    scripts/otel_schema.py embed <out>   # write the C++ header
+    scripts/otel/schema.py generate      # rewrite the sqllogic include
+    scripts/otel/schema.py check         # fail if that include has drifted
+    scripts/otel/schema.py embed <out>   # write the C++ header
 """
 
 import argparse
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "resources" / "otel" / "otel_schema.sql"
 INCLUDE = ROOT / "tests" / "sqllogic" / "sdb" / "pg" / "otel" / "schema.inc"
 
@@ -66,7 +66,7 @@ def check():
         return 0
     print(
         f"{INCLUDE.relative_to(ROOT)} is out of date with "
-        f"{SCHEMA.relative_to(ROOT)}; run scripts/otel_schema.py generate",
+        f"{SCHEMA.relative_to(ROOT)}; run scripts/otel/schema.py generate",
         file=sys.stderr,
     )
     return 1

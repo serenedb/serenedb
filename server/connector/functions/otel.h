@@ -29,19 +29,20 @@ namespace sdb::connector {
 // OTLP/HTTP ingestion as table functions: each takes one ProtoJSON
 // Export<Signal>ServiceRequest and emits rows shaped exactly like its target
 // table, so the HTTP handlers are one
-// `INSERT INTO <table> SELECT * FROM otlp_*(<payload>)` each.
+// `INSERT INTO <table> SELECT * FROM otel_parse_*(<payload>)` each.
 //
-//   otlp_logs(json)                          -> otel_logs rows
-//   otlp_traces(json)                        -> otel_traces rows
-//   otlp_metrics_gauge(json)                 -> otel_metrics_gauge rows
-//   otlp_metrics_sum(json)                   -> otel_metrics_sum rows
-//   otlp_metrics_histogram(json)             -> otel_metrics_histogram rows
-//   otlp_metrics_exponential_histogram(json) -> ..._exponential_histogram rows
-//   otlp_metrics_summary(json)               -> otel_metrics_summary rows
+//   otel_parse_logs(json)                          -> otel_logs rows
+//   otel_parse_traces(json)                        -> otel_traces rows
+//   otel_parse_metrics_gauge(json)                 -> otel_metrics_gauge rows
+//   otel_parse_metrics_sum(json)                   -> otel_metrics_sum rows
+//   otel_parse_metrics_histogram(json)             -> otel_metrics_histogram
+//   rows otel_parse_metrics_exponential_histogram(json) ->
+//   ..._exponential_histogram otel_parse_metrics_summary(json)               ->
+//   otel_metrics_summary rows
 //
 // Columns the mapping does not produce are left NULL, so a deployment may add
 // promoted columns to its own DDL without breaking the INSERT.
-void RegisterOtlpFunctions(duckdb::DatabaseInstance& db);
+void RegisterOtelFunctions(duckdb::DatabaseInstance& db);
 
 inline constexpr std::string_view kOtelSchema = "public";
 inline constexpr std::string_view kOtelLogsTable = "otel_logs";

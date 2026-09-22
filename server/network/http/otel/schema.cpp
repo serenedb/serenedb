@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "network/http/otlp/schema.h"
+#include "network/http/otel/schema.h"
 
 #include <absl/strings/str_cat.h>
 
@@ -39,11 +39,12 @@
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/functions/otlp.h"
+#include "connector/functions/otel.h"
+#include "network/http/common.h"
 #include "otel/schema_sql.h"
 #include "pg/connection_context.h"
 
-namespace sdb::network::http::otlp {
+namespace sdb::otel {
 namespace {
 
 class Creator {
@@ -81,11 +82,18 @@ class Creator {
     return !result->HasError() && result->RowCount() == 1;
   }
 
+  bool Run(std::string sql) {
+    auto result = _conn->Query(std::move(sql));
+    if (result->HasError()) {
+      SDB_WARN(STARTUP, "OpenTelemetry schema: ", result->GetError());
+      return false;
+    }
+    return true;
+  }
+
   bool Create() {
-    for (const auto statement : otel::kSchemaStatements) {
-      auto result = _conn->Query(std::string{statement});
-      if (result->HasError()) {
-        SDB_WARN(STARTUP, "OpenTelemetry schema: ", result->GetError());
+    for (const auto statement : kSchemaStatements) {
+      if (!Run(std::string{statement})) {
         return false;
       }
     }
@@ -98,21 +106,38 @@ class Creator {
 
 }  // namespace
 
-void EnsureSchema() {
-  const auto* database =
-    catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
-  if (database == nullptr) {
-    SDB_WARN(STARTUP, "OpenTelemetry schema: default database not found");
-    return;
+void EnsureSchema(std::string_view database) {
+  const auto* entry = catalog::FindDatabase(nullptr, database);
+  if (entry == nullptr) {
+    // CREATE DATABASE has to run somewhere: the default database always
+    // exists and every role may connect to it.
+    const auto* home =
+      catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
+    if (home == nullptr) {
+      SDB_WARN(STARTUP, "OpenTelemetry schema: default database not found");
+      return;
+    }
+    Creator bootstrap{home->name.GetIdentifierName(), catalog::IdOf(*home)};
+    if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
+                                    network::http::SqlIdentifier(database)))) {
+      return;
+    }
+    entry = catalog::FindDatabase(nullptr, database);
+    if (entry == nullptr) {
+      SDB_WARN(STARTUP, "OpenTelemetry schema: database '", database,
+               "' not visible after CREATE DATABASE");
+      return;
+    }
+    SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
-  Creator creator{database->name.GetIdentifierName(), catalog::IdOf(*database)};
+  Creator creator{entry->name.GetIdentifierName(), catalog::IdOf(*entry)};
   if (creator.Exists()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema already present");
+    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database);
     return;
   }
   if (creator.Create()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema created");
+    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database);
   }
 }
 
-}  // namespace sdb::network::http::otlp
+}  // namespace sdb::otel

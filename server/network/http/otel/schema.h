@@ -20,11 +20,13 @@
 
 #pragma once
 
-#include "network/http/router.h"
+#include <string_view>
 
-namespace sdb::network::http::otlp {
+namespace sdb::otel {
 
-// OTLP/HTTP: POST /v1/logs, /v1/traces, /v1/metrics (OTLP spec default paths).
-void Register(HttpRouter& router);
+// Creates `database` when it is missing, then the OpenTelemetry tables and
+// indexes in it when they are missing. Called at startup for every listener
+// that serves ?api=otel, so the first export lands in a schema that exists.
+void EnsureSchema(std::string_view database);
 
-}  // namespace sdb::network::http::otlp
+}  // namespace sdb::otel

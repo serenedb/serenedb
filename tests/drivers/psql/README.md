@@ -8,7 +8,7 @@ in [`tests.test`](tests.test). Harness: [`run.py`](run.py).
     tests/drivers/run.sh --lang psql --host 127.0.0.1 --port 5432
 
 The unscoped listings (`\dAc`, `\dFd`) include what the drivers listener
-creates at startup: serened must run with `?api=otlp`, as in
+creates at startup: serened must run with `?api=otel`, as in
 `docker-compose.drivers.yml`, so `public.otel_body_dict` exists.
 
 ## Refresh goldens (after psql/PG version bumps or new commands)

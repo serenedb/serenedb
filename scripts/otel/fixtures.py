@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Encode the conformance fixtures' ProtoJSON into OTLP protobuf.
 
-The `.otlp.json` files are the source of truth; this writes the matching
-`.otlp.pb` next to each one using the OFFICIAL opentelemetry-proto bindings,
+The `.json` files are the source of truth; this writes the matching `.pb`
+next to each one using the OFFICIAL opentelemetry-proto bindings,
 so the protozero decoder in server/otel/protobuf.cpp is checked against an
 independent implementation rather than against itself.
 
     pip install opentelemetry-proto protobuf
-    scripts/otel_fixtures.py generate
-    scripts/otel_fixtures.py check     # fail if a .pb is missing or stale
+    scripts/otel/fixtures.py generate
+    scripts/otel/fixtures.py check     # fail if a .pb is missing or stale
 """
 
 import base64
@@ -16,7 +16,7 @@ import json
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONFORMANCE = ROOT / "resources" / "otel" / "conformance"
 
 SIGNALS = {
@@ -84,8 +84,8 @@ def encode(signal, text):
 
 def each_fixture():
     for signal in SIGNALS:
-        for source in sorted((CONFORMANCE / signal).glob("*.otlp.json")):
-            yield signal, source, source.with_suffix("").with_suffix(".otlp.pb")
+        for source in sorted((CONFORMANCE / signal).glob("*.json")):
+            yield signal, source, source.with_suffix(".pb")
 
 
 def main(argv):

@@ -79,7 +79,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 ## Write memory {#write-memory}
 
-Memory held while writing to a search table is bounded by `segment_memory_max` — default 256 MB, set per table with `WITH (segment_memory_max = …)` or per session with `SET`. Estimate the peak for one writing transaction as:
+Memory held while writing to a search table is bounded by `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = …)` clause and defaulting to 256 MB. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |
@@ -93,9 +93,9 @@ CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB
 ```
 
-<DocCallout type="attention">
+<DocCallout type="tip">
 
-`DELETE` is not covered by this bound: a removed row is remembered until the transaction commits, so a very large `DELETE` in a single transaction holds memory proportional to the number of rows it removes. Split it across transactions if that matters.
+`DELETE` sits outside this bound, but costs little: only a rowid per removed row is held until the transaction commits, so even a million-row `DELETE` is a handful of megabytes.
 
 </DocCallout>
 

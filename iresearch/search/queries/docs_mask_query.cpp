@@ -85,13 +85,10 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
                                IResourceManager& memory,
                                PrepareCollector* collector, bool needs_terms) {
   const auto masked = MaskedCount(segment);
-  if (masked == 0 || (query && QueryBuilder::IsEmpty(*query))) {
+  if (!query || masked == 0 || (query && QueryBuilder::IsEmpty(*query))) {
     return query;
   }
-  if (!query) {
-    const All all;
-    query = all.PrepareSegment(segment, {.memory = memory});
-  }
+
   BooleanBuilder builder{
     segment, memory, 0, kNoBoost, ScoreMergeType::Sum, collector, needs_terms};
   builder.Add(std::move(query), Occur::Must);

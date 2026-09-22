@@ -37,8 +37,6 @@ namespace irs {
 struct SegmentMetaWriterImpl : public SegmentMetaWriter {
   static constexpr std::string_view kFormatExt = "sm";
 
-  static constexpr uint32_t kMaxMaskFiles = 8;
-
   static constexpr size_t kMinChainBytes = 4096;
 
   static constexpr uint64_t kNoParent = std::numeric_limits<uint64_t>::max();
@@ -113,7 +111,6 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
 
   const bool append = has_mask && patch != nullptr &&
                       meta.docs_mask_chain != 0 &&
-                      meta.docs_mask_chain < kMaxMaskFiles &&
                       compressed.getSizeInBytes() > kMinChainBytes;
 
   const size_t ancestors =

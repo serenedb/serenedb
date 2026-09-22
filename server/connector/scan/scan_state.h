@@ -34,6 +34,7 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -343,8 +344,8 @@ struct ColScanLocalState : public ScanLocalState {
   uint64_t doc_cursor = 0;
   uint64_t doc_end = 0;
   FullScanner* scanner = nullptr;
-  const uint64_t* mask_words = nullptr;
-  uint32_t mask_word_count = 0;
+  irs::fill::DocsMask mask{nullptr, irs::doc_limits::eof()};
+  bool has_mask = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;
   duckdb::SelectionVector live_sel;

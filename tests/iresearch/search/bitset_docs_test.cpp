@@ -811,7 +811,7 @@ TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
   const auto removals = MakeMask({3, 64, 4999});
   auto probe = ProbeOver(&removals, irs::doc_limits::eof());
 
-  // A hit answers with the target itself; a miss answers with a bound that
+  // A hit answers with the target itself; a miss answers with a bound saying
   // nothing between it and the target is deleted, not with the next deletion.
   ASSERT_EQ(3, probe.Probe(1));
   ASSERT_EQ(3, probe.Probe(3));
@@ -821,13 +821,6 @@ TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
   ASSERT_EQ(4999, probe.Probe(4993));
   ASSERT_LT(5000, probe.Probe(5000));
   ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(100000)));
-
-  ASSERT_TRUE(probe.Test(3));
-  ASSERT_TRUE(probe.Test(64));
-  ASSERT_TRUE(probe.Test(4999));
-  ASSERT_FALSE(probe.Test(1));
-  ASSERT_FALSE(probe.Test(65));
-  ASSERT_FALSE(probe.Test(5000));
 }
 
 TEST(docs_mask_test, probe_is_stateless_under_arbitrary_order) {
@@ -855,10 +848,15 @@ TEST(docs_mask_test, probe_treats_the_uncommitted_tail_as_deleted) {
   ASSERT_EQ(65, probe.Probe(4));
   ASSERT_EQ(5000, probe.Probe(4992));
   ASSERT_EQ(6000, probe.Probe(6000));
+}
 
-  ASSERT_TRUE(probe.Test(5000));
-  ASSERT_TRUE(probe.Test(6000));
-  ASSERT_FALSE(probe.Test(4));
+TEST(docs_mask_test, probe_bound_never_steps_over_the_tail) {
+  const auto removals = MakeMask({3, 10000});
+  auto probe = ProbeOver(&removals, 70);
+
+  ASSERT_EQ(70, probe.Probe(65));
+  ASSERT_EQ(70, probe.Probe(69));
+  ASSERT_EQ(3, probe.Probe(1));
 }
 
 TEST(docs_mask_test, tail_only_probe_starts_at_the_bound) {

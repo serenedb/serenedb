@@ -158,9 +158,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     auto link = parent;
 
     while (link != SegmentMetaWriterImpl::kNoParent) {
-      if (link >= version ||
-          docs_mask_chain == SegmentMetaWriterImpl::kMaxMaskFiles)
-        [[unlikely]] {
+      if (link >= version) [[unlikely]] {
         throw IndexError{absl::StrCat(
           "Corrupted document mask chain of '", name, "', ", docs_mask_chain,
           " link(s) deep at version(", version, ") links to ", link)};

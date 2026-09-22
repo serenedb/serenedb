@@ -31,6 +31,18 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+namespace count {
+
+class MaskCount;
+}
+namespace fill {
+
+class DocsMask;
+}
+namespace probe {
+
+class DocsMask;
+}
 
 class DocumentMask final {
  public:
@@ -119,10 +131,6 @@ class DocumentMask final {
     return _bits.capacity * sizeof(uint64_t);
   }
 
-  const uint64_t* Words() const noexcept { return _bits.array; }
-
-  size_t WordCount() const noexcept { return _bits.arraysize; }
-
   bool Add(doc_id_t doc) {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
@@ -137,6 +145,15 @@ class DocumentMask final {
 
   void Clear() noexcept { roaring::api::bitset_clear(&_bits); }
   void Trim() noexcept { roaring::api::bitset_trim(&_bits); }
+
+ protected:
+  friend class count::MaskCount;
+  friend class fill::DocsMask;
+  friend class probe::DocsMask;
+
+  const uint64_t* Words() const noexcept { return _bits.array; }
+
+  size_t WordCount() const noexcept { return _bits.arraysize; }
 
  private:
   static constexpr doc_id_t kBase = doc_limits::min();

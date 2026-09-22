@@ -26,7 +26,6 @@
 #include "iresearch/search/detail/window.hpp"
 
 namespace irs::count {
-namespace {
 
 class MaskCount : public Root {
  public:
@@ -52,20 +51,21 @@ class MaskCount : public Root {
   }
 
  private:
+  static constexpr auto kBits = detail::kWindowBits;
+
   uint64_t Popcount(doc_id_t min, doc_id_t max) const noexcept {
     const auto base = static_cast<int64_t>(min - doc_limits::min());
     const auto len = static_cast<uint32_t>(max - min);
-    const auto full = len / detail::kWindowBits;
+    const auto full = len / kBits;
     uint64_t count = 0;
     for (uint32_t w = 0; w != full; ++w) {
-      count += static_cast<uint64_t>(std::popcount(detail::WordAt(
-        _words, _word_count, base + int64_t{w} * detail::kWindowBits)));
+      count += static_cast<uint64_t>(std::popcount(
+        detail::WordAt(_words, _word_count, base + int64_t{w} * kBits)));
     }
-    if (const auto rest = len % detail::kWindowBits; rest != 0) {
+    if (const auto rest = len % kBits; rest != 0) {
       const auto word =
-        detail::WordAt(_words, _word_count,
-                       base + int64_t{full} * detail::kWindowBits) &
-        (~uint64_t{0} >> (detail::kWindowBits - rest));
+        detail::WordAt(_words, _word_count, base + int64_t{full} * kBits) &
+        (~uint64_t{0} >> (kBits - rest));
       count += static_cast<uint64_t>(std::popcount(word));
     }
     return count;
@@ -76,8 +76,6 @@ class MaskCount : public Root {
   doc_id_t _uncommitted;
   doc_id_t _end;
 };
-
-}  // namespace
 
 Root::ptr MakeMaskCount(const DocumentMask* mask, doc_id_t uncommitted,
                         doc_id_t docs_count) {

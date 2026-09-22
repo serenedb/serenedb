@@ -12611,8 +12611,8 @@ void InsertBucketDocs(irs::IndexWriter& writer, size_t count, size_t buckets) {
   trx.Commit();
 }
 
-TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
-  constexpr uint32_t kCap = irs::SegmentMetaWriterImpl::kMaxMaskFiles;
+TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
+  constexpr uint32_t kRounds = 12;
   constexpr size_t kDocs = 10000;
   constexpr size_t kBuckets = 20;
   // Enough buckets in the first round to clear kMinChainBytes in one step --
@@ -12632,7 +12632,7 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
     return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
   };
 
-  for (uint32_t round = 0; round <= kCap; ++round) {
+  for (uint32_t round = 0; round != kRounds; ++round) {
     {
       auto trx = writer->GetBatch();
       const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
@@ -12644,9 +12644,8 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
     }
     writer->RefreshCommit();
 
-    // The chain grows to the cap, then the next write collapses it to a base.
-    const auto expected = round + 1 <= kCap ? round + 1 : 1;
-    ASSERT_EQ(expected, mask_chain()) << "after round " << round;
+    // Nothing caps the chain: every patched write adds a link.
+    ASSERT_EQ(round + 1, mask_chain()) << "after round " << round;
   }
 
   auto reader = irs::DirectoryReader(directory, nullptr,
@@ -12660,7 +12659,7 @@ TEST_P(IndexTestCase11, docs_mask_chain_collapses_at_cap) {
 }
 
 TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
-  constexpr uint32_t kCap = irs::SegmentMetaWriterImpl::kMaxMaskFiles;
+  constexpr uint32_t kRounds = 5;
   constexpr size_t kDocs = 10000;
   constexpr size_t kBuckets = 20;
   constexpr size_t kFirstRound = 6;
@@ -12700,7 +12699,7 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
   ASSERT_EQ(1, segment_meta().docs_mask_chain);
 
   std::vector<std::string> links;
-  for (uint32_t round = 1; round < kCap; ++round) {
+  for (uint32_t round = 1; round != kRounds; ++round) {
     remove_round(round);
     const auto meta = segment_meta();
     ASSERT_EQ(round + 1, meta.docs_mask_chain) << "after round " << round;
@@ -12714,20 +12713,26 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
     ASSERT_TRUE(exists(link)) << "linked " << link << " was collected";
   }
 
-  remove_round(kCap);
-  ASSERT_EQ(1, segment_meta().docs_mask_chain);
+  // Compaction rewrites the segment, which folds the mask in and leaves the
+  // whole chain unreferenced -- the only way a link is dropped now that
+  // nothing caps the chain's length.
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
 
   irs::directory_utils::RemoveAllUnreferenced(directory);
   for (const auto& link : links) {
     ASSERT_FALSE(exists(link)) << "orphaned " << link << " was not collected";
   }
 
+  // The compaction folded the mask into the rewritten segment, so what is left
+  // carries no mask at all -- and it dropped exactly the removed documents.
   auto reader = irs::DirectoryReader(directory, nullptr,
                                      irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
-  ASSERT_NE(nullptr, reader[0].docs_mask());
-  ASSERT_EQ(kDocs - reader[0].live_docs_count(),
-            reader[0].docs_mask()->Count());
+  ASSERT_EQ(nullptr, reader[0].docs_mask());
+  ASSERT_EQ(reader[0].docs_count(), reader[0].live_docs_count());
+  ASSERT_LT(reader[0].live_docs_count(), kDocs);
 }
 
 TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {

@@ -20,8 +20,7 @@
 
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/detail/window.hpp>
-#include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/full_scanner.h"
@@ -50,46 +49,6 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
   l.scanner = slot.get();
 }
 
-constexpr uint32_t kMaskBits = 64;
-
-uint64_t DeadWord(const uint64_t* words, uint32_t count, int64_t at,
-                  uint32_t len) noexcept {
-  const auto word = irs::detail::WordAt(words, count, at);
-  return len == kMaskBits ? word : word & ((uint64_t{1} << len) - 1);
-}
-
-duckdb::idx_t LiveRows(const ColScanLocalState& l, irs::doc_id_t first,
-                       duckdb::idx_t take, duckdb::SelectionVector& sel) {
-  const auto base = static_cast<int64_t>(first - irs::doc_limits::min());
-  auto* const out = sel.data();
-  duckdb::idx_t live = 0;
-  for (duckdb::idx_t at = 0; at < take; at += kMaskBits) {
-    const auto len =
-      static_cast<uint32_t>(std::min<duckdb::idx_t>(kMaskBits, take - at));
-    const auto dead = DeadWord(l.mask_words, l.mask_word_count,
-                               base + static_cast<int64_t>(at), len);
-    const auto alive =
-      ~dead & (len == kMaskBits ? ~uint64_t{0} : ((uint64_t{1} << len) - 1));
-    live = static_cast<duckdb::idx_t>(
-      irs::MaterializeWord(static_cast<uint32_t>(at), alive, out + live) - out);
-  }
-  return live;
-}
-
-bool HasDead(const ColScanLocalState& l, irs::doc_id_t first,
-             duckdb::idx_t take) noexcept {
-  const auto base = static_cast<int64_t>(first - irs::doc_limits::min());
-  for (duckdb::idx_t at = 0; at < take; at += kMaskBits) {
-    const auto len =
-      static_cast<uint32_t>(std::min<duckdb::idx_t>(kMaskBits, take - at));
-    if (DeadWord(l.mask_words, l.mask_word_count,
-                 base + static_cast<int64_t>(at), len) != 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
 duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
                            duckdb::DataChunk& output) {
   auto& scanner = *l.scanner;
@@ -101,13 +60,16 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
-    const auto first =
-      irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
     duckdb::idx_t produced;
-    if (l.mask_words != nullptr && HasDead(l, first, take)) {
+    if (l.has_mask) {
+      const auto first =
+        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
       l.live_sel.Initialize(l.live_sel_data);
-      const auto live = LiveRows(l, first, take, l.live_sel);
-      produced = scanner.Scan(l.doc_cursor, take, output, &l.live_sel, live);
+      const auto live =
+        l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
+      produced = live == take ? scanner.Scan(l.doc_cursor, take, output)
+                              : scanner.Scan(l.doc_cursor, take, output,
+                                             &l.live_sel, live);
     } else {
       produced = scanner.Scan(l.doc_cursor, take, output);
     }
@@ -127,7 +89,6 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
                 ScanGlobalState& g, ColScanLocalState& l,
                 duckdb::DataChunk& output) {
   if (!l.live_sel_data) {
-    // MaterializeWord writes up to 8 slots past the produced count.
     l.live_sel_data =
       duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE + 8);
   }
@@ -157,9 +118,8 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
       l.doc_end = std::min<uint64_t>(docs, uint64_t{l.unit.rg_end} * g.rg_size);
     }
     const auto* mask = sub.docs_mask();
-    l.mask_words = mask != nullptr ? mask->Words() : nullptr;
-    l.mask_word_count =
-      mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0;
+    l.has_mask = mask != nullptr && !mask->Empty();
+    l.mask = irs::fill::DocsMask{mask, sub.Meta().uncommitted_begin};
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

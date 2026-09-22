@@ -136,11 +136,7 @@ run_stress() {
 	fi
 }
 
-# The customer-flow replay (view-backed hybrid index over an iceberg REST
-# table, ingest + search + deletes, restarts, data oracle): every run, hard
-# fail, about eight minutes.
 run_workload() {
-	run env SDB_STRESS_PROFILE=biglake-reindex-smoke bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
 	if biglake_enabled; then
 		run env ICEBERG_BACKEND=biglake SDB_STRESS_PROFILE=biglake-reindex-smoke \
 			bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"

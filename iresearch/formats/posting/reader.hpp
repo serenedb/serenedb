@@ -106,6 +106,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
   //  error detection which could recognize
   //  some forms of corruption.
   format_utils::ReadChecksum(*_doc_in);
+  _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     /* prepare positions input */
@@ -119,6 +120,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // error detection which could recognize
     // some forms of corruption.
     format_utils::ReadChecksum(*_pos_in);
+    _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
@@ -132,6 +134,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // error detection which could recognize
     // some forms of corruption.
     format_utils::ReadChecksum(*_pay_in);
+    _pay_in->EnableReadahead();
   }
 
   const uint64_t block_size = in.ReadV32();

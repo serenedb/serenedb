@@ -43,6 +43,7 @@ class NormColumnReader final {
     std::span<const byte_type> bytes;
     uint64_t first_row;
     uint64_t row_count;
+    size_t rg;
     uint8_t byte_size;
   };
 
@@ -57,9 +58,12 @@ class NormColumnReader final {
 
   RgInfo Rg(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
-    return {_spans[rg], rg * _rg_rows, RowGroupRowCount(rg),
+    return {_spans[rg], rg * _rg_rows, RowGroupRowCount(rg), rg,
             _pointers[rg].byte_size};
   }
+
+  size_t Stream(size_t rg, const byte_type* from,
+                size_t advised) const noexcept;
 
   uint8_t ByteSize(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
@@ -98,6 +102,7 @@ class NormColumnReader final {
   uint64_t _total_sum = 0;
   uint64_t _total_non_zero = 0;
   bool _uniform_byte_size = true;
+  bool _mapped = false;
 };
 
 // Decode one stored value from a row-group's raw bytes.

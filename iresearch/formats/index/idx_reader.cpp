@@ -55,6 +55,7 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
     throw IoError{absl::StrCat("Failed to open index file, path: ", filename)};
   }
   format_utils::CheckHeader(*in, kIdxFormatName, kIdxFormatVersion);
+  in->EnableReadahead();
   return in;
 }
 

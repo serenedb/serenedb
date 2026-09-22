@@ -55,6 +55,7 @@ class ReadContext final : public BlockManager,
   IndexInput& In() noexcept { return *_in; }
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
+  bool RandomAccess() const noexcept { return _random_access; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;

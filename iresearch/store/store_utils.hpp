@@ -147,11 +147,21 @@ class BytesViewInput : public IndexInput {
 
   BytesViewInput() = default;
   explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
+  BytesViewInput(const BytesViewInput& other) noexcept
+    : IndexInput{other},
+      _data{other._data},
+      _pos{other._pos},
+      _readahead_limit{other._readahead_limit},
+      _readahead{other._readahead == Readahead::Off ? Readahead::Off
+                                                    : Readahead::On} {}
 
   IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
+    if (_readahead == Readahead::On) [[unlikely]] {
+      OnSequentialRead(begin, count);
+    }
     return begin;
   }
   IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t offset,
@@ -217,6 +227,22 @@ class BytesViewInput : public IndexInput {
 
   uint32_t Checksum(uint64_t offset) const final;
 
+  void Prefetch(uint64_t offset, uint64_t count) const noexcept final;
+
+  bool Resident(uint64_t offset, uint64_t count) const noexcept final;
+
+  void EnableReadahead() noexcept final { _readahead = Readahead::On; }
+
+  void LimitReadahead(uint64_t end) noexcept final {
+    _readahead_limit = _data.data() + std::min<uint64_t>(end, _data.size());
+    _seq_end = nullptr;
+    _prefetch_end = nullptr;
+    _probed = false;
+    if (_readahead == Readahead::Suspended) {
+      _readahead = Readahead::On;
+    }
+  }
+
   void reset(const byte_type* data, size_t size) noexcept {
     _data = bytes_view(data, size);
     _pos = data;
@@ -224,8 +250,37 @@ class BytesViewInput : public IndexInput {
   void reset(bytes_view ref) noexcept { reset(ref.data(), ref.size()); }
 
  private:
+  enum class Readahead : uint8_t {
+    Off,
+    On,
+    Suspended,
+  };
+
+  static constexpr uint64_t kMinReadahead = 128 * 1024;
+  static constexpr uint64_t kReadaheadSlack = kMinReadahead / 2;
+
+  bytes_view Window(uint64_t offset, uint64_t count) const noexcept {
+    if (offset >= _data.size()) {
+      return {};
+    }
+    return {_data.data() + offset,
+            std::min<uint64_t>(count, _data.size() - offset)};
+  }
+
+  void OnSequentialRead(const byte_type* begin, uint64_t count) noexcept;
+
+  void ReadaheadFrom(const byte_type* begin) noexcept;
+
   bytes_view _data;
   const byte_type* _pos = _data.data();
+  const byte_type* _seq_end = nullptr;
+  const byte_type* _prefetch_end = nullptr;
+  const byte_type* _readahead_limit = nullptr;
+  uint64_t _run = 0;
+  uint64_t _skipped = 0;
+  uint64_t _window = kMinReadahead;
+  Readahead _readahead = Readahead::Off;
+  bool _probed = false;
 };
 
 // same as BytesViewInput but with support of adress remapping

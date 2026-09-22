@@ -7,6 +7,7 @@ wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import socket
@@ -15,6 +16,15 @@ import pytest
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
+USER = os.environ.get("SDB_DRV_USER", "postgres")
+PASSWORD = os.environ.get("SDB_DRV_PASSWORD", "")
+
+TOKEN = os.environ.get("SDB_DRV_HTTP_TOKEN", "")
+AUTH = (
+    f"Bearer {TOKEN}"
+    if TOKEN
+    else "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+)
 
 INDEX = "drv_es_lifecycle"
 
@@ -30,6 +40,18 @@ MAPPINGS = {
         }
     }
 }
+
+
+def _authorize(conn):
+    send = conn.request
+
+    def request(method, url, body=None, headers=None, **kwargs):
+        merged = {"Authorization": AUTH}
+        merged.update(headers or {})
+        return send(method, url, body=body, headers=merged, **kwargs)
+
+    conn.request = request
+    return conn
 
 
 def _reachable() -> bool:
@@ -50,7 +72,7 @@ def conn():
     import http.client
 
     c = http.client.HTTPConnection(HOST, PORT, timeout=30)
-    yield c
+    yield _authorize(c)
     c.close()
 
 

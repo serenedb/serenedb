@@ -1,0 +1,1 @@
+{"__table":"otel_logs","timestamp":"2026-09-08T12:00:00.000000000Z","body":"every AnyValue shape","log_attributes":{"a.string":"text","b.bool":true,"c.int":-9007199254740993,"d.double":0.1,"e.bytes":"3q2+7w==","f.array":["x",2,false],"g.map":{"inner.key":"inner","inner.nested":{"deep":1}},"h.empty":null},"resource_attributes":{},"scope_attributes":{}}

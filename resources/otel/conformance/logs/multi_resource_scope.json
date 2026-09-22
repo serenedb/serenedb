@@ -1,0 +1,41 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "alpha"}}
+      ]},
+      "schemaUrl": "https://opentelemetry.io/schemas/1.30.0",
+      "scopeLogs": [
+        {
+          "scope": {"name": "s1", "version": "1"},
+          "logRecords": [
+            {"timeUnixNano": "1788868800000000010", "body": {"stringValue": "a-s1-1"}},
+            {"timeUnixNano": "1788868800000000011", "body": {"stringValue": "a-s1-2"}}
+          ]
+        },
+        {
+          "scope": {"name": "s2"},
+          "schemaUrl": "https://opentelemetry.io/schemas/1.31.0",
+          "logRecords": [
+            {"timeUnixNano": "1788868800000000012", "body": {"stringValue": "a-s2-1"}}
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "beta"}},
+        {"key": "host.name", "value": {"stringValue": "node-9"}}
+      ]},
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {"timeUnixNano": "1788868800000000013", "body": {"stringValue": "b-s0-1"},
+             "severityNumber": 21, "severityText": "FATAL"}
+          ]
+        }
+      ]
+    }
+  ]
+}

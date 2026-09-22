@@ -1,0 +1,63 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "cart"}}
+      ]},
+      "scopeMetrics": [
+        {
+          "scope": {"name": "rpc", "version": "2.1"},
+          "metrics": [
+            {
+              "name": "rpc.client.duration",
+              "description": "client call duration",
+              "unit": "ms",
+              "exponentialHistogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1788865200000000000",
+                    "timeUnixNano": "1788868800000000000",
+                    "count": "9",
+                    "sum": 12.5,
+                    "scale": -3,
+                    "zeroCount": "1",
+                    "zeroThreshold": 1e-6,
+                    "positive": {"offset": 5, "bucketCounts": ["1", "2", "2"]},
+                    "negative": {"offset": -7, "bucketCounts": ["1", "0", "2"]},
+                    "min": 0.1,
+                    "max": 4.0,
+                    "flags": 1,
+                    "attributes": [
+                      {"key": "rpc.system", "value": {"stringValue": "grpc"}}
+                    ],
+                    "exemplars": [
+                      {
+                        "timeUnixNano": "1788868800000000001",
+                        "asInt": "3",
+                        "traceId": "1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6",
+                        "spanId": "00f067aa0ba902b7",
+                        "filteredAttributes": [
+                          {"key": "peer", "value": {"stringValue": "10.0.0.7"}}
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "timeUnixNano": "1788868860000000000",
+                    "count": "0",
+                    "scale": 4,
+                    "zeroCount": "0",
+                    "positive": {"offset": 0, "bucketCounts": []},
+                    "negative": {"offset": 0, "bucketCounts": []},
+                    "attributes": []
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

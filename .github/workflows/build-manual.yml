@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
       BIGLAKE:
-        description: 'Also run the iceberg tests against Google BigLake in the dev build (needs the BIGLAKE_* secrets)'
+        description: 'Launch BigLake tests: sqllogic + recovery + stress against the real catalog in the dev build (needs the BIGLAKE_* secrets)'
         type: boolean
         default: false
       PR_SHA:

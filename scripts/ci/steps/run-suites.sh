@@ -141,6 +141,10 @@ run_stress() {
 # fail, about eight minutes.
 run_workload() {
 	run env SDB_STRESS_PROFILE=biglake-reindex-smoke bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	if biglake_enabled; then
+		run env ICEBERG_BACKEND=biglake SDB_STRESS_PROFILE=biglake-reindex-smoke \
+			bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	fi
 }
 
 # Sanitizer configs run ours + drivers by default; RUN_EXTRA is what widens them

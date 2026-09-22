@@ -13,14 +13,20 @@
 # core dumps available for wedge triage.
 STRESS_TSAN_OPTIONS="${TSAN_OPTIONS:-}"
 PROFILE="${SDB_STRESS_PROFILE:-smoke}"
+BACKEND="${ICEBERG_BACKEND:-local}"
 OUT="out/stress/${PROFILE}"
+JUNIT_OUT="out/test-results"
+if [[ "${BACKEND}" != "local" ]]; then
+	OUT="${OUT}-${BACKEND}"
+	JUNIT_OUT="${JUNIT_OUT}/${BACKEND}"
+fi
 
 # The workload profiles replay the customer's iceberg flow against an
 # iceberg-rest + MinIO pair. The stress container has no docker socket, so the
 # pair starts on the host and the container joins the host network to reach it.
 FIXTURE_STATE=""
 FIXTURE_ARGS=()
-if [[ "${PROFILE}" == biglake-reindex-* && "${ICEBERG_BACKEND:-local}" == "local" ]]; then
+if [[ "${PROFILE}" == biglake-reindex-* && "${BACKEND}" == "local" ]]; then
 	FIXTURE_STATE="$(mktemp)"
 	eval "$(python3 "${WORKSPACE}/tests/drivers/harness/iceberg_rest.py" start --state "${FIXTURE_STATE}")"
 	trap 'python3 "${WORKSPACE}/tests/drivers/harness/iceberg_rest.py" stop --state "${FIXTURE_STATE}"; rm -f "${FIXTURE_STATE}"' EXIT
@@ -42,6 +48,7 @@ if ! docker run --rm \
 	-e TSAN_OPTIONS="${STRESS_TSAN_OPTIONS}" \
 	-e SDB_STRESS_PROFILE="${PROFILE}" \
 	-e SDB_STRESS_OUTDIR="/serenedb/${OUT}" \
+	-e SDB_STRESS_JUNIT="/serenedb/${JUNIT_OUT}" \
 	-e ICEBERG_BACKEND -e BIGLAKE_PROJECT -e BIGLAKE_CATALOG \
 	-e BIGLAKE_CLIENT_EMAIL -e BIGLAKE_PRIVATE_KEY -e BIGLAKE_PRIVATE_KEY_ID \
 	"${FIXTURE_ARGS[@]}" \
@@ -50,9 +57,8 @@ if ! docker run --rm \
 	bash -c '
     set -o pipefail
     cd /serenedb
-    mkdir -p /serenedb/out/logs /serenedb/out/test-results
+    mkdir -p /serenedb/out/logs "${SDB_STRESS_JUNIT}"
     WORKSPACE=/serenedb BUILD_DIR="${BUILD_DIR}" \
-      SDB_STRESS_JUNIT=/serenedb/out/test-results \
       ./tests/drivers/stress/run.sh 2>&1 | tee -a /serenedb/out/logs/stress-tests.log
   '; then
 	echo "STRESS_TESTS=FAILED"

@@ -72,18 +72,27 @@ def backend_sql(backend, env):
     if backend == "biglake":
         project = os.environ["BIGLAKE_PROJECT"]
         catalog = os.environ["BIGLAKE_CATALOG"]
+        service_account = None
         if os.environ.get("BIGLAKE_CLIENT_EMAIL"):
-            body = (f"TYPE ICEBERG, PROVIDER google, "
-                    f"CLIENT_EMAIL {lit(os.environ['BIGLAKE_CLIENT_EMAIL'])}, "
-                    f"PRIVATE_KEY {lit(os.environ['BIGLAKE_PRIVATE_KEY'])}, "
-                    f"PRIVATE_KEY_ID {lit(os.environ.get('BIGLAKE_PRIVATE_KEY_ID', ''))}, "
-                    f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(project)}}}")
+            service_account = (os.environ["BIGLAKE_CLIENT_EMAIL"],
+                               os.environ["BIGLAKE_PRIVATE_KEY"],
+                               os.environ.get("BIGLAKE_PRIVATE_KEY_ID", ""))
         else:
             adc_path = os.environ.get(
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 os.path.expanduser("~/.config/gcloud/application_default_credentials.json"))
             with open(adc_path) as fh:
                 adc = json.load(fh)
+            if adc.get("type") == "service_account":
+                service_account = (adc["client_email"], adc["private_key"],
+                                   adc.get("private_key_id", ""))
+        if service_account:
+            email, key, key_id = service_account
+            body = (f"TYPE ICEBERG, PROVIDER google, "
+                    f"CLIENT_EMAIL {lit(email)}, PRIVATE_KEY {lit(key)}, "
+                    f"PRIVATE_KEY_ID {lit(key_id)}, "
+                    f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(project)}}}")
+        else:
             body = (f"TYPE ICEBERG, OAUTH2_GRANT_TYPE 'refresh_token', "
                     f"OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token', "
                     f"CLIENT_ID {lit(adc['client_id'])}, CLIENT_SECRET {lit(adc['client_secret'])}, "

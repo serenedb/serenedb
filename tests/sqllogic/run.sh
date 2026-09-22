@@ -599,18 +599,25 @@ launch_biglake() {
 			echo "ERROR: ICEBERG_BACKEND=biglake needs BIGLAKE_CLIENT_EMAIL/BIGLAKE_PRIVATE_KEY or gcloud application-default credentials at $adc" >&2
 			exit 1
 		fi
-		secret_body=$(python3 - "$adc" "$BIGLAKE_PROJECT" <<-'PY'
-			import json, sys
-			adc = json.load(open(sys.argv[1]))
-			lit = lambda s: "'" + s.replace("'", "''") + "'"
-			print("TYPE ICEBERG, OAUTH2_GRANT_TYPE 'refresh_token', "
-			      "OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token', "
-			      f"CLIENT_ID {lit(adc['client_id'])}, CLIENT_SECRET {lit(adc['client_secret'])}, "
-			      f"REFRESH_TOKEN {lit(adc['refresh_token'])}, "
-			      f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(sys.argv[2])}}}")
+		secret_body=$(
+			python3 - "$adc" "$BIGLAKE_PROJECT" <<-'PY'
+				import json, sys
+				adc = json.load(open(sys.argv[1]))
+				lit = lambda s: "'" + s.replace("'", "''") + "'"
+				if adc.get("type") == "service_account":
+				    print("TYPE ICEBERG, PROVIDER google, "
+				          f"CLIENT_EMAIL {lit(adc['client_email'])}, PRIVATE_KEY {lit(adc['private_key'])}, "
+				          f"PRIVATE_KEY_ID {lit(adc.get('private_key_id', ''))}, "
+				          f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(sys.argv[2])}}}")
+				else:
+				    print("TYPE ICEBERG, OAUTH2_GRANT_TYPE 'refresh_token', "
+				          "OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token', "
+				          f"CLIENT_ID {lit(adc['client_id'])}, CLIENT_SECRET {lit(adc['client_secret'])}, "
+				          f"REFRESH_TOKEN {lit(adc['refresh_token'])}, "
+				          f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(sys.argv[2])}}}")
 			PY
 		)
-		echo "BigLake catalog ${BIGLAKE_CATALOG}: gcloud application-default credentials."
+		echo "BigLake catalog ${BIGLAKE_CATALOG}: credentials from ${adc}."
 	fi
 	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_catalog (${secret_body});"
 	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"

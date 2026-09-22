@@ -156,7 +156,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
     if (ColumnId{col.Oid()} == kGeneratedPKId) {
       continue;
     }
-    id_to_pos.emplace(static_cast<duckdb::idx_t>(col.Oid()), pos++);
+    id_to_pos.emplace(col.Oid(), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

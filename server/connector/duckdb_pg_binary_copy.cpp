@@ -125,10 +125,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  if (auto* state = context.registered_state
-                      ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                      .get()) {
-    sdb::pg::FillContext(state->GetConnectionContext(), result->ctx);
+  if (auto* connection = GetSereneDBContextPtr(context)) {
+    sdb::pg::FillContext(*connection, result->ctx);
   }
   result->serializers.reserve(bdata.sql_types.size());
   for (const auto& type : bdata.sql_types) {

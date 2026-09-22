@@ -514,12 +514,7 @@ void InvertedIndexEntry::OnDrop() {
 
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
-    if (_storage) {
-      _storage->MarkDropped();
-    }
-    if (_search_table) {
-      _search_table->RemoveIndexConfig(oid);
-    }
+    OnDrop();
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
 }

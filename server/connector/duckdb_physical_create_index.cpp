@@ -312,7 +312,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
             static_cast<int64_t>(published.rowid_horizon);
           state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
             duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
-          auto& store_db = DuckTableOrNull()->ParentCatalog().GetAttached();
+          auto& store_db = _relation.ParentCatalog().GetAttached();
           auto& store_txn = duckdb::DuckTransaction::Get(context, store_db);
           const auto undo = store_txn.GetUndoProperties();
           if (!undo.has_updates && !undo.has_deletes) {

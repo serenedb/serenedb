@@ -134,16 +134,8 @@ void ExternalLookupIndexSource::PrepareLookup(
                                duckdb::Identifier{func_name});
   SDB_ASSERT(entry);
   auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
-  bool found = false;
-  for (duckdb::idx_t i = 0; i < tf_entry.functions.Size(); ++i) {
-    auto candidate = tf_entry.functions.GetFunctionByOffset(i);
-    if (candidate.arguments.size() == 2) {
-      _lookup_func = candidate;
-      found = true;
-      break;
-    }
-  }
-  SDB_ASSERT(found);
+  _lookup_func = tf_entry.functions.GetFunctionByArguments(
+    context, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR});
 
   duckdb::vector<duckdb::Value> inputs;
   inputs.emplace_back(catalog);

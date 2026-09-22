@@ -48,7 +48,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
-  std::vector<duckdb::idx_t> column_ids;
+  std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   duckdb::vector<duckdb::column_t> new_row_src;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;

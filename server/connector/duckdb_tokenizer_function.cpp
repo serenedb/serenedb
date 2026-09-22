@@ -35,7 +35,7 @@ namespace {
 void CreateTSDictionaryPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 3 || args[2].IsNull()) {
+  if (args[2].IsNull()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("create_text_search_dictionary requires name, if_not_exists "

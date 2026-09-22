@@ -134,12 +134,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
-
-// Whether `context` belongs to the data store's own connection -- the one that
-// issues the index builds an ART over existing rows needs a physical plan for.
-// Those statements must reach duckdb's native catalog paths rather than the
-// serenedb mutators that emitted them.
-bool IsStorageStatement(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

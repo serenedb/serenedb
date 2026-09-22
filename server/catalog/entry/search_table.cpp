@@ -287,7 +287,7 @@ void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
-    _storage->MarkDropped();
+    OnDrop();
   }
   duckdb::TableCatalogEntry::Rollback(prev_entry);
 }

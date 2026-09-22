@@ -541,7 +541,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     // PG accepts a missing trailing newline: a non-empty leftover partial is
     // the final row. Then keep the bridge in lock-step until the feeder's
     // CopyDone.
-    if (!g.partial.empty() && row < STANDARD_VECTOR_SIZE) {
+    if (!g.partial.empty()) {
       if (g.header_pending) {
         g.header_pending = false;  // header-only input with no trailing newline
       } else {
@@ -551,10 +551,8 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
       }
       g.partial.clear();
     }
-    if (g.partial.empty()) {
-      source.DrainToEof();
-      g.finished = true;
-    }
+    source.DrainToEof();
+    g.finished = true;
   }
 
   // SetChildCardinality (not SetCardinality): fork vectors carry their own

@@ -145,12 +145,14 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
 SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
                                 duckdb::idx_t id) {
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> result;
-  duckdb::DuckCatalog::ScanSchemas(context,
-                                   [&](duckdb::SchemaCatalogEntry& schema) {
-                                     if (!result && schema.oid == id) {
-                                       result = &schema;
-                                     }
-                                   });
+  GetSchemaCatalogSet().ScanWithReturn(
+    context, [&](duckdb::CatalogEntry& entry) {
+      if (entry.oid != id) {
+        return true;
+      }
+      result = &entry.Cast<duckdb::SchemaCatalogEntry>();
+      return false;
+    });
   return result;
 }
 
@@ -287,9 +289,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
   }
   auto& table_entry = table.Cast<duckdb::TableCatalogEntry>();
-  if (!table_entry.IsDuckTable()) {
-    return connector::BindCreateIndexOnSearchTable(
-      binder, stmt, table_entry.Cast<SearchTableEntry>(), std::move(plan));
+  if (auto* search = dynamic_cast<SearchTableEntry*>(&table_entry)) {
+    return connector::BindCreateIndexOnSearchTable(binder, stmt, *search,
+                                                   std::move(plan));
   }
   auto& scan = plan->Cast<duckdb::LogicalGet>()
                  .bind_data->Cast<duckdb::TableScanBindData>();

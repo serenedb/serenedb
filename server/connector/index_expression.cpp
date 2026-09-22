@@ -123,8 +123,7 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   types.reserve(count);
   for (duckdb::idx_t slot = 0; slot < count; ++slot) {
     bindings.emplace_back(duckdb::TableIndex(table_id),
-                          duckdb::ProjectionIndex(
-                            static_cast<duckdb::idx_t>(slot_to_col_id[slot])));
+                          duckdb::ProjectionIndex(slot_to_col_id[slot]));
     types.push_back(chunk.data[slot].GetType());
   }
   ChunkBindingResolver resolver(std::move(bindings), std::move(types));

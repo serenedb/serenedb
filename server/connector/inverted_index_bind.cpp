@@ -585,6 +585,15 @@ uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
   return n;
 }
 
+void FinishAnnOpclass(const irs::AnnInfo& cfg, bool compression,
+                      catalog::InvertedIndexField& entry) {
+  entry.column_options.ann_info = cfg;
+  entry.column_options.compression =
+    compression ? duckdb::CompressionType::COMPRESSION_AUTO
+                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.store_values = true;
+}
+
 void ApplyIVFOpclass(
   duckdb::ClientContext& context, std::string_view owner_label,
   const duckdb::LogicalType& value_type,
@@ -597,11 +606,7 @@ void ApplyIVFOpclass(
   ApplyIVFOptions(owner_label, *opts, cfg, compression);
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
-  entry.column_options.ann_info = cfg;
-  entry.column_options.compression =
-    compression ? duckdb::CompressionType::COMPRESSION_AUTO
-                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
-  entry.store_values = true;
+  FinishAnnOpclass(cfg, compression, entry);
 }
 
 void ApplyHNSWOpclass(
@@ -614,11 +619,7 @@ void ApplyHNSWOpclass(
   };
   bool compression = true;
   ApplyHNSWOptions(owner_label, *opts, cfg, compression);
-  entry.column_options.ann_info = cfg;
-  entry.column_options.compression =
-    compression ? duckdb::CompressionType::COMPRESSION_AUTO
-                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
-  entry.store_values = true;
+  FinishAnnOpclass(cfg, compression, entry);
 }
 
 [[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
@@ -1081,7 +1082,7 @@ void DeriveKeys(
     std::string label;
     bool bare_column = false;
     const auto block = ExpressionFieldId(i);
-    auto next_sub_id = static_cast<irs::field_id>(block + 1);
+    auto next_sub_id = block + 1;
     const auto next_id = [&]() -> irs::field_id {
       return search_table ? db_manager.NextOid() : next_sub_id++;
     };
@@ -1090,7 +1091,7 @@ void DeriveKeys(
       if (const auto colref = AsColumnRef(*exprs[i])) {
         const auto pos = colref->Binding().column_index.GetIndex();
         SDB_ASSERT(pos < entry.column_ids.size());
-        record.column_id = static_cast<irs::field_id>(entry.column_ids[pos]);
+        record.column_id = entry.column_ids[pos];
         label = colref->GetName().GetIdentifierName();
         bare_column = true;
       }
@@ -1103,7 +1104,7 @@ void DeriveKeys(
                  duckdb::ExpressionType::COLUMN_REF);
       const auto& column = table->GetColumn(
         parsed.Cast<duckdb::ColumnRefExpression>().GetColumnName());
-      record.column_id = static_cast<irs::field_id>(column.Oid());
+      record.column_id = column.Oid();
       value_type = column.Type();
       label = column.Name().GetIdentifierName();
       bare_column = true;

@@ -233,7 +233,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
   for (auto& attached :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     auto& db_catalog = attached->GetCatalog();
-    if (dynamic_cast<catalog::SereneDBCatalog*>(&db_catalog)) {
+    if (db_catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
       out.emplace_back(db_catalog);
     }
   }
@@ -310,22 +310,16 @@ struct MaintainTarget {
   duckdb::Permissions perm;
 };
 
-std::shared_ptr<search::SearchTable> MaintainStoreOf(
-  const duckdb::TableCatalogEntry& table) {
-  const auto* entry = dynamic_cast<const catalog::SearchTableEntry*>(&table);
-  return entry ? entry->Storage() : nullptr;
-}
-
 MaintainTarget MakeMaintainTarget(duckdb::ClientContext& context,
                                   duckdb::TableCatalogEntry& table) {
+  const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
   return {.id = table.oid,
           .schema_entry = &table.ParentSchema(context),
           .schema = table.ParentSchemaName().GetIdentifierName(),
           .name = std::string{table.name.GetIdentifierName()},
-          .engine = dynamic_cast<const catalog::SearchTableEntry*>(&table)
-                      ? catalog::TableEngine::Search
-                      : catalog::TableEngine::Transactional,
-          .search_data = MaintainStoreOf(table),
+          .engine = search ? catalog::TableEngine::Search
+                           : catalog::TableEngine::Transactional,
+          .search_data = search ? search->Storage() : nullptr,
           .perm = table.permissions};
 }
 
@@ -365,10 +359,9 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
       if (!IsInvertedIndex(index) || index.GetTableName() != table.name) {
         return;
       }
-      const auto* inverted =
-        dynamic_cast<const catalog::InvertedIndexEntry*>(&index);
-      if (inverted && inverted->Storage()) {
-        steps.push_back({inverted->Storage(), inverted->Config(), nullptr});
+      const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
+      if (inverted.Storage()) {
+        steps.push_back({inverted.Storage(), inverted.Config(), nullptr});
       }
     });
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
@@ -739,9 +732,7 @@ void VacuumPragma(duckdb::ClientContext& context,
                   const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   VacuumBindData bind_data;
-  if (args.size() >= 1) {
-    bind_data.option = args[0].GetValue<std::string>();
-  }
+  bind_data.option = args[0].GetValue<std::string>();
   if (args.size() >= 2) {
     bind_data.name = args[1].GetValue<std::string>();
   }

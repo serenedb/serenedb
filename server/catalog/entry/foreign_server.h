@@ -38,9 +38,6 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   ForeignServerCatalogEntry(duckdb::Catalog& catalog,
                             duckdb::CreateForeignServerInfo& info);
 
-  const std::string& ServerType() const noexcept { return _server_type; }
-  const std::string& Version() const noexcept { return _version; }
-  const std::string& FdwName() const noexcept { return _fdw_name; }
   const ServerOptions& Options() const noexcept { return _options; }
 
   void Attach(duckdb::ClientContext& context) const;

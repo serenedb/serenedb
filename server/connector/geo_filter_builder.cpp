@@ -481,7 +481,7 @@ void FromGeoDistanceComparison(BoolTarget filter, const FilterContext& ctx,
       options->range.min = setup.second;
       options->range.min_type = irs::BoundType::Inclusive;
       break;
-    default:
+    case ComparisonOp::None:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("ST_Distance_Centroid: unsupported comparison op"));

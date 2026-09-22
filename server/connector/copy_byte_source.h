@@ -61,7 +61,20 @@ struct ByteSource {
   virtual void Next(size_t n) = 0;
   // Copy exactly `len` bytes into `dst`, spanning views as needed. Returns the
   // number actually copied (< len only at premature EOF).
-  virtual size_t Fill(char* dst, size_t len) = 0;
+  size_t Fill(char* dst, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+      auto v = View();
+      if (v.empty()) {
+        break;
+      }
+      const auto take = std::min(len - done, v.size());
+      std::memcpy(dst + done, v.data(), take);
+      done += take;
+      Next(take);
+    }
+    return done;
+  }
   // Block until EOF, releasing remaining bytes. Used after the last row to keep
   // the pg-stdin bridge in lock-step with the feeder until CopyDone.
   virtual void DrainToEof() = 0;
@@ -91,21 +104,6 @@ class BridgeByteSource final : public ByteSource {
     }
     _view.remove_prefix(n);
     _bridge.Consume(n);
-  }
-
-  size_t Fill(char* dst, size_t len) final {
-    size_t done = 0;
-    while (done < len) {
-      auto v = View();
-      if (v.empty()) {
-        break;  // premature EOF
-      }
-      const auto take = std::min(len - done, v.size());
-      std::memcpy(dst + done, v.data(), take);
-      done += take;
-      Next(take);
-    }
-    return done;
   }
 
   void DrainToEof() final {
@@ -141,21 +139,6 @@ class HandleByteSource final : public ByteSource {
   }
 
   void Next(size_t n) final { _view.remove_prefix(n); }
-
-  size_t Fill(char* dst, size_t len) final {
-    size_t done = 0;
-    while (done < len) {
-      auto v = View();
-      if (v.empty()) {
-        break;
-      }
-      const auto take = std::min(len - done, v.size());
-      std::memcpy(dst + done, v.data(), take);
-      done += take;
-      Next(take);
-    }
-    return done;
-  }
 
   void DrainToEof() final {
     _view = {};

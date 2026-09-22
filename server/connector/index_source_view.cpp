@@ -62,10 +62,9 @@ void ViewIndexSourceBase::InitProjection(
     SDB_ASSERT(bind_col < bind_column_ids.size());
     duckdb::idx_t source_col;
     if (_fast_path.projection_columns.empty()) {
-      source_col = static_cast<duckdb::idx_t>(bind_column_ids[bind_col]);
+      source_col = bind_column_ids[bind_col];
     } else {
-      const auto view_col_idx =
-        static_cast<duckdb::idx_t>(bind_column_ids[bind_col]);
+      const auto view_col_idx = bind_column_ids[bind_col];
       SDB_ASSERT(view_col_idx < _fast_path.projection_columns.size());
       source_col = col_by_name(_fast_path.projection_columns[view_col_idx]);
     }
@@ -79,7 +78,7 @@ void ViewIndexSourceBase::InitProjection(
       continue;
     }
     auto ref = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-      _scratch_types[c], static_cast<duckdb::idx_t>(c));
+      _scratch_types[c], c);
     auto cast_expr = duckdb::BoundCastExpression::AddCastToType(
       context, std::move(ref), _projected_types[c]);
     auto exec = duckdb::make_uniq<duckdb::ExpressionExecutor>(context);
@@ -170,8 +169,8 @@ void ViewIndexSourceBase::AliasOutput(duckdb::DataChunk& output) {
 void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
                                       duckdb::idx_t row_count) {
   const bool has_cast =
-    std::any_of(_cast_executors.begin(), _cast_executors.end(),
-                [](const auto& e) { return static_cast<bool>(e); });
+    absl::c_any_of(_cast_executors,
+                   [](const auto& e) { return static_cast<bool>(e); });
   if (!has_cast || row_count == 0) {
     return;
   }

@@ -291,11 +291,6 @@ ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
   return &state->GetConnectionContext();
 }
 
-bool IsStorageStatement(duckdb::ClientContext& context) {
-  auto* ctx = GetSereneDBContextPtr(context);
-  return ctx && ctx->IsStorageConnection();
-}
-
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   auto* ctx = GetSereneDBContextPtr(context);
   SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",

@@ -125,7 +125,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context) const final;
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
-  std::string ToSQL() const final { return GetInfo()->ToString(); }
 
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 

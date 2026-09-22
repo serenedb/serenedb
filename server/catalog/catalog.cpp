@@ -34,6 +34,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
@@ -351,11 +352,15 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   duckdb::DuckCatalog::OnDetach(context);
 }
 
+static bool IsReservedSchemaName(const duckdb::Identifier& name) {
+  return !duckdb::DefaultSchemaGenerator::IsDefaultSchema(name) &&
+         name.GetIdentifierName().starts_with("pg_");
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
   const auto& name = info.GetQualifiedName().Schema();
-  if (!duckdb::DefaultSchemaGenerator::IsDefaultSchema(name) &&
-      name.GetIdentifierName().starts_with("pg_")) {
+  if (IsReservedSchemaName(name)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_RESERVED_NAME),
       ERR_MSG("unacceptable schema name \"", name.GetIdentifierName(), "\""),
@@ -381,6 +386,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
+  if (type == duckdb::CatalogType::SCHEMA_ENTRY &&
+      info.type == duckdb::AlterType::RENAME) {
+    const auto& new_name = info.Cast<duckdb::RenameInfo>().new_name;
+    if (IsReservedSchemaName(new_name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_RESERVED_NAME),
+        ERR_MSG("unacceptable schema name \"", new_name.GetIdentifierName(),
+                "\""),
+        ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
+    }
+  }
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;

@@ -201,18 +201,26 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
 
   auto& context = _context;
+  std::vector<duckdb::reference<const duckdb::TableCatalogEntry>> tables;
   VisitEntries<duckdb::TableCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
-      EmitColumnsForTable(table, context, values);
+      tables.emplace_back(table);
     });
   // Emit pg_attribute rows for composite (record) types so that drivers can
   // introspect the field list via the standard `attrelid = $oid` lookup. The
   // synthetic relid is the type's own OID (matching what pg_type.typrelid
   // reports).
+  std::vector<std::pair<Oid, duckdb::LogicalType>> struct_types;
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TypeCatalogEntry& type) {
-      EmitStructColumns(type.oid, type.user_type, context, values);
+      struct_types.emplace_back(type.oid, type.user_type);
     });
+  for (const auto& table : tables) {
+    EmitColumnsForTable(table.get(), context, values);
+  }
+  for (const auto& [relid, row_type] : struct_types) {
+    EmitStructColumns(relid, row_type, context, values);
+  }
 
   VisitSystemTables([&](const VirtualTable& table, Oid /*schema_oid*/) {
     EmitStructColumns(table.Id(), table.RowType(), context, values);

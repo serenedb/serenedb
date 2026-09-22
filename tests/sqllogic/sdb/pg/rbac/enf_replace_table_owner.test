@@ -1,0 +1,91 @@
+# CREATE OR REPLACE TABLE keeps the existing table under its own name and drops
+# the old definition, so it is the owner's to run -- the same ownership check
+# the other CREATE OR REPLACE objects already enforce. A role with only CREATE
+# on the schema must not be able to replace another role's table.
+
+
+statement ok
+DROP TABLE IF EXISTS rto_t;
+
+
+statement ok
+DROP ROLE IF EXISTS rto_a;
+
+
+statement ok
+DROP ROLE IF EXISTS rto_b;
+
+
+statement ok
+CREATE ROLE rto_a;
+
+
+statement ok
+CREATE ROLE rto_b;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO rto_a;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO rto_b;
+
+
+statement ok
+SET ROLE rto_a;
+
+
+statement ok
+CREATE TABLE rto_t(x INTEGER);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE rto_b;
+
+
+statement error
+CREATE OR REPLACE TABLE rto_t(y INTEGER);
+----
+db error: ERROR: must be owner of table rto_t
+
+
+statement ok
+RESET ROLE;
+
+
+# The owner may replace its own table.
+statement ok
+SET ROLE rto_a;
+
+
+statement ok
+CREATE OR REPLACE TABLE rto_t(z INTEGER);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rto_t;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM rto_a;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM rto_b;
+
+
+statement ok
+DROP ROLE rto_a;
+
+
+statement ok
+DROP ROLE rto_b;

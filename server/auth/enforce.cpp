@@ -372,6 +372,7 @@ class Enforcer {
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         if (_enforce) {
           RequireSchemaCreate(create.schema);
+          CheckReplace(info);
           CheckForeignKeys(info, create.schema);
         }
         break;
@@ -427,6 +428,10 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_ALTER: {
         auto& info =
           op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::AlterInfo>();
+        if (info.type == duckdb::AlterType::ALTER_DATABASE) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("renaming a database is not supported"));
+        }
         if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
           ResolvePermissions(info.Cast<duckdb::AlterPermissionsInfo>());
         } else if (info.type == duckdb::AlterType::ALTER_ROLE) {

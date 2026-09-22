@@ -211,3 +211,20 @@ csr_c
 
 statement ok
 DROP SCHEMA csr_c CASCADE;
+
+
+# A rename to a reserved pg_ name is refused, the same check CREATE SCHEMA
+# applies, so a checkpoint can never persist a pg_-prefixed user schema and
+# then fail to boot.
+statement ok
+CREATE SCHEMA csr_reserved;
+
+statement error
+ALTER SCHEMA csr_reserved RENAME TO pg_reserved;
+----
+db error: ERROR: unacceptable schema name "pg_reserved"
+DETAIL: The prefix "pg_" is reserved for system schemas.
+
+
+statement ok
+DROP SCHEMA csr_reserved;

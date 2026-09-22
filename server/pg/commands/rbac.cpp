@@ -286,8 +286,17 @@ void CreateRolePragma(duckdb::ClientContext& client,
   }
   const auto grantor = GrantorOfMembership(s);
   for (const auto& role_name : in_roles) {
+    const auto& target = RoleByName(s, role_name);
+    if (!s.Superuser() && !s.closure->IsAdminOf(target.oid)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to grant role \"",
+                target.name.GetIdentifierName(), "\""),
+        ERR_DETAIL("Only roles with the ADMIN option on role \"",
+                   target.name.GetIdentifierName(), "\" may grant this role."));
+    }
     info.member_of.push_back(duckdb::Membership{
-      .role = RoleByName(s, role_name).oid,
+      .role = target.oid,
       .grantor = grantor,
       .admin_option = false,
       .inherit_option = inherit,
@@ -335,6 +344,12 @@ void DropRolePragma(duckdb::ClientContext& client,
         role.oid == s.conn.GetLoginRoleId()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("current user cannot be dropped"));
+    }
+    if (role.oid == kRootUser) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("cannot drop role \"", role.name.GetIdentifierName(),
+                "\" because it is required by the database system"));
     }
 
     size_t dependencies = 0;
@@ -413,6 +428,12 @@ void ResolveAlterRole(duckdb::ClientContext& client,
     if (role.oid == s.Role() || role.oid == s.conn.GetSessionRoleId()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("session user cannot be renamed"));
+    }
+    if (role.oid == kRootUser) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("cannot rename role \"", role.name.GetIdentifierName(),
+                "\" because it is required by the database system"));
     }
     RequireRoleAdmin(s, role, "rename");
     if (FindRole(s, info.new_name.GetIdentifierName())) {

@@ -1,0 +1,179 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vrd_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vrd_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrd_t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vrd_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vrd_t;
+
+statement ok
+CREATE INDEX vrd_idx ON vrd_v USING inverted(id, body vrd_en) WITH (compaction_interval=0);
+
+connection reader_a user=postgres
+query
+SELECT id FROM vrd_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection reader_b user=postgres
+query
+SELECT body FROM vrd_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+connection reader_c user=postgres
+statement ok
+BEGIN;
+
+connection reader_c user=postgres
+query
+SELECT count(*) FROM vrd_idx;
+----
+count
+3
+
+connection reader_c user=postgres
+query
+SELECT id, body FROM vrd_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+connection reader_c user=postgres
+statement ok
+COMMIT;
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrd_t VALUES (4, 'after the restart too');
+
+query
+SELECT * FROM serenedb_reindex('vrd_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection reader_a user=postgres
+query
+SELECT id FROM vrd_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+connection reader_b user=postgres
+query
+SELECT body FROM vrd_idx WHERE id = 4;
+----
+body
+after the restart too
+
+connection reader_c user=postgres
+statement ok
+BEGIN;
+
+connection reader_c user=postgres
+query
+SELECT count(*) FROM vrd_idx;
+----
+count
+4
+
+connection reader_c user=postgres
+query
+SELECT id FROM vrd_idx WHERE id IN (1, 4) ORDER BY id;
+----
+id
+1
+4
+
+connection reader_c user=postgres
+statement ok
+COMMIT;
+
+connection reader_a user=postgres
+statement ok
+BEGIN;
+
+connection reader_a user=postgres
+query
+SELECT id FROM vrd_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vrd_t WHERE id = 2;
+
+query
+SELECT action, files_changed FROM serenedb_reindex('vrd_idx');
+----
+action	files_changed
+delta	1
+
+connection reader_a user=postgres
+statement ok
+COMMIT;
+
+connection reader_a user=postgres
+query
+SELECT id FROM vrd_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+
+connection reader_b user=postgres
+query
+SELECT count(*) FROM vrd_idx WHERE id = 2;
+----
+count
+0
+
+connection reader_c user=postgres
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vrd_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vrd_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vrd_t EXCEPT SELECT id, body FROM vrd_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vrd_idx;
+
+statement ok
+DROP VIEW vrd_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vrd_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

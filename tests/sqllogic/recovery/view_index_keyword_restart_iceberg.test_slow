@@ -1,0 +1,182 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vikr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vikr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vikr.${__DATABASE__};
+
+statement ok
+CREATE TABLE vikr.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vikr.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vikr_v AS SELECT * FROM vikr.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vikr_idx ON vikr_v USING inverted(id, body vikr_en) WITH (compaction_interval=0);
+
+statement count 1
+INSERT INTO vikr.${__DATABASE__}.t VALUES (4, 'after the restart too');
+
+statement ok
+REINDEX INDEX vikr_idx;
+
+query
+SELECT id FROM vikr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vikr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+connection after_crash
+query
+SELECT body FROM vikr_idx WHERE id = 4;
+----
+body
+after the restart too
+
+connection after_crash
+statement count 1
+INSERT INTO vikr.${__DATABASE__}.t VALUES (5, 'restart number five');
+
+connection after_crash
+statement ok
+REINDEX INDEX vikr_idx;
+
+connection after_crash
+query
+SELECT id FROM vikr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+connection after_crash
+statement count 1
+DELETE FROM vikr.${__DATABASE__}.t WHERE id = 2;
+
+connection after_crash
+statement ok
+REINDEX INDEX CONCURRENTLY vikr_idx;
+
+connection after_crash
+query
+SELECT id FROM vikr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+5
+
+connection after_crash
+query
+SELECT count(*) FROM vikr_idx WHERE id = 2;
+----
+count
+0
+
+connection after_crash
+statement count 1
+UPDATE vikr.${__DATABASE__}.t SET body = 'restart three prime' WHERE id = 3;
+
+connection after_crash
+statement ok
+REINDEX INDEX vikr_idx;
+
+connection after_crash
+query
+SELECT body FROM vikr_idx WHERE id = 3;
+----
+body
+restart three prime
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vikr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vikr_idx EXCEPT SELECT id, body FROM vikr.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, body FROM vikr.${__DATABASE__}.t EXCEPT SELECT id, body FROM vikr_idx)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vikr_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+5
+
+connection after_shutdown
+query
+SELECT body FROM vikr_idx WHERE id = 3;
+----
+body
+restart three prime
+
+connection after_shutdown
+statement ok
+DROP INDEX vikr_idx;
+
+connection after_shutdown
+statement ok
+DROP VIEW vikr_v;
+
+connection after_shutdown
+statement ok
+DROP TABLE vikr.${__DATABASE__}.t;
+
+connection after_shutdown
+statement ok
+DROP SCHEMA vikr.${__DATABASE__};
+
+connection after_shutdown
+statement ok
+DROP SERVER vikr;

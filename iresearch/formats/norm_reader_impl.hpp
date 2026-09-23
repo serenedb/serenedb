@@ -25,6 +25,7 @@
 
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -66,13 +67,53 @@ class NormReaderBase : public NormReader {
 
  protected:
   explicit NormReaderBase(const NormColumnReader& column) noexcept
-    : _avg{
+    : _column{&column},
+      _avg{
         column.NonZeroCount() == 0
           ? score_t{}
           : static_cast<score_t>(static_cast<double>(column.Sum()) /
                                  static_cast<double>(column.NonZeroCount()))} {}
 
+  static constexpr uint64_t kMinTouchedPages = 256;
+  static constexpr uint64_t kMaxSpanPerTouched = 2;
+
+  static constexpr uint64_t PageOf(doc_id_t doc, uint8_t width) noexcept {
+    return (uint64_t{doc} * width) / file_utils::kPage;
+  }
+
+  IRS_FORCE_INLINE void Touched(doc_id_t first, doc_id_t last,
+                                uint8_t width) noexcept {
+    if (_rg < _advised) [[likely]] {
+      return;
+    }
+    _touched += PageOf(last, width) - PageOf(first, width) + 1;
+    _lo = std::min(_lo, first);
+    _hi = std::max(_hi, last);
+    if (_touched < kMinTouchedPages ||
+        PageOf(_hi - _lo, width) > _touched * kMaxSpanPerTouched) {
+      return;
+    }
+    Stream(_bytes + size_t{last} * width);
+  }
+
+  void Stream(const byte_type* at) noexcept {
+    const auto span = _column->RowGroupBytes(_rg);
+    const auto* end = span.data() + span.size();
+    SDB_ASSERT(at >= span.data() && at < end);
+    if (file_utils::IsResident(at, static_cast<size_t>(end - at))) {
+      _advised = _rg + 1;
+      return;
+    }
+    _advised = _column->Stream(_rg, at, _advised);
+  }
+
+  const NormColumnReader* _column;
   const byte_type* _bytes = nullptr;
+  size_t _rg = 0;
+  size_t _advised = 0;
+  uint64_t _touched = 0;
+  doc_id_t _lo = doc_limits::eof();
+  doc_id_t _hi = 0;
   score_t _avg;
 };
 
@@ -136,19 +177,23 @@ class SingleRgNormReader : public NormReaderBase {
 
   void Get(std::span<const doc_id_t> docs,
            std::span<uint32_t> values) noexcept final {
+    SDB_ASSERT(!docs.empty());
     SDB_ASSERT(docs.size() <= values.size());
     SDB_ASSERT(absl::c_is_sorted(docs));
+    Touched(docs.front(), docs.back(), _width.Get());
     _width.Read(_bytes, docs, values.data());
   }
 
   uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= doc_limits::min());
+    Touched(doc, doc, _width.Get());
     return _width.At(_bytes, doc);
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
                      std::span<uint32_t, kScoreBlock> values) noexcept final {
     SDB_ASSERT(absl::c_is_sorted(docs));
+    Touched(docs.front(), docs.back(), _width.Get());
     _width.Read(_bytes, docs, values.data());
   }
 
@@ -156,6 +201,7 @@ class SingleRgNormReader : public NormReaderBase {
     std::span<const doc_id_t, kPostingBlock> docs,
     std::span<uint32_t, kPostingBlock> values) noexcept final {
     SDB_ASSERT(absl::c_is_sorted(docs));
+    Touched(docs.front(), docs.back(), _width.Get());
     _width.Read(_bytes, docs, values.data());
   }
 
@@ -167,7 +213,7 @@ template<typename Width>
 class WindowedNormReader : public NormReaderBase {
  public:
   explicit WindowedNormReader(const NormColumnReader& column) noexcept
-    : NormReaderBase{column}, _column{&column} {
+    : NormReaderBase{column} {
     SDB_ASSERT(column.RowGroupCount() > 1);
     SDB_ASSERT(column.RowCount() != 0);
     Position(column.Rg(0));
@@ -181,6 +227,7 @@ class WindowedNormReader : public NormReaderBase {
     }
     SDB_ASSERT(absl::c_is_sorted(docs));
     if (InWindow(docs)) [[likely]] {
+      Touched(docs.front(), docs.back(), _width.Get());
       _width.Read(_bytes, docs, values.data());
       return;
     }
@@ -192,6 +239,7 @@ class WindowedNormReader : public NormReaderBase {
     if (!InWindow(doc)) [[unlikely]] {
       Position(Locate(doc));
     }
+    Touched(doc, doc, _width.Get());
     return _width.At(_bytes, doc);
   }
 
@@ -199,6 +247,7 @@ class WindowedNormReader : public NormReaderBase {
                      std::span<uint32_t, kScoreBlock> values) noexcept final {
     SDB_ASSERT(absl::c_is_sorted(docs));
     if (InWindow(docs)) [[likely]] {
+      Touched(docs.front(), docs.back(), _width.Get());
       _width.Read(_bytes, docs, values.data());
       return;
     }
@@ -210,6 +259,7 @@ class WindowedNormReader : public NormReaderBase {
     std::span<uint32_t, kPostingBlock> values) noexcept final {
     SDB_ASSERT(absl::c_is_sorted(docs));
     if (InWindow(docs)) [[likely]] {
+      Touched(docs.front(), docs.back(), _width.Get());
       _width.Read(_bytes, docs, values.data());
       return;
     }
@@ -236,6 +286,7 @@ class WindowedNormReader : public NormReaderBase {
     _rg_end_doc = static_cast<doc_id_t>(_rg_first_doc + info.row_count);
     _bytes =
       info.bytes.data() - static_cast<size_t>(_width.Get()) * _rg_first_doc;
+    _rg = info.rg;
   }
 
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
@@ -248,13 +299,13 @@ class WindowedNormReader : public NormReaderBase {
       while (j != n && docs[j] < _rg_end_doc) {
         ++j;
       }
+      Touched(docs[i], docs[j - 1], _width.Get());
       _width.Read(_bytes, std::span<const doc_id_t>{docs + i, j - i},
                   values + i);
       i = j;
     }
   }
 
-  const NormColumnReader* _column;
   doc_id_t _rg_first_doc = 0;
   doc_id_t _rg_end_doc = 0;
   [[no_unique_address]] Width _width;

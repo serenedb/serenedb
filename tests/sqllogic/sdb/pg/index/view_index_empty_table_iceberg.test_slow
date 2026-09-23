@@ -1,0 +1,130 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vet_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vet_t (id INTEGER, body TEXT);
+
+statement ok
+CREATE VIEW vet_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vet_t;
+
+statement ok
+CREATE INDEX vet_idx ON vet_v USING inverted(id, body vet_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vet_idx;
+----
+count
+0
+
+query
+SELECT id FROM vet_idx WHERE body @@ ts_phrase('pudge');
+----
+id
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vet_t VALUES (1, 'pudge goes mid');
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM vet_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+query
+SELECT body FROM vet_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vet_t;
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT count(*) FROM vet_idx;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vet_t VALUES (2, 'second row'), (3, 'third row');
+
+query
+SELECT * FROM serenedb_reindex('vet_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM vet_idx ORDER BY id;
+----
+id	body
+2	second row
+3	third row
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vet_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vet_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vet_t EXCEPT SELECT id, body FROM vet_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vet_idx;
+
+statement ok
+DROP VIEW vet_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vet_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

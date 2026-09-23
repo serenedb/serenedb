@@ -1,0 +1,194 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vmm_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.a (id INTEGER, body TEXT);
+
+statement count 3000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.a SELECT s, 'doc ' || s FROM generate_series(1, 3000) t(s);
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.b (id INTEGER, body TEXT);
+
+statement count 3000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.b SELECT s, 'doc ' || s FROM generate_series(1, 3000) t(s);
+
+statement ok
+CREATE VIEW vmm_a AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.a;
+
+statement ok
+CREATE VIEW vmm_b AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.b;
+
+statement ok
+CREATE INDEX vmm_loop_idx ON vmm_a USING inverted(id, body vmm_en) WITH (reindex_interval=200, compaction_interval=0);
+
+statement ok
+CREATE INDEX vmm_kw_idx ON vmm_b USING inverted(id, body vmm_en) WITH (compaction_interval=0);
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.a WHERE id = 1;
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.b WHERE id = 1;
+
+query ok retry 200 backoff 500ms
+SELECT count(*) FROM vmm_loop_idx WHERE id = 1;
+----
+count
+0
+
+query
+SELECT count(*) FROM vmm_loop_idx;
+----
+count
+2999
+
+statement ok
+REINDEX INDEX vmm_kw_idx;
+
+query
+SELECT count(*) FROM vmm_kw_idx WHERE id = 1;
+----
+count
+0
+
+query
+SELECT count(*) FROM vmm_kw_idx;
+----
+count
+2999
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.a SET body = 'doc 5 prime' WHERE id = 5;
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.b SET body = 'doc 5 prime' WHERE id = 5;
+
+query ok retry 200 backoff 500ms
+SELECT body FROM vmm_loop_idx WHERE id = 5;
+----
+body
+doc 5 prime
+
+statement ok
+REINDEX INDEX CONCURRENTLY vmm_kw_idx;
+
+query
+SELECT body FROM vmm_kw_idx WHERE id = 5;
+----
+body
+doc 5 prime
+
+query
+SELECT count(*) FROM vmm_kw_idx;
+----
+count
+2999
+
+statement count 5
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.a WHERE id IN (2, 700, 1500, 2300, 3000);
+
+statement count 5
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.b WHERE id IN (2, 700, 1500, 2300, 3000);
+
+query ok retry 200 backoff 500ms
+SELECT count(*) FROM vmm_loop_idx;
+----
+count
+2994
+
+query
+SELECT count(*) FROM vmm_loop_idx WHERE id IN (2, 700, 1500, 2300, 3000);
+----
+count
+0
+
+statement ok
+REINDEX INDEX vmm_kw_idx;
+
+query
+SELECT count(*) FROM vmm_kw_idx;
+----
+count
+2994
+
+query
+SELECT count(*) FROM vmm_kw_idx WHERE id IN (2, 700, 1500, 2300, 3000);
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vmm_loop_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.a)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.a EXCEPT SELECT id, body FROM vmm_loop_idx)
+  UNION ALL
+  (SELECT id, body FROM vmm_kw_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.b)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.b EXCEPT SELECT id, body FROM vmm_kw_idx)
+);
+----
+count
+0
+
+statement count 2994
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.a;
+
+statement count 2994
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.b;
+
+query ok retry 200 backoff 500ms
+SELECT count(*) FROM vmm_loop_idx;
+----
+count
+0
+
+statement ok
+REINDEX INDEX vmm_kw_idx;
+
+query
+SELECT count(*) FROM vmm_kw_idx;
+----
+count
+0
+
+statement ok
+ALTER INDEX vmm_loop_idx SET (reindex_interval=0);
+
+statement ok
+DROP INDEX vmm_loop_idx;
+
+statement ok
+DROP INDEX vmm_kw_idx;
+
+statement ok
+DROP VIEW vmm_a;
+
+statement ok
+DROP VIEW vmm_b;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.a;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.b;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

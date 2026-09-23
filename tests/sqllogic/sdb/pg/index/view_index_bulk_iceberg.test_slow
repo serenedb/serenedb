@@ -1,0 +1,192 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vbk_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vbk_t (id INTEGER, body TEXT);
+
+statement count 2000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vbk_t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i % 100 = 0 THEN ' marker' ELSE ' filler' END FROM range(1, 2001) r(i);
+
+statement count 2000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vbk_t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i % 100 = 0 THEN ' marker' ELSE ' filler' END FROM range(2001, 4001) r(i);
+
+statement count 2000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vbk_t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i % 100 = 0 THEN ' marker' ELSE ' filler' END FROM range(4001, 6001) r(i);
+
+statement count 2000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vbk_t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i % 100 = 0 THEN ' marker' ELSE ' filler' END FROM range(6001, 8001) r(i);
+
+statement count 2000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vbk_t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i % 100 = 0 THEN ' marker' ELSE ' filler' END FROM range(8001, 10001) r(i);
+
+statement ok
+CREATE VIEW vbk_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t;
+
+statement ok
+CREATE INDEX vbk_idx ON vbk_v USING inverted(id, body vbk_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vbk_idx;
+----
+count
+10000
+
+query
+SELECT count(*) FROM vbk_idx WHERE body @@ ts_phrase('marker');
+----
+count
+100
+
+query
+SELECT id FROM vbk_idx WHERE body @@ ts_phrase('marker') ORDER BY id DESC LIMIT 3;
+----
+id
+10000
+9900
+9800
+
+query
+SELECT id FROM vbk_idx WHERE id BETWEEN 3998 AND 4003 ORDER BY id;
+----
+id
+3998
+3999
+4000
+4001
+4002
+4003
+
+query
+SELECT body FROM vbk_idx WHERE id = 7777;
+----
+body
+doc 7777 filler
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vbk_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t EXCEPT SELECT id, body FROM vbk_idx)
+);
+----
+count
+0
+
+statement count 1000
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t WHERE id BETWEEN 3001 AND 4000;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vbk_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+query
+SELECT count(*) FROM vbk_idx;
+----
+count
+9000
+
+query
+SELECT count(*) FROM vbk_idx WHERE body @@ ts_phrase('marker');
+----
+count
+90
+
+query
+SELECT id FROM vbk_idx WHERE id BETWEEN 2998 AND 4003 ORDER BY id;
+----
+id
+2998
+2999
+3000
+4001
+4002
+4003
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vbk_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t EXCEPT SELECT id, body FROM vbk_idx)
+);
+----
+count
+0
+
+statement count 500
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.vbk_t SET body = body || ' touched' WHERE id BETWEEN 1 AND 500;
+
+query
+SELECT action FROM serenedb_reindex('vbk_idx');
+----
+action
+delta
+
+query
+SELECT count(*) FROM vbk_idx WHERE body @@ ts_phrase('touched');
+----
+count
+500
+
+query
+SELECT body FROM vbk_idx WHERE id = 100;
+----
+body
+doc 100 marker touched
+
+query
+SELECT body FROM vbk_idx WHERE id = 501;
+----
+body
+doc 501 filler
+
+query
+SELECT count(*) FROM vbk_idx;
+----
+count
+9000
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vbk_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t EXCEPT SELECT id, body FROM vbk_idx)
+);
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vbk_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX vbk_idx;
+
+statement ok
+DROP VIEW vbk_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vbk_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

@@ -98,7 +98,23 @@ run_serened_core() {
 	local scope=ours
 	[[ "${RUN_SQLITE:-false}" == "true" ]] && scope=all
 	run env SDB_SQLLOGIC_SCOPE="$scope" bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
+	if biglake_enabled; then
+		run env SDB_SQLLOGIC_SCOPE=biglake bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
+	fi
 	run bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
+}
+
+biglake_enabled() {
+	[[ "${RUN_BIGLAKE:-false}" == "true" && -n "${BIGLAKE_CLIENT_EMAIL:-}" ]]
+}
+
+run_recovery() {
+	run bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
+	if biglake_enabled; then
+		run env ICEBERG_BACKEND=biglake JOBS=2 SDB_RECOVERY_TESTS="recovery/*_iceberg.test_slow" \
+			SDB_RECOVERY_JUNIT="tests-serenedb-recovery-biglake" \
+			bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
+	fi
 }
 
 # Diff-gated heavy suite: sqlsmith fuzzing.
@@ -117,6 +133,13 @@ run_stress() {
 		run_soft bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
 	else
 		run bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	fi
+}
+
+run_workload() {
+	if biglake_enabled; then
+		run env ICEBERG_BACKEND=biglake SDB_STRESS_PROFILE=biglake-reindex-smoke \
+			bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
 	fi
 }
 
@@ -148,7 +171,8 @@ dev | coverage)
 	start_iresearch_load_bg
 	run_test_suites
 	run_serened_core
-	run bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
+	run_recovery
+	run_workload
 	run_sqlsmith
 	;;
 asan | tsan | msan | ubsan)

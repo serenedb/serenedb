@@ -200,6 +200,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
   SDB_ASSERT(meta.docs_count > 1);
 
   in.Seek(meta.doc_start);
+  LimitDocReadahead(in, meta);
   if (meta.docs_count < doc_limits::kBlockSize) {
     SkipScoreBounds(has_score_bounds, in);
   }

@@ -68,6 +68,10 @@ class WorkerState:
                     self.databases.append(key)
 
     def note_rows(self, op):
+        apply = getattr(op, "apply", None)
+        if apply is not None:
+            apply()
+            return
         if op.key is None or op.key[0] != ops.TABLE:
             return
         bucket = self.rows.get(op.key)
@@ -476,6 +480,7 @@ SCENARIOS = {
     "attach_churn": pick_attach_churn,
     "server_race": pick_server_race,
     "break_everything": pick_break_everything,
+    "biglake_reindex": lambda rng, st: st.env["workload"].pick(rng, st),
 }
 
 

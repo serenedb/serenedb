@@ -1,12 +1,4 @@
 # ALTER TABLE ... ADD PRIMARY KEY
-#
-# SereneDB enforces the primary key in the underlying store (see
-# Catalog::AddPrimaryKey). DuckCatalog would turn ADD PRIMARY KEY into a
-# CREATE INDEX over an ART; SereneDBCatalog::BindAlterAddIndex instead routes
-# it through the normal LOGICAL_ALTER dispatch, which mirrors the constraint to
-# the store table and records it (plus the implied NOT NULL) in the catalog.
-# Only ADD PRIMARY KEY is supported; ADD CONSTRAINT for UNIQUE / CHECK /
-# FOREIGN KEY is rejected (matching upstream DuckDB, which lacks them too).
 
 
 # ---------------------------------------------------------------------------

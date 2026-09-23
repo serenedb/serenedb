@@ -83,9 +83,9 @@ class DocsMask {
       }
       _rest = Live(++_word);
     }
-    const auto doc = static_cast<doc_id_t>(
-      kMin + size_t{_word} * kBits +
-      static_cast<size_t>(std::countr_zero(_rest)));
+    const auto doc =
+      static_cast<doc_id_t>(kMin + size_t{_word} * kBits +
+                            static_cast<size_t>(std::countr_zero(_rest)));
     if (doc >= _end) [[unlikely]] {
       return _doc = doc_limits::eof();
     }

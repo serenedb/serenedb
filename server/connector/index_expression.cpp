@@ -50,7 +50,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <utility>
-#include <vector>
 
 #include "connector/column_id.h"
 #include "connector/common.h"
@@ -172,20 +171,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
       }
     });
   return copy;
-}
-
-std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr) {
-  constexpr size_t kReserved = 8;
-  std::vector<ColumnId> out;
-  out.reserve(kReserved);
-  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
-    expr, [&](const duckdb::BoundColumnRefExpression& ref) {
-      out.push_back(
-        static_cast<ColumnId>(ref.Binding().column_index.GetIndex()));
-    });
-  std::ranges::sort(out);
-  out.erase(std::ranges::unique(out).begin(), out.end());
-  return out;
 }
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,

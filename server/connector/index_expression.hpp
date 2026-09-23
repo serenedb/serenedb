@@ -39,8 +39,6 @@ struct IndexedExpression {
   bool is_geojson = false;
 };
 
-std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr);
-
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(

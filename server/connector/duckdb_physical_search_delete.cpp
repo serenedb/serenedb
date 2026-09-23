@@ -56,7 +56,6 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
 };
 
 struct SearchDeleteSourceState final : duckdb::GlobalSourceState {
-  bool finished = false;
   duckdb::ColumnDataScanState scan;
 };
 
@@ -103,9 +102,6 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   const auto num_rows = chunk.size();
-  if (num_rows == 0) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
 
   // A search table's removal key is the row's synthetic rowid, read from the
   // single slot the scan materialised and encoded exactly as the insert wrote
@@ -155,11 +151,9 @@ duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchDelete::GetGlobalSourceState(
   duckdb::ClientContext& /*context*/) const {
   auto state = duckdb::make_uniq<SearchDeleteSourceState>();
-  if (sink_state) {
-    auto& gstate = sink_state->Cast<SearchTableDeleteState>();
-    if (gstate.returned) {
-      gstate.returned->InitializeScan(state->scan);
-    }
+  auto& gstate = sink_state->Cast<SearchTableDeleteState>();
+  if (gstate.returned) {
+    gstate.returned->InitializeScan(state->scan);
   }
   return state;
 }
@@ -174,14 +168,10 @@ duckdb::SourceResultType SereneDBSearchDelete::GetDataInternal(
     return chunk.size() == 0 ? duckdb::SourceResultType::FINISHED
                              : duckdb::SourceResultType::HAVE_MORE_OUTPUT;
   }
-  if (source.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-  source.finished = true;
 
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count));
-  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  return duckdb::SourceResultType::FINISHED;
 }
 
 }  // namespace sdb::connector

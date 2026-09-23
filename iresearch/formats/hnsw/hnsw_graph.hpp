@@ -61,40 +61,53 @@ inline constexpr uint64_t kHnswBuildSeed = 0x9E3779B97F4A7C15ULL;
 class HnswVisited {
  public:
   void Reset(size_t n) {
-    if (_marks.size() < n) {
-      _marks.assign(n, 0);
-      _generation = 0;
+    const size_t words = (n + 63) / 64;
+    if (_words.size() < words) {
+      _words.assign(words, 0);
+      _dirty.clear();
+      return;
     }
     Next();
   }
 
   void Next() noexcept {
-    if (++_generation == 0) {
-      std::ranges::fill(_marks, 0);
-      _generation = 1;
+    for (const auto w : _dirty) {
+      _words[w] = 0;
     }
+    _dirty.clear();
   }
 
-  bool TestAndSet(uint32_t id) noexcept {
-    SDB_ASSERT(id < _marks.size());
-    const bool seen = _marks[id] == _generation;
-    _marks[id] = _generation;
-    return seen;
+  bool TestAndSet(uint32_t id) {
+    SDB_ASSERT(id / 64 < _words.size());
+    auto& word = _words[id / 64];
+    const auto bit = uint64_t{1} << (id % 64);
+    if ((word & bit) != 0) {
+      return true;
+    }
+    if (word == 0) {
+      _dirty.push_back(id / 64);
+    }
+    word |= bit;
+    return false;
   }
 
   bool Test(uint32_t id) const noexcept {
-    SDB_ASSERT(id < _marks.size());
-    return _marks[id] == _generation;
+    SDB_ASSERT(id / 64 < _words.size());
+    return ((_words[id / 64] >> (id % 64)) & 1) != 0;
   }
 
-  void Set(uint32_t id) noexcept {
-    SDB_ASSERT(id < _marks.size());
-    _marks[id] = _generation;
+  void Set(uint32_t id) {
+    SDB_ASSERT(id / 64 < _words.size());
+    auto& word = _words[id / 64];
+    if (word == 0) {
+      _dirty.push_back(id / 64);
+    }
+    word |= uint64_t{1} << (id % 64);
   }
 
  private:
-  std::vector<uint16_t> _marks;
-  uint16_t _generation = 0;
+  std::vector<uint64_t> _words;
+  std::vector<uint32_t> _dirty;
 };
 
 struct HnswCandidate {
@@ -116,7 +129,31 @@ struct HnswFrontierOrder {
   }
 };
 
+struct HnswWalkFilterScratch {
+  std::vector<uint64_t> known;
+  std::vector<uint64_t> pass;
+  std::vector<uint32_t> dirty;
+  std::vector<doc_id_t> ask;
+  std::vector<uint32_t> keep;
+
+  void Grow(size_t words) {
+    if (known.size() < words) {
+      known.resize(words, 0);
+      pass.resize(words, 0);
+    }
+  }
+
+  void Clear() {
+    for (const auto w : dirty) {
+      known[w] = 0;
+      pass[w] = 0;
+    }
+    dirty.clear();
+  }
+};
+
 struct HnswSearchScratch {
+  HnswWalkFilterScratch walk_filter;
   HnswVisited visited;
   // Rejected nodes reached as a neighbour's neighbour (TwoHop): explored
   // once from there, yet still handled when reached as a direct neighbour.

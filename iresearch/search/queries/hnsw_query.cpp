@@ -121,11 +121,6 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     });
 }
 
-HnswSearchScratch& ThreadScratch() {
-  static thread_local HnswSearchScratch scratch;
-  return scratch;
-}
-
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
                                   const DocumentMask* mask, doc_id_t end) {
   std::vector<ScoreDoc> hits;
@@ -182,43 +177,12 @@ detail::LazyBitset MakeSet(const QueryBuilder* inner,
 // anywhere, so the scans are rewound between hops. Every answer is remembered,
 // so a node revisited on a later hop costs nothing, and the walk asks about
 // each node at most once however often it is reached.
-// Buffers for the walk's answers, kept per thread. Sizing them per query would
-// be two bitmaps of the segment: at ten million rows that is 2.5 MB allocated
-// and zeroed for a walk that asks about a few hundred nodes. They are grown
-// once and cleared by the words actually touched.
-struct WalkFilterScratch {
-  std::vector<uint64_t> known;
-  std::vector<uint64_t> pass;
-  std::vector<uint32_t> dirty;
-  std::vector<doc_id_t> ask;
-  std::vector<uint32_t> keep;
-
-  void Grow(size_t words) {
-    if (known.size() < words) {
-      known.resize(words, 0);
-      pass.resize(words, 0);
-    }
-  }
-
-  void Clear() {
-    for (const auto w : dirty) {
-      known[w] = 0;
-      pass[w] = 0;
-    }
-    dirty.clear();
-  }
-};
-
-WalkFilterScratch& ThreadWalkScratch() {
-  static thread_local WalkFilterScratch scratch;
-  return scratch;
-}
-
 class WalkFilter {
  public:
-  WalkFilter(detail::TableFilter& table, doc_id_t docs_count)
+  WalkFilter(detail::TableFilter& table, doc_id_t docs_count,
+             HnswWalkFilterScratch& s)
     : _table{&table},
-      _s{ThreadWalkScratch()},
+      _s{s},
       _docs_count{docs_count},
       _points{table.PointReads() != detail::PointRead::None} {
     _s.Grow((size_t{docs_count} + 63) / 64);
@@ -292,7 +256,7 @@ class WalkFilter {
   }
 
   detail::TableFilter* _table;
-  WalkFilterScratch& _s;
+  HnswWalkFilterScratch& _s;
   doc_id_t _docs_count;
   bool _points;
 };
@@ -307,8 +271,9 @@ class WalkFilter {
 // only about the nodes the walk reaches that the postings already admit.
 class InnerAndTableFilter {
  public:
-  InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table) noexcept
-    : _inner{&inner}, _table{&table}, _s{ThreadWalkScratch()} {}
+  InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table,
+                      HnswWalkFilterScratch& s) noexcept
+    : _inner{&inner}, _table{&table}, _s{s} {}
 
   void Prepare(std::span<const uint32_t> batch) const {
     auto& keep = _s.keep;
@@ -328,7 +293,7 @@ class InnerAndTableFilter {
  private:
   detail::LazyBitset* _inner;
   const WalkFilter* _table;
-  WalkFilterScratch& _s;
+  HnswWalkFilterScratch& _s;
 };
 
 // The hop hook is found by shape, so a signature that drifts apart would leave
@@ -669,10 +634,11 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // they would take one positioned read per node: worse than the fold this is
   // replacing. They keep the set.
   if (ask_per_hop) {
-    const WalkFilter walk_filter{*table, docs_count};
-    const bool done = _inner == nullptr
-                        ? run(walk_filter)
-                        : run(InnerAndTableFilter{set, walk_filter});
+    const WalkFilter walk_filter{*table, docs_count, scratch.walk_filter};
+    const bool done =
+      _inner == nullptr
+        ? run(walk_filter)
+        : run(InnerAndTableFilter{set, walk_filter, scratch.walk_filter});
     if (done) {
       return;
     }
@@ -736,7 +702,7 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
 std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
                                            doc_id_t first,
                                            doc_id_t last) const {
-  auto& scratch = ThreadScratch();
+  HnswSearchScratch scratch;
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
   }

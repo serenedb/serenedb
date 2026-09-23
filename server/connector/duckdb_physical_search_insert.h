@@ -29,8 +29,7 @@
 
 namespace sdb::connector {
 
-class SereneDBSearchInsert final : public duckdb::PhysicalOperator,
-                                   public SearchTableWriteOperator {
+class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
  public:
   // Insert mode: pre-existing target table. `return_chunk` is RETURNING: the
   // operator then hands back the rows it inserted rather than their count, and

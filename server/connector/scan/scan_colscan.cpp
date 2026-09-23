@@ -43,9 +43,9 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
     const auto* col_reader = reader[l.unit.seg].GetColReader();
     SDB_ENSURE(col_reader != nullptr,
                "bulk cs scan: segment has no columnstore reader");
-    slot = std::make_unique<FullScanner>(*col_reader, g.cs_projections,
-                                         l.seg_cls.active, g.client_context,
-                                         l.filter_states, l.share_payloads);
+    slot = std::make_unique<FullScanner>(
+      *col_reader, g.cs_projections, l.seg_cls.active, g.client_context,
+      l.filter_states, g.Bind().share_payloads);
   }
   l.scanner = slot.get();
 }

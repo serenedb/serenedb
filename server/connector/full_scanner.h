@@ -74,7 +74,6 @@ class FullScanner {
   };
 
   std::shared_ptr<irs::ReadContext> _ctx;
-  bool _share_payloads = false;
   std::vector<Binding> _bound;
   irs::ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;

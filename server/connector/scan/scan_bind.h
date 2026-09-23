@@ -178,6 +178,7 @@ struct ScanBindData final : duckdb::FunctionData {
   TsDictSpec ts_dict;
   LookupSpec lookup;
   std::optional<ViewSpec> view;
+  bool share_payloads = false;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
   bool Equals(const duckdb::FunctionData& other) const final;

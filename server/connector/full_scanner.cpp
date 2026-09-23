@@ -35,8 +35,7 @@ FullScanner::FullScanner(
   std::span<const irs::ColumnstoreProjection> projections,
   std::span<const irs::ColFilterSpec> filters, duckdb::ClientContext* context,
   irs::ColFilterStateCache& states, bool share_payloads)
-  : _ctx{std::make_shared<irs::ReadContext>(reader)},
-    _share_payloads{share_payloads} {
+  : _ctx{std::make_shared<irs::ReadContext>(reader)} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 
@@ -72,8 +71,8 @@ FullScanner::FullScanner(
     b.is_list_like = type_id == duckdb::LogicalTypeId::LIST ||
                      type_id == duckdb::LogicalTypeId::MAP;
     b.state = std::make_unique<irs::ColumnReader::ScanState>(
-      _share_payloads ? column_reader->InitScan(_ctx)
-                      : column_reader->InitScan(*_ctx));
+      share_payloads ? column_reader->InitScan(_ctx)
+                     : column_reader->InitScan(*_ctx));
   }
 
   _filters.FinishBind();

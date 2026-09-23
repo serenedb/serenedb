@@ -269,7 +269,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         store->MergeIndexConfig(index_entry.oid, index_entry.Config());
         SearchBackfillTarget backfill;
-        backfill.table = &_relation.Cast<catalog::SearchTableEntry>();
+        backfill.shard = store;
+        backfill.catalog = &_relation.ParentCatalog();
+        backfill.table_id = _relation.oid;
+        const auto& table_columns =
+          _relation.Cast<catalog::SearchTableEntry>().GetColumns();
+        backfill.column_ids.reserve(table_columns.LogicalColumnCount());
+        backfill.column_types.reserve(table_columns.LogicalColumnCount());
+        for (const auto& column : table_columns.Logical()) {
+          backfill.column_ids.emplace_back(column.Oid());
+          backfill.column_types.push_back(column.Type());
+        }
         backfill.group_bytes = uint64_t{1} << 30;
         duckdb::Value group_bytes;
         if (context.TryGetCurrentSetting(

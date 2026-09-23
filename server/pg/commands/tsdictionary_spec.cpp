@@ -88,6 +88,7 @@ struct Stage {
   std::string name;
   std::vector<std::pair<std::string, duckdb::Value>> options;
   std::vector<Chain> children;
+  const catalog::TokenizerCatalogEntry* dictionary = nullptr;
 };
 
 const duckdb::FunctionExpression* AsFunction(
@@ -320,9 +321,7 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
       type = kKeywordName;
       break;
     case Stage::Kind::Dictionary:
-      type = tokenizer_options::kDictionaryTemplate;
-      put(tokenizer_options::kFrom.name, duckdb::Value{stage.name});
-      break;
+      return irs::analysis::Clone(stage.dictionary->Config());
     case Stage::Kind::Sql:
       type = kSqlName;
       put(tokenizer_options::kSqlExpression.name, duckdb::Value{stage.name});
@@ -501,7 +500,7 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", spelled, "\" does not exist"));
     }
-    return {.kind = Stage::Kind::Dictionary, .name = spelled};
+    return {.kind = Stage::Kind::Dictionary, .dictionary = tokenizer.get()};
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {

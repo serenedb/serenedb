@@ -445,22 +445,17 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
     return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
   auto& index_alter = info.Cast<duckdb::AlterIndexInfo>();
-  auto info_copy = GetInfo();
-  auto& index_info = info_copy->Cast<duckdb::CreateIndexInfo>();
   auto& context = transaction.GetContext();
-  const auto relation =
-    ParentSchema(transaction)
-      .GetEntry(transaction, duckdb::CatalogType::VIEW_ENTRY, _relation_name);
-  const bool view_backed =
-    relation && relation->type == duckdb::CatalogType::VIEW_ENTRY;
+  auto result = Copy(context);
+  auto& new_options = result->Cast<InvertedIndexEntry>().options;
+  const bool view_backed = !this->info && !_search_table;
   switch (index_alter.alter_index_type) {
     case duckdb::AlterIndexType::SET_INDEX_OPTIONS:
       for (const auto& [name, value] :
            index_alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
         RequireAlterableOption(name);
         RequireViewBackedOption(name, view_backed);
-        index_info.options[name] =
-          connector::ValidateSetting(context, name, value);
+        new_options[name] = connector::ValidateSetting(context, name, value);
       }
       break;
     case duckdb::AlterIndexType::RESET_INDEX_OPTIONS:
@@ -468,23 +463,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
            index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
         const auto& name = identifier.GetIdentifierName();
         RequireAlterableOption(name);
-        context.TryGetCurrentSetting(name, index_info.options[name]);
+        context.TryGetCurrentSetting(name, new_options[name]);
       }
       break;
     default:
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
-  auto result = duckdb::make_uniq<InvertedIndexEntry>(
-    catalog, ParentSchema(transaction), index_info, nullptr);
-  result->info = this->info;
-  result->initial_index_size = initial_index_size;
-  result->_storage = _storage;
-  result->_search_table = _search_table;
-  result->_relation_name = _relation_name;
   if (_storage) {
-    _storage->ApplyOptions(ResolveSettings(result->options));
+    _storage->ApplyOptions(ResolveSettings(new_options));
   }
-  return std::move(result);
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
@@ -498,7 +486,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   result->_storage = _storage;
   result->_search_table = _search_table;
   result->_config = _config;
-  result->_relation_name = _relation_name;
   return std::move(result);
 }
 

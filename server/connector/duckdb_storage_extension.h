@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb.hpp>
-#include <duckdb/storage/storage_extension.hpp>
 #include <string_view>
 
 namespace sdb::catalog {
@@ -30,12 +29,6 @@ struct DataDirectory;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
-
-class SereneDBStorageExtension final : public duckdb::StorageExtension {
- public:
-  explicit SereneDBStorageExtension(
-    duckdb::shared_ptr<catalog::DataDirectory> layout);
-};
 
 // Register the storage extension with a DuckDB config (before DB creation).
 void RegisterSereneDBStorage(duckdb::DBConfig& config,

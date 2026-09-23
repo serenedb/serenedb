@@ -66,15 +66,6 @@ duckdb::unique_ptr<duckdb::TransactionManager> MakeClusterTransactionManager(
   return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
 }
 
-class ClusterStorageExtension final : public duckdb::StorageExtension {
- public:
-  explicit ClusterStorageExtension(duckdb::shared_ptr<DataDirectory> layout) {
-    attach = AttachCluster;
-    create_transaction_manager = MakeClusterTransactionManager;
-    storage_info = std::move(layout);
-  }
-};
-
 const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
   return static_cast<const DataDirectory&>(
     *db.GetStorageExtension()->storage_info);
@@ -116,9 +107,12 @@ void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid) {
 
 void RegisterClusterStorage(duckdb::DBConfig& config,
                             duckdb::shared_ptr<DataDirectory> layout) {
-  duckdb::StorageExtension::Register(
-    config, ClusterCatalog::kStorageType,
-    duckdb::make_shared_ptr<ClusterStorageExtension>(std::move(layout)));
+  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
+  extension->attach = AttachCluster;
+  extension->create_transaction_manager = MakeClusterTransactionManager;
+  extension->storage_info = std::move(layout);
+  duckdb::StorageExtension::Register(config, ClusterCatalog::kStorageType,
+                                     std::move(extension));
 }
 
 void InitCatalog(std::string_view directory) {

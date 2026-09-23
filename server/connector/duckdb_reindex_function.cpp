@@ -1200,6 +1200,10 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
         SDB_INFO(SEARCH, "reindex \"", index_name, "\": ", notice.errmsg);
       });
     };
+    const auto& storage = index->Cast<catalog::InvertedIndexEntry>().Storage();
+    if (!storage || storage->GetTasksSettings().reindex_interval_msec == 0) {
+      return false;
+    }
     const auto outcome =
       RunReindex(*conn.context, index_name, schema_name, database_name);
     return outcome.action != ReindexAction::UpToDate;

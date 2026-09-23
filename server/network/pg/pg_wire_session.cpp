@@ -26,11 +26,8 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/timestamp.hpp>
-#include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -158,46 +155,22 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
           format};
 }
 
-// The COPY target, resolved the way the binder would (explicit schema, else
-// the first search-path schema that CONTAINS it). Both callers run before the
-// statement's own transaction exists, so this reads committed state.
 inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
   ConnectionContext& conn, const duckdb::QualifiedName& qname) {
-  // Not Catalog::GetCatalog(DatabaseInstance&, name): the pinned duckdb
-  // declares that overload and never defines it.
-  auto attached =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
-      .GetDatabase(duckdb::Identifier{conn.GetDatabase()});
-  if (!attached) {
-    return nullptr;
-  }
-  auto& database = attached->GetCatalog();
-  const auto transaction =
-    duckdb::CatalogTransaction::GetSystemTransaction(database.GetDatabase());
-  const auto lookup = [&](const duckdb::Identifier& schema_name)
-    -> duckdb::optional_ptr<duckdb::TableCatalogEntry> {
-    auto schema = database.GetSchema(transaction, schema_name,
-                                     duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!schema) {
-      return nullptr;
-    }
-    auto entry = schema->GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
-                                  qname.Name());
-    if (!entry || entry->type != duckdb::TableCatalogEntry::Type) {
-      return nullptr;
-    }
-    return &entry->Cast<duckdb::TableCatalogEntry>();
-  };
-  if (!qname.Schema().empty()) {
-    return lookup(qname.Schema());
-  }
-  for (const auto& entry : duckdb::ClientData::Get(conn.GetClientContext())
-                             .catalog_search_path->GetResolvedSetPaths()) {
-    if (auto table = lookup(entry.GetSchema())) {
-      return table;
-    }
-  }
-  return nullptr;
+  auto& context = conn.GetClientContext();
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
+  context.RunFunctionInTransaction(
+    [&] {
+      auto entry = duckdb::Catalog::GetEntry(
+        context,
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (entry && entry->type == duckdb::TableCatalogEntry::Type) {
+        table = &entry->Cast<duckdb::TableCatalogEntry>();
+      }
+    },
+    false);
+  return table;
 }
 
 // relid for pg_stat_progress_copy: `COPY table TO STDOUT` reports the table

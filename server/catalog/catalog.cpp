@@ -277,11 +277,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         opclass == kHNSWKind) {
       continue;
     }
-    const duckdb::EntryLookupInfo dictionary{
-      duckdb::CatalogType::TOKENIZER_ENTRY,
-      duckdb::QualifiedName::Parse(opclass)};
-    auto entry = duckdb::Catalog::GetEntry(
-      binder.context, dictionary, duckdb::OnEntryNotFound::RETURN_NULL);
+    auto entry = duckdb::Catalog::GetEntry<TokenizerCatalogEntry>(
+      binder.context, duckdb::QualifiedName::Parse(opclass),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (entry && &entry->ParentCatalog() == this) {
       info.dependencies.AddDependency(*entry);
     }

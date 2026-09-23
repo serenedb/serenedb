@@ -40,7 +40,6 @@
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
@@ -394,20 +393,9 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   };
 
   add_column(kIdColumn, duckdb::LogicalType::VARCHAR);
-  {
-    // The primary key and the NOT NULL it implies, in the order and under the
-    // names CREATE TABLE's own constraint expansion produces.
-    auto not_null =
-      duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
-    not_null->constraint_name =
-      absl::StrCat(data.index, "_", kIdColumn, "_not_null");
-    options->constraints.push_back(std::move(not_null));
-    auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
-      duckdb::vector<duckdb::Identifier>{duckdb::Identifier{kIdColumn}},
-      /*is_primary_key=*/true);
-    key->constraint_name = absl::StrCat(data.index, "_pkey");
-    options->constraints.push_back(std::move(key));
-  }
+  options->constraints.push_back(duckdb::make_uniq<duckdb::UniqueConstraint>(
+    duckdb::vector<duckdb::Identifier>{duckdb::Identifier{kIdColumn}},
+    /*is_primary_key=*/true));
   for (const auto& [field, mapping] : request.mappings.properties) {
     ValidateFieldName(data.index, field);
     add_column(field, EsTypeToLogical(data.index, field, mapping.type));

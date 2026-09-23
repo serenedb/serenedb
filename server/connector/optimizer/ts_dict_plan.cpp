@@ -37,6 +37,7 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/logical_operator_deep_copy.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_cross_product.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
@@ -174,23 +175,23 @@ duckdb::idx_t EnsureTsDictCol(connector::ScanBindData& bind_data,
 
 duckdb::unique_ptr<duckdb::Expression> BuildTsDictAggregate(
   duckdb::ClientContext& context, std::string_view agg_name,
-  duckdb::unique_ptr<duckdb::Expression> child) {
+  duckdb::unique_ptr<duckdb::Expression> child,
+  duckdb::unique_ptr<duckdb::Expression> filter = nullptr) {
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
   auto& entry = sys.GetEntry<duckdb::AggregateFunctionCatalogEntry>(
     context, duckdb::QualifiedName(sys.GetName(), DEFAULT_SCHEMA,
                                    duckdb::Identifier{std::string{agg_name}}));
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(std::move(child));
-  duckdb::FunctionBinder binder{context};
+  duckdb::vector<
+    std::pair<duckdb::Identifier, duckdb::unique_ptr<duckdb::Expression>>>
+    args;
+  args.emplace_back(duckdb::Identifier{}, std::move(child));
   duckdb::ErrorData error;
-  const auto best =
-    binder.BindFunction(duckdb::Identifier{std::string{agg_name}},
-                        entry.functions, children, {}, error);
-  if (!best.IsValid()) {
+  auto result = duckdb::FunctionBinder{context}.BindAggregateFunction(
+    entry, std::move(args), error, std::move(filter));
+  if (!result) {
     error.Throw();
   }
-  auto fn = entry.functions.GetFunctionByOffset(best.GetIndex());
-  return binder.BindAggregateFunction(fn, std::move(children));
+  return result;
 }
 
 // With several fields the scan emits each field's terms in its own rows and
@@ -201,15 +202,13 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
   const duckdb::LogicalType& type, duckdb::ColumnBinding binding) {
   auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
     duckdb::Identifier{std::string{name}}, type, binding);
-  auto result = BuildTsDictAggregate(context, "list", std::move(ref));
   auto filter_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
     duckdb::Identifier{std::string{name}}, type, binding);
   auto is_not_null = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, duckdb::LogicalType::BOOLEAN);
   is_not_null->GetChildrenMutable().push_back(std::move(filter_ref));
-  result->Cast<duckdb::BoundAggregateExpression>().GetFilterMutable() =
-    std::move(is_not_null);
-  return result;
+  return BuildTsDictAggregate(context, "list", std::move(ref),
+                              std::move(is_not_null));
 }
 
 duckdb::unique_ptr<duckdb::Expression> MakeTsDictAggregate(
@@ -597,32 +596,27 @@ void CollectEnumFieldRefs(
   const irs::containers::FlatHashMap<irs::field_id, size_t>& key_by_field,
   const connector::ScanBindData& bind_data, const duckdb::LogicalGet& get,
   EnumFieldRefs& refs) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    refs.any_ref = true;
-    const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
-    const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
-    if (col_id == connector::kInvertedIndexTermId) {
-      refs.term_virtual = true;
-      return;
-    }
-    if (col_id != connector::kInvalidColumnId) {
-      const auto it = key_by_field.find(
-        bind_data.relation.inverted_config->TermField(col_id));
-      if (it != key_by_field.end()) {
-        if (!refs.matched_key) {
-          refs.matched_key = it->second;
-        } else if (*refs.matched_key != it->second) {
-          refs.multi_enum = true;
-        }
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    expr, [&](const duckdb::BoundColumnRefExpression& ref) {
+      refs.any_ref = true;
+      const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
+      if (col_id == connector::kInvertedIndexTermId) {
+        refs.term_virtual = true;
         return;
       }
-    }
-    refs.non_enum = true;
-    return;
-  }
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      CollectEnumFieldRefs(child, key_by_field, bind_data, get, refs);
+      if (col_id != connector::kInvalidColumnId) {
+        const auto it = key_by_field.find(
+          bind_data.relation.inverted_config->TermField(col_id));
+        if (it != key_by_field.end()) {
+          if (!refs.matched_key) {
+            refs.matched_key = it->second;
+          } else if (*refs.matched_key != it->second) {
+            refs.multi_enum = true;
+          }
+          return;
+        }
+      }
+      refs.non_enum = true;
     });
 }
 
@@ -1194,25 +1188,9 @@ bool TryPushdownTsDictFacet(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     .Convert();
 }
 
-void RemapColumnRefs(
-  duckdb::unique_ptr<duckdb::Expression>& expr,
-  const std::vector<std::pair<duckdb::TableIndex, duckdb::TableIndex>>& map) {
-  duckdb::ExpressionIterator::VisitExpressionClassMutable(
-    expr, duckdb::ExpressionClass::BOUND_COLUMN_REF,
-    [&](duckdb::unique_ptr<duckdb::Expression>& ref_expr) {
-      auto& ref = ref_expr->Cast<duckdb::BoundColumnRefExpression>();
-      for (const auto& [from, to] : map) {
-        if (ref.Binding().table_index == from) {
-          ref.BindingMutable().table_index = to;
-          break;
-        }
-      }
-    });
-}
-
 duckdb::unique_ptr<duckdb::LogicalOperator> CopyTsDictSourceChain(
   duckdb::LogicalOperator& top, duckdb::Binder& binder,
-  std::vector<std::pair<duckdb::TableIndex, duckdb::TableIndex>>& index_map) {
+  duckdb::unordered_map<duckdb::TableIndex, duckdb::TableIndex>& index_map) {
   if (top.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
     auto& get = top.Cast<duckdb::LogicalGet>();
     if (get.table_filters.HasFilters()) {
@@ -1222,7 +1200,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CopyTsDictSourceChain(
       binder.GenerateTableIndex(), get.function, get.bind_data->Copy(),
       get.returned_types, get.names, get.virtual_columns);
     copy->GetMutableColumnIds() = get.GetColumnIds();
-    index_map.emplace_back(get.table_index, copy->table_index);
+    index_map.emplace(get.table_index, copy->table_index);
     return copy;
   }
   if (top.children.size() != 1) {
@@ -1240,7 +1218,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CopyTsDictSourceChain(
     auto copy = duckdb::make_uniq<duckdb::LogicalFilter>();
     for (const auto& e : filter.expressions) {
       auto expr = e->Copy();
-      RemapColumnRefs(expr, index_map);
+      duckdb::TableBindingReplacer{index_map, nullptr}.VisitExpression(&expr);
       copy->expressions.push_back(std::move(expr));
     }
     copy->children.push_back(std::move(child));
@@ -1251,12 +1229,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CopyTsDictSourceChain(
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
     for (const auto& e : proj.expressions) {
       auto expr = e->Copy();
-      RemapColumnRefs(expr, index_map);
+      duckdb::TableBindingReplacer{index_map, nullptr}.VisitExpression(&expr);
       exprs.push_back(std::move(expr));
     }
     auto copy = duckdb::make_uniq<duckdb::LogicalProjection>(
       binder.GenerateTableIndex(), std::move(exprs));
-    index_map.emplace_back(proj.table_index, copy->table_index);
+    index_map.emplace(proj.table_index, copy->table_index);
     copy->children.push_back(std::move(child));
     return copy;
   }
@@ -1275,7 +1253,7 @@ bool TrySplitMixedTsDictAggregates(
   if (!aggr.groups.empty() || aggr.children.size() != 1) {
     return false;
   }
-  std::vector<std::pair<duckdb::TableIndex, duckdb::TableIndex>> index_map;
+  duckdb::unordered_map<duckdb::TableIndex, duckdb::TableIndex> index_map;
   auto doc_child = CopyTsDictSourceChain(*aggr.children[0], binder, index_map);
   if (!doc_child) {
     return false;
@@ -1302,7 +1280,7 @@ bool TrySplitMixedTsDictAggregates(
     } else {
       slot_of[i] = doc_exprs.size();
       auto expr = std::move(aggr.expressions[i]);
-      RemapColumnRefs(expr, index_map);
+      duckdb::TableBindingReplacer{index_map, nullptr}.VisitExpression(&expr);
       doc_exprs.push_back(std::move(expr));
     }
   }

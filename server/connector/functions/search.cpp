@@ -308,18 +308,10 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
 
 duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>
 ResolveCatalogTokenizer(duckdb::ClientContext& context, std::string_view name) {
-  // Through the duckdb catalog, so the schema entry's TOKENIZER_ENTRY set
-  // answers -- including for a transaction reading its own uncommitted DDL,
-  // whose version is in the set under its transaction id.
-  const duckdb::EntryLookupInfo lookup{
-    duckdb::CatalogType::TOKENIZER_ENTRY,
-    duckdb::QualifiedName::Parse(std::string{name})};
-  auto entry = duckdb::Catalog::GetEntry(context, lookup,
-                                         duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!entry) {
-    return nullptr;
-  }
-  return &entry->Cast<catalog::TokenizerCatalogEntry>();
+  return duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+           context, duckdb::QualifiedName::Parse(std::string{name}),
+           duckdb::OnEntryNotFound::RETURN_NULL)
+    .get();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

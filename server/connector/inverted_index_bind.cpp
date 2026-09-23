@@ -27,7 +27,7 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -36,7 +36,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -56,7 +55,6 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
-#include "connector/functions/search.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
@@ -873,12 +871,9 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
 // only in the parenthesised form, so a dictionary may shadow either.
 struct KeyOpclass {
   std::string_view name;
-  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>* options =
-    nullptr;
+  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& options;
 
-  bool HasParentheses() const noexcept {
-    return options && options->has_value();
-  }
+  bool HasParentheses() const noexcept { return options.has_value(); }
   bool IsBuiltin(std::string_view builtin) const noexcept {
     return HasParentheses() && name == builtin;
   }
@@ -919,20 +914,16 @@ void ValidateInvertedIndexKey(std::string_view label,
 duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
-  auto parsed = duckdb::QualifiedName::Parse(std::string{name});
-  if (parsed.Schema().empty()) {
-    auto local =
-      schema.GetEntry(schema.catalog.GetCatalogTransaction(context),
-                      duckdb::CatalogType::TOKENIZER_ENTRY, parsed.Name());
-    if (local) {
-      return &local->Cast<TokenizerCatalogEntry>();
-    }
-  }
-  auto dict = ResolveCatalogTokenizer(context, name);
-  if (dict && &dict->ParentCatalog() != &schema.ParentCatalog()) {
+  duckdb::CatalogEntryRetriever retriever{context};
+  retriever.SetSearchPath({{schema.ParentCatalog().GetName(), schema.name}});
+  auto dict = retriever.GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                            duckdb::QualifiedName::Parse(std::string{name})},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
     return nullptr;
   }
-  return dict;
+  return &dict->Cast<TokenizerCatalogEntry>();
 }
 
 // Folds one key's opclass into the field's config, drawing whatever sub-field
@@ -950,17 +941,16 @@ void ApplyOpclassToEntry(
   if (opclass.name.empty()) {
     return;
   }
-  const auto* opts = opclass.options;
   if (opclass.IsBuiltin(catalog::kIVFKind)) {
-    ApplyIVFOpclass(context, label, value_type, *opts, entry);
+    ApplyIVFOpclass(context, label, value_type, opclass.options, entry);
     return;
   }
   if (opclass.IsBuiltin(catalog::kHNSWKind)) {
-    ApplyHNSWOpclass(label, value_type, *opts, entry);
+    ApplyHNSWOpclass(label, value_type, opclass.options, entry);
     return;
   }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {
-    ApplyIncludedOpclass(context, label, value_type, *opts, entry);
+    ApplyIncludedOpclass(context, label, value_type, opclass.options, entry);
     entry.store_values = true;
     return;
   }
@@ -978,7 +968,7 @@ void ApplyOpclassToEntry(
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query
     // re-parses the column -- which only works if it is in the columnstore.
-    ApplyIncludedOpclass(context, label, value_type, *opts, entry);
+    ApplyIncludedOpclass(context, label, value_type, opclass.options, entry);
     entry.store_values = true;
   }
 }
@@ -1058,9 +1048,6 @@ void DeriveKeys(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
   InvertedIndexConfig& config) {
-  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
-                        ? &relation.Cast<duckdb::TableCatalogEntry>()
-                        : nullptr;
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
   static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
@@ -1086,37 +1073,17 @@ void DeriveKeys(
     const auto next_id = [&]() -> irs::field_id {
       return search_table ? db_manager.NextOid() : next_sub_id++;
     };
-    if (i < exprs.size()) {
-      value_type = exprs[i]->GetReturnType();
-      if (const auto colref = AsColumnRef(*exprs[i])) {
-        const auto pos = colref->Binding().column_index.GetIndex();
-        SDB_ASSERT(pos < entry.column_ids.size());
-        record.column_id = entry.column_ids[pos];
-        label = colref->GetName().GetIdentifierName();
-        bare_column = true;
-      }
-    } else {
-      // No binder output for this key: it can only be a bare column of a
-      // table, resolved by the name the statement wrote.
-      const auto& parsed = *entry.parsed_expressions[i];
-      SDB_ASSERT(table);
-      SDB_ASSERT(parsed.GetExpressionType() ==
-                 duckdb::ExpressionType::COLUMN_REF);
-      const auto& column = table->GetColumn(
-        parsed.Cast<duckdb::ColumnRefExpression>().GetColumnName());
-      record.column_id = column.Oid();
-      value_type = column.Type();
-      label = column.Name().GetIdentifierName();
+    value_type = exprs[i]->GetReturnType();
+    if (const auto colref = AsColumnRef(*exprs[i])) {
+      const auto pos = colref->Binding().column_index.GetIndex();
+      SDB_ASSERT(pos < entry.column_ids.size());
+      record.column_id = entry.column_ids[pos];
+      label = colref->GetName().GetIdentifierName();
       bare_column = true;
     }
 
-    KeyOpclass opclass;
-    if (i < entry.column_opclasses.size()) {
-      opclass.name = entry.column_opclasses[i];
-    }
-    if (i < entry.column_opclass_options.size()) {
-      opclass.options = &entry.column_opclass_options[i];
-    }
+    const KeyOpclass opclass{entry.column_opclasses[i],
+                             entry.column_opclass_options[i]};
 
     if (bare_column) {
       record.field_id = record.column_id;

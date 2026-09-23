@@ -25,6 +25,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -85,18 +86,13 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 }  // namespace
 
-SereneDBStorageExtension::SereneDBStorageExtension(
-  duckdb::shared_ptr<catalog::DataDirectory> layout) {
-  attach = AttachSereneDB;
-  create_transaction_manager = CreateTransactionManager;
-  storage_info = std::move(layout);
-}
-
 void RegisterSereneDBStorage(
   duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
-  duckdb::StorageExtension::Register(
-    config, "serenedb",
-    duckdb::make_shared_ptr<SereneDBStorageExtension>(std::move(layout)));
+  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
+  extension->attach = AttachSereneDB;
+  extension->create_transaction_manager = CreateTransactionManager;
+  extension->storage_info = std::move(layout);
+  duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {

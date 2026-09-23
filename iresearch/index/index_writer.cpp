@@ -416,7 +416,8 @@ struct PartialSync {
 
 std::vector<std::string_view> GetFilesToSync(
   std::span<const IndexSegment> segments,
-  std::span<const PartialSync> partial_sync, size_t partial_sync_threshold) {
+  std::span<const PartialSync> partial_sync, size_t partial_sync_threshold,
+  std::span<const size_t> durable) {
   // TODO(gnusi): make format dependent?
   static constexpr size_t kMaxFilesPerSegment = 6;
 
@@ -434,13 +435,18 @@ std::vector<std::string_view> GetFilesToSync(
     files_to_sync.emplace_back(segment.filename);
   }
 
-  std::for_each(segments.begin() + partial_sync_threshold, segments.end(),
-                [&files_to_sync](const IndexSegment& segment) {
-                  files_to_sync.emplace_back(segment.filename);
-                  const auto& files = segment.meta.files;
-                  files_to_sync.insert(files_to_sync.end(), files.begin(),
-                                       files.end());
-                });
+  auto skip = durable.begin();
+  for (size_t i = partial_sync_threshold; i != segments.size(); ++i) {
+    if (skip != durable.end() && *skip == i) {
+      ++skip;
+      continue;
+    }
+    const auto& segment = segments[i];
+    files_to_sync.emplace_back(segment.filename);
+    const auto& files = segment.meta.files;
+    files_to_sync.insert(files_to_sync.end(), files.begin(), files.end());
+  }
+  SDB_ASSERT(skip == durable.end());
 
   return files_to_sync;
 }
@@ -1969,6 +1975,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
+  absl::flat_hash_map<std::string_view, const IndexSegment*>
+    partially_committed;
+
   for (DocumentMask deleted_docs;
        const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
@@ -1978,6 +1987,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
+      if (HasUncommitted(index_segment.meta)) {
+        partially_committed.emplace(index_segment.meta.name, &index_segment);
+      }
       continue;
     }
 
@@ -2208,6 +2220,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     next_cached.clear();
   }
 
+  std::vector<size_t> durable;
+
   // Stage 3
   // create new segments
   {
@@ -2299,6 +2313,24 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         continue;
       }
       SDB_ASSERT(segment_ctx.flushed.meta.version == new_segment.meta.version);
+      if (const auto it = partially_committed.find(new_segment.meta.name);
+          it != partially_committed.end()) {
+        const auto& committed = it->second->meta;
+        SDB_ASSERT(committed.version == new_segment.meta.version);
+        if (document_mask.Count() + UncommittedCount(committed) ==
+            RemovalCount(committed)) {
+          auto segment = *it->second;
+          segment.meta.uncommitted_begin = new_segment.meta.uncommitted_begin;
+          segment.meta.live_docs_count =
+            segment.meta.docs_count - RemovalCount(segment.meta);
+          durable.emplace_back(pending_meta.segments.size());
+          readers.emplace_back(
+            segment_ctx.reader->UpdateMeta(dir, segment.meta));
+          pending_meta.segments.emplace_back(std::move(segment));
+          modified = true;
+          continue;
+        }
+      }
       if (!document_mask.Empty()) {
         document_mask.Trim();
         new_segment.meta.docs_mask =
@@ -2341,8 +2373,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   //  partially committed, and free query memory which already was applied.
   //  But when I start thinking about rollback stuff it looks almost impossible
 
-  auto files_to_sync =
-    GetFilesToSync(pending_meta.segments, partial_sync, partial_sync_threshold);
+  auto files_to_sync = GetFilesToSync(pending_meta.segments, partial_sync,
+                                      partial_sync_threshold, durable);
 
   modified |= !files_to_sync.empty();
 

@@ -1049,26 +1049,15 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     {
       irs::SegmentMeta read_meta;
-      read_meta.name = meta.name;
-      read_meta.version = 100;
 
       auto reader = codec()->get_segment_meta_reader();
-      reader->read(dir(), read_meta,
-                   irs::FileName<irs::SegmentMetaWriter>(read_meta));
+      reader->read(dir(), read_meta, filename);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
-      ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
+      ASSERT_EQ(451, read_meta.live_docs_count);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
 
-      ASSERT_EQ(56, irs::RemovalCount(read_meta));
-      ASSERT_EQ(400, read_meta.uncommitted_begin);
-
-      auto it_mask = irs::DocumentMask::Iterator{read_meta.docs_mask.get(),
-                                                 read_meta.uncommitted_begin};
-      ASSERT_EQ(42, it_mask.Seek(42));
-      ASSERT_EQ(100, it_mask.Seek(43));
-      ASSERT_EQ(400, it_mask.Seek(399));
-      ASSERT_EQ(400, it_mask.Seek(400));
-      ASSERT_EQ(453, it_mask.Seek(453));
+      ASSERT_EQ(2, irs::RemovalCount(read_meta));
+      ASSERT_EQ(irs::doc_limits::eof(), read_meta.uncommitted_begin);
     }
   }
 
@@ -1388,8 +1377,8 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
                        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
                          list.WriteElement<std::string>(meta.files[i]);
                        });
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldLiveDocsCount,
-                                     "live_docs_count", meta.live_docs_count);
+    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                     meta.docs_count);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size",
                                      meta.byte_size);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
@@ -1469,8 +1458,8 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
                            list.WriteElement<std::string>("file1");
                          });
     }
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldLiveDocsCount,
-                                     "live_docs_count", 1);
+    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                     100);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
     meta_out.End();
     out->WriteU64(mask.size());

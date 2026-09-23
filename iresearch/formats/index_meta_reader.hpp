@@ -87,10 +87,12 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   const auto cnt = meta_in.ReadProperty<uint64_t>(
     IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
   std::vector<IndexSegment> segments;
+  std::vector<uint32_t> uncommitted;
   meta_in.ReadList(
     IndexMetaWriterImpl::kFieldSegments, "segments",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
       auto& segment = segments.emplace_back();
+      auto& uncommitted_count = uncommitted.emplace_back();
       list.ReadObject([&](duckdb::Deserializer& obj) {
         segment.filename = obj.ReadProperty<std::string>(
           IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
@@ -103,6 +105,9 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
                                         "' of segment '", segment.filename,
                                         "', path: ", filename)};
         }
+        uncommitted_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+          IndexMetaWriterImpl::kSegmentFieldUncommittedCount,
+          "uncommitted_count", 0);
       });
     });
   std::optional<bstring> payload;
@@ -116,10 +121,23 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
       });
   }
 
-  for (auto& segment : segments) {
+  for (size_t i = 0; auto& segment : segments) {
     auto reader = segment.meta.codec->get_segment_meta_reader();
 
     reader->read(dir, segment.meta, segment.filename);
+
+    if (const auto count = uncommitted[i++]; count != 0) {
+      auto& info = segment.meta;
+      if (count > info.live_docs_count) [[unlikely]] {
+        throw IndexError{absl::StrCat(
+          "Segment '", segment.filename, "' has uncommitted_count(", count,
+          ") above live_docs_count(", info.live_docs_count,
+          "), path: ", filename)};
+      }
+      info.live_docs_count -= count;
+      info.uncommitted_begin =
+        static_cast<doc_id_t>(doc_limits::min() + info.docs_count - count);
+    }
   }
 
   meta.gen = gen;

@@ -58,9 +58,7 @@ class SearchDbWal {
   };
 
   // One iresearch segment flushed and fsynced before the commit record was
-  // written, so its rows are never written twice. The same pair iresearch's own
-  // index meta keeps per segment (index_meta_writer.hpp): the meta file holds
-  // every other field behind its own checksum. Ordering against the deletes
+  // written, so its rows are never written twice. Ordering against the deletes
   // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;

@@ -43,9 +43,8 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
 
   static constexpr duckdb::field_id_t kFieldParent = 0;
   static constexpr duckdb::field_id_t kFieldFiles = 1;
-  static constexpr duckdb::field_id_t kFieldLiveDocsCount = 2;
-  static constexpr duckdb::field_id_t kFieldUncommittedCount = 3;
-  static constexpr duckdb::field_id_t kFieldByteSize = 4;
+  static constexpr duckdb::field_id_t kFieldDocsCount = 2;
+  static constexpr duckdb::field_id_t kFieldByteSize = 3;
 
   void write(Directory& dir, std::string& filename, SegmentMeta& meta) final {
     Write(dir, filename, meta, nullptr, kNoParent);
@@ -161,10 +160,8 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
                          list.WriteElement<std::string>(files[i]);
                        });
   }
-  meta_out.WriteProperty<uint32_t>(kFieldLiveDocsCount, "live_docs_count",
-                                   meta.live_docs_count);
-  meta_out.WritePropertyWithDefault<uint32_t>(
-    kFieldUncommittedCount, "uncommitted_count", UncommittedCount(meta), 0);
+  meta_out.WriteProperty<uint32_t>(kFieldDocsCount, "docs_count",
+                                   meta.docs_count);
   meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
                                    size_without_mask);
   meta_out.End();

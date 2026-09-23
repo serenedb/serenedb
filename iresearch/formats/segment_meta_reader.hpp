@@ -132,11 +132,8 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     SegmentMetaWriterImpl::kNoParent);
   std::vector<std::string> files;
   bool has_files = ReadFiles(meta_in, files);
-  const auto live_docs_count = meta_in.ReadProperty<uint32_t>(
-    SegmentMetaWriterImpl::kFieldLiveDocsCount, "live_docs_count");
-  const auto uncommitted_count =
-    meta_in.ReadPropertyWithExplicitDefault<uint32_t>(
-      SegmentMetaWriterImpl::kFieldUncommittedCount, "uncommitted_count", 0);
+  const auto docs_count = meta_in.ReadProperty<uint32_t>(
+    SegmentMetaWriterImpl::kFieldDocsCount, "docs_count");
   const auto size = meta_in.ReadProperty<uint64_t>(
     SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
 
@@ -198,22 +195,13 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     docs_mask = std::make_shared<DocumentMask>(std::move(builder));
   }
 
-  const auto mask_count =
-    docs_mask ? static_cast<uint64_t>(docs_mask->Count()) : 0;
-  const auto docs_count =
-    uint64_t{live_docs_count} + mask_count + uncommitted_count;
+  const auto mask_count = docs_mask ? docs_mask->Count() : 0;
 
-  if (docs_count >= doc_limits::eof()) [[unlikely]] {
-    throw IndexError{absl::StrCat("While reading segment meta '", name,
-                                  "', error: docs_count(", docs_count,
-                                  ") is out of range")};
+  if (docs_count >= doc_limits::eof() || mask_count > docs_count) [[unlikely]] {
+    throw IndexError{absl::StrCat(
+      "While reading segment meta '", name, "', error: docs_count(", docs_count,
+      ") is out of range for ", mask_count, " masked document(s)")};
   }
-
-  const auto uncommitted_begin =
-    uncommitted_count == 0
-      ? doc_limits::eof()
-      : static_cast<doc_id_t>(docs_count + doc_limits::min() -
-                              uncommitted_count);
 
   // ...........................................................................
   // all operations below are noexcept
@@ -221,9 +209,9 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
   meta.name = std::move(name);
   meta.version = segment_version;
-  meta.docs_count = static_cast<uint32_t>(docs_count);
-  meta.live_docs_count = live_docs_count;
-  meta.uncommitted_begin = uncommitted_begin;
+  meta.docs_count = docs_count;
+  meta.live_docs_count = static_cast<uint32_t>(docs_count - mask_count);
+  meta.uncommitted_begin = doc_limits::eof();
   meta.docs_mask = std::move(docs_mask);
   meta.docs_mask_size = docs_mask_size;
   meta.docs_mask_chain = docs_mask_chain;

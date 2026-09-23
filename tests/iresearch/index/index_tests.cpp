@@ -12520,6 +12520,203 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
   ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
 }
 
+TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
+  struct SyncRecorder : tests::DirectoryMock {
+    explicit SyncRecorder(irs::Directory& impl) : DirectoryMock(impl) {}
+
+    bool sync(std::span<const std::string_view> files) noexcept final {
+      for (const auto file : files) {
+        synced.emplace_back(file);
+      }
+      return DirectoryMock::sync(files);
+    }
+
+    std::vector<std::string> synced;
+  };
+
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  SyncRecorder recorder{directory};
+  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc0));
+    ASSERT_TRUE(insert(trx, *doc1));
+    trx.Commit(kVisibleTick);
+  }
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    trx.Commit(kPendingTick);
+  }
+
+  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+
+  std::string partial_meta;
+  {
+    auto reader = irs::DirectoryReader(directory, nullptr,
+                                       irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(2, reader[0].live_docs_count());
+    ASSERT_EQ(1, irs::UncommittedCount(reader[0].Meta()));
+    partial_meta = reader.Meta().index_meta.segments[0].filename;
+  }
+
+  recorder.synced.clear();
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  ASSERT_EQ(1, recorder.synced.size());
+  ASSERT_TRUE(recorder.synced.front().starts_with("pending_segments_"));
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader[0].live_docs_count());
+  ASSERT_FALSE(irs::HasUncommitted(reader[0].Meta()));
+  ASSERT_EQ(partial_meta, reader.Meta().index_meta.segments[0].filename);
+  AssertSnapshotEquality(*writer);
+}
+
+TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kRemoveTick = 15;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc0));
+    ASSERT_TRUE(insert(trx, *doc1));
+    trx.Commit(kVisibleTick);
+  }
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    trx.Commit(kPendingTick);
+  }
+
+  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+
+  std::string partial_meta;
+  {
+    auto reader = irs::DirectoryReader(directory, nullptr,
+                                       irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(1, reader.size());
+    partial_meta = reader.Meta().index_meta.segments[0].filename;
+  }
+
+  {
+    auto trx = writer->GetBatch();
+    trx.Remove(MakeByTerm(kNameFieldId, "A"));
+    trx.Commit(kRemoveTick);
+  }
+
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader[0].docs_count());
+  ASSERT_EQ(2, reader[0].live_docs_count());
+  ASSERT_FALSE(irs::HasUncommitted(reader[0].Meta()));
+  ASSERT_NE(partial_meta, reader.Meta().index_meta.segments[0].filename);
+  AssertSnapshotEquality(*writer);
+}
+
+TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+  auto* doc3 = gen.next();
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto writer =
+      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc0));
+      ASSERT_TRUE(insert(trx, *doc1));
+      trx.Commit(kVisibleTick);
+    }
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc2));
+      trx.Commit(kPendingTick);
+    }
+    ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+  }
+
+  {
+    auto writer =
+      open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc3));
+      ASSERT_TRUE(trx.Commit());
+    }
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(4, reader.docs_count());
+  ASSERT_EQ(3, reader.live_docs_count());
+  ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().uncommitted_begin);
+  ASSERT_EQ(2, reader[0].live_docs_count());
+}
+
 TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);

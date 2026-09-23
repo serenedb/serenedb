@@ -88,6 +88,61 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   EXPECT_EQ(meta_orig, meta_read);
 }
 
+TEST(index_meta_tests, uncommitted_count_round_trip) {
+  auto codec = irs::formats::Get("1_5simd");
+  ASSERT_NE(nullptr, codec);
+  irs::MemoryDirectory dir;
+
+  auto make_segment = [&](std::string_view name,
+                          irs::doc_id_t uncommitted_begin) {
+    irs::IndexSegment segment;
+    segment.meta.name = name;
+    segment.meta.version = 1;
+    segment.meta.codec = codec;
+    segment.meta.docs_count = 10;
+    segment.meta.byte_size = 42;
+    segment.meta.uncommitted_begin = uncommitted_begin;
+    segment.meta.docs_mask = std::make_shared<irs::DocumentMask>([] {
+      irs::DocumentMask mask;
+      mask.Add(irs::doc_limits::min() + 1);
+      mask.Trim();
+      return mask;
+    }());
+    segment.meta.live_docs_count =
+      segment.meta.docs_count - irs::RemovalCount(segment.meta);
+    codec->get_segment_meta_writer()->write(dir, segment.filename,
+                                            segment.meta);
+    return segment;
+  };
+
+  irs::IndexMeta meta_orig;
+  meta_orig.segments.emplace_back(
+    make_segment("tailed", irs::doc_limits::min() + 7));
+  meta_orig.segments.emplace_back(
+    make_segment("whole", irs::doc_limits::eof()));
+
+  std::string filename;
+  std::string tmp_filename;
+  auto writer = codec->get_index_meta_writer();
+  ASSERT_TRUE(writer->prepare(dir, meta_orig, tmp_filename, filename));
+  ASSERT_TRUE(writer->commit());
+
+  irs::IndexMeta meta_read;
+  codec->get_index_meta_reader()->read(dir, meta_read, filename);
+  ASSERT_EQ(2, meta_read.segments.size());
+
+  const auto& tailed = meta_read.segments[0].meta;
+  EXPECT_EQ(10, tailed.docs_count);
+  EXPECT_EQ(6, tailed.live_docs_count);
+  EXPECT_EQ(irs::doc_limits::min() + 7, tailed.uncommitted_begin);
+  EXPECT_EQ(3, irs::UncommittedCount(tailed));
+
+  const auto& whole = meta_read.segments[1].meta;
+  EXPECT_EQ(10, whole.docs_count);
+  EXPECT_EQ(9, whole.live_docs_count);
+  EXPECT_EQ(irs::doc_limits::eof(), whole.uncommitted_begin);
+}
+
 TEST(index_meta_tests, ctor) {
   irs::IndexMeta meta;
   EXPECT_EQ(0, meta.seg_counter);

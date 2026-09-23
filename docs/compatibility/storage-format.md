@@ -37,9 +37,8 @@ file named `<segment>.<version>.sm` — `_1.4.sm` is version 4 of segment `_1`. 
 commit that changes a segment writes a new `.sm` at the next version; the previous
 one is dropped once nothing references it.
 
-The `.sm` holds the segment's bookkeeping — its name and version, how many
-documents it has, how big it is, which files belong to it — and the segment's
-*document mask*.
+The `.sm` holds the segment's bookkeeping — how many documents it has, how big it
+is, which files belong to it — and the segment's *document mask*.
 
 ### Document masks
 
@@ -89,24 +88,19 @@ and a handful of counters.
 
 The metadata object is serialized field by field, each tagged with a numeric id:
 
-| Id  | Field               | Type           | Notes                                                     |
-| --- | ------------------- | -------------- | ---------------------------------------------------------- |
-| 0   | `parent`            | `uint64`       | previous `.sm` version; omitted outside a chain             |
-| 1   | `files`             | `list<string>` | omitted by a chain link, which inherits the root's list     |
-| 2   | `name`              | `string`       | segment name                                                |
-| 3   | `version`           | `uint64`       | this segment version                                        |
-| 4   | `live_docs_count`   | `uint32`       | documents neither deleted nor uncommitted                   |
-| 5   | `removal_count`     | `uint32`       | omitted when zero                                           |
-| 6   | `uncommitted_count` | `uint32`       | omitted when zero                                           |
-| 7   | `byte_size`         | `uint64`       | segment size, not counting the mask bytes                   |
+| Id  | Field        | Type           | Notes                                                   |
+| --- | ------------ | -------------- | -------------------------------------------------------- |
+| 0   | `parent`     | `uint64`       | previous `.sm` version; omitted outside a chain           |
+| 1   | `files`      | `list<string>` | omitted by a chain link, which inherits the root's list   |
+| 2   | `docs_count` | `uint32`       | every document the segment holds, masked or not           |
+| 3   | `byte_size`  | `uint64`       | segment size, not counting the mask bytes                 |
 
 `parent` and `files` come first so that walking a chain reads two fields per link
 rather than parsing each link in full.
 
-The rest is derived: a segment holds `live_docs_count + removal_count` documents,
-of which `uncommitted_count` are a trailing run still being written and the other
-`removal_count - uncommitted_count` are the bits in the mask. A reader that finds a
-different number of bits than that rejects the file.
+Everything else is derived rather than stored. The segment's name and version are
+already in the file's own name, so the reader takes them from there, and the live
+document count is `docs_count` minus the bits in the mask.
 
 There is no format version number and no header or footer. A field at its default
 is not written at all, a reader asks for each field by id with the default to use
@@ -114,6 +108,27 @@ when it is missing, and a reader stops at the last field it knows about rather t
 insisting the object end there. A later release can therefore add fields, or start
 writing a field an earlier release always defaulted, without any version to bump.
 Changes that reorder or repurpose an existing id still break the format.
+
+### Uncommitted documents
+
+A commit can publish a segment whose last documents belong to transactions that
+have not committed yet. Those documents form a trailing run that queries skip, the
+same as masked ones, until a later commit covers them.
+
+The length of that run is not in the `.sm`. It is recorded in the segment's entry
+in `segments_N`, next to the `.sm` file name:
+
+| Id  | Field               | Type     | Notes                                         |
+| --- | ------------------- | -------- | --------------------------------------------- |
+| 0   | `filename`          | `string` | the segment's current `.sm`                   |
+| 1   | `codec`             | `string` | format the segment was written with           |
+| 2   | `uncommitted_count` | `uint32` | length of the trailing run; omitted when zero |
+
+The run shrinks or disappears at a later commit while the segment itself stays the
+same. Every commit rewrites and syncs `segments_N` anyway, so that commit writes and
+syncs nothing else for the segment: the `.sm` it already has is reused as is. After
+a crash the run stays skipped: recovery replays those transactions' rows into new
+segments, so the old copies must not come back.
 
 ## Format changes
 
@@ -130,13 +145,19 @@ Its layout changed with it:
   positional layout;
 - the format header and footer are gone — nothing read them, and the checksum they
   carried duplicated what the storage layer already verifies;
-- `removal_count` and `uncommitted_count` are new, and the document count is
-  computed from them rather than from the mask's contents;
+- the document count is stored instead of the live count, which is derived from it
+  and the mask;
 - the file list is written only at the root of a chain, and each link inherits it
-  through the link it already follows.
+  through the link it already follows;
+- the segment's name and version are no longer stored, since the file is named
+  after them. A `.sm` is therefore only meaningful under its own name.
 
-The index metadata file, `segments_N`, changed with it: its commit payload was a
-size field plus a blob, and is now a single self-describing field, since the blob
-already carries its own length.
+The index metadata file, `segments_N`, changed with it. Its commit payload was a
+size field plus a blob and is now a single self-describing field, since the blob
+already carries its own length; its generation is no longer stored, for the same
+reason the segment's is not — the file is called `segments_<generation>`; and its
+segment entries gained `uncommitted_count`, so a partially committed segment
+records its trailing run as a bound instead of masking each of its documents, and
+the commit that completes the run writes no new `.sm`.
 
 Indexes written before this change must be rebuilt.

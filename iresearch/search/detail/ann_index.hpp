@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/docs_mask_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -83,6 +84,8 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
     if (out == nullptr || QueryBuilder::IsEmpty(*out)) {
       return false;
     }
+  } else if (HasRemovals(segment.Meta())) {
+    out = MakeAllQuery(segment, {.memory = ctx.memory}, kNoBoost);
   }
   out = WithDocsMask(std::move(out), segment, ctx.memory, nullptr, false);
   return true;

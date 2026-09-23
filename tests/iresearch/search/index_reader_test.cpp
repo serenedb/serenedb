@@ -434,6 +434,7 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     writer->write(dir, filename, expected);
 
@@ -451,6 +452,7 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     writer->write(dir, filename, expected);
 
@@ -468,6 +470,7 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     expected.docs_count = 43;
     expected.live_docs_count = 42;
@@ -494,6 +497,7 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     expected.docs_count = 43;
     expected.live_docs_count = 42;

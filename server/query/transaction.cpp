@@ -21,6 +21,7 @@
 #include "query/transaction.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/random/random.h>
 
 #include <chrono>
 #include <duckdb/main/client_context.hpp>
@@ -33,7 +34,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <random>
 #include <thread>
 
 #include "catalog/ddl/catalog.h"
@@ -185,11 +185,9 @@ void Transaction::CommitSearch(
       std::max<uint64_t>(max_queries, connector::PrepareInvertedFeed(*feed));
   }
   SDB_IF_FAILURE("long_waited_advance") {
-    static std::atomic<uint32_t> gSeedCounter{0};
-    static thread_local std::mt19937 gRng{
-      gSeedCounter.fetch_add(1, std::memory_order_relaxed)};
+    absl::BitGen gen;
     std::this_thread::sleep_for(std::chrono::microseconds(
-      std::uniform_int_distribution<int>(0, 20000)(gRng)));
+      absl::Uniform(absl::IntervalClosed, gen, 0, 20000)));
   }
 
   const auto last_tick = search::TickDomain::Instance().Next(max_queries + 1);

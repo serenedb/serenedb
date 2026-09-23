@@ -30,10 +30,18 @@
 
 namespace irs::detail {
 
+enum class PointRead : uint8_t { None, Row, Vector };
+
 struct TableFilter {
   virtual ~TableFilter() = default;
 
   virtual doc_id_t Live(doc_id_t doc) = 0;
+
+  // True when every predicate reads columns alone, so a window can be narrowed
+  // before any score exists: `Narrow(base, mask, nullptr, words)` is then the
+  // whole answer and a set folded that way needs no second pass. A predicate
+  // on the computed score makes this false; such a table is applied to hits.
+  virtual bool Foldable() const noexcept = 0;
 
   virtual uint64_t CountAndClear(doc_id_t base, uint64_t* mask,
                                  uint32_t words) = 0;
@@ -42,6 +50,19 @@ struct TableFilter {
 
   virtual uint32_t Narrow(doc_id_t base, uint64_t* mask, score_t* scores,
                           uint32_t words) = 0;
+
+  // Puts the column scans back at the start. The readers require rows to
+  // ascend across calls, so a caller that asks about one region and then an
+  // earlier one has to say so between the two. A table with no scans to move
+  // does nothing.
+  virtual void Rewind() {}
+
+  virtual PointRead PointReads() const noexcept { return PointRead::None; }
+
+  virtual bool Admits(doc_id_t doc) {
+    Rewind();
+    return Narrow(&doc, nullptr, 1) == 1;
+  }
 };
 
 template<typename Table>

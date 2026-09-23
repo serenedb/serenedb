@@ -403,6 +403,9 @@ void ScanBindData::AppendSummary(
     }
     out.insert("Score", absl::StrCat(VectorMetricFunctionName(vector->metric),
                                      "(", fname, ", ", ctype.ToString(), ")"));
+    if (vector->exact) {
+      out.insert("Exact", "brute force over the stored vectors");
+    }
   }
   std::unique_ptr<irs::Scorer> query_scorer;
   if (score.text) {
@@ -411,11 +414,17 @@ void ScanBindData::AppendSummary(
       out.insert("Score", query_scorer->ToString());
     }
   }
-  if (score.top_k) {
-    std::string topk_val = absl::StrCat(
-      *score.top_k - (score.top_n_consumed ? score.top_offset : 0));
+  if (score.top_k || score.top_k_expr) {
+    std::string topk_val =
+      score.top_k ? absl::StrCat(*score.top_k -
+                                 (score.top_n_consumed ? score.top_offset : 0))
+                  : score.top_k_expr->ToString();
     if (score.top_n_consumed && score.top_offset != 0) {
       absl::StrAppend(&topk_val, ", offset ", score.top_offset);
+    }
+    if (!score.top_k && score.top_offset_expr) {
+      absl::StrAppend(&topk_val, score.top_n_consumed ? ", offset " : " + ",
+                      score.top_offset_expr->ToString());
     }
     const auto* pruning = ResolvePruneScorer(score.prune, query_scorer.get());
     if (pruning) {
@@ -526,7 +535,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   }
   bind.AppendSummary(result);
   if (bind.score.static_floor > std::numeric_limits<float>::lowest() &&
-      (bind.score.top_k || bind.score.text)) {
+      (bind.score.top_k || bind.score.top_k_expr || bind.score.text)) {
     result.insert("Min Score", absl::StrCat(bind.score.static_floor));
   }
   if (count_only) {

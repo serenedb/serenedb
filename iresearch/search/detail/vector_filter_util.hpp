@@ -67,7 +67,7 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
 inline bool PrepareVectorState(
   const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
   const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
-  QueryBuilder::ptr& inner_query, uint32_t max_search_fanout = 1) {
+  QueryBuilder::ptr& inner_query, uint32_t beam = 0) {
   if (opts.query.empty() || nprobe == 0 ||
       !field_limits::valid(opts.centroids_id) ||
       !field_limits::valid(opts.postings_id)) {
@@ -106,7 +106,7 @@ inline bool PrepareVectorState(
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
   ivf.Search(query, *idx_in, nprobe, fine_ids,
-             needs_centroids ? &probed_centroids : nullptr, max_search_fanout);
+             needs_centroids ? &probed_centroids : nullptr, beam);
   if (fine_ids.empty()) {
     return false;
   }

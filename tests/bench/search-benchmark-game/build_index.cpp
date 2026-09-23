@@ -32,7 +32,7 @@
 #include "insert_field.hpp"
 
 int main(int argc, const char* argv[]) {
-  irs::RemapExecutable();
+  irs::RemapExecutable(true);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
   // before main returns -- duckdb's BlockAllocator dtor reads a

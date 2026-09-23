@@ -10,14 +10,15 @@ control substitution on
 # reachable at all.
 #
 # The beam is also the result ceiling: HnswSearchTopK keeps at most ef
-# candidates, so an ef below the LIMIT returns fewer rows than asked for. That
-# is the deterministic signal this file pins -- on a linear dataset the graph
-# finds the exact neighbour at any ef, so row *count* is what distinguishes the
-# beam widths, not row identity.
+# candidates, so the scan floors ef at the LIMIT -- a beam narrower than k
+# could not answer the query -- and above that the value is used verbatim. On
+# a linear dataset the graph finds the exact neighbours at any beam, so what
+# this file pins is that every LIMIT is met and that small values are honoured
+# rather than pinned to the old floor of 64.
 #
-# quant = 'none' is pinned so the graph traverses raw f32: with a quantizer the
-# scan layer over-fetches sdb_rerank_factor * k and rescores, which would mask
-# what the graph itself returned.
+# quant = 'none' is pinned so the graph traverses raw f32; with a quantizer the
+# scan layer reads sdb_ann_oversample * k of the beam's hits back at full
+# precision, and the beam is widened to hold that pool.
 # ============================================================================
 
 statement ok
@@ -40,7 +41,7 @@ query
 SHOW sdb_hnsw_ef_search;
 ----
 sdb_hnsw_ef_search
-64
+-1
 
 
 # A wide beam ranks exactly. 1500.4 is off-lattice so no two neighbours tie.
@@ -57,8 +58,8 @@ pk
 1499
 
 
-# Below the old floor of 64 the value is honoured verbatim, and the beam caps
-# the result at min(ef, LIMIT).
+# Below the old floor of 64 the value is honoured, floored at the LIMIT: a
+# beam of 1 asked for 5 rows searches with a beam of 5 and returns all 5.
 statement ok
 SET sdb_hnsw_ef_search = 1;
 
@@ -68,10 +69,10 @@ SELECT pk FROM hnsw_ef_idx
 ----
 pk
 1500
-1482
-1548
-1418
-1612
+1501
+1499
+1502
+1498
 
 
 statement ok
@@ -85,8 +86,8 @@ pk
 1500
 1501
 1499
-1482
-1481
+1502
+1498
 
 
 # 0 restores the legacy derivation, so sdb_nprobe drives ef again and the old
@@ -112,9 +113,22 @@ count
 
 
 statement error
-SET sdb_hnsw_ef_search = -1;
+SET sdb_hnsw_ef_search = -2;
 ----
-db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-1"
+db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-2"
+
+
+statement ok
+SET sdb_hnsw_ef_search = -1;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM hnsw_ef_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 50)
+  WHERE pk BETWEEN 1476 AND 1525;
+----
+count
+50
 
 
 statement ok
@@ -132,12 +146,13 @@ INSERT INTO hnsw_efq SELECT i,
 statement ok
 VACUUM (REFRESH_TABLE) hnsw_efq;
 
+# sdb_ann_oversample is HNSW's own oversample; sdb_ann_oversample is the IVF
+# one and does not reach here. The pool it asks for is read back at full
+# precision, and the beam is widened to hold it -- so an oversample of 4 at
+# LIMIT 5 searches at least 20 however narrow ef is set.
 statement ok
-SET sdb_rerank_factor = 4;
+SET sdb_ann_oversample = 4;
 
-
-# ef = 1 would cap the result at one row on an unquantized index. Here the pool
-# floor (4 * 5) lifts the beam, so the full LIMIT comes back.
 statement ok
 SET sdb_hnsw_ef_search = 1;
 
@@ -150,10 +165,11 @@ count
 5
 
 
-# With reranking off there is no pool to floor the beam against, so ef = 1
-# caps the result again.
+# 0 disables the rescore, as Elasticsearch's oversample of 0 does. Nothing
+# widens the beam past the LIMIT then, but the LIMIT is still a floor, so the
+# full five come back and they come back straight from the quantized codes.
 statement ok
-SET sdb_rerank_factor = 0;
+SET sdb_ann_oversample = 0;
 
 query
 SELECT count(*) FROM (
@@ -162,3 +178,22 @@ SELECT count(*) FROM (
 ----
 count
 5
+
+
+# On this linear dataset the codes separate the neighbours cleanly, so the
+# answer is the exact one either way: the oversample is a recall knob, never a
+# correctness one.
+query
+SELECT pk FROM hnsw_efq_idx
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1500
+1501
+1499
+1502
+1498
+
+
+statement ok
+SET sdb_ann_oversample = 3;

@@ -1,0 +1,442 @@
+statement ok
+CREATE TABLE hnsw_cr (
+  pk INTEGER PRIMARY KEY, emb FLOAT[8], tag VARCHAR, url VARCHAR, body VARCHAR,
+  price DOUBLE, ratio DOUBLE, qty BIGINT, run BIGINT, flag BOOLEAN, opt INTEGER);
+
+
+statement ok
+CREATE INDEX hnsw_cr_idx ON hnsw_cr
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (tag included (compression = 'dict_fsst'),
+           url included (compression = 'dict_fsst'),
+           body included (compression = 'zstd'),
+           price included (compression = 'alp'),
+           ratio included (compression = 'alprd'),
+           qty included (compression = 'bitpacking'),
+           run included (compression = 'rle'),
+           flag included (compression = 'roaring'),
+           opt included (compression = 'bitpacking'));
+
+
+statement ok
+INSERT INTO hnsw_cr SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  ['a', 'b', 'c'][i % 3 + 1],
+  'https://example.org/p/' || i,
+  repeat('x', 100) || i,
+  (i % 100) / 4.0,
+  round(sin(i) * 1000.123456789, 9),
+  i // 10,
+  i // 500,
+  i % 7 = 0,
+  CASE WHEN i % 5 = 0 THEN NULL ELSE i END
+FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_cr;
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement error invalid value for parameter "sdb_hnsw_column_filter"
+SET sdb_hnsw_column_filter = 'point';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE tag = 'b'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2503
+2497
+2506
+2494
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE url >= 'https://example.org/p/3'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+3000
+3001
+3002
+3003
+3004
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE body < repeat('x', 100) || '25'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2498
+2497
+2496
+2495
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE price BETWEEN 10 AND 10.5
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2540
+2541
+2542
+2442
+2441
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE qty BETWEEN 300 AND 301
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+3000
+3001
+3002
+3003
+3004
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE run = 5
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2501
+2502
+2503
+2504
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE flag
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2506
+2492
+2513
+2485
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt > 2400
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2501
+2499
+2502
+2498
+2503
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE tag = 'a' AND qty < 250
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2496
+2493
+2490
+2487
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE ratio > 990
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2496
+2521
+2471
+2540
+2452
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'fold';
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE tag = 'b'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2503
+2497
+2506
+2494
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE url >= 'https://example.org/p/3'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+3000
+3001
+3002
+3003
+3004
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE body < repeat('x', 100) || '25'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2498
+2497
+2496
+2495
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE price BETWEEN 10 AND 10.5
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2540
+2541
+2542
+2442
+2441
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE qty BETWEEN 300 AND 301
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+3000
+3001
+3002
+3003
+3004
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE run = 5
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2501
+2502
+2503
+2504
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE flag
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2506
+2492
+2513
+2485
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt > 2400
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2501
+2499
+2502
+2498
+2503
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE tag = 'a' AND qty < 250
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2496
+2493
+2490
+2487
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE ratio > 990
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2496
+2521
+2471
+2540
+2452
+
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+CREATE TABLE hnsw_nest (pk INTEGER PRIMARY KEY, emb FLOAT[8],
+  meta STRUCT(cat INTEGER, name VARCHAR), tags INTEGER[], pair INTEGER[2]);
+
+
+statement ok
+CREATE INDEX hnsw_nest_idx ON hnsw_nest
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (meta, tags, pair);
+
+
+statement ok
+INSERT INTO hnsw_nest SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  {'cat': i % 5, 'name': 'n' || i},
+  CASE WHEN i % 4 = 0 THEN NULL ELSE [i] END,
+  (CASE WHEN i % 3 = 0 THEN NULL ELSE [i, i] END)::INTEGER[2]
+FROM range(2000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_nest;
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+query
+SELECT pk FROM hnsw_nest_idx WHERE meta.cat = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+98
+103
+93
+
+
+query
+SELECT pk FROM hnsw_nest_idx WHERE tags IS NOT NULL
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+102
+
+
+query
+SELECT pk FROM hnsw_nest_idx WHERE pair IS NOT NULL
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+98
+
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+
+statement ok
+CREATE TABLE hnsw_late (pk INTEGER PRIMARY KEY, emb FLOAT[8], seq BIGINT);
+
+
+statement ok
+CREATE INDEX hnsw_late_idx ON hnsw_late
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (seq);
+
+
+statement ok
+INSERT INTO hnsw_late SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
+FROM range(40000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_late;
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'prune';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'bridge';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'twohop';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+SET sdb_compact_target_segments = 4000000000;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) hnsw_late;
+
+
+statement ok
+RESET sdb_compact_target_segments;

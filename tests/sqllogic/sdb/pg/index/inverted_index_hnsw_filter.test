@@ -44,16 +44,28 @@ pk
 99
 
 
-query error an hnsw vector index does not support filtered search
+# `label` is INCLUDE'd, not indexed: a column predicate. It folds into the
+# set the graph walk admits from, so the answer is the k nearest that pass.
+query
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'even'
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+102
+98
 
 
-query error an hnsw vector index does not support filtered search
+query
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'odd'
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+103
 
 
 query
@@ -63,14 +75,160 @@ count
 150
 
 
-# Inherited limitation, pinned deliberately: the qualifying rows (pk >= 250)
-# lie far outside the neighbourhood the graph walks for a query at 100.4, so
-# the over-fetched pool holds none of them and the answer is short of k. IVF
-# answers this exactly because it intersects postings; HNSW cannot, and
-# returning fewer rows is preferred over silently dropping the predicate.
+# `pk` is indexed: the range is claimed into the scan and becomes the walk's
+# predicate. The qualifying rows lie far from the query, where an unfiltered
+# beam would never look; the predicate-aware walk (or the scan of its docs,
+# when the predicate is sparse) still finds the nearest of them.
 query
 SELECT pk FROM hnsw_f_idx
   WHERE pk >= 250
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
 ----
 pk
+250
+251
+
+
+# Both kinds at once: the indexed range and the stored column.
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250 AND label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+251
+253
+
+
+# A predicate nothing satisfies.
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 300
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+
+
+# Every walk mode answers the same. The admitted rows (pk >= 250) sit far from
+# where the descent lands, so a Prune walk that only expands admitted rows
+# empties its frontier at once and falls back to the scan; TwoHop reaches
+# them through rejected bridges or falls back the same way.
+statement ok
+SET sdb_hnsw_filter_mode = 'prune';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250 AND label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+251
+253
+
+statement ok
+SET sdb_hnsw_filter_mode = 'twohop';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+102
+98
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+250
+251
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+103
+
+statement error invalid value for parameter "sdb_hnsw_filter_mode"
+SET sdb_hnsw_filter_mode = 'sideways';
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+# Filtered count through the graph's radius search.
+query
+SELECT count(*) FROM hnsw_f_idx
+  WHERE label = 'even' AND emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 5;
+----
+count
+5
+
+
+# An attribute that runs in blocks.
+#
+# A language, a tenant, a day: the admitted rows sit together in doc order
+# rather than spread over the segment, which is the shape a scan split by doc
+# range handles worst -- one part is handed every matching row and the rest
+# none. This table is well under the size at which a scan splits, so it covers
+# the answer, not the split; wiki-v3-1024 in vectorbench is where the split
+# itself is exercised.
+statement ok
+CREATE TABLE hnsw_blocks (pk INTEGER PRIMARY KEY, emb FLOAT[8], zone VARCHAR);
+
+statement ok
+CREATE INDEX hnsw_blocks_idx ON hnsw_blocks
+  USING inverted(pk, zone, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hnsw_blocks SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i < 8000 THEN 'front' ELSE 'back' END FROM range(40000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_blocks;
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'front'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+99
+
+
+# The mirror case: the admitted block sits at the end, so it is the early
+# parts that come back empty.
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'back'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+8000
+8001
+8002
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+statement ok
+DROP TABLE hnsw_blocks;

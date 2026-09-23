@@ -38,6 +38,11 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+namespace {
+
+constexpr uint32_t kPointHeapFetches = 1024;
+
+}  // namespace
 
 duckdb::TableFilterState& ColFilterStateCache::State(
   duckdb::ClientContext& context, const duckdb::TableFilter& filter) {
@@ -76,19 +81,35 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
                           ColFilterStateCache& states) {
   _context = &context;
   _states = &states;
+  _col_reader = &col_reader;
   _cols.clear();
   _cols.reserve(specs.size());
   for (const auto& spec : specs) {
     if (spec.is_score) {
       continue;
     }
-    const auto* reader = col_reader.Column(spec.field);
-    SDB_ASSERT(reader != nullptr,
+    const auto* column = col_reader.Column(spec.field);
+    SDB_ASSERT(column != nullptr,
                "classification resolves filters on absent columns");
-    const auto type_id = reader->Type().id();
+    const auto* reader = column;
+    std::unique_ptr<ExtractBinding> extract;
+    if (!spec.extract_path.empty()) {
+      SDB_ASSERT(spec.extract_type != nullptr);
+      reader =
+        DirectExtractLeaf(*column, spec.extract_path, *spec.extract_type);
+      if (reader == nullptr) {
+        extract = std::make_unique<ExtractBinding>();
+        extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
+                      &context);
+        reader = column;
+      }
+    }
+    const auto type_id =
+      extract ? spec.extract_type->id() : reader->Type().id();
     const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
                            type_id == duckdb::LogicalTypeId::MAP;
-    const bool nested = list_like || type_id == duckdb::LogicalTypeId::ARRAY ||
+    const bool nested = extract != nullptr || list_like ||
+                        type_id == duckdb::LogicalTypeId::ARRAY ||
                         type_id == duckdb::LogicalTypeId::STRUCT ||
                         type_id == duckdb::LogicalTypeId::UNION ||
                         type_id == duckdb::LogicalTypeId::VARIANT;
@@ -103,6 +124,9 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .nested = nested,
       .state = &states.State(context, *spec.filter),
       .scan = reader->InitScan(ctx),
+      .extract_path = spec.extract_path,
+      .extract_type = spec.extract_type,
+      .extract = std::move(extract),
     });
   }
 }
@@ -112,7 +136,7 @@ bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
     // A children-backed column filters on a compact decode whose scan state
     // ends past the window -- it cannot double as the slot's materialization;
     // the caller scans it as a plain projected column instead.
-    if (c.field == field && !c.nested) {
+    if (c.field == field && !c.nested && c.extract_path.empty()) {
       c.output_slots.push_back(slot);
       return true;
     }
@@ -126,7 +150,8 @@ void ColFilterChain::FinishBind() {
   // evaluate the predicate.
   for (auto& c : _cols) {
     if (c.output_slots.empty()) {
-      c.scratch = &_states->Scratch(*c.filter, c.reader->Type());
+      c.scratch = &_states->Scratch(
+        *c.filter, c.extract ? *c.extract_type : c.reader->Type());
     }
   }
   // Reordering must not evaluate a throwing expression on rows an earlier
@@ -195,7 +220,9 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       if (f.list_like) {
         duckdb::ListVector::SetListSize(scratch, 0);
       }
-      if (span <= STANDARD_VECTOR_SIZE) {
+      if (f.extract) {
+        f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
+      } else if (span <= STANDARD_VECTOR_SIZE) {
         f.reader->GatherDense(f.scan, anchor, sel, survivors, span, scratch);
       } else {
         f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
@@ -266,6 +293,60 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
   return w;
 }
 
+detail::PointRead ColFilterChain::PointReads() const noexcept {
+  auto read = detail::PointRead::Row;
+  for (const auto& c : _cols) {
+    if (c.nested) {
+      return detail::PointRead::None;
+    }
+    if (absl::c_any_of(c.reader->DataBlocks(), [](const auto& block) {
+          return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+        })) {
+      read = detail::PointRead::Vector;
+    }
+  }
+  return read;
+}
+
+bool ColFilterChain::AdmitRow(uint64_t row) {
+  SDB_ASSERT(_col_reader != nullptr);
+  for (auto& f : _cols) {
+    if (!f.point) {
+      f.point =
+        std::make_unique<irs::ColumnReader::PointReader>(*_col_reader, *f.reader);
+      f.point_scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
+      f.point_heap =
+        !duckdb::TypeIsConstantSize(f.reader->Type().InternalType());
+      auto& executor =
+        f.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
+      if (executor && executor->FiltersValues()) {
+        f.point_filter = executor.get();
+      }
+    }
+    auto* value = &f.point_scratch->vector;
+    if (f.point_heap && ++f.point_heap_fetches == kPointHeapFetches) {
+      f.point_heap_fetches = 0;
+      value = &f.point_scratch->Reset();
+    }
+    const bool valid = f.point->FetchRow(row, *value, 0);
+    if (f.point_filter) {
+      if (!f.point_filter->FilterValue(duckdb::FlatVector::GetData(*value),
+                                       valid)) {
+        return false;
+      }
+      continue;
+    }
+    duckdb::SelectionVector sel;
+    duckdb::idx_t approved = 1;
+    duckdb::ColumnSegment::FilterSelection(sel, *value, *f.state, 1, approved);
+    if (approved == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 template<bool Keep>
 duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
                                        duckdb::idx_t words) {
@@ -328,6 +409,28 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
     uint64_t last = off;
     bool more = true;
     for (;;) {
+      // A whole word of candidates, all of it inside the run: 64 consecutive
+      // indices at once. A set folded from every row of the segment is made
+      // of such words, and walking them a bit at a time cost more than the
+      // column compare they feed.
+      if (word == ~uint64_t{0}) {
+        const uint64_t first = (w - 1) * 64;
+        if (first + 64 <= limit && first + 64 - off <= STANDARD_VECTOR_SIZE) {
+          auto* const sel = _sel.data() + run;
+          const auto rel = static_cast<uint32_t>(first - off);
+          for (uint32_t i = 0; i < 64; ++i) {
+            sel[i] = rel + i;
+          }
+          run += 64;
+          last = first + 63;
+          word = 0;
+          if (!load()) {
+            more = false;
+            break;
+          }
+          continue;
+        }
+      }
       const auto b = bit();
       if (b >= limit || b - off >= STANDARD_VECTOR_SIZE) {
         break;
@@ -381,6 +484,10 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, uint64_t* mask,
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   for (auto& f : _cols) {
     f.scan = f.reader->InitScan(ctx);
+    if (f.extract) {
+      f.extract->Bind(*f.reader, ctx, f.extract_path, *f.extract_type,
+                      _context);
+    }
   }
 }
 

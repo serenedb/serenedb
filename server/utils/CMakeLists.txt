@@ -12,9 +12,7 @@ add_library(
     message_sequence_view.cpp
     metrics.cpp
     number_of_cores.cpp
-    random_generator.cpp
     signals.cpp
-    uniform_character.cpp
 )
 
 target_link_libraries(serene PUBLIC iresearch-static boost_boost simdjson)

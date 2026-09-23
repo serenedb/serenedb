@@ -1,0 +1,63 @@
+control substitution on
+
+query
+SHOW sdb_ivf_search_nprobe;
+----
+sdb_ivf_search_nprobe
+-1
+
+statement error
+SET sdb_ivf_search_nprobe = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_search_nprobe": "0"
+
+
+statement error
+SET sdb_ivf_search_nprobe = -2;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_search_nprobe": "-2"
+
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+statement ok
+CREATE TABLE ivf_np (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ivf_np_idx ON ivf_np
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO ivf_np SELECT i,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_np;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM ivf_np_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 50)
+  WHERE pk BETWEEN 1476 AND 1525;
+----
+count
+50
+
+statement ok
+SET sdb_ivf_search_nprobe = 200;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM ivf_np_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 50)
+  WHERE pk BETWEEN 1476 AND 1525;
+----
+count
+50
+
+statement ok
+RESET sdb_ivf_search_nprobe;
+
+statement ok
+RESET sdb_ivf_posting_size;

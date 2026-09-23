@@ -118,11 +118,17 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
   };
 }
 
+using BindingColumnId = absl::AnyInvocable<catalog::ColumnId(
+  const duckdb::BoundColumnRefExpression&) const>;
+
 struct SearchGetters {
   const connector::ColumnGetter& getter;
   const connector::ExpressionGetter& expr_getter;
   irs::containers::FlatHashSet<irs::field_id>& analyzed_fields;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
+  // The scan column a reference names, for a claim that must resolve the
+  // column again at execution.
+  const BindingColumnId& column_id;
 };
 
 bool WithSearchGetters(duckdb::LogicalGet& get,

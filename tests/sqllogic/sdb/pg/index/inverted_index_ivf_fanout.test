@@ -1,24 +1,10 @@
 control substitution on
 
-# ============================================================================
-# sdb_ivf_max_search_fanout bounds how many children of each centroid-tree node
-# the search descends into, decoupling the descent width from sdb_ivf_search_nprobe. It is
-# raised to sdb_ivf_search_nprobe when smaller, because on a shallow tree one expanded node
-# yields one leaf candidate, so a smaller width would silently cap the probe
-# count.
-#
-# This file covers the setting's surface and the end-to-end health of both the
-# narrow and the wide descent on a genuinely multi-level tree. That the width
-# changes which clusters are reached is pinned deterministically in the gtest
-# centroids_node_test.fanout_caps_children_per_node -- proving it through SQL
-# would need a crafted approximate case whose expected rows are fragile.
-# ============================================================================
-
 query
 SHOW sdb_ivf_max_search_fanout;
 ----
 sdb_ivf_max_search_fanout
-16
+-1
 
 statement error
 SET sdb_ivf_max_search_fanout = 0;
@@ -27,9 +13,34 @@ db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "0"
 
 
 statement error
-SET sdb_ivf_max_search_fanout = -1;
+SET sdb_ivf_max_search_fanout = -2;
 ----
-db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-1"
+db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-2"
+
+
+statement ok
+SET sdb_ivf_max_search_fanout = -1;
+
+query
+SHOW sdb_ivf_min_search_fanout;
+----
+sdb_ivf_min_search_fanout
+-1
+
+statement error
+SET sdb_ivf_min_search_fanout = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_min_search_fanout": "0"
+
+
+statement error
+SET sdb_ivf_min_search_fanout = -2;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_min_search_fanout": "-2"
+
+
+statement ok
+SET sdb_ivf_min_search_fanout = -1;
 
 
 # ---- multi-level tree: posting_size=2, 10000 points ------------------------
@@ -44,13 +55,14 @@ statement ok
 SET sdb_ivf_posting_size = 2;
 
 statement ok
-CREATE TABLE fan (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+CREATE TABLE fan (pk INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[2]);
 
 statement ok
-CREATE INDEX fan_idx ON fan USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+CREATE INDEX fan_idx ON fan USING inverted(pk, grp, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
-INSERT INTO fan SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+INSERT INTO fan SELECT i, CASE WHEN i >= 9000 THEN 1 ELSE 0 END,
+  [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) fan;
@@ -93,7 +105,10 @@ near
 # globally nearest one rather than the greedy one. That still probes a single
 # leaf at nprobe 1, so the same exact/approximate split applies.
 statement ok
-SET sdb_ivf_max_search_fanout = 100000;
+RESET sdb_ivf_max_search_fanout;
+
+statement ok
+SET sdb_ivf_min_search_fanout = 100000;
 
 query
 SELECT pk FROM fan_idx ORDER BY emb <-> [9999.0, 0.0]::FLOAT[2] LIMIT 1;
@@ -109,13 +124,20 @@ SELECT count(*) AS near FROM (
 near
 1
 
-# ---- a large nprobe lifts the width past the setting, so the exhaustive-probe
-# idiom other IVF tests rely on keeps working at the default width.
 statement ok
-RESET sdb_ivf_max_search_fanout;
+RESET sdb_ivf_min_search_fanout;
 
 statement ok
 SET sdb_ivf_search_nprobe = 100000;
+
+query
+SELECT pk FROM fan_idx WHERE grp = 1
+  ORDER BY emb <-> [0.0, 0.0]::FLOAT[2] LIMIT 3;
+----
+pk
+9000
+9001
+9002
 
 query
 SELECT pk FROM (SELECT pk

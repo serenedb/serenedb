@@ -1,0 +1,56 @@
+statement ok
+CREATE TABLE snr (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_idx ON snr
+  USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
+  [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr;
+
+query
+SELECT count(*) FROM snr WHERE num BETWEEN 1200 AND 1500;
+----
+count
+301
+
+query
+SELECT pk FROM snr WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+1499
+1498
+
+query
+SELECT pk FROM snr WHERE (num BETWEEN 1200 AND 1500)::boost(2)
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+1499
+1498
+
+query
+SELECT count(*) FROM snr WHERE (num <= 1500)::boost(2);
+----
+count
+1501
+
+query
+SELECT count(*) FROM snr WHERE (num <= 1500 OR tag = 'odd')::merge('max');
+----
+count
+1751
+
+query
+SELECT count(*) FROM snr WHERE (num BETWEEN 1200 AND 1500)::score('constant(1)');
+----
+count
+301

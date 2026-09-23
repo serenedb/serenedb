@@ -22,6 +22,10 @@
 
 #include <duckdb/common/vector.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <optional>
+
+#include "connector/scan/scan_bind.h"
+#include "connector/search_filter_builder.hpp"
 
 namespace duckdb {
 
@@ -39,5 +43,23 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+// Every parameter of `expr` replaced by a constant: its bound value, or a
+// stand-in of its type where the plan is only being shaped and the value is
+// not known.
+duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
+  duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);
+
+// A conjunct with its parameters substituted, in the shape the filter builder
+// reads: constant subtrees folded, a widening cast of an integer column
+// against a constant moved onto the constant.
+duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
+  duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::Expression> expr);
+
+// The search column info of the scan's column `col_id`, resolved at execution
+// the way the plan-time claim resolved it, for a deferred claim.
+std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
+  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  catalog::ColumnId col_id, bool column_stored);
 
 }  // namespace sdb::optimizer

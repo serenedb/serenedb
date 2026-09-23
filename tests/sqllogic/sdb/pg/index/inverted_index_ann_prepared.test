@@ -1,0 +1,324 @@
+control substitution on
+
+# A prepared vector search keeps its plan across executions: the query vector
+# and the WHERE's parameters are read at execution, as are the search knobs,
+# and each execution sees the rows of its own transaction.
+
+statement ok
+CREATE TABLE ap (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR, num INTEGER)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX ap_idx ON ap
+  USING inverted(pk, label, num, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO ap SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ap;
+
+statement ok
+PREPARE ap_knn AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+# A second execution with another vector answers for that vector.
+query
+EXECUTE ap_knn([1500.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+1500
+1501
+1499
+
+# The WHERE's parameter is read at execution too.
+statement ok
+PREPARE ap_where AS SELECT pk FROM ap
+  WHERE label = $2 AND num >= $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 0);
+----
+pk
+100
+102
+98
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'odd', 105);
+----
+pk
+105
+107
+109
+
+# A knob set between executions applies to the next one: with a beam of one
+# admitted row the result has one row.
+statement ok
+SET sdb_hnsw_ef_search = 1;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
+# Rows added after the statement was prepared are seen.
+statement ok
+INSERT INTO ap VALUES (5000, [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], 'even', 5000);
+
+statement ok
+VACUUM (REFRESH_TABLE) ap;
+
+query
+EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+5000
+100
+101
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 200);
+----
+pk
+5000
+200
+202
+
+# Exact mode is a knob as well.
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 200);
+----
+pk
+5000
+200
+202
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement ok
+DEALLOCATE ap_knn;
+
+statement ok
+DEALLOCATE ap_where;
+
+# `auto` no longer re-scores eight-bit codes, so the distance it reports is
+# the estimate. This file is about the re-score, so it asks for one.
+
+statement ok
+SET sdb_ann_oversample = 4
+
+# A quantized index reranks the beam with the stored vectors: the rerank reads
+# this execution's query vector, so a prepared search answers exactly what the
+# same search with a literal vector answers.
+statement ok
+CREATE TABLE apq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX apq_idx ON apq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+INSERT INTO apq SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(512) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) apq;
+
+statement ok
+SET sdb_hnsw_ef_search = 64;
+
+statement ok
+PREPARE apq_knn AS SELECT pk FROM apq ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE apq_knn([100.3, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+100
+101
+99
+
+query
+EXECUTE apq_knn([300.7, 0, 0, 0, 0, 0, 0, 0]);
+----
+pk
+301
+300
+302
+
+# The same answer as the literal form, which is planned per execution.
+query
+SELECT pk FROM apq ORDER BY emb <-> [300.7, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+301
+300
+302
+
+statement ok
+DEALLOCATE apq_knn;
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
+statement ok
+PREPARE ap_page AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2 OFFSET $3;
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 3, 2);
+----
+pk
+101
+99
+102
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 2, 0);
+----
+pk
+5000
+100
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 0, 0);
+----
+pk
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], NULL, 1995);
+----
+pk
+1994
+1995
+1996
+1997
+1998
+1999
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement ok
+DEALLOCATE ap_page;
+
+statement ok
+PREPARE ap_offset AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 2 OFFSET $2;
+
+query
+EXECUTE ap_offset([100.4, 0, 0, 0, 0, 0, 0, 0], 1);
+----
+pk
+100
+101
+
+statement ok
+DEALLOCATE ap_offset;
+
+statement ok
+PREPARE ap_limit AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2 OFFSET 1;
+
+query
+EXECUTE ap_limit([100.4, 0, 0, 0, 0, 0, 0, 0], 2);
+----
+pk
+100
+101
+
+statement ok
+DEALLOCATE ap_limit;
+
+statement ok
+PREPARE ap_or AS SELECT pk FROM ap WHERE label = 'odd' OR num > 1000
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2;
+
+query
+EXECUTE ap_or([100.4, 0, 0, 0, 0, 0, 0, 0], 3);
+----
+pk
+5000
+101
+99
+
+statement ok
+DEALLOCATE ap_or;
+
+statement ok
+PREPARE ap_mixed AS SELECT pk FROM ap WHERE label = $2 AND num = 100
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_mixed([100.4, 0, 0, 0, 0, 0, 0, 0], 'even');
+----
+pk
+100
+
+statement ok
+DEALLOCATE ap_mixed;
+
+statement ok
+PREPARE ap_mixed_range AS SELECT pk FROM ap WHERE label = $2 AND num <= 500
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_mixed_range([100.4, 0, 0, 0, 0, 0, 0, 0], 'odd');
+----
+pk
+101
+99
+103
+
+statement ok
+DEALLOCATE ap_mixed_range;
+
+statement ok
+CREATE TABLE ap_empty (i INTEGER);
+
+statement ok
+INSERT INTO ap_empty VALUES (1);
+
+statement ok
+PREPARE ap_empty_q AS SELECT i + $1 AS v FROM ap_empty WHERE i > 5;
+
+query
+EXECUTE ap_empty_q(1);
+----
+v
+
+statement ok
+INSERT INTO ap_empty VALUES (10);
+
+query
+EXECUTE ap_empty_q(1);
+----
+v
+11
+
+statement ok
+DEALLOCATE ap_empty_q;

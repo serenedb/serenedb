@@ -839,7 +839,7 @@ statement ok
 SELECT random();
 
 # op_math: random_normal
-statement error
+statement ok
 SELECT random_normal();
 
 # op_math: setseed

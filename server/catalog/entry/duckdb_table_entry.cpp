@@ -355,6 +355,15 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
     data->lookup.label = "search";
     data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
+    data->plan_cache.reacquire_snapshot =
+      [id = catalog::IdOf(*this), search = GetSearchData()](
+        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
+      auto fresh =
+        connector::GetSereneDBContext(ctx).SearchTxn().EnsureSearchTableReader(
+          id, [&] { return search->GetDirectoryReader(); });
+      return std::make_shared<search::InvertedIndexSnapshot>(
+        irs::DirectoryReader{*fresh}, nullptr);
+    };
     bind_data = std::move(data);
     return connector::CreateIResearchScanFunction();
   }

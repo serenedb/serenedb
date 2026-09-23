@@ -36,9 +36,14 @@ struct VectorFilterOptions {
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;
-  uint32_t max_search_fanout = 16;
+  uint32_t min_search_fanout = 0;
+  uint32_t max_search_fanout = 0;
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
+  uint32_t top_k = 0;
+  uint32_t posting_size = 0;
+  HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
+  HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;

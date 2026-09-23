@@ -8,11 +8,21 @@ hash-threshold 100
 #   - pure ORDER BY score LIMIT k        -> TopK scan (emit-side exact rerank)
 #   - ORDER BY score, <tiebreak> LIMIT k -> Stream scan (compound order)
 #   - projected score, no pushed LIMIT   -> Stream scan
-# so a default (quantized) index returns the same distances as a quant='none'
+# so a re-scoring quantized index returns the same distances as a quant='none'
 # one. Vectors are chosen so every true distance is an exact integer.
+#
+# The exactness holds only where a rescore happens, and `auto` does not rescore
+# eight-bit codes any more -- it decided their ranking is good enough to answer
+# from, which also means the number it reports is the estimate. So the oversample
+# is pinned here rather than left to the default: what this file checks is that
+# a rescore resolves the exact distance on every execution path, not what the
+# default chooses to spend.
 
 statement ok
 SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+SET sdb_ann_oversample = 4
 
 # --- L2 + sq8: exact distances across TopK, Stream, and no-limit paths --------
 

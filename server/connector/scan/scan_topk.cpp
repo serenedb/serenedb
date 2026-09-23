@@ -72,12 +72,71 @@ void RerankHits(ScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
   }
 }
 
+struct AnswerWorstFirst {
+  bool operator()(const irs::ScoreDoc& a, const irs::ScoreDoc& b) const {
+    return a.score > b.score;
+  }
+};
+
+// One segment's pool, re-scored exactly and merged into the worker's answer.
+// The collector then restarts from nothing: seeding the next segment with this
+// one's quantized k-th is exactly the comparison this path exists to avoid,
+// and the exact k-th cannot seed a quantized threshold either without a bound
+// on the quantizer's error. Until that bound exists the segment is walked
+// unpruned rather than pruned wrongly.
+void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
+  if (!l.collector) {
+    return;
+  }
+  auto& c = *l.collector;
+  const size_t accepted = c.AcceptedCount();
+  if (accepted != 0) {
+    auto pool = l.hit_slice.first(accepted);
+    // Ascending by doc so the exact vectors come off the columnstore in one
+    // forward pass instead of a scatter.
+    SortByAddress(pool);
+    RerankHits(g, pool);
+    const size_t k = *g.top_k;
+    if (l.answer.size() < k) {
+      l.answer.resize(k);
+    }
+    for (const auto& hit : pool) {
+      if (l.answer_size < k) {
+        l.answer[l.answer_size++] = hit;
+        std::push_heap(l.answer.begin(), l.answer.begin() + l.answer_size,
+                       AnswerWorstFirst{});
+      } else if (hit.score > l.answer.front().score) {
+        std::pop_heap(l.answer.begin(), l.answer.begin() + k,
+                      AnswerWorstFirst{});
+        l.answer[k - 1] = hit;
+        std::push_heap(l.answer.begin(), l.answer.begin() + k,
+                       AnswerWorstFirst{});
+      }
+    }
+  }
+  c.Restart(std::numeric_limits<irs::score_t>::lowest());
+}
+
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
   if (!l.collector) {
-    l.collector.emplace(g.topk.global_kth_score, l.hit_slice);
+    // A pool that exists to survive a lookup filter is not a rescore and keeps
+    // the old shape, as does an index whose scores are already exact.
+    l.per_segment_rescore =
+      g.topk.rerank_pool != 0 && !g.has_lookup_filter &&
+      g.vector_scorer != nullptr &&
+      g.vector_scorer->quant != irs::VectorQuantization::None;
+    l.collector.emplace(
+      l.per_segment_rescore ? l.segment_kth_score : g.topk.global_kth_score,
+      l.hit_slice);
   }
   auto& collector = *l.collector;
+  if (l.pool_seg != unit.seg) {
+    if (l.per_segment_rescore && l.pool_seg != std::numeric_limits<uint32_t>::max()) {
+      FlushSegmentPool(g, l);
+    }
+    l.pool_seg = unit.seg;
+  }
   collector.SetSegment(unit.seg);
   const auto range = g.RangeOf(unit);
   if (l.root_seg != unit.seg || range.begin < l.root_end) {
@@ -108,6 +167,15 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
+  if (l.per_segment_rescore) {
+    // Every segment re-scored and merged itself; `answer` is this worker's
+    // top-k on exact scores and nothing else needs doing to it.
+    FlushSegmentPool(g, l);
+    std::copy_n(l.answer.begin(), l.answer_size, l.hit_slice.begin());
+    t.accepted[l.worker].store(static_cast<uint32_t>(l.answer_size),
+                               std::memory_order_release);
+    return;
+  }
   auto hits = l.collector ? l.hit_slice.first(l.collector->AcceptedCount())
                           : l.hit_slice.first(0);
   if (t.rerank_pool != 0 && g.vector_scorer != nullptr &&
@@ -172,14 +240,42 @@ bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
          g.lookup_projected_columns[col] == duckdb::DConstants::INVALID_INDEX;
 }
 
-void CopyFetched(const ScanGlobalState& g, const duckdb::DataChunk& from,
-                 duckdb::DataChunk& into, duckdb::idx_t count,
-                 duckdb::idx_t offset) {
+// Whether anything writes this slot of the batch. A projected column outside
+// the output set gets neither a columnstore projection nor a lookup entry
+// (ClassifyColumnstoreProjections drops it), so its vector is never touched.
+// The streaming shape hands such a slot straight to duckdb, which does not
+// read it; the top-k shape copies the batch twice on its way to the answer,
+// and an untouched vector is not something to copy.
+bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
+                    duckdb::idx_t col) noexcept {
+  if (col == g.score_output_idx || col == g.tableoid_output_idx) {
+    return true;
+  }
+  // ts_offsets() is written by WriteChunkOffsets, not from the columnstore.
+  if (absl::c_any_of(f.offsets_entries, [col](const auto& e) {
+        return e.output_idx == col;
+      })) {
+    return true;
+  }
+  return absl::c_any_of(g.cs_projections, [col](const auto& p) {
+    return p.output_slot == col;
+  });
+}
+
+void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
+                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
+                 duckdb::idx_t count, duckdb::idx_t offset) {
   for (duckdb::idx_t c = 0; c < from.ColumnCount(); ++c) {
-    if (FetchedColumn(g, c)) {
-      duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
-                                     offset);
+    if (!FetchedColumn(g, c)) {
+      continue;
     }
+    if (!ProducedColumn(g, f, c)) {
+      into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(into.data[c], true);
+      continue;
+    }
+    duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
+                                   offset);
   }
   into.SetChildCardinality(offset + count);
 }
@@ -194,7 +290,7 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return;
   }
   SDB_ASSERT(appended + count <= capacity);
-  CopyFetched(g, tmp, into, count, appended);
+  CopyFetched(g, l, tmp, into, count, appended);
   if (g.needs_lookup) {
     SDB_ASSERT(l.pk_column != nullptr);
     if (!pk) {
@@ -302,7 +398,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   } else {
     if (!l.index_source) {
       l.index_source =
-        MakeIndexSource(ctx, g.Bind(), g.lookup_projected_columns,
+        MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
                         g.projected_types, g.Bind().columns.ids,
                         const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
@@ -313,7 +409,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
       auto& fetched = *t.fetched[u];
       auto& pk = *t.fetched_pk[u];
       batch.Reset();
-      CopyFetched(g, fetched, batch, fu.count, 0);
+      CopyFetched(g, l, fetched, batch, fu.count, 0);
       const auto rows = l.index_source->Materialize(ctx, pk, fu.count, batch);
       g.metrics.rows_looked_up.fetch_add(fu.count, std::memory_order_relaxed);
       const auto survivors = l.index_source->Survivors();
@@ -367,19 +463,60 @@ void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
 
 void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   auto& t = g.topk;
-  const auto& ss = g.Bind();
-  t.limit = *ss.score.top_k;
-  t.offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
-  if (ss.score.vector &&
-      (ss.score.vector->quant != irs::VectorQuantization::None ||
-       g.has_lookup_filter)) {
-    static constinit SettingRef gRerank{"sdb_rerank_factor"};
-    const auto k = static_cast<double>(*ss.score.top_k);
-    const double pool = std::ceil(gRerank.Double(context) * k);
-    t.rerank_pool = pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
+  t.limit = *g.top_k;
+  t.offset = g.top_offset;
+  const auto* vs = g.vector_scorer;
+  if (vs != nullptr && !vs->exact &&
+      (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
+    const auto k = static_cast<double>(*g.top_k);
+    // The search walks on quantized codes and this many of its candidates are
+    // read back at full precision. Zero means the query answers from the
+    // codes.
+    bool chosen_here = false;
+    const auto factor = AnnOversample(context, *vs, chosen_here);
+    double pool = factor > 0.0 ? std::max(k, std::ceil(factor * k)) : 0.0;
+    if (g.has_lookup_filter) {
+      // This pool is not about precision: a lookup filter drops rows after the
+      // collector, so the over-fetch has to cover everything the search can
+      // return or the query yields fewer than k. It stands whatever the
+      // rescore says.
+      //
+      // For HNSW the ceiling is the beam, which is a real bound on what the
+      // search can hand back. An IVF probe has no such ceiling -- what it can
+      // return is every document in the clusters it probed -- so there is no
+      // honest number to read, and `ef_search` is the wrong one to borrow
+      // because it is populated from the HNSW knob whatever the index kind.
+      // What it had instead was `k`, which absorbs no drops at all: a lookup
+      // filter that rejects the k nearest returns nothing.
+      //
+      // So IVF over-fetches by a factor, and only where the engine chose the
+      // oversample. A value the user wrote is a statement about how much work
+      // they want done and is left exactly as written. It is a guess at
+      // selectivity, and a selective enough filter still empties it -- the
+      // real answer is to widen the probe set until k survive.
+      constexpr double kLookupFilterOverfetch = 4.0;
+      const double reachable =
+        vs->kind == irs::AnnKind::Hnsw
+          ? static_cast<double>(vs->ef_search)
+          : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
+      pool = std::max(pool, std::max(k, reachable));
+    }
+    t.rerank_pool =
+      pool == 0
+        ? 0
+        : static_cast<uint32_t>(std::min(
+            {std::max(pool, k),
+             std::max(k, static_cast<double>(g.reader->live_docs_count())),
+             static_cast<double>(std::numeric_limits<uint32_t>::max())}));
   }
   t.pool =
-    t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*ss.score.top_k);
+    t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
+  if (vs != nullptr && vs->exact && g.has_lookup_filter) {
+    g.workers = 1;
+    t.pool = static_cast<uint32_t>(
+      std::clamp<uint64_t>(g.reader->live_docs_count(), t.pool,
+                           std::numeric_limits<uint32_t>::max()));
+  }
   t.hits.resize(size_t{g.workers} * t.pool);
   t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
   for (uint32_t w = 0; w < g.workers; ++w) {

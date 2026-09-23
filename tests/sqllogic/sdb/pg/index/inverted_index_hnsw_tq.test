@@ -15,6 +15,13 @@ control substitution on
 # reason inverted_index_hnsw_small.test pins quant = 'none'.
 # ============================================================================
 
+# TurboQuant is coarse enough that a pool of k cannot rank it deterministically,
+# and `auto` gives it a factor of one. This file is about the codes, not about
+# what the default spends, so the pool is pinned.
+
+statement ok
+SET sdb_ann_oversample = 4
+
 statement ok
 CREATE TABLE hnsw_tq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
 
@@ -151,7 +158,7 @@ statement error
 CREATE INDEX bad_c ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'tq'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'rabitq' or 'tq'
 
 
 statement error

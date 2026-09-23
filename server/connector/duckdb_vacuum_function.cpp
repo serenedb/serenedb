@@ -51,6 +51,7 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
+#include "query/config.h"
 
 namespace sdb::connector {
 namespace {
@@ -492,7 +493,9 @@ void DispatchInverted(duckdb::ClientContext& context,
       if (action == Action::Refresh) {
         search->VacuumRefresh();  // commit pending inserts + reclaim files
       } else {
-        search->VacuumCompact();  // + merge segments
+        // + merge segments, down to sdb_compact_target_segments of them
+        static constinit SettingRef gTargets{"sdb_compact_target_segments"};
+        search->VacuumCompact(gTargets.Int(context));
       }
     }
   }

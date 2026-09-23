@@ -73,7 +73,26 @@ enum class VectorQuantization : uint8_t {
   PQ,
   RaBitQ,
   TQ,
+  // Uniform scalar quantization: one (min, max) for the whole vector rather
+  // than one per dimension. Coarser per dimension, but every component then
+  // shares a scale, which is what lets the distance kernel fold the squared
+  // term into an integer accumulator -- and what lets a future kernel use an
+  // integer dot product outright. Qdrant's and Lucene's scalar quantizers are
+  // both uniform; ours was per-dimension only.
+  USQ8,
+  USQ4,
 };
+
+/// True for the scalar quantizers whose range is shared by every dimension.
+inline constexpr bool IsUniformScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::USQ8 || q == VectorQuantization::USQ4;
+}
+
+/// True for every scalar quantizer, uniform or per-dimension.
+inline constexpr bool IsScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::SQ8 || q == VectorQuantization::SQ4 ||
+         IsUniformScalar(q);
+}
 
 inline constexpr uint32_t kRaBitQMinBits = 1;
 inline constexpr uint32_t kRaBitQMaxBits = 9;
@@ -98,6 +117,32 @@ inline constexpr VectorMetric EffectiveQuantMetric(
 enum class AnnKind : uint8_t {
   Ivf = 0,
   Hnsw,
+};
+
+// How an HNSW search honours a predicate. Auto picks by the predicate's
+// estimated selectivity; the others force one path, for measurement and for
+// a caller that knows better.
+//   Scan    every doc the predicate admits is scored, no graph.
+//   Walk    the graph walk scores every neighbour and passes through rejected
+//           nodes; only admitted nodes enter the result.
+//   Prune   rejected nodes are neither scored nor expanded (Qdrant's default).
+//   TwoHop  rejected nodes are not scored; their neighbours are candidates
+//           instead (ACORN-1).
+//   Bridge  rejected nodes are scored and crossed for one hop: their expansion
+//           offers only admitted neighbours.
+enum class HnswFilterMode : uint8_t {
+  Auto = 0,
+  Walk,
+  Scan,
+  Prune,
+  TwoHop,
+  Bridge,
+};
+
+enum class HnswColumnFilter : uint8_t {
+  Auto = 0,
+  Fold,
+  Read,
 };
 
 struct AnnInfo {

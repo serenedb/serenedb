@@ -255,8 +255,15 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                             .expr;
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
-      cf.not_null = MakeNotNullReplacement(entry.Filter(),
-                                           bind_data.columns.types[bind_index]);
+      if (proj_idx < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj_idx];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          DecodeExtractPath(column_index, bind_data.columns.types[bind_index],
+                            cf.extract_path);
+          cf.type = column_index.GetScanType();
+        }
+      }
+      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
     }
   }
 }
@@ -576,7 +583,7 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
     return ss.IsMatchAll() && g.col_filters.empty() ? ScanShape::CountFast
                                                     : ScanShape::Count;
   }
-  if (ss.score.top_k && (ss.score.text || ss.score.order) &&
+  if (g.top_k && (ss.score.text || ss.score.order) &&
       (!g.has_lookup_filter || ss.score.vector)) {
     return ScanShape::TopK;
   }
@@ -727,7 +734,7 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   }
   if (!f.index_source) {
     f.index_source =
-      MakeIndexSource(ctx, g.Bind(), g.lookup_projected_columns,
+      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
                       g.projected_types, g.Bind().columns.ids,
                       const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }

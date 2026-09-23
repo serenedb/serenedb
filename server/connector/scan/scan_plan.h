@@ -26,6 +26,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <string_view>
 #include <vector>
 

@@ -60,6 +60,8 @@ class SettingRef {
 
   uint32_t Int(duckdb::ClientContext& context) const;
 
+  int64_t SignedInt(duckdb::ClientContext& context) const;
+
   double Double(duckdb::ClientContext& context) const;
 
   bool Bool(duckdb::ClientContext& context) const;

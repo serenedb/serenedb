@@ -1,0 +1,130 @@
+control substitution on
+
+# sdb_ann_exact: the vector search scores every stored vector instead of
+# walking the index. The answer is what a brute-force ORDER BY computes, the
+# plan says so, and a WHERE narrows the rows scored.
+
+statement ok
+CREATE TABLE ax (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR);
+
+statement ok
+CREATE INDEX ax_idx ON ax
+  USING inverted(pk, label, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+INSERT INTO ax SELECT i, [i::FLOAT, (i % 7)::FLOAT, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ax;
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+EXPLAIN SELECT pk FROM ax_idx
+  ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: ax_idx                       │
+│ Lookup: table                       │
+│ Score: l2_distance(emb, FLOAT[8])   │
+│ Exact:                              │
+│ brute force over the stored vectors │
+│ Top: 3                              │
+│ Projections: pk                     │
+│ ~3,000 rows                         │
+╰─────────────────────────────────────╯
+
+# Exact and brute force agree row for row.
+query
+SELECT pk FROM ax_idx
+  ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1501
+1500
+1502
+1499
+1503
+
+statement ok
+SET sdb_ann_force_exact = false;
+
+query
+SELECT pk FROM ax_idx
+  ORDER BY emb::DOUBLE[8] <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::DOUBLE[8] LIMIT 5;
+----
+pk
+1501
+1500
+1502
+1499
+1503
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+# An indexed predicate narrows the rows scored.
+query
+SELECT pk FROM ax_idx
+  WHERE label = 'odd'
+  ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+1501
+1499
+1503
+
+# So does one nothing satisfies.
+query
+SELECT pk FROM ax_idx
+  WHERE pk >= 3000
+  ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+
+# The distance is the exact one, not the quantized approximation.
+query
+SELECT pk, round((emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8])::DOUBLE, 3) AS d FROM ax_idx
+  ORDER BY emb <-> [1500.4, 3, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk	d
+1501	0.6
+1500	1.077
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement ok
+CREATE TABLE axl (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER);
+
+statement ok
+CREATE INDEX axl_idx ON axl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO axl SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10
+  FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) axl;
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT pk FROM axl_idx WHERE cat = 1
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+91
+111
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement error invalid value for parameter "sdb_ann_oversample"
+SET sdb_ann_oversample = 'inf';

@@ -48,11 +48,15 @@
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
-ABSL_FLAG(bool, remap_executable, true,
+ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE_DEFAULT,
           "Copy the server's machine code into anonymous huge-page memory at "
-          "startup and pre-read its read-only data, so the first queries after "
-          "a cold start pay no code page faults. Turn off when profiling with "
-          "perf, which symbolizes only file-backed code.");
+          "startup, so the first queries after a cold start pay no code page "
+          "faults and the code runs from huge pages. Off, the machine code is "
+          "locked in memory instead, or pre-read where locking is not "
+          "permitted, and perf can symbolize it, which it cannot for "
+          "anonymous code. Read-only data is pre-read either way. On by "
+          "default in Release and MinSizeRel builds, the ones that omit frame "
+          "pointers, and off in the others.");
 
 namespace {
 
@@ -236,9 +240,7 @@ int main(int argc, char* argv[]) {
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
-  const auto remap = absl::GetFlag(FLAGS_remap_executable)
-                       ? irs::RemapExecutable()
-                       : irs::ExecutableRemap{.skipped = "disabled"};
+  const auto remap = irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   server::query::RegisterServerExtensions(engine.instance());
@@ -246,10 +248,10 @@ int main(int argc, char* argv[]) {
   sdb::app::InitProcess(argv[0]);
   SDB_INFO(STARTUP, "executable memory: ", remap.remapped >> 20,
            " MB of machine code remapped into anonymous huge-page memory, ",
-           remap.populated >> 20, " MB of read-only mappings pre-read",
+           remap.locked >> 20, " MB locked, ", remap.populated >> 20,
+           " MB pre-read",
            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
-  sdb::app::ShutdownGlobals();
 
   engine.Shutdown();
   return rc;

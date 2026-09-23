@@ -28,8 +28,10 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -55,13 +57,18 @@ enum class ScanEntryKind : uint8_t {
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
-  search::InvertedIndexSnapshotPtr snapshot;
+  mutable search::InvertedIndexSnapshotPtr snapshot;
 
   bool MatchAll() const noexcept { return filter == nullptr; }
 };
 
 struct ScoreSpec {
   std::optional<catalog::ScorerOptions> text;
+  // A LIMIT that is a prepared-statement parameter is not a number at plan
+  // time. It is kept as the expression the scan evaluates at execution, so
+  // the top-k still runs inside the scan instead of a sort above it.
+  std::shared_ptr<const duckdb::Expression> top_k_expr;
+  std::shared_ptr<const duckdb::Expression> top_offset_expr;
   std::optional<VectorScorerOptions> vector;
   std::optional<catalog::ScorerOptions> prune;
   std::optional<duckdb::OrderType> order;
@@ -127,6 +134,40 @@ struct TsDictSpec {
   TsDictRequest& For(irs::field_id field_id);
 };
 
+// A column a deferred conjunct references, by the scan column it resolved to
+// at plan time; its search info is resolved again at execution.
+struct DeferredColumn {
+  catalog::ColumnId column;
+  bool column_stored = false;
+};
+
+// The claimed WHERE as expressions, kept when some conjunct carries a
+// prepared-statement parameter: the filter is then rebuilt at execution with
+// the parameters' values, over the columns resolved at plan time.
+struct DeferredClaim {
+  std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
+  std::shared_ptr<
+    const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, DeferredColumn>>
+    columns;
+  // What the filter optimizer is told about the claimed fields.
+  std::set<irs::field_id> analyzed_fields;
+  std::map<irs::field_id, irs::field_id> null_markers;
+};
+
+struct PlanCacheSpec {
+  std::optional<DeferredClaim> deferred;
+  // Re-acquires the index snapshot at execution, so a cached plan reads the
+  // data of the executing transaction rather than of the one that planned.
+  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
+    reacquire_snapshot;
+  // True when every parameter this scan depends on is read at execution: the
+  // prepared statement's plan is then kept instead of re-bound per execution.
+  bool cache_plan = false;
+  // A conjunct with a parameter the claim could not shape: it stays a filter
+  // above the scan, so the plan must be re-bound with values.
+  bool declined_parameter = false;
+};
+
 struct LookupSpec {
   std::string label;
   bool supports_filters = true;
@@ -176,11 +217,13 @@ struct ScanBindData final : duckdb::FunctionData {
   std::optional<ScanOrderSpec> scan_order;
   OffsetsSpec offsets;
   TsDictSpec ts_dict;
+  PlanCacheSpec plan_cache;
   LookupSpec lookup;
   std::optional<ViewSpec> view;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
   bool Equals(const duckdb::FunctionData& other) const final;
+  bool CachePlanWithParameters() const final { return plan_cache.cache_plan; }
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
   bool IsMatchAll() const noexcept {
@@ -220,6 +263,36 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<catalog::PkSpec> ViewPkSpecOf(const ScanBindData& bind);
+
+// The session's HNSW filter mode and exact flag (sdb_hnsw_filter_mode,
+// sdb_ann_exact), read at execution by a scan whose plan was cached.
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context);
+irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context);
+bool ReadAnnExact(duckdb::ClientContext& context);
+
+// The share of a global top-k that one of `segments` segments is expected to
+// hold. Every segment is searched with its own beam and the results are
+// merged, so a segment never has to be able to answer the whole query alone --
+// only to hold its part of the answer. How many of the top k land in one
+// segment is Binomial(k, 1/segments); three standard deviations above the mean
+// covers the segment that happens to draw more than its share. One segment
+// gets the whole k, and a beam this narrow is pointless below a few dozen.
+double SegmentBeamShare(double k, size_t segments) noexcept;
+
+// The oversample the engine picks for a quantizer when sdb_ann_oversample is
+// -1, and the session's value otherwise; `chosen_here` reports which.
+double AnnOversample(duckdb::ClientContext& context,
+                     const VectorScorerOptions& vs, bool& chosen_here);
+
+// The search knobs a vector scan reads from the session at execution, rather
+// than from the session that planned it.
+void RefreshVectorKnobs(VectorScorerOptions& vs,
+                        duckdb::ClientContext& context);
+
+// The claimed WHERE of a scan whose plan deferred it, built with the
+// parameter values bound to this execution.
+std::shared_ptr<const irs::Filter> BuildDeferredFilter(
+  duckdb::ClientContext& context, const ScanBindData& scan);
 
 const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk, const irs::Scorer* scorer);

@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <deque>
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <chrono>
@@ -534,8 +536,8 @@ ResultWithTime SearchTable::CompactUnsafe(
 auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
-  -> yaclib::Future<ResultWithTime> {
+  const irs::IndexFieldOptions* field_options,
+  const irs::AnnBuildEnv* env) -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
@@ -601,7 +603,7 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact() {
+void SearchTable::VacuumCompact(uint32_t target_segments) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
@@ -609,7 +611,76 @@ void SearchTable::VacuumCompact() {
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
   const auto field_options = GetFieldOptions();
-  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
+  // The merged segment's ANN graphs build on the ANN workers when a
+  // compaction slot is free, as the background loop's merges do; without the
+  // slot the build stays on this thread. A 1m-row HNSW graph is minutes of
+  // work on one core.
+  auto& engine = GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
+
+  if (target_segments > 1) {
+    // Compact down to `target_segments` rather than to one, as N independent
+    // merges run at once. A merge owns the segments it took -- that is what
+    // CompactingSegments tracks -- so rounds that pick disjoint stripes do not
+    // collide, and the ANN rebuild inside each one still fans out over the ANN
+    // workers. Striping by index keeps the buckets about equal where the
+    // segments are, which is the case a bulk load produces.
+    // Decide the buckets once, by segment name. The rounds run concurrently
+    // and each policy is handed its own snapshot, so a bucket defined by
+    // position would shift under the rounds that finish first and leave
+    // segments unmerged -- which is what striping by index did.
+    std::vector<std::vector<std::string>> buckets;
+    {
+      const auto snapshot = _writer->GetSnapshot();
+      const auto count = static_cast<uint32_t>(snapshot.size());
+      if (count <= target_segments) {
+        CleanupUnsafe();
+        return;
+      }
+      buckets.resize(target_segments);
+      for (uint32_t i = 0; i < count; ++i) {
+        buckets[i % target_segments].emplace_back(snapshot[i].Meta().name);
+      }
+    }
+    std::vector<yaclib::Future<ResultWithTime>> rounds;
+    // One flag per round: CompactUnsafeAsync writes it, and a vector<bool>
+    // would hand out a proxy rather than a bool&.
+    std::deque<bool> empties(target_segments, false);
+    rounds.reserve(target_segments);
+    for (uint32_t b = 0; b < target_segments; ++b) {
+      auto bucket = [names = std::move(buckets[b])](
+                      irs::Compaction& candidates, const irs::IndexReader& r,
+                      const irs::CompactingSegments& busy) {
+        for (size_t i = 0; i < r.size(); ++i) {
+          auto& segment = r[i];
+          const auto& name = segment.Meta().name;
+          if (busy.contains(name) ||
+              std::find(names.begin(), names.end(), name) == names.end()) {
+            continue;
+          }
+          candidates.emplace_back(&segment);
+        }
+      };
+      rounds.push_back(CompactUnsafeAsync(bucket, kProgress, empties[b],
+                                          field_options.get(), env));
+    }
+    for (auto& r : rounds) {
+      irs::GetBlocking(std::move(r));
+    }
+    RefreshUnsafe(/*wait=*/true, nullptr, code);
+    CleanupUnsafe();
+    return;
+  }
+
+  // With workers the merge suspends on them; this VACUUM thread waits.
+  irs::GetBlocking(
+    CompactUnsafeAsync(kFullMerge, kProgress, empty, field_options.get(), env));
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

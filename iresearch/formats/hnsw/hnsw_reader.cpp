@@ -126,10 +126,15 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
   const auto ef = std::max(opts.ef_search, opts.min_ef);
+  QueryBuilder::ptr inner;
+  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+    return QueryBuilder::Empty();
+  }
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost);
+    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost, std::move(inner),
+    opts.hnsw_filter_mode, opts.hnsw_column_filter);
   built->SetStats(ctx.Record());
   return built;
 }
@@ -153,10 +158,14 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   const bool angular = opts.metric == VectorMetric::InnerProduct ||
                        opts.metric == VectorMetric::Cosine;
   const score_t threshold = angular ? radius : -radius;
+  QueryBuilder::ptr inner;
+  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+    return QueryBuilder::Empty();
+  }
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
-    static_cast<size_t>(_header.rows), inclusive, ctx.boost);
+    static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner));
   built->SetStats(ctx.Record());
   return built;
 }

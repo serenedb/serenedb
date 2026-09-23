@@ -138,22 +138,147 @@ class RawVectorReader {
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
-      const size_t run = ConsecutiveRunLength(docs, i);
-      const auto* base = Read(docs[i], run);
-      for (size_t k = 0; k < run; ++k) {
-        out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+      size_t run = ConsecutiveRunLength(docs, i);
+      // A run of one is the scattered case: the row after the next is far
+      // enough ahead to be worth naming now.
+      if (run == 1 && i + 2 < docs.size()) {
+        PrefetchRow(docs[i + 2]);
       }
-      i += run;
+      while (run != 0) {
+        size_t got = 0;
+        const auto* base = ReadSome(docs[i], run, got);
+        SDB_ASSERT(got != 0 && got <= run);
+        // The rows are contiguous and each is several cache lines, so the
+        // hardware prefetcher has to recognise the stream afresh every row it
+        // strides over. Ninety-six threads streaming at once leave it little
+        // room; naming the next row keeps the scan ahead of its own reads.
+        const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+        constexpr size_t kAhead = 2;
+        for (size_t k = 0; k < got; ++k) {
+          if (k + kAhead < got) {
+            const auto* ahead = base + (k + kAhead) * stride;
+            for (size_t off = 0; off < stride; off += 64) {
+              __builtin_prefetch(ahead + off, 0, 3);
+            }
+          }
+          out[i + k] = _dist(q, base + k * stride, d);
+        }
+        i += got;
+        run -= got;
+      }
     }
   }
 
  private:
+  // Name the lines of a row that is coming but not next, without disturbing
+  // the window the scan is reading from. A selective predicate leaves the rows
+  // scattered, so each one is its own miss; naming a later row now lets that
+  // miss overlap the one being scored instead of following it.
+  void PrefetchRow(doc_id_t doc) noexcept {
+    const auto* child = _column->Child();
+    const uint64_t elem =
+      (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
+    const auto w = child->Locate(elem, _win);
+    const auto& blocks = child->DataBlocks();
+    if (w.block >= blocks.size()) {
+      return;
+    }
+    const auto& m = blocks[w.block];
+    const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
+    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        elem < w.begin || elem + _d > w.end) {
+      return;
+    }
+    const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
+    const auto* q = _read_ctx.TryReadStable(off, span);
+    if (q == nullptr) {
+      return;
+    }
+    for (uint64_t o = 0; o < span; o += 64) {
+      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, 3);
+    }
+  }
+
+  // The rows of a run that one stable window can serve, and how many that was.
+  //
+  // A data block holds a few thousand floats, so a run of rows is spread over
+  // several of them: asking for the whole run at once fails the in-place read
+  // every time and falls back to copying the lot through the columnstore. On a
+  // brute-force scan that copy was 17% of the server's CPU and doubled the
+  // memory traffic -- the vectors were read once into a buffer and once again
+  // to score. Stopping at the window edge keeps the pointer.
+  const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    const auto* child = _column->Child();
+    SDB_ASSERT(child != nullptr);
+    const uint64_t elem =
+      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
+    _win = child->Locate(elem, _win);
+    const auto window = _win;  // by value: the walk below moves the hint
+    const auto& blocks = child->DataBlocks();
+    const auto& meta = blocks[window.block];
+    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
+        elem >= window.begin && elem < window.end) {
+      // Blocks of an uncompressed column are written back to back, so the run
+      // one read can serve reaches over every block that follows this one
+      // contiguously in the file. Stopping at the first block edge instead
+      // leaves any row sitting on a seam to the columnstore's scan path -- a
+      // pin and an output vector to move one row -- and on a million-row scan
+      // those seams were 11% of the server's CPU.
+      const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
+      uint64_t end = window.end;
+      for (auto w = window; end < want;) {
+        const auto next = child->Locate(end, w);
+        if (next.block == w.block || next.begin != end) {
+          break;
+        }
+        const auto& m = blocks[next.block];
+        if (m.codec->type !=
+              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+            m.file_offset != meta.file_offset +
+                               (next.begin - window.begin) * sizeof(float)) {
+          break;
+        }
+        end = next.end;
+        w = next;
+        _win = next;  // the next call starts where this run ended
+      }
+      // Whole rows only: a block boundary that falls inside a row leaves none,
+      // and that row goes the slow way so the next one can start clean.
+      const auto fit = static_cast<size_t>((end - elem) / _d);
+      if (fit != 0) {
+        got = std::min(count, fit);
+        const size_t bytes = got * _d * sizeof(float);
+        const uint64_t offset =
+          meta.file_offset + (elem - window.begin) * sizeof(float);
+        if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+          return reinterpret_cast<const byte_type*>(p);
+        }
+        _buf.resize(bytes);
+        _read_ctx.Read(offset,
+                       reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
+                       bytes);
+        return _buf.data();
+      }
+      got = 1;
+      return reinterpret_cast<const byte_type*>(_vreader.ReadDocBatch(first, 1));
+    }
+    got = count;
+    return reinterpret_cast<const byte_type*>(
+      _vreader.ReadDocBatch(first, count));
+  }
+
   const byte_type* Read(doc_id_t first, size_t count) {
     const auto* child = _column->Child();
     SDB_ASSERT(child != nullptr);
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
-    const auto window = child->Locate(elem);
+    // The rows a scan hands over ascend, so the block one lands in is almost
+    // always the block the last one landed in. Locate takes the previous
+    // window as a hint and answers from it instead of searching the block
+    // list -- which a selective predicate would otherwise pay for once per
+    // row, its runs being a single row each.
+    _win = child->Locate(elem, _win);
+    const auto& window = _win;
     const auto& meta = child->DataBlocks()[window.block];
     const size_t bytes = count * _d * sizeof(float);
     if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
@@ -173,6 +298,7 @@ class RawVectorReader {
   }
 
   ReadContext _read_ctx;
+  irs::BlockWindow _win{};
   IvfVectorReader _vreader;
   const ColumnReader* _column;
   std::vector<byte_type> _buf;
@@ -214,7 +340,15 @@ class VectorCluster {
       _lane{lane} {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
-    SDB_ASSERT(_setting.group_size <= _cache.size());
+    SDB_ASSERT(_setting.group_size != 0);
+    // ServeGroup decodes a whole group at once, so the cache is sized by the
+    // format's group, not by the run. They are unrelated numbers: a run is at
+    // most kRun docs, while a group is whatever the quantizer packs together
+    // -- 32 lanes for fast scan, but 1024 for Panorama, which is eight times
+    // kRun. Sizing this by kRun overflowed it by 896 floats, straight over the
+    // members below, and the SDB_ASSERT that would have caught it is compiled
+    // out of the build that ships.
+    _cache.resize(_setting.group_size);
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
@@ -355,7 +489,8 @@ class VectorCluster {
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
-  std::array<score_t, kRun> _cache;
+  /// One decoded group; sized from the quantizer's group_size, not kRun.
+  std::vector<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   uint32_t _total;

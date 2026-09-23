@@ -48,6 +48,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/scan/col_filter_verify.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_plan.h"
 
 namespace irs {
 
@@ -165,8 +166,18 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
+  // A cached plan outlives the transaction that planned it, so its scan reads
+  // the executing transaction's snapshot, taken at init, not the bind's.
+  search::InvertedIndexSnapshotPtr snapshot;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
+  // The query's top-k, from the plan or from this execution's parameters.
+  std::optional<size_t> top_k;
+  size_t top_offset = 0;
+  bool empty_answer = false;
+  // The executing session's copy: its knobs and beam floor are read at scan
+  // init, not at plan time, so a cached plan follows the current SETs.
+  std::optional<VectorScorerOptions> owned_vector_scorer;
 
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
@@ -200,6 +211,7 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
     duckdb::LogicalType type;
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
+    std::vector<std::string_view> extract_path;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
@@ -209,6 +221,9 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
+  // The claimed WHERE rebuilt from this execution's parameters, when the plan
+  // deferred it; `owned_filter` wraps it and `filter` points into that.
+  std::shared_ptr<const irs::Filter> owned_where;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
@@ -364,6 +379,16 @@ struct StreamLocalState : public ScanLocalState, FetchLocalState {
 
 struct TopKLocalState : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
+  // With a quantized index the pool of each segment is re-scored exactly and
+  // merged here before the next segment starts, so no quantized score ever
+  // decides between two segments -- each segment trains its own quantizer, so
+  // their estimates are not comparable. Qdrant merges segments this way.
+  bool per_segment_rescore = false;
+  std::atomic<irs::score_t> segment_kth_score{
+    std::numeric_limits<irs::score_t>::lowest()};
+  std::vector<irs::ScoreDoc> answer;
+  size_t answer_size = 0;
+  uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;
   ColFilterVerify col_verify;

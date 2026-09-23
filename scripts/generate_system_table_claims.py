@@ -21,10 +21,7 @@ import re
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-DOCS = (
-    REPO.parent
-    / "serenedb-site/docusaurus/docs/compatibility/system-table-compatibility.md"
-)
+DOCS = REPO / "docs/compatibility/system-table-compatibility.md"
 TEST = (
     REPO / "tests/sqllogic/sdb/pg/site_docs/compatibility/system_table_claims.test"
 )

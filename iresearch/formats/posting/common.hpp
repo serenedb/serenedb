@@ -31,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -142,6 +143,24 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   if (has_score_bounds) {
     in.Skip(in.ReadByte());
   }
+}
+
+inline constexpr uint64_t kDocsPerSkipByte = 4;
+inline constexpr uint64_t kPosBytesPerFreq = 3;
+
+template<typename Input>
+void LimitDocReadahead(Input& in, const PostingMeta& meta) noexcept {
+  const uint64_t blocks =
+    meta.docs_count > doc_limits::kBlockSize
+      ? uint64_t{meta.doc_delta} + meta.docs_count / kDocsPerSkipByte
+      : 0;
+  in.LimitReadahead(meta.doc_start + blocks + file_utils::kPage);
+}
+
+template<typename Input>
+void LimitPosReadahead(Input& in, const PostingMeta& meta) noexcept {
+  in.LimitReadahead(meta.pos_start + uint64_t{meta.freq} * kPosBytesPerFreq +
+                    file_utils::kPage);
 }
 
 inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,

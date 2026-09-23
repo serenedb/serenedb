@@ -17,6 +17,7 @@ CRASH_AFTER_SEARCH_COMMIT_FAULT = "crash_after_search_commit"
 CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT = "crash_before_search_wal_commit"
 CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT = "crash_after_search_wal_commit"
 CRASH_SST_SINK_AFTER_INGEST_FAULT = "crash_sst_sink_after_ingest"
+CRASH_AFTER_SEARCH_REFRESH_FAULT = "Search::CrashAfterCommit"
 SLOW_SEARCH_TASK_FAULT = "slow_search_task"
 UNABLE_TO_CREATE_FAULT = "unable_to_create"
 
@@ -36,6 +37,7 @@ CRASH_FAULTS = frozenset({
     CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT,
     CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT,
     CRASH_SST_SINK_AFTER_INGEST_FAULT,
+    CRASH_AFTER_SEARCH_REFRESH_FAULT,
 })
 
 PROGRESS_GATED_FAULTS = frozenset({

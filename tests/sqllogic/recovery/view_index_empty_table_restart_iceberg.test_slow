@@ -1,0 +1,184 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vetr FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vetr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vetr.${__DATABASE__};
+
+statement ok
+CREATE TABLE vetr.${__DATABASE__}.t (id INTEGER, body TEXT);
+
+statement ok
+CREATE VIEW vetr_v AS SELECT * FROM vetr.${__DATABASE__}.t;
+
+statement ok
+CREATE INDEX vetr_idx ON vetr_v USING inverted(id, body vetr_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vetr_idx;
+----
+count
+0
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vetr_idx;
+----
+count
+0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+query
+SELECT count(*) FROM vetr_idx;
+----
+count
+0
+
+connection after_crash
+statement count 2
+INSERT INTO vetr.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart');
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT id, body FROM vetr_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	arrives before the restart
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM vetr_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	arrives before the restart
+
+connection after_second_crash
+query
+SELECT id FROM vetr_idx WHERE body @@ ts_phrase('restart');
+----
+id
+2
+
+connection after_second_crash
+statement count 2
+DELETE FROM vetr.${__DATABASE__}.t;
+
+connection after_second_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+connection after_second_crash
+query
+SELECT count(*) FROM vetr_idx;
+----
+count
+0
+
+connection after_second_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_second_crash
+statement error connection closed
+SELECT 1;
+
+connection after_third_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vetr_idx;
+----
+count
+0
+
+connection after_third_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_third_crash
+statement count 1
+INSERT INTO vetr.${__DATABASE__}.t VALUES (3, 'lands after the restart');
+
+connection after_third_crash
+query
+SELECT * FROM serenedb_reindex('vetr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_third_crash
+query
+SELECT id, body FROM vetr_idx WHERE body @@ ts_phrase('restart');
+----
+id	body
+3	lands after the restart
+
+connection after_third_crash
+statement ok
+DROP INDEX vetr_idx;
+
+connection after_third_crash
+statement ok
+DROP VIEW vetr_v;
+
+connection after_third_crash
+statement ok
+DROP TABLE vetr.${__DATABASE__}.t;
+
+connection after_third_crash
+statement ok
+DROP SCHEMA vetr.${__DATABASE__};
+
+connection after_third_crash
+statement ok
+DROP SERVER vetr;

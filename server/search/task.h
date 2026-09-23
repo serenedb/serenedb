@@ -22,6 +22,7 @@
 #pragma once
 
 #include <absl/status/status.h>
+#include <absl/status/statusor.h>
 
 #include <duckdb/common/typedefs.hpp>
 #include <functional>
@@ -54,8 +55,8 @@ extern template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<SearchTable>);
 yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak);
 
-using ReindexRunner = std::function<absl::Status(duckdb::idx_t database_id,
-                                                 duckdb::idx_t index_id)>;
+using ReindexRunner = std::function<absl::StatusOr<bool>(
+  duckdb::idx_t database_id, duckdb::idx_t index_id)>;
 void SetReindexRunner(ReindexRunner runner);
 
 }  // namespace sdb::search

@@ -65,6 +65,11 @@ services:
       - SDB_TIMING_KEY
       - SKIP_SLOW_TESTS
       - SDB_SQLLOGIC_SCOPE
+      - BIGLAKE_PROJECT
+      - BIGLAKE_CATALOG
+      - BIGLAKE_CLIENT_EMAIL
+      - BIGLAKE_PRIVATE_KEY
+      - BIGLAKE_PRIVATE_KEY_ID
     networks:
       - test-network
     command: >

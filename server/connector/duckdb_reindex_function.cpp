@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/status/statusor.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -676,42 +677,36 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
   });
 }
 
-// The referenced rows/buckets live on the observe's DeleteMask, alive
-// until the remove commits.
 SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
-  const std::vector<int64_t>& rows) {
-  return [&rows,
-          idx = size_t{0}](int64_t min_row) mutable -> std::optional<int64_t> {
-    idx =
-      std::lower_bound(rows.begin() + idx, rows.end(), min_row) - rows.begin();
-    if (idx == rows.size()) {
+  std::vector<int64_t> rows) {
+  return [rows = std::move(rows)](int64_t min_row) -> std::optional<int64_t> {
+    const auto it = absl::c_lower_bound(rows, min_row);
+    if (it == rows.end()) {
       return std::nullopt;
     }
-    return rows[idx];
+    return *it;
   };
 }
 
 // Buckets ascend by (high, low) = ascending row.
 SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
-  const std::vector<std::pair<int32_t, roaring::Roaring>>& buckets) {
-  return [&buckets, bucket = size_t{0}](
-           int64_t min_row) mutable -> std::optional<int64_t> {
-    while (bucket < buckets.size()) {
-      const auto base = static_cast<int64_t>(buckets[bucket].first) << 32;
-      if (min_row >= base + (int64_t{1} << 32)) {
-        ++bucket;
-        continue;
+  std::vector<std::pair<int32_t, roaring::Roaring>> buckets) {
+  return
+    [buckets = std::move(buckets)](int64_t min_row) -> std::optional<int64_t> {
+      for (const auto& [high, bitmap] : buckets) {
+        const auto base = static_cast<int64_t>(high) << 32;
+        if (min_row >= base + (int64_t{1} << 32)) {
+          continue;
+        }
+        const uint32_t low = min_row <= base ? 0 : min_row - base;
+        auto it = bitmap.begin();
+        if (!it.move_equalorlarger(low)) {
+          continue;
+        }
+        return base | *it;
       }
-      const uint32_t low = min_row <= base ? 0 : min_row - base;
-      auto it = buckets[bucket].second.begin();
-      if (!it.move_equalorlarger(low)) {
-        ++bucket;
-        continue;
-      }
-      return base | *it;
-    }
-    return std::nullopt;
-  };
+      return std::nullopt;
+    };
 }
 
 // Delete kind 1 -- deleted files: one prefix entry per file. nullptr =
@@ -1024,6 +1019,11 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
     RunFullRebuild(context, conn_ctx, target, *storage);
     return {};
   }
+  if (manifest->version && manifest->entries.empty() &&
+      storage->GetInvertedIndexSnapshot()->reader.live_docs_count() > 0) {
+    RunFullRebuild(context, conn_ctx, target, *storage);
+    return {};
+  }
   if (src->version && src->version == manifest->version) {
     // An unmoved pin proves an empty diff (a died pass never advances the
     // manifest version). Most periodic ticks land here.
@@ -1035,14 +1035,6 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
       // The indexed snapshot left the table's history: deletes may have
       // been UNDONE, invisible to any seq diff. Only a rebuild converges.
-      RunFullRebuild(context, conn_ctx, target, *storage);
-      return {ReindexAction::Rebuild, 0, 0, 0,
-              static_cast<int64_t>(src->files.size())};
-    }
-    if (manifest->entries.empty() && manifest->version) {
-      // The durable iceberg manifest is version-only: an unmoved pin already
-      // returned up_to_date above, and without the id baseline only a
-      // rebuild converges.
       RunFullRebuild(context, conn_ctx, target, *storage);
       return {ReindexAction::Rebuild, 0, 0, 0,
               static_cast<int64_t>(src->files.size())};
@@ -1153,12 +1145,13 @@ constexpr const char* kReindexStubUser = "postgres";
 
 // ReindexLoop tick: one REINDEX on an internal session. Quiet outcomes return
 // OK -- vanished index, claim lost to a manual run.
-absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
-                            duckdb::idx_t database_id, duckdb::idx_t index_id) {
+absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
+                                    duckdb::idx_t database_id,
+                                    duckdb::idx_t index_id) {
   try {
     const auto attached = FindAttachedById(db, database_id);
     if (!attached) {
-      return absl::OkStatus();
+      return false;
     }
     const std::string database_name = attached->GetName().GetIdentifierName();
     // SDB_RBAC_DISABLED. The tick resolved the relation's owner role and ran
@@ -1175,7 +1168,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
     auto index =
       catalog.FindIn<duckdb::DuckIndexEntry>(conn.context.get(), index_id);
     if (!index || index->index_type != "inverted") {
-      return absl::OkStatus();
+      return false;
     }
     const std::string index_name = index->name.GetIdentifierName();
     // The index names its relation, and duckdb keeps both halves of that
@@ -1188,7 +1181,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
                                 index->GetTableName())
              : nullptr;
     if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
-      return absl::OkStatus();
+      return false;
     }
     const std::string schema_name = schema_ident.GetIdentifierName();
     // Ownership itself is real (pg_class.relowner asserts it), so the id is
@@ -1207,13 +1200,14 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
         SDB_INFO(SEARCH, "reindex \"", index_name, "\": ", notice.errmsg);
       });
     };
-    RunReindex(*conn.context, index_name, schema_name, database_name);
-    return absl::OkStatus();
+    const auto outcome =
+      RunReindex(*conn.context, index_name, schema_name, database_name);
+    return outcome.action != ReindexAction::UpToDate;
   } catch (const irs::SqlException& ex) {
     if (ex.error().errcode == ERRCODE_OBJECT_IN_USE ||
         ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
       // A manual REINDEX holds the claim / the index vanished mid-tick.
-      return absl::OkStatus();
+      return false;
     }
     return absl::InternalError(ex.message());
   } catch (const std::exception& ex) {

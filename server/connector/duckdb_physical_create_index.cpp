@@ -305,6 +305,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       } else {
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
+        published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
         if (IsDuckDBTable()) {
           published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
@@ -655,6 +656,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
                       ERR_MSG("failed to replay concurrent deletes for index '",
                               gstate.index_name, "'"));
     }
+  }
+  SDB_IF_FAILURE("refresh_before_manifest_publish") {
+    inverted_storage.Refresh();
   }
   if (gstate.file_manifest) {
     inverted_storage.SetFileManifest(gstate.file_manifest);

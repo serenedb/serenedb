@@ -410,7 +410,7 @@ long double ScanCandidateCost(uint32_t record_size) noexcept {
   return r / (r + kWalkCandidateOverhead);
 }
 
-inline constexpr uint64_t kTwoHopAdmittedNeighbours = 3;
+inline constexpr uint64_t kTwoHopAdmittedNeighbours = 2;
 
 bool HnswBridgeRejected(uint32_t record_size, uint32_t m0) noexcept {
   return static_cast<long double>(record_size) >

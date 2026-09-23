@@ -133,7 +133,11 @@ The `rowid` values are stable within a transaction.
 It is strongly advised to avoid using rowids as identifiers.
 </DocCallout>
 
-> If there is a user-defined column named `rowid`, it shadows the `rowid` pseudocolumn.
+<DocCallout type="note">
+
+If there is a user-defined column named `rowid`, it shadows the `rowid` pseudocolumn.
+
+</DocCallout>
 
 ### Common Table Expressions
 

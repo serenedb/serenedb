@@ -33,7 +33,7 @@ The `AND` / `OR` conjunctions can be used to combine Boolean values.
 
 Below is the truth table for the `AND` conjunction (i.e., `x AND y`).
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | `X`   | `X AND true` | `X AND false` | `X AND NULL` |
 | ----- | ------------ | ------------- | ------------ |
@@ -41,15 +41,19 @@ Below is the truth table for the `AND` conjunction (i.e., `x AND y`).
 | false | false        | false         | false        |
 | NULL  | NULL         | false         | NULL         |
 
+</div>
+
 Below is the truth table for the `OR` conjunction (i.e., `x OR y`).
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | `X`   | `X OR true` | `X OR false` | `X OR NULL` |
 | ----- | ----------- | ------------ | ----------- |
 | true  | true        | true         | true        |
 | false | true        | false        | NULL        |
 | NULL  | true        | NULL         | NULL        |
+
+</div>
 
 ## Expressions
 

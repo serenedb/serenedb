@@ -75,7 +75,11 @@ we are doing an integer comparison instead of a string comparison
 
 <SqlLogicTest id="sql/data_types/enum/example_012" />
 
-> Warning This means that comparing against a random (non-equivalent) string always results in `false` (and does not error):
+<DocCallout type="attention" title="Warning">
+
+This means that comparing against a random (non-equivalent) string always results in `false` (and does not error):
+
+</DocCallout>
 
 <SqlLogicTest id="sql/data_types/enum/example_013" />
 
@@ -119,4 +123,8 @@ Enum types are stored in the catalog, and a catalog dependency is added to each 
 
 Currently, it is possible to drop enums that are used in tables without affecting the tables.
 
-> Warning This behavior of the enum removal feature is subject to change. In future releases, it is expected that any dependent columns must be removed before dropping the enum, or the enum must be dropped with the additional `CASCADE` parameter.
+<DocCallout type="attention" title="Warning">
+
+This behavior of the enum removal feature is subject to change. In future releases, it is expected that any dependent columns must be removed before dropping the enum, or the enum must be dropped with the additional `CASCADE` parameter.
+
+</DocCallout>

@@ -59,13 +59,15 @@ Get subfield from a time.
 
 #### `get_current_time()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current time (start of current transaction) in the local time zone as `TIMETZ`. |
 | :--- | :--- |
 | **Example** | `get_current_time()` |
 | **Result** | `06:09:59.988+2` |
 | **Alias** | `current_time` (no parentheses necessary) |
+
+</div>
 
 #### `make_time(bigint, bigint, double)`
 

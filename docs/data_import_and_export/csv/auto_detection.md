@@ -96,7 +96,7 @@ After detecting the dialect, the system will attempt to figure out the types of 
 
 The type detection works by attempting to convert the values in each column to the candidate types. If the conversion is unsuccessful, the candidate type is removed from the set of candidate types for that column. After all samples have been handled – the remaining candidate type with the highest priority is chosen. The default set of candidate types is given below, in order of priority:
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | Types       |
 | ----------- |
@@ -110,6 +110,8 @@ The type detection works by attempting to convert the values in each column to t
 | DOUBLE      |
 | VARCHAR     |
 
+</div>
+
 Everything can be cast to `VARCHAR`, therefore, this type has the lowest priority meaning that all columns are converted to `VARCHAR` as a fallback if they cannot be cast to anything else.
 In <a href="/files/docs/flights.csv" download>`flights.csv`</a> the `FlightDate` column will be cast to a `DATE`, while the other columns will be cast to `VARCHAR`.
 
@@ -117,7 +119,7 @@ The set of candidate types that should be considered by the CSV reader can be sp
 
 Here are all additional candidate types that may be specified using the `auto_type_candidates` option, in order of priority:
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | Types    |
 | -------- |
@@ -126,6 +128,8 @@ Here are all additional candidate types that may be specified using the `auto_ty
 | INTEGER  |
 | DECIMAL  |
 | FLOAT    |
+
+</div>
 
 Even though the set of data types that can be automatically detected may appear quite limited, the CSV reader can be configured to read arbitrarily complex types by using the `types`-option described in the next section.
 
@@ -163,7 +167,7 @@ If the ambiguities cannot be resolved by looking at the data the system has a li
 
 The system considers the following formats for dates (`dateformat`). Higher entries are chosen over lower entries in case of ambiguities (i.e., ISO 8601 is preferred over `MM-DD-YYYY`).
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | dateformat |
 | ---------- |
@@ -175,9 +179,11 @@ The system considers the following formats for dates (`dateformat`). Higher entr
 | %m-%d-%y   |
 | %m-%d-%Y   |
 
+</div>
+
 The system considers the following formats for timestamps (`timestampformat`). Higher entries are chosen over lower entries in case of ambiguities.
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | timestampformat      |
 | -------------------- |
@@ -189,3 +195,5 @@ The system considers the following formats for timestamps (`timestampformat`). H
 | %m-%d-%y %I:%M:%S %p |
 | %m-%d-%Y %I:%M:%S %p |
 | %Y-%m-%d %H:%M:%S.%f |
+
+</div>

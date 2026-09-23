@@ -6,6 +6,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 <!-- markdownlint-disable MD001 -->
 
@@ -239,7 +240,11 @@ Match by n-gram similarity — fuzzy matching that scores on shared character se
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_ngram" />
 
-> N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+<DocCallout type="note">
+
+N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+
+</DocCallout>
 
 #### `ts_between(min, max, min_incl, max_incl)` {#ts_between}
 
@@ -473,7 +478,11 @@ Ordered proximity: require the sub-queries to appear close together, in order.
 
 **How it works.** `##` is an **ordered** proximity operator: `a` must precede `b`. The integer counts the tokens *between* the two ends — `a ## b` (no integer) and `a ## 0 ## b` both mean immediate adjacency, `a ## 2 ## b` means exactly two intervening tokens. Order matters: `'quick' ## 'brown'` matches `quick brown` but `'brown' ## 'quick'` does not.
 
-> The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+<DocCallout type="note">
+
+The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+
+</DocCallout>
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

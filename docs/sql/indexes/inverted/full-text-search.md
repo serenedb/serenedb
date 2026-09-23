@@ -17,7 +17,11 @@ Every query family below produces a `TSQUERY`. The simplest is a bare string lit
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_001" />
 
+<DocCallout type="tip">
+
 All examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
+
+</DocCallout>
 
 ## Term and phrase search {#phrase-search}
 

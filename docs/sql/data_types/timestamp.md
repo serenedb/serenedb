@@ -102,12 +102,12 @@ Binning is a common practice with continuous data: A range of possible values is
 <img src="/images/blog/timezones/tz-instants-light.svg"
      alt="Time Zone Instants at the Epoch"
      width="600"
-     class="lightmode-img"
+     className="lightmode-img"
      />
 <img src="/images/blog/timezones/tz-instants-dark.svg"
      alt="Time Zone Instants at the Epoch"
      width="600"
-     class="darkmode-img"
+     className="darkmode-img"
      />
 
 Temporal binning rules are complex, and generally come in two sets: _time zones_ and _calendars_.
@@ -118,12 +118,12 @@ For example, here is what binning for the `'America/Los_Angeles'` time zone look
 <img src="/images/blog/timezones/tz-timezone-light.svg"
      alt="Two Time Zones at the Epoch"
      width="600"
-     class="lightmode-img"
+     className="lightmode-img"
      />
 <img src="/images/blog/timezones/tz-timezone-dark.svg"
      alt="Two Time Zones at the Epoch"
      width="600"
-     class="darkmode-img"
+     className="darkmode-img"
      />
 
 The most common temporal binning problem occurs when daylight saving time changes.
@@ -133,12 +133,12 @@ To distinguish the two hours, another range of bins containing the offset from U
 <img src="/images/blog/timezones/tz-daylight-light.svg"
      alt="Two Time Zones at a Daylight Savings Time transition"
      width="600"
-     class="lightmode-img"
+     className="lightmode-img"
      />
 <img src="/images/blog/timezones/tz-daylight-dark.svg"
      alt="Two Time Zones at a Daylight Savings Time transition"
      width="600"
-     class="darkmode-img"
+     className="darkmode-img"
      />
 
 ### Time Zone Support

@@ -118,8 +118,8 @@ The store fills that skeleton in as follows:
 | :--- | :--- |
 | Branch 1 | Lexical: `content @@ tsquery_function(...)`, ranked by `scorer` |
 | Branch 2 | Vector: the [distance strategy](./indexes.md#distancestrategy)'s operator against the query embedding |
-| Per-branch [`LIMIT`](../../cookbook/search/reciprocal-rank-fusion.md#window-size-per-branch-limit) | `secondary_top_k` for the lexical branch, `primary_top_k` for the vector one |
-| RRF [`k`](../../cookbook/search/reciprocal-rank-fusion.md#k-top-rank-weight) | `rrf_k` |
+| Per-branch [`LIMIT`](../../cookbook/search/reciprocal-rank-fusion.md#window-size--per-branch-limit) | `secondary_top_k` for the lexical branch, `primary_top_k` for the vector one |
+| RRF [`k`](../../cookbook/search/reciprocal-rank-fusion.md#k--top-rank-weight) | `rrf_k` |
 | Final `LIMIT` | The search's `k` |
 
 Both branches read from the combined index *by name*, and the outer query joins the base table back to project the content and metadata columns.

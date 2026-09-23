@@ -35,21 +35,25 @@ they are always available.
 
 #### `current_timestamp`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current date and time (start of current transaction). |
 | :--- | :--- |
 | **Example** | `current_timestamp` |
 | **Result** | `2022-10-08 12:44:46.122-07` |
 
+</div>
+
 #### `get_current_timestamp()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current date and time (start of current transaction). |
 | :--- | :--- |
 | **Example** | `get_current_timestamp()` |
 | **Result** | `2022-10-08 12:44:46.122-07` |
+
+</div>
 
 #### `greatest(timestamptz, timestamptz)`
 
@@ -77,12 +81,14 @@ The earlier of two timestamps.
 
 #### `now()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current date and time (start of current transaction). |
 | :--- | :--- |
 | **Example** | `now()` |
 | **Result** | `2022-10-08 12:44:46.122-07` |
+
+</div>
 
 #### `timetz_byte_comparable(timetz)`
 
@@ -98,12 +104,14 @@ Converts seconds since the epoch to a timestamp with time zone.
 
 #### `transaction_timestamp()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current date and time (start of current transaction). |
 | :--- | :--- |
 | **Example** | `transaction_timestamp()` |
 | **Result** | `2022-10-08 12:44:46.122-07` |
+
+</div>
 
 ## Timestamp with Time Zone Strings
 
@@ -160,66 +168,80 @@ The table below shows the ICU scalar functions for `TIMESTAMP WITH TIME ZONE` va
 
 #### `age(timestamptz, timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Subtract arguments, resulting in the time difference between the two timestamps. |
 | :--- | :--- |
 | **Example** | `age(TIMESTAMPTZ '2001-04-10', TIMESTAMPTZ '1992-09-20')` |
 | **Result** | `8 years 6 months 20 days` |
 
+</div>
+
 #### `age(timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Subtract from current_date. |
 | :--- | :--- |
 | **Example** | `age(TIMESTAMP '1992-09-20')` |
 | **Result** | `29 years 1 month 27 days 12:39:00.844` |
 
+</div>
+
 #### `date_diff(part, starttimestamptz, endtimestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The signed number of [`part`](../../sql/functions/datepart.md) boundaries between `starttimestamptz` and `endtimestamptz`, inclusive of the larger timestamp and exclusive of the smaller timestamp. |
 | :--- | :--- |
 | **Example** | `date_diff('hour', TIMESTAMPTZ '1992-09-30 23:59:59', TIMESTAMPTZ '1992-10-01 01:58:00')` |
 | **Result** | `2` |
 
+</div>
+
 #### `date_part([part, ...], timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Get the listed [subfields](../../sql/functions/datepart.md) as a `struct`. The list must be constant. |
 | :--- | :--- |
 | **Example** | `date_part(['year', 'month', 'day'], TIMESTAMPTZ '1992-09-20 20:38:40-07')` |
 | **Result** | `{year: 1992, month: 9, day: 20}` |
 
+</div>
+
 #### `date_part(part, timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Get [subfield](../../sql/functions/datepart.md) (equivalent to _extract_). |
 | :--- | :--- |
 | **Example** | `date_part('minute', TIMESTAMPTZ '1992-09-20 20:38:40')` |
 | **Result** | `38` |
 
+</div>
+
 #### `date_sub(part, starttimestamptz, endtimestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The signed length of the interval between `starttimestamptz` and `endtimestamptz`, truncated to whole multiples of [`part`](../../sql/functions/datepart.md). |
 | :--- | :--- |
 | **Example** | `date_sub('hour', TIMESTAMPTZ '1992-09-30 23:59:59', TIMESTAMPTZ '1992-10-01 01:58:00')` |
 | **Result** | `1` |
 
+</div>
+
 #### `date_trunc(part, timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Truncate to specified [precision](../../sql/functions/datepart.md). |
 | :--- | :--- |
 | **Example** | `date_trunc('hour', TIMESTAMPTZ '1992-09-20 20:38:40')` |
 | **Result** | `1992-09-20 20:00:00` |
+
+</div>
 
 #### `epoch_ns(timestamptz)`
 
@@ -235,48 +257,58 @@ Converts a timestamptz to microseconds since the epoch.
 
 #### `extract(field FROM timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Get [subfield](../../sql/functions/datepart.md) from a `TIMESTAMP WITH TIME ZONE`. |
 | :--- | :--- |
 | **Example** | `extract('hour' FROM TIMESTAMPTZ '1992-09-20 20:38:48')` |
 | **Result** | `20` |
 
+</div>
+
 #### `last_day(timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The last day of the month. |
 | :--- | :--- |
 | **Example** | `last_day(TIMESTAMPTZ '1992-03-22 01:02:03.1234')` |
 | **Result** | `1992-03-31` |
 
+</div>
+
 #### `make_timestamptz(bigint, bigint, bigint, bigint, bigint, double, string)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The `TIMESTAMP WITH TIME ZONE` for the given parts and time zone. |
 | :--- | :--- |
 | **Example** | `make_timestamptz(1992, 9, 20, 15, 34, 27.123456, 'CET')` |
 | **Result** | `1992-09-20 06:34:27.123456-07` |
 
+</div>
+
 #### `make_timestamptz(bigint, bigint, bigint, bigint, bigint, double)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The `TIMESTAMP WITH TIME ZONE` for the given parts in the current time zone. |
 | :--- | :--- |
 | **Example** | `make_timestamptz(1992, 9, 20, 13, 34, 27.123456)` |
 | **Result** | `1992-09-20 13:34:27.123456-07` |
 
+</div>
+
 #### `make_timestamptz(microseconds)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The `TIMESTAMP WITH TIME ZONE` for the given µs since the epoch. |
 | :--- | :--- |
 | **Example** | `make_timestamptz(1667810584123456)` |
 | **Result** | `2022-11-07 16:43:04.123456-08` |
+
+</div>
 
 #### `strftime(timestamptz, format)`
 
@@ -292,30 +324,36 @@ Parses string to a `TIMESTAMP` according to the [format string](../../sql/functi
 
 #### `time_bucket(bucket_width, timestamptz[, offset])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Truncate `timestamptz` to a grid of width `bucket_width`. The grid is anchored at `2000-01-01 00:00:00+00:00[ + offset]` when `bucket_width` is a number of months or coarser units, else `2000-01-03 00:00:00+00:00[ + offset]`. Note that `2000-01-03` is a Monday. |
 | :--- | :--- |
 | **Example** | `time_bucket(INTERVAL '10 minutes', TIMESTAMPTZ '1992-04-20 15:26:00-07', INTERVAL '5 minutes')` |
 | **Result** | `1992-04-20 15:25:00-07` |
 
+</div>
+
 #### `time_bucket(bucket_width, timestamptz[, origin])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Truncate `timestamptz` to a grid of width `bucket_width`. The grid is anchored at the `origin` timestamp, which defaults to `2000-01-01 00:00:00+00:00` when `bucket_width` is a number of months or coarser units, else `2000-01-03 00:00:00+00:00`. Note that `2000-01-03` is a Monday. |
 | :--- | :--- |
 | **Example** | `time_bucket(INTERVAL '2 weeks', TIMESTAMPTZ '1992-04-20 15:26:00-07', TIMESTAMPTZ '1992-04-01 00:00:00-07')` |
 | **Result** | `1992-04-15 00:00:00-07` |
 
+</div>
+
 #### `time_bucket(bucket_width, timestamptz[, timezone])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Truncate `timestamptz` to a grid of width `bucket_width`. The grid is anchored at the `origin` timestamp, which defaults to `2000-01-01 00:00:00` in the provided `timezone` when `bucket_width` is a number of months or coarser units, else `2000-01-03 00:00:00` in the provided `timezone`. The default timezone is `'UTC'`. Note that `2000-01-03` is a Monday. |
 | :--- | :--- |
 | **Example** | `time_bucket(INTERVAL '2 days', TIMESTAMPTZ '1992-04-20 15:26:00-07', 'Europe/Berlin')` |
 | **Result** | `1992-04-19 15:00:00-07` (=`1992-04-20 00:00:00 Europe/Berlin`) |
+
+</div>
 
 There are also dedicated extraction functions to get the [subfields](../../sql/functions/datepart.md).
 
@@ -336,19 +374,23 @@ Infinite values are not allowed as table function bounds.
 
 #### `generate_series(timestamptz, timestamptz, interval)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Generate a table of timestamps in the closed range (including both the starting timestamp and the ending timestamp), stepping by the interval. |
 | :--- | :--- |
 | **Example** | `generate_series(TIMESTAMPTZ '2001-04-10', TIMESTAMPTZ '2001-04-11', INTERVAL 30 MINUTE)` |
 
+</div>
+
 #### `range(timestamptz, timestamptz, interval)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Generate a table of timestamps in the half open range (including the starting timestamp, but stopping before the ending timestamp), stepping by the interval. |
 | :--- | :--- |
 | **Example** | `range(TIMESTAMPTZ '2001-04-10', TIMESTAMPTZ '2001-04-11', INTERVAL 30 MINUTE)` |
+
+</div>
 
 ## ICU Timestamp Without Time Zone Functions
 
@@ -370,57 +412,69 @@ Often the same functionality can be implemented more reliably using the `struct`
 
 #### `current_localtime()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns a `TIME` whose GMT bin values correspond to local time in the current time zone. |
 | :--- | :--- |
 | **Example** | `current_localtime()` |
 | **Result** | `08:47:56.497` |
 
+</div>
+
 #### `current_localtimestamp()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns a `TIMESTAMP` whose GMT bin values correspond to local date and time in the current time zone. |
 | :--- | :--- |
 | **Example** | `current_localtimestamp()` |
 | **Result** | `2022-12-17 08:47:56.497` |
 
+</div>
+
 #### `localtime`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Synonym for the `current_localtime()` function call. |
 | :--- | :--- |
 | **Example** | `localtime` |
 | **Result** | `08:47:56.497` |
 
+</div>
+
 #### `localtimestamp`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Synonym for the `current_localtimestamp()` function call. |
 | :--- | :--- |
 | **Example** | `localtimestamp` |
 | **Result** | `2022-12-17 08:47:56.497` |
 
+</div>
+
 #### `timezone(text, timestamp)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Use the [date parts](../../sql/functions/datepart.md) of the timestamp in GMT to construct a timestamp in the given time zone. Effectively, the argument is a “local” time. |
 | :--- | :--- |
 | **Example** | `timezone('America/Denver', TIMESTAMP '2001-02-16 20:38:40')` |
 | **Result** | `2001-02-16 19:38:40-08` |
 
+</div>
+
 #### `timezone(text, timestamptz)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Use the [date parts](../../sql/functions/datepart.md) of the timestamp in the given time zone to construct a timestamp. Effectively, the result is a “local” time. |
 | :--- | :--- |
 | **Example** | `timezone('America/Denver', TIMESTAMPTZ '2001-02-16 20:38:40-05')` |
 | **Result** | `2001-02-16 18:38:40` |
+
+</div>
 
 ## At Time Zone
 

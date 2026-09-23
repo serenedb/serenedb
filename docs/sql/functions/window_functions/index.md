@@ -71,16 +71,18 @@ The table below shows the available general window functions.
 
 #### `cume_dist([ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The cumulative distribution: (number of partition rows preceding or peer with current row) / total partition rows. If an `ORDER BY` clause is specified, the distribution is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | `DOUBLE` |
 | **Example** | `cume_dist()` |
 
+</div>
+
 #### `dense_rank()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The rank of the current row _without gaps;_ this function counts peer groups. |
 | :--- | :--- |
@@ -88,95 +90,117 @@ The table below shows the available general window functions.
 | **Example** | `dense_rank()` |
 | **Aliases** | `rank_dense()` |
 
+</div>
+
 #### `fill(expr[ ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Replaces `NULL` values of `expr` with a linear interpolation based on the closest non-`NULL` values and the sort values. Both values must support arithmetic and there must be only one ordering key. For missing values at the ends, linear extrapolation is used. Failure to interpolate results in the `NULL` value being retained. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `fill(column)` |
 
+</div>
+
 #### `first_value(expr[ ORDER BY ordering][ IGNORE NULLS])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns `expr` evaluated at the row that is the first row (with a non-null value of `expr` if `IGNORE NULLS` is set) of the window frame. If an `ORDER BY` clause is specified, the first row number is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `first_value(column)` |
 
+</div>
+
 #### `lag(expr[, offset[, default]][ ORDER BY ordering][ IGNORE NULLS])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns `expr` evaluated at the row that is `offset` rows (among rows with a non-null value of `expr` if `IGNORE NULLS` is set) before the current row within the window frame; if there is no such row, instead return `default` (which must be of the same type as `expr`). Both `offset` and `default` are evaluated with respect to the current row. If omitted, `offset` defaults to `1` and default to `NULL`. If an `ORDER BY` clause is specified, the lagged row number is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `lag(column, 3, 0)` |
 
+</div>
+
 #### `last_value(expr[ ORDER BY ordering][ IGNORE NULLS])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns `expr` evaluated at the row that is the last row (among rows with a non-null value of `expr` if `IGNORE NULLS` is set) of the window frame. If omitted, `offset` defaults to `1` and default to `NULL`. If an `ORDER BY` clause is specified, the last row is determined within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `last_value(column)` |
 
+</div>
+
 #### `lead(expr[, offset[, default]][ ORDER BY ordering][ IGNORE NULLS])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns `expr` evaluated at the row that is `offset` rows after the current row (among rows with a non-null value of `expr` if `IGNORE NULLS` is set) within the window frame; if there is no such row, instead return `default` (which must be of the same type as `expr`). Both `offset` and `default` are evaluated with respect to the current row. If omitted, `offset` defaults to `1` and default to `NULL`. If an `ORDER BY` clause is specified, the leading row number is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `lead(column, 3, 0)` |
 
+</div>
+
 #### `nth_value(expr, nth[ ORDER BY ordering][ IGNORE NULLS])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns `expr` evaluated at the nth row (among rows with a non-null value of `expr` if `IGNORE NULLS` is set) of the window frame (counting from 1); `NULL` if no such row. If an `ORDER BY` clause is specified, the nth row number is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | Same type as `expr` |
 | **Example** | `nth_value(column, 2)` |
 
+</div>
+
 #### `ntile(num_buckets[ ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | An integer ranging from 1 to `num_buckets`, dividing the partition as equally as possible. If an `ORDER BY` clause is specified, the ntile is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | `BIGINT` |
 | **Example** | `ntile(4)` |
 
+</div>
+
 #### `percent_rank([ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The relative rank of the current row: `(rank() - 1) / (total partition rows - 1)`. If an `ORDER BY` clause is specified, the relative rank is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | `DOUBLE` |
 | **Example** | `percent_rank()` |
 
+</div>
+
 #### `rank([ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The rank of the current row _with gaps_; same as `row_number` of its first peer. If an `ORDER BY` clause is specified, the rank is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | `BIGINT` |
 | **Example** | `rank()` |
 
+</div>
+
 #### `row_number([ORDER BY ordering])`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The number of the current row within the partition, counting from 1. If an `ORDER BY` clause is specified, the row number is computed within the frame using the provided ordering instead of the frame ordering. |
 | :--- | :--- |
 | **Return type** | `BIGINT` |
 | **Example** | `row_number()` |
+
+</div>
 
 ## Aggregate Window Functions
 
@@ -232,8 +256,8 @@ or as a number of _groups_ (sets of rows with the same sort value).
 The full syntax is shown in the diagram at the top of the page,
 and this diagram visually illustrates computation environment:
 
-<img src="/images/framing-light.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" style="max-width:90%;width:90%;height:auto" class="lightmode-img" />
-<img src="/images/framing-dark.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" style="max-width:90%;width:90%;height:auto" class="darkmode-img" />
+<img src="/images/framing-light.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="lightmode-img" />
+<img src="/images/framing-dark.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="darkmode-img" />
 
 ### Partition and Ordering
 
@@ -285,7 +309,7 @@ Here is a simple `ROW` frame query, using an aggregate function:
 
 This query computes the `sum` of each point and the points on either side of it:
 
-<img src="/images/blog/windowing/moving-sum.jpg" alt="Moving SUM of three values" title="Figure 2: A moving SUM of three values" style="max-width:90%;width:90%;height:auto"/>
+<img src="/images/blog/windowing/moving-sum.jpg" alt="Moving SUM of three values" title="Figure 2: A moving SUM of three values"/>
 
 Notice that at the edge of the partition, there are only two values added together.
 This is because frames are cropped to the edge of the partition.

@@ -268,11 +268,13 @@ Returns a `MAP` of key-value pairs representing the requested elements and their
 
 #### `histogram_values(source, col_name, technique, bin_count)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns the upper boundaries of the bins and their counts. |
 | :--- | :--- |
 | **Example** | `histogram_values(integers, i, bin_count := 2)` |
+
+</div>
 
 Note: this function is not yet supported in SereneDB.
 
@@ -389,217 +391,269 @@ They all ignore `NULL` values (in the case of a single input column `x`), or pai
 
 #### `corr(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The correlation coefficient. |
 | :--- | :--- |
 | **Formula** | `covar_pop(y, x) / (stddev_pop(x) * stddev_pop(y))` |
 
+</div>
+
 #### `covar_pop(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The population covariance, which does not include bias correction. |
 | :--- | :--- |
 | **Formula** | `(sum(x*y) - sum(x) * sum(y) / regr_count(y, x)) / regr_count(y, x)`, `covar_samp(y, x) * (1 - 1 / regr_count(y, x))` |
 
+</div>
+
 #### `covar_samp(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample covariance, which includes Bessel's bias correction. |
 | :--- | :--- |
 | **Formula** | `(sum(x*y) - sum(x) * sum(y) / regr_count(y, x)) / (regr_count(y, x) - 1)`, `covar_pop(y, x) / (1 - 1 / regr_count(y, x))` |
 | **Alias(es)** | `regr_sxy(y, x)` |
 
+</div>
+
 #### `entropy(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The log-2 entropy of count input-values. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `kurtosis_pop(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The excess kurtosis (Fisher’s definition) without bias correction. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `kurtosis(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The excess kurtosis (Fisher's definition) with bias correction according to the sample size. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `mad(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The median absolute deviation. Temporal types return a positive `INTERVAL`. |
 | :--- | :--- |
 | **Formula** | `median(abs(x - median(x)))` |
 
+</div>
+
 #### `median(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The middle value of the set. For even value counts, quantitative values are averaged and ordinal values return the lower value. |
 | :--- | :--- |
 | **Formula** | `quantile_cont(x, 0.5)` |
 
+</div>
+
 #### `mode(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The most frequent value. This function is [affected by ordering](#order-by-clause-in-aggregate-functions). |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `quantile_cont(x, pos)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The interpolated `pos`-quantile of `x` for `0 <= pos <= 1`. Returns the `pos * (n_nonnull_values - 1)`th (zero-indexed, in the specified order) value of `x` or an interpolation between the adjacent values if the index is not an integer. Intuitively, arranges the values of `x` as equispaced _points_ on a line, starting at 0 and ending at 1, and returns the (interpolated) value at `pos`. This is Type 7 in Hyndman & Fan (1996). If `pos` is a `LIST` of `FLOAT`s, then the result is a `LIST` of the corresponding interpolated quantiles. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `quantile_disc(x, pos)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The discrete `pos`-quantile of `x` for `0 <= pos <= 1`. Returns the `greatest(ceil(pos * n_nonnull_values) - 1, 0)`th (zero-indexed, in the specified order) value of `x`. Intuitively, assigns to each value of `x` an equisized _sub-interval_ (left-open and right-closed except for the initial interval) of the interval `[0, 1]`, and picks the value of the sub-interval that contains `pos`. This is Type 1 in Hyndman & Fan (1996). If `pos` is a `LIST` of `FLOAT`s, then the result is a `LIST` of the corresponding discrete quantiles. |
 | :--- | :--- |
 | **Formula** | - |
 | **Alias(es)** | `quantile` |
 
+</div>
+
 #### `regr_avgx(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The average of the independent variable for non-`NULL` pairs, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `regr_avgy(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The average of the dependent variable for non-`NULL` pairs, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `regr_count(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The number of non-`NULL` pairs. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `regr_intercept(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The intercept of the univariate linear regression line, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | `regr_avgy(y, x) - regr_slope(y, x) * regr_avgx(y, x)` |
 
+</div>
+
 #### `regr_r2(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The squared Pearson correlation coefficient between y and x. Also: The coefficient of determination in a linear regression, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `regr_slope(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns the slope of the linear regression line, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | `regr_sxy(y, x) / regr_sxx(y, x)` |
 | **Alias(es)** | - |
 
+</div>
+
 #### `regr_sxx(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample variance, which includes Bessel's bias correction, of the independent variable for non-`NULL` pairs, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `regr_sxy(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample covariance, which includes Bessel's bias correction. |
 | :--- | :--- |
 | **Formula** | `(sum(x*y) - sum(x) * sum(y) / regr_count(y, x)) / (regr_count(y, x) - 1)`, `covar_pop(y, x) / (1 - 1 / regr_count(y, x))` |
 | **Alias(es)** | `covar_samp(y, x)` |
 
+</div>
+
 #### `regr_syy(y, x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample variance, which includes Bessel's bias correction, of the dependent variable for non-`NULL` pairs, where x is the independent variable and y is the dependent variable. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `sem(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The standard error of the mean. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `skewness(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The skewness. |
 | :--- | :--- |
 | **Formula** | - |
 
+</div>
+
 #### `stddev_pop(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The population standard deviation. |
 | :--- | :--- |
 | **Formula** | `sqrt(var_pop(x))` |
 
+</div>
+
 #### `stddev_samp(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample standard deviation. |
 | :--- | :--- |
 | **Formula** | `sqrt(var_samp(x))`|
 | **Alias(es)** | `stddev(x)`|
 
+</div>
+
 #### `var_pop(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The population variance, which does not include bias correction. |
 | :--- | :--- |
 | **Formula** | `(sum(x^2) - sum(x)^2 / count(x)) / count(x)`, `var_samp(y, x) * (1 - 1 / count(x))` |
 
+</div>
+
 #### `var_samp(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | The sample variance, which includes Bessel's bias correction. |
 | :--- | :--- |
 | **Formula** | `(sum(x^2) - sum(x)^2 / count(x)) / (count(x) - 1)`, `var_pop(y, x) / (1 - 1 / count(x))` |
 | **Alias(es)** | `variance(arg, val)` |
+
+</div>
 
 ## Ordered Set Aggregate Functions
 

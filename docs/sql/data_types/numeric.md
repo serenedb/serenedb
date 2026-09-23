@@ -11,7 +11,7 @@ import DocCallout from "@site/src/components/DocCallout";
 The types `TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT` and `HUGEINT` store whole numbers, that is, numbers without fractional components, of various ranges. Attempts to store values outside of the allowed range will result in an error.
 The types `UTINYINT`, `USMALLINT`, `UINTEGER`, `UBIGINT` and `UHUGEINT` store whole unsigned numbers. Attempts to store negative numbers or values outside of the allowed range will result in an error.
 
-<div class="center_aligned_header_table"></div>
+<div className="docs-table-centered">
 
 | Name        | Aliases                          |     Min |       Max | Size in bytes |
 | :---------- | :------------------------------- | ------: | --------: | ------------: |
@@ -25,6 +25,8 @@ The types `UTINYINT`, `USMALLINT`, `UINTEGER`, `UBIGINT` and `UHUGEINT` store wh
 | `UINTEGER`  | `UINT32`                         |       0 |  2^32 - 1 |             4 |
 | `UBIGINT`   | `UINT64`                         |       0 |  2^64 - 1 |             8 |
 | `UHUGEINT`  | `UINT128`                        |       0 | 2^128 - 1 |            16 |
+
+</div>
 
 <DocCallout type="tip">
 `INT8` is a 64-bit integer, and is not the signed equivalent of `UINT8`, an unsigned, 8-bit integer. The type aliases `INT1`, `INT2`, `INT4` and `INT8` for signed integers were inherited from PostgreSQL, where digits in these names indicate their size in _bytes_, whereas the type aliases for their unsigned equivalents, `UINT8`, `UINT16`, `UINT32` and `UINT64`, indicate their size in _bits_ following the C/C++ convention.

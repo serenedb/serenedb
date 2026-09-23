@@ -155,6 +155,13 @@ bool Move(const path_char_t* src_path, const path_char_t* dst_path) noexcept;
 size_t Fread(void* fd, void* buf, size_t size);
 size_t Fwrite(void* fd, const void* buf, size_t size);
 void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
+
+inline constexpr size_t kPage = 4 * 1024;
+inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
+
+void Prefetch(const void* addr, size_t size) noexcept;
+bool IsResident(const void* addr, size_t size) noexcept;
+
 IRS_FORCE_INLINE inline bool Write(void* fd, const void* buf, size_t size) {
   return Fwrite(fd, buf, size) == size;
 }

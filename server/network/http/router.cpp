@@ -20,6 +20,7 @@
 
 #include "network/http/router.h"
 
+#include <absl/algorithm/container.h>
 #include <ada.h>
 
 #include <iresearch/utils/assert.hpp>
@@ -52,7 +53,25 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
       rest = rest.substr(slash + 1);
     }
   }
-  _routes.push_back({method, std::move(segments), std::move(handler)});
+  auto& routes =
+    absl::c_any_of(segments, [](const Segment& s) { return s.param; })
+      ? _parameterized
+      : _literal;
+  routes.push_back({method, std::move(segments), std::move(handler)});
+}
+
+HttpHandler* HttpRouter::MatchIn(std::vector<Entry>& routes,
+                                 std::string_view path, HttpRequest& request) {
+  for (auto& route : routes) {
+    if (route.method != request.method) {
+      continue;
+    }
+    request.params.clear();
+    if (MatchPath(route.segments, path, request)) {
+      return route.handler.get();
+    }
+  }
+  return nullptr;
 }
 
 bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
@@ -74,9 +93,6 @@ bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
       slash == std::string_view::npos ? rest : rest.substr(0, slash);
     const Segment& pat = segments[i];
     if (pat.param) {
-      if (seg.starts_with('_')) {
-        return false;
-      }
       request.params.emplace_back(pat.text, std::string{seg});
     } else if (seg != pat.text) {
       return false;
@@ -111,15 +127,13 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   if (path.empty() || path.front() != '/') {
     return nullptr;
   }
-  for (auto& route : _routes) {
-    if (route.method != request.method) {
-      continue;
-    }
-    request.params.clear();
-    if (MatchPath(route.segments, path, request)) {
-      return route.handler.get();
-    }
+  if (auto* handler = MatchIn(_literal, path, request)) {
+    return handler;
   }
+  if (auto* handler = MatchIn(_parameterized, path, request)) {
+    return handler;
+  }
+  request.params.clear();
   return nullptr;
 }
 

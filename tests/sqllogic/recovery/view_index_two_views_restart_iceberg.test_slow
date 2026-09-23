@@ -1,0 +1,210 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vitv FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vitv_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vitv.${__DATABASE__};
+
+statement ok
+CREATE TABLE vitv.${__DATABASE__}.t (id INTEGER, title TEXT, body TEXT);
+
+statement count 3
+INSERT INTO vitv.${__DATABASE__}.t VALUES
+  (1, 'first title', 'pudge goes mid'),
+  (2, 'second title', 'arrives before the restart'),
+  (3, 'third title', 'lands after the restart');
+
+statement ok
+CREATE TABLE vitv.${__DATABASE__}.u (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO vitv.${__DATABASE__}.u VALUES (10, 'techies mines the jungle');
+
+statement ok
+CREATE VIEW vitv_a AS SELECT * FROM vitv.${__DATABASE__}.t;
+
+statement ok
+CREATE VIEW vitv_b AS SELECT ID, TITLE FROM vitv.${__DATABASE__}.t;
+
+statement ok
+CREATE VIEW vitv_u_v AS SELECT * FROM vitv.${__DATABASE__}.u;
+
+statement ok
+CREATE INDEX vitv_idx_a ON vitv_a USING inverted(id, body vitv_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vitv_idx_b ON vitv_b USING inverted(id, title vitv_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vitv_idx_u ON vitv_u_v USING inverted(id, body vitv_en) WITH (compaction_interval=0);
+
+query
+SELECT id FROM vitv_idx_a WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id, title FROM vitv_idx_b WHERE title @@ ts_phrase('second');
+----
+id	title
+2	second title
+
+query
+SELECT id FROM vitv_idx_u WHERE body @@ ts_phrase('techies');
+----
+id
+10
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vitv_idx_a WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT id, title FROM vitv_idx_b ORDER BY id;
+----
+id	title
+1	first title
+2	second title
+3	third title
+
+connection after_crash
+query
+SELECT title FROM vitv_idx_b WHERE id = 3;
+----
+title
+third title
+
+connection after_crash
+query
+SELECT id, body FROM vitv_idx_u WHERE body @@ ts_phrase('techies');
+----
+id	body
+10	techies mines the jungle
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vitv_idx_a');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vitv_idx_b');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vitv_idx_u');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement count 1
+INSERT INTO vitv.${__DATABASE__}.t VALUES (4, 'fourth title', 'after the restart too');
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vitv_idx_a');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vitv_idx_b');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT id FROM vitv_idx_a WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+connection after_crash
+query
+SELECT id, title FROM vitv_idx_b WHERE title @@ ts_phrase('fourth');
+----
+id	title
+4	fourth title
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  (SELECT id, title, body FROM vitv_idx_a EXCEPT SELECT id, title, body FROM vitv.${__DATABASE__}.t)
+  UNION ALL
+  (SELECT id, title, body FROM vitv.${__DATABASE__}.t EXCEPT SELECT id, title, body FROM vitv_idx_a)
+);
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP INDEX vitv_idx_a;
+
+connection after_crash
+statement ok
+DROP INDEX vitv_idx_b;
+
+connection after_crash
+statement ok
+DROP INDEX vitv_idx_u;
+
+connection after_crash
+statement ok
+DROP VIEW vitv_a;
+
+connection after_crash
+statement ok
+DROP VIEW vitv_b;
+
+connection after_crash
+statement ok
+DROP VIEW vitv_u_v;
+
+connection after_crash
+statement ok
+DROP TABLE vitv.${__DATABASE__}.t;
+
+connection after_crash
+statement ok
+DROP TABLE vitv.${__DATABASE__}.u;
+
+connection after_crash
+statement ok
+DROP SCHEMA vitv.${__DATABASE__};
+
+connection after_crash
+statement ok
+DROP SERVER vitv;

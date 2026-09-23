@@ -41,8 +41,14 @@ class HttpRouter {
 
  private:
   // A route pattern is a list of '/'-delimited segments; `param` segments
-  // (`:name`) capture any request segment not starting with '_' (the API
-  // namespace, never a name in ES), the rest match literally.
+  // (`:name`) capture any request segment, the rest match literally. Fully
+  // literal routes are matched first, so one api's `/:index` cannot swallow
+  // another's reserved `/_mcp` whichever order the apis were registered in;
+  // within each of the two classes, insertion order still decides.
+  //
+  // A param does capture an `_`-prefixed segment once no literal claims it, so
+  // a name the caller should not have used reaches the handler that can reject
+  // it properly rather than looking like a missing route.
   // No regex, optionals, or wildcards -- every ES/OS route is this shape, so a
   // segment walk beats per-request URL parsing + regex by ~30% of server CPU.
   struct Segment {
@@ -58,7 +64,11 @@ class HttpRouter {
   static bool MatchPath(const std::vector<Segment>& segments,
                         std::string_view path, HttpRequest& request);
 
-  std::vector<Entry> _routes;
+  static HttpHandler* MatchIn(std::vector<Entry>& routes, std::string_view path,
+                              HttpRequest& request);
+
+  std::vector<Entry> _literal;
+  std::vector<Entry> _parameterized;
 };
 
 }  // namespace sdb::network

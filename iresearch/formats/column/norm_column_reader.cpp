@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -72,6 +73,28 @@ NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
       offset += byte_count;
     }
   }
+}
+
+size_t NormColumnReader::Stream(size_t rg, const byte_type* from,
+                                size_t advised) const noexcept {
+  if (!_owned.empty()) {
+    return advised;
+  }
+  uint64_t budget = file_utils::kMaxReadahead;
+  auto r = std::max(rg, advised);
+  if (r == rg) {
+    const auto span = _spans[r++];
+    SDB_ASSERT(from >= span.data() && from < span.data() + span.size());
+    const auto size = static_cast<size_t>(span.data() + span.size() - from);
+    file_utils::Prefetch(from, size);
+    budget -= std::min<uint64_t>(budget, size);
+  }
+  for (; r < _spans.size() && budget != 0; ++r) {
+    const auto span = _spans[r];
+    file_utils::Prefetch(span.data(), span.size());
+    budget -= std::min<uint64_t>(budget, span.size());
+  }
+  return r;
 }
 
 uint32_t NormColumnReader::Get(uint64_t row_pos) const noexcept {

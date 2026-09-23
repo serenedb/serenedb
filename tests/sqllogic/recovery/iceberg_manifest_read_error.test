@@ -1,0 +1,28 @@
+control substitution on
+
+# An iceberg scan reads the manifests its manifest list names through a task
+# executor. A read that fails leaves the error recorded there, and the scan's
+# shared state asks the executor for its result again from its destructor, so
+# the exception escapes a destructor: std::terminate. A manifest the scan
+# cannot parse must fail the statement and leave the server answering.
+#
+# Here rather than under sdb/ because an unfixed server aborts on it, and
+# recovery tests each get their own serened.
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/imre_good && ln -sfn ${RESOURCES}/tests/iceberg/plain_badmanifest_v1 $__TEST_DIR__/imre_bad
+
+query
+SELECT count(*) FROM iceberg_scan('${__TEST_DIR__}/imre_good', allow_moved_paths=true);
+----
+count
+3
+
+statement error Avro container file
+SELECT count(*) FROM iceberg_scan('${__TEST_DIR__}/imre_bad', allow_moved_paths=true);
+
+query
+SELECT 1 AS alive;
+----
+alive
+1

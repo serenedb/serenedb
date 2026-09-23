@@ -1,0 +1,38 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "enumtest"}}
+        ]
+      },
+      "someUnknownResourceField": {"ignored": true},
+      "scopeSpans": [
+        {
+          "scope": {"name": "names"},
+          "spans": [
+            {
+              "traceId": "AABBCCDDEEFF00112233445566778899",
+              "spanId": "0011223344556677",
+              "name": "kind and status by name",
+              "kind": "SPAN_KIND_PRODUCER",
+              "startTimeUnixNano": "1544712660000000000",
+              "endTimeUnixNano": "1544712660000000005",
+              "status": {"code": "STATUS_CODE_ERROR", "message": "named"},
+              "futureField": 42
+            },
+            {
+              "trace_id": "aabbccddeeff00112233445566778899",
+              "span_id": "0011223344556678",
+              "name": "snake_case field names",
+              "kind": 5,
+              "start_time_unix_nano": "1544712660000000000",
+              "end_time_unix_nano": "1544712660000000009",
+              "status": {"code": 1}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

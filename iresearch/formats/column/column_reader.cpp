@@ -60,6 +60,7 @@
 #include "iresearch/formats/column/variant_column_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -285,8 +286,10 @@ bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   return true;
 }
 
-std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(
-  const BlockWindow& w, ReadContext& ctx) const {
+std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
+                                                          ReadContext& ctx,
+                                                          ScanState* s) const {
+  Readahead(w.block, ctx, s);
   const auto& m = _segments[w.block];
   auto& db = ctx.Database();
   const auto& codec = *m.codec;
@@ -314,6 +317,40 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(
     }
   }
   return segment;
+}
+
+void ColumnReader::Readahead(size_t block, ReadContext& ctx,
+                             ScanState* s) const noexcept {
+  if (ctx.RandomAccess()) {
+    return;
+  }
+  auto& in = ctx.In();
+  const auto& first = _segments[block];
+  if (s == nullptr) {
+    in.Prefetch(first.file_offset, first.byte_size);
+    return;
+  }
+  const bool sequential = block != 0 && s->opened_block + 1 == block;
+  s->opened_block = block;
+  if (block < s->advised_end) {
+    return;
+  }
+  if (in.Resident(first.file_offset, first.byte_size)) {
+    s->advised_end = block + 1;
+    return;
+  }
+  uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  auto b = block;
+  do {
+    const auto& m = _segments[b++];
+    in.Prefetch(m.file_offset, m.byte_size);
+    const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
+    if (budget <= cost) {
+      break;
+    }
+    budget -= cost;
+  } while (b < _segments.size());
+  s->advised_end = b;
 }
 
 ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
@@ -344,7 +381,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
     if (s.st.scan_state) {
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
     }
-    s.segments.emplace_back(Open(s.window, *s.ctx));
+    s.segments.emplace_back(Open(s.window, *s.ctx, &s));
     s.segments.back()->InitializeScan(s.st);
     s.st.internal_index = 0;
     s.initialized = true;
@@ -406,7 +443,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
         break;
       }
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
-      s.segments.emplace_back(Open(s.window, *s.ctx));
+      s.segments.emplace_back(Open(s.window, *s.ctx, &s));
       s.segments.back()->InitializeScan(s.st);
       s.st.offset_in_column = 0;
       s.st.internal_index = 0;

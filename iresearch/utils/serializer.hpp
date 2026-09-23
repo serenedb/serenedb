@@ -688,6 +688,11 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
       });
     } else if constexpr (std::is_aggregate_v<T>) {
       src.ForEachObjectField([&](std::string_view name) {
+        // The arg may remap incoming keys, e.g. lowerCamelCase to the
+        // snake_case member names.
+        if constexpr (requires { arg.FieldName(name); }) {
+          name = arg.FieldName(name);
+        }
         bool matched = false;
         boost::pfr::for_each_field_with_name(
           value, [&](std::string_view field_name, auto& fv) {

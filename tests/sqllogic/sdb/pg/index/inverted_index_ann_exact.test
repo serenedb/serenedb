@@ -19,7 +19,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ax;
 
 statement ok
-SET sdb_ann_exact = true;
+SET sdb_ann_force_exact = true;
 
 query
 EXPLAIN SELECT pk FROM ax_idx
@@ -50,7 +50,7 @@ pk
 1503
 
 statement ok
-SET sdb_ann_exact = false;
+SET sdb_ann_force_exact = false;
 
 query
 SELECT pk FROM ax_idx
@@ -64,7 +64,7 @@ pk
 1503
 
 statement ok
-SET sdb_ann_exact = true;
+SET sdb_ann_force_exact = true;
 
 # An indexed predicate narrows the rows scored.
 query
@@ -95,4 +95,4 @@ pk	d
 1500	1.077
 
 statement ok
-RESET sdb_ann_exact;
+RESET sdb_ann_force_exact;

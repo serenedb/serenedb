@@ -96,7 +96,7 @@ Quantization also speeds up the scan itself, not just the index size: quantized 
 
 A quantized score is an *estimate*, and two segments' estimates are not comparable — each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
 
-- `-1` (the default) lets the engine choose by code width: 8-bit codes rank well enough alone, everything narrower is re-scored.
+- `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
 - A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
 

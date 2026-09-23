@@ -103,7 +103,7 @@ pk
 
 # Exact mode is a knob as well.
 statement ok
-SET sdb_ann_exact = true;
+SET sdb_ann_force_exact = true;
 
 query
 EXECUTE ap_where([100.4, 0, 0, 0, 0, 0, 0, 0], 'even', 200);
@@ -114,7 +114,7 @@ pk
 202
 
 statement ok
-RESET sdb_ann_exact;
+RESET sdb_ann_force_exact;
 
 statement ok
 DEALLOCATE ap_knn;

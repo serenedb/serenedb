@@ -516,13 +516,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ann_exact",
+      "sdb_ann_force_exact",
       {
         LogicalTypeId::BOOLEAN,
         "When true, a vector search (ORDER BY <distance> LIMIT k) scores every "
         "row from its stored vector instead of walking the ANN index: the "
         "exact answer, at the cost of a full scan, split across the scan's "
-        "workers. Default false.",
+        "workers. Default false, which leaves the choice to the engine.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -581,7 +581,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "the query answers from the codes, which is faster and caps recall at "
         "whatever the codes can tell apart -- well below 1 for a 4-bit or "
         "binary quantizer, and worse still across many segments. -1 (the "
-        "default) lets the engine choose by code width. Elasticsearch spells "
+        "default) rescores every quantized index at 1. Elasticsearch spells "
         "this rescore_vector.oversample, with the same 0, and Qdrant splits it "
         "into quantization.oversampling and quantization.rescore. Fractional "
         "values are allowed, but a factor between 0 and 1 is rejected because "

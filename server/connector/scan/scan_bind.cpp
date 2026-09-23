@@ -126,9 +126,9 @@ namespace {
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
   switch (vs.quant) {
     case irs::VectorQuantization::None:
+      return 0.0;
     case irs::VectorQuantization::SQ8:
     case irs::VectorQuantization::USQ8:
-      return 0.0;
     case irs::VectorQuantization::SQ4:
     case irs::VectorQuantization::USQ4:
     case irs::VectorQuantization::PQ:
@@ -174,7 +174,7 @@ irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
 }
 
 bool ReadAnnExact(duckdb::ClientContext& context) {
-  static constinit SettingRef gExact{"sdb_ann_exact"};
+  static constinit SettingRef gExact{"sdb_ann_force_exact"};
   return gExact.Bool(context);
 }
 

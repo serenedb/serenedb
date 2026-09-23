@@ -395,9 +395,19 @@ bool TryClaimIResearchConjunctImpl(
   // away once the whole request is claimed.
   auto node = std::make_unique<irs::BooleanFilter>();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  const auto claimed =
-    connector::MakeSearchFilter(*node, single, getter, context, expr_getter,
-                                scorers, connector::WideRanges::DeclineWide);
+  const connector::ColumnGetter* column_getter = &getter;
+  const connector::ExpressionGetter* expression_getter = &expr_getter;
+  connector::ColumnGetter recording_columns;
+  connector::ExpressionGetter recording_expressions;
+  if (deferred != nullptr) {
+    recording_columns = deferred->Recording(getter);
+    recording_expressions = deferred->Recording(expr_getter);
+    column_getter = &recording_columns;
+    expression_getter = &recording_expressions;
+  }
+  const auto claimed = connector::MakeSearchFilter(
+    *node, single, *column_getter, context, *expression_getter, scorers,
+    connector::WideRanges::DeclineWide);
   const bool built = absl::c_any_of(
     irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
   if (!claimed.ok() || !built) {
@@ -1278,13 +1288,14 @@ bool ClaimSearchConjuncts(
       ++i;
     }
   }
-  if (deferred.declined_parameter) {
+  if (deferred.declined_parameter ||
+      (!deferred.claim.conjuncts.empty() && deferred.used_expr_getter)) {
     scan.plan_cache.declined_parameter = true;
   }
   if (!any_claimed) {
     return false;
   }
-  if (!deferred.claim.conjuncts.empty()) {
+  if (!deferred.claim.conjuncts.empty() && !deferred.used_expr_getter) {
     // The whole WHERE is rebuilt at execution, the constant conjuncts with
     // it, so the executed filter is one boolean the optimizer has seen whole.
     for (auto& e : claimed_exprs) {

@@ -221,6 +221,7 @@ class PostingLeaf {
     }
     auto& in = In();
     in.Seek(meta.doc_start);
+    LimitDocReadahead(in, meta);
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);
     }

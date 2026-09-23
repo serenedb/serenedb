@@ -230,8 +230,10 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
     const irs::bytes_view prefix{entry.prefix};
     if (entry.dead) {
       // Leapfrog: the cursor names the next dead row, seek_ge jumps to its
-      // term, a landed alive term gallops the cursor forward. Seeks only --
-      // never mixed with next() on one iterator.
+      // term, a landed alive term gallops the cursor forward. Only a seek that
+      // lands on the term leaves the iterator usable: the other outcomes
+      // advance it internally and leave its floor-block state stale, so the
+      // iterator is dropped and the next dead row starts from a fresh one.
       while (true) {
         const auto dead_row = (*entry.dead)(_resume_row);
         if (!dead_row) {
@@ -248,11 +250,13 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
           reinterpret_cast<const irs::byte_type*>(_key_scratch.data()),
           _key_scratch.size()});
         if (res == irs::SeekResult::End) {
+          _terms.reset();
           break;
         }
         if (res == irs::SeekResult::NotFound) {
           const auto term = _terms->value();
           if (!term.starts_with(prefix)) {
+            _terms.reset();
             break;  // no terms of this file at or above the dead row
           }
           // An alive row's term: gallop the cursor to it and re-check.
@@ -260,6 +264,7 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
           _resume_row = primary_key::ReadSigned<int64_t>(std::string_view{
             reinterpret_cast<const char*>(term.data()) + prefix.size(),
             sizeof(int64_t)});
+          _terms.reset();
           continue;
         }
         _postings = _terms->postings(irs::IndexFeatures::None);

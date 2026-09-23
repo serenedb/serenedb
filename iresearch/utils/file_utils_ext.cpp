@@ -25,7 +25,9 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <utility>
 
 #include "iresearch/utils/assert.hpp"
 
@@ -49,6 +51,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #endif  // _WIN32
@@ -234,6 +237,53 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #ifdef __linux__
   ::sync_file_range(HANDLE_CAST(fd), static_cast<off64_t>(offset),
                     static_cast<off64_t>(size), SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
+#ifndef _WIN32
+namespace {
+
+constexpr size_t kPrefetchChunk = 128 * 1024;
+
+std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
+  static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
+  const auto begin = reinterpret_cast<uintptr_t>(addr);
+  const auto aligned = begin & ~(kPageSize - 1);
+  return {aligned, size + (begin - aligned)};
+}
+
+}  // namespace
+#endif
+
+void Prefetch(const void* addr, size_t size) noexcept {
+#ifndef _WIN32
+  if (size == 0) {
+    return;
+  }
+  const auto [aligned, total] = PageRange(addr, size);
+  for (size_t offset = 0; offset < total; offset += kPrefetchChunk) {
+    ::madvise(reinterpret_cast<void*>(aligned + offset),
+              std::min(kPrefetchChunk, total - offset), MADV_WILLNEED);
+  }
+#endif
+}
+
+bool IsResident(const void* addr, size_t size) noexcept {
+#ifndef _WIN32
+  if (size == 0) {
+    return true;
+  }
+  constexpr size_t kMaxPages = 1024;
+  auto [aligned, total] = PageRange(addr, size);
+  total = std::min(total, kMaxPages * kPage);
+  unsigned char resident[kMaxPages];
+  if (::mincore(reinterpret_cast<void*>(aligned), total, resident) != 0) {
+    return false;
+  }
+  return std::all_of(resident, resident + (total + kPage - 1) / kPage,
+                     [](unsigned char page) { return (page & 1) != 0; });
+#else
+  return false;
 #endif
 }
 

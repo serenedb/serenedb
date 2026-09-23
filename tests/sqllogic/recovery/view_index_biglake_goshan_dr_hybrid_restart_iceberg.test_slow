@@ -1,0 +1,228 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vkh FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vkh_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vkh.${__DATABASE__};
+
+statement ok
+CREATE TABLE vkh.${__DATABASE__}.docs (id INTEGER, body TEXT, emb FLOAT[]);
+
+statement count 4617
+INSERT INTO vkh.${__DATABASE__}.docs
+SELECT s,
+       'doc ' || s || CASE s % 4 WHEN 0 THEN ' red fox' WHEN 1 THEN ' blue cat' WHEN 2 THEN ' green bird' ELSE ' yellow dog' END,
+       [sin(s * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]
+FROM generate_series(1, 4617) t(s);
+
+statement ok
+CREATE VIEW vkh_v AS SELECT id, body, emb::FLOAT[3072] AS emb FROM vkh.${__DATABASE__}.docs;
+
+statement ok
+CREATE INDEX vkh_idx ON vkh_v USING inverted(id, body vkh_en, emb ivf (metric = 'l2')) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vkh_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+query
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
+----
+id
+4
+8
+12
+
+query
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY bm25(tableoid) DESC, id LIMIT 3;
+----
+id
+4
+8
+12
+
+query
+SELECT id FROM vkh_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+7
+
+query
+SELECT body FROM vkh_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkh_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_crash
+query
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
+----
+id
+4
+8
+12
+
+connection after_crash
+query
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY bm25(tableoid) DESC, id LIMIT 3;
+----
+id
+4
+8
+12
+
+connection after_crash
+query
+SELECT id FROM vkh_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+7
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM vkh_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 10
+);
+----
+count
+10
+
+connection after_crash
+query
+SELECT body FROM vkh_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+connection after_crash
+query
+SELECT id, body FROM vkh_idx WHERE id IN (1, 4617) ORDER BY id;
+----
+id	body
+1	doc 1 blue cat
+4617	doc 4617 blue cat
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vkh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2;
+----
+id
+4616
+4612
+
+connection after_shutdown
+query
+SELECT * FROM serenedb_reindex('vkh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_shutdown
+statement count 1
+INSERT INTO vkh.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
+
+connection after_shutdown
+query
+SELECT * FROM serenedb_reindex('vkh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_shutdown
+query
+SELECT count(*) FROM vkh_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1155
+
+connection after_shutdown
+query
+SELECT id FROM vkh_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2;
+----
+id
+4618
+4616
+
+connection after_shutdown
+query
+SELECT id FROM vkh_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+4618
+
+connection after_shutdown
+query
+SELECT body FROM vkh_idx WHERE id = 4618;
+----
+body
+doc 4618 red fox
+
+connection after_shutdown
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vkh_idx EXCEPT SELECT id, body FROM vkh.${__DATABASE__}.docs)
+  UNION ALL
+  (SELECT id, body FROM vkh.${__DATABASE__}.docs EXCEPT SELECT id, body FROM vkh_idx)
+);
+----
+count
+0
+
+connection after_shutdown
+statement ok
+DROP INDEX vkh_idx;
+
+connection after_shutdown
+statement ok
+DROP VIEW vkh_v;
+
+connection after_shutdown
+statement ok
+DROP TABLE vkh.${__DATABASE__}.docs;
+
+connection after_shutdown
+statement ok
+DROP SCHEMA vkh.${__DATABASE__};
+
+connection after_shutdown
+statement ok
+DROP SERVER vkh;

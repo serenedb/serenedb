@@ -1,0 +1,184 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_a_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE SERVER srv_b_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vtc_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_a_${__DATABASE__}.${__DATABASE__}_a;
+
+statement ok
+CREATE SCHEMA srv_b_${__DATABASE__}.${__DATABASE__}_b;
+
+statement ok
+CREATE TABLE srv_a_${__DATABASE__}.${__DATABASE__}_a.docs (id INTEGER, body TEXT);
+
+statement ok
+CREATE TABLE srv_b_${__DATABASE__}.${__DATABASE__}_b.docs (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO srv_a_${__DATABASE__}.${__DATABASE__}_a.docs VALUES (1, 'pudge in catalog a'), (2, 'anchin in catalog a');
+
+statement count 2
+INSERT INTO srv_b_${__DATABASE__}.${__DATABASE__}_b.docs VALUES (1, 'pudge in catalog b'), (3, 'techies in catalog b');
+
+statement ok
+CREATE VIEW vtc_a_v AS SELECT * FROM srv_a_${__DATABASE__}.${__DATABASE__}_a.docs;
+
+statement ok
+CREATE VIEW vtc_b_v AS SELECT * FROM srv_b_${__DATABASE__}.${__DATABASE__}_b.docs;
+
+statement ok
+CREATE INDEX vtc_a_idx ON vtc_a_v USING inverted(id, body vtc_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vtc_b_idx ON vtc_b_v USING inverted(id, body vtc_en) WITH (compaction_interval=0);
+
+query
+SELECT id, body FROM vtc_a_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge in catalog a
+
+query
+SELECT id, body FROM vtc_b_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge in catalog b
+
+query
+SELECT body FROM vtc_a_idx WHERE id = 1;
+----
+body
+pudge in catalog a
+
+query
+SELECT body FROM vtc_b_idx WHERE id = 1;
+----
+body
+pudge in catalog b
+
+query
+SELECT count(*) FROM vtc_a_idx WHERE body @@ ts_phrase('techies');
+----
+count
+0
+
+query
+SELECT id FROM vtc_b_idx WHERE body @@ ts_phrase('techies');
+----
+id
+3
+
+statement count 1
+INSERT INTO srv_b_${__DATABASE__}.${__DATABASE__}_b.docs VALUES (4, 'mines in catalog b');
+
+query
+SELECT * FROM serenedb_reindex('vtc_a_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT * FROM serenedb_reindex('vtc_b_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM vtc_b_idx WHERE body @@ ts_phrase('catalog') ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM vtc_a_idx WHERE body @@ ts_phrase('catalog') ORDER BY id;
+----
+id
+1
+2
+
+statement count 1
+DELETE FROM srv_a_${__DATABASE__}.${__DATABASE__}_a.docs WHERE id = 2;
+
+query
+SELECT action, files_changed FROM serenedb_reindex('vtc_a_idx');
+----
+action	files_changed
+delta	1
+
+query
+SELECT * FROM serenedb_reindex('vtc_b_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT id, body FROM vtc_a_idx ORDER BY id;
+----
+id	body
+1	pudge in catalog a
+
+query
+SELECT id, body FROM vtc_b_idx ORDER BY id;
+----
+id	body
+1	pudge in catalog b
+3	techies in catalog b
+4	mines in catalog b
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vtc_a_idx EXCEPT SELECT id, body FROM srv_a_${__DATABASE__}.${__DATABASE__}_a.docs)
+  UNION ALL
+  (SELECT id, body FROM srv_a_${__DATABASE__}.${__DATABASE__}_a.docs EXCEPT SELECT id, body FROM vtc_a_idx)
+  UNION ALL
+  (SELECT id, body FROM vtc_b_idx EXCEPT SELECT id, body FROM srv_b_${__DATABASE__}.${__DATABASE__}_b.docs)
+  UNION ALL
+  (SELECT id, body FROM srv_b_${__DATABASE__}.${__DATABASE__}_b.docs EXCEPT SELECT id, body FROM vtc_b_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vtc_a_idx;
+
+statement ok
+DROP INDEX vtc_b_idx;
+
+statement ok
+DROP VIEW vtc_a_v;
+
+statement ok
+DROP VIEW vtc_b_v;
+
+statement ok
+DROP TABLE srv_a_${__DATABASE__}.${__DATABASE__}_a.docs;
+
+statement ok
+DROP TABLE srv_b_${__DATABASE__}.${__DATABASE__}_b.docs;
+
+statement ok
+DROP SCHEMA srv_a_${__DATABASE__}.${__DATABASE__}_a;
+
+statement ok
+DROP SCHEMA srv_b_${__DATABASE__}.${__DATABASE__}_b;
+
+statement ok
+DROP SERVER srv_a_${__DATABASE__};
+
+statement ok
+DROP SERVER srv_b_${__DATABASE__};

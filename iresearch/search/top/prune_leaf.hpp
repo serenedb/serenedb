@@ -249,6 +249,7 @@ class PruneLeafBase {
     }
     auto& in = In();
     in.Seek(meta.doc_start);
+    LimitDocReadahead(in, meta);
     _left_in_list = meta.docs_count;
 
     if (meta.docs_count > doc_limits::kBlockSize) {

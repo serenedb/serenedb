@@ -30,6 +30,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -148,6 +149,8 @@ class ColumnReader {
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;
     ReadContext* ctx = nullptr;
+    size_t opened_block = std::numeric_limits<size_t>::max();
+    size_t advised_end = 0;
     bool initialized = false;
     duckdb::SelectionVector sel;
     std::unique_ptr<VectorScratch> list_offsets;
@@ -343,8 +346,10 @@ class ColumnReader {
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 
  private:
+  void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;
   std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
-                                              ReadContext& ctx) const;
+                                              ReadContext& ctx,
+                                              ScanState* s = nullptr) const;
   bool NextSegment(BlockWindow& w) const noexcept;
   // The span's validity block is the all-valid EMPTY codec (or there is no
   // validity child): the data segment alone is validity-complete there.

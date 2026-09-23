@@ -145,6 +145,7 @@ CLICKHOUSE_LOG_FILE=""
 CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
 TEST_NETWORK=""
 cancel_pid=""
+: "${ICEBERG_BACKEND:=local}"
 # Bounds the docker event query in report_failed_container to this run.
 RUN_START_TS=$(date +%s)
 
@@ -494,6 +495,7 @@ PYEOF
 launch_iceberg_rest() {
 	if [[ -n "${ICEBERG_REST_URL:-}" ]]; then
 		echo "iceberg-rest provided by the environment (${ICEBERG_REST_URL})."
+		export_iceberg_local_vars
 		return
 	fi
 	local prefix
@@ -576,6 +578,49 @@ launch_iceberg_rest() {
 
 	echo "iceberg-rest running (url=$ICEBERG_REST_URL)."
 	echo
+	export_iceberg_local_vars
+}
+
+export_iceberg_local_vars() {
+	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_storage (TYPE S3, KEY_ID '${MINIO_ACCESS_KEY}', SECRET '${MINIO_SECRET_KEY}', ENDPOINT '${MINIO_HOST}:${MINIO_PORT}', URL_STYLE 'path', USE_SSL false, SCOPE 's3://${MINIO_BUCKET}/warehouse/');"
+	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', endpoint '${ICEBERG_REST_URL}', authorization_type 'none'"
+}
+
+launch_biglake() {
+	: "${BIGLAKE_PROJECT:?ICEBERG_BACKEND=biglake needs BIGLAKE_PROJECT}"
+	: "${BIGLAKE_CATALOG:?ICEBERG_BACKEND=biglake needs BIGLAKE_CATALOG}"
+	local secret_body
+	if [[ -n "${BIGLAKE_CLIENT_EMAIL:-}" ]]; then
+		secret_body="TYPE ICEBERG, PROVIDER google, CLIENT_EMAIL '${BIGLAKE_CLIENT_EMAIL}', PRIVATE_KEY '${BIGLAKE_PRIVATE_KEY}', PRIVATE_KEY_ID '${BIGLAKE_PRIVATE_KEY_ID:-}', EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '${BIGLAKE_PROJECT}'}"
+		echo "BigLake catalog ${BIGLAKE_CATALOG}: service account ${BIGLAKE_CLIENT_EMAIL}."
+	else
+		local adc="${GOOGLE_APPLICATION_CREDENTIALS:-$HOME/.config/gcloud/application_default_credentials.json}"
+		if [[ ! -f "$adc" ]]; then
+			echo "ERROR: ICEBERG_BACKEND=biglake needs BIGLAKE_CLIENT_EMAIL/BIGLAKE_PRIVATE_KEY or gcloud application-default credentials at $adc" >&2
+			exit 1
+		fi
+		secret_body=$(
+			python3 - "$adc" "$BIGLAKE_PROJECT" <<-'PY'
+				import json, sys
+				adc = json.load(open(sys.argv[1]))
+				lit = lambda s: "'" + s.replace("'", "''") + "'"
+				if adc.get("type") == "service_account":
+				    print("TYPE ICEBERG, PROVIDER google, "
+				          f"CLIENT_EMAIL {lit(adc['client_email'])}, PRIVATE_KEY {lit(adc['private_key'])}, "
+				          f"PRIVATE_KEY_ID {lit(adc.get('private_key_id', ''))}, "
+				          f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(sys.argv[2])}}}")
+				else:
+				    print("TYPE ICEBERG, OAUTH2_GRANT_TYPE 'refresh_token', "
+				          "OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token', "
+				          f"CLIENT_ID {lit(adc['client_id'])}, CLIENT_SECRET {lit(adc['client_secret'])}, "
+				          f"REFRESH_TOKEN {lit(adc['refresh_token'])}, "
+				          f"EXTRA_HTTP_HEADERS MAP {{'x-goog-user-project': {lit(sys.argv[2])}}}")
+			PY
+		)
+		echo "BigLake catalog ${BIGLAKE_CATALOG}: credentials from ${adc}."
+	fi
+	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_catalog (${secret_body});"
+	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
 # Launches an Ollama server and pulls a small embedding model. Ollama exposes
@@ -867,6 +912,30 @@ launch_external() {
 			esac
 		done <<<"$test_files"
 	done
+	if [[ "$ICEBERG_BACKEND" == "biglake" && "$needs_iceberg" == "true" ]]; then
+		local -a kept=() dropped=()
+		for pattern in "${tests[@]}"; do
+			test_files=$(compgen -G "$pattern" 2>/dev/null || true)
+			[[ -n "$test_files" ]] || continue
+			while IFS= read -r f; do
+				[[ -n "$f" ]] || continue
+				case "$f" in
+				*_fixture_iceberg.test_slow) dropped+=("$f") ;;
+				*) kept+=("$f") ;;
+				esac
+			done <<<"$test_files"
+		done
+		tests=("${kept[@]}")
+		if [[ ${#dropped[@]} -gt 0 ]]; then
+			echo "ICEBERG_BACKEND=biglake: skipping ${#dropped[@]} fixture-only iceberg test(s)."
+		fi
+		if [[ ${#tests[@]} -eq 0 ]]; then
+			echo "ICEBERG_BACKEND=biglake: nothing left to run."
+			exit 0
+		fi
+		needs_iceberg=false
+		launch_biglake
+	fi
 	shopt -u globstar
 
 	if [[ ${#misnamed[@]} -gt 0 ]]; then

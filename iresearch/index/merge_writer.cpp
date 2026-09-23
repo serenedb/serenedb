@@ -766,8 +766,12 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   IdxWriter idx{track_dir, segment.name, _db};
 
   col_writer->SetIdxWriter(idx);
-  col_writer->Commit(segment.docs_count);
-  co_await col_writer->ComputeAnn(env);
+  if (!col_writer->Commit(segment.docs_count, progress_callback)) {
+    co_return false;
+  }
+  if (!co_await col_writer->ComputeAnn(env, progress_callback)) {
+    co_return false;
+  }
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);

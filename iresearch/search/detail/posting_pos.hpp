@@ -83,6 +83,7 @@ class PostingPos {
       }
       auto& in = In();
       in.Seek(meta.doc_start);
+      LimitDocReadahead(in, meta);
       if (meta.docs_count < doc_limits::kBlockSize) {
         SkipScoreBounds(Bounds, in);
       }

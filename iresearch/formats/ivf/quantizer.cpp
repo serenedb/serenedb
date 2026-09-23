@@ -243,9 +243,25 @@ std::optional<faiss::ScalarQuantizer::QuantizerType> FaissTurboQuantType(
 }
 
 void TrainTurboQuant(faiss::ScalarQuantizer& sq, uint64_t seed) {
+  using QT = faiss::ScalarQuantizer::QuantizerType;
   sq.turboq_refine.seed = seed;
   sq.turboq_refine.qjl_type = kTurboQuantQjlFwht;
   sq.train(0, nullptr);
+  switch (sq.qtype) {
+    case QT::QT_1bit_tqmse:
+    case QT::QT_2bit_tqmse:
+    case QT::QT_3bit_tqmse:
+    case QT::QT_4bit_tqmse:
+    case QT::QT_8bit_tqmse: {
+      const float unit = std::sqrt(static_cast<float>(sq.d));
+      for (auto& v : sq.trained) {
+        v *= unit;
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 struct PanoramaStatsHeader {

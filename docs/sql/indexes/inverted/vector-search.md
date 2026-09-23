@@ -100,8 +100,6 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
 - A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
 
-Elasticsearch spells this `rescore_vector.oversample`, with the same `0`; Qdrant splits it into `quantization.oversampling` and `quantization.rescore`.
-
 ## HNSW {#hnsw}
 
 `hnsw (...)` builds a **navigable small-world graph** instead of coarse clusters. Every vector is a node; each node keeps up to `m` neighbours per layer (`2m` on the bottom one), and a query descends the layers greedily, keeping a beam of the `sdb_hnsw_ef_search` best candidates it has seen. Where IVF narrows the search by *partitioning* the vectors, HNSW narrows it by *navigating* between them, which is usually the better trade at high recall:

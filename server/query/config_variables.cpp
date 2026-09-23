@@ -398,12 +398,16 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ivf_search_nprobe",
       {
         LogicalTypeId::INTEGER,
-        "Number of IVF cluster lists scanned per vector-similarity query. "
-        "Higher values improve recall at the cost of latency. Default 8.",
-        [] { return duckdb::Value::INTEGER(8); },
+        "Number of IVF cluster lists each segment scans per vector-similarity "
+        "query. Higher values improve recall at the cost of latency. A value "
+        "is used as written. -1 (the default) lets the engine choose per "
+        "segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is "
+        "the segment's rows over the index's posting size, which keeps recall "
+        "near 0.95 at any LIMIT and segment size.",
+        [] { return duckdb::Value::INTEGER(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n < 1) {
+          if (n == 0 || n < -1) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_ivf_search_nprobe\": \"",

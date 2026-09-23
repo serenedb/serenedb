@@ -53,6 +53,9 @@ using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 
+uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size,
+                       uint32_t top_k) noexcept;
+
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
 
 class IvfVectorReader {

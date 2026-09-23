@@ -31,6 +31,7 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/formats/ivf/clustering.hpp>
+#include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
@@ -1324,3 +1325,21 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
 }
 
 }  // namespace
+
+TEST(ivf_auto_nprobe, grows_with_the_limit_and_the_root_of_the_list_count) {
+  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 10), 41u);
+  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 100), 82u);
+  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 1000), 122u);
+  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 10), 15u);
+  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 100), 29u);
+  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 1000), 44u);
+  EXPECT_EQ(IvfAutoNprobe(2000, 16, 50), 25u);
+}
+
+TEST(ivf_auto_nprobe, floors_the_limit_at_ten_and_stays_within_the_lists) {
+  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 5), 41u);
+  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 0), 41u);
+  EXPECT_EQ(IvfAutoNprobe(4096, 1024, 1000), 4u);
+  EXPECT_EQ(IvfAutoNprobe(0, 1024, 10), 1u);
+  EXPECT_EQ(IvfAutoNprobe(2000, 0, 10), 59u);
+}

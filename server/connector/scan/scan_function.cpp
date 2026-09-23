@@ -281,6 +281,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         vs.min_ef = static_cast<uint32_t>(seg_pool > 0.0 ? seg_pool : share);
       }
     }
+    if (state->top_k) {
+      vs.top_k = static_cast<uint32_t>(*state->top_k);
+    }
     if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
       vs.ef_search = std::max(
         vs.ef_construction,

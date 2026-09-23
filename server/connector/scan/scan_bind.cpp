@@ -154,7 +154,8 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
   static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
   static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  vs.nprobe = gNprobe.Int(context);
+  const auto nprobe = gNprobe.SignedInt(context);
+  vs.nprobe = nprobe < 0 ? 0 : static_cast<uint32_t>(nprobe);
   vs.max_search_fanout = gFanout.Int(context);
   const auto ef = gEfSearch.SignedInt(context);
   vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
@@ -433,6 +434,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;
+  o->top_k = vs.top_k;
+  o->posting_size = vs.posting_size;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->inner = std::move(inner);
   return f;

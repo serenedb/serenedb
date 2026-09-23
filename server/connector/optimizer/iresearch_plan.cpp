@@ -700,7 +700,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
 
 uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
   static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
-  return gNprobe.Int(context);
+  const auto n = gNprobe.SignedInt(context);
+  return n < 0 ? 0 : static_cast<uint32_t>(n);
 }
 
 uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
@@ -820,6 +821,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
       .ef_construction = ann_info->ef_construction,
+      .posting_size = ann_info->posting_size,
       .hnsw_filter_mode = connector::ReadHnswFilterMode(context),
       .exact = connector::ReadAnnExact(context),
     };

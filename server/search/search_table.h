@@ -25,6 +25,7 @@
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -33,6 +34,7 @@
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -94,7 +96,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
   ObjectId GetDbId() const noexcept { return _db_id; }
   uint64_t GetWriteBufferMaxBytes() const noexcept {
-    return _segment_memory_max / 2;
+    return _segment_memory_max == 0
+             ? std::numeric_limits<uint64_t>::max()
+             : std::max<uint64_t>(_segment_memory_max / 2, 1);
   }
 
   // The merged per-field index config: PRIMARY KEY columns (term-indexed +

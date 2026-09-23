@@ -89,6 +89,7 @@ struct VectorScorerOptions {
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
+  irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
   // Brute force over the stored vectors instead of the ANN index: the exact
   // answer, split across workers segment by segment.
   bool exact = false;

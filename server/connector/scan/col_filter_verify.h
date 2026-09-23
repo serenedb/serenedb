@@ -74,6 +74,17 @@ class ColFilterVerify : public irs::detail::TableFilter {
     }
   }
 
+  irs::detail::PointRead PointReads() const noexcept final {
+    if (_score_filter != nullptr || _chain.Empty()) {
+      return irs::detail::PointRead::None;
+    }
+    return _chain.PointReads();
+  }
+
+  bool Admits(irs::doc_id_t doc) final {
+    return _chain.AdmitRow(doc - irs::doc_limits::min());
+  }
+
  private:
   std::unique_ptr<irs::ReadContext> _ctx;
   irs::ColFilterChain _chain;

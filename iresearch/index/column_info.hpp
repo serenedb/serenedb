@@ -139,6 +139,12 @@ enum class HnswFilterMode : uint8_t {
   Bridge,
 };
 
+enum class HnswColumnFilter : uint8_t {
+  Auto = 0,
+  Fold,
+  Read,
+};
+
 struct AnnInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;

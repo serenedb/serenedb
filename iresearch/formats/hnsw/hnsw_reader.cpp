@@ -134,7 +134,7 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
     /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost, std::move(inner),
-    opts.hnsw_filter_mode);
+    opts.hnsw_filter_mode, opts.hnsw_column_filter);
   built->SetStats(ctx.Record());
   return built;
 }

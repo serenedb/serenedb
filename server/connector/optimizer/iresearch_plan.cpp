@@ -832,6 +832,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,
       .hnsw_filter_mode = connector::ReadHnswFilterMode(context),
+      .hnsw_column_filter = connector::ReadHnswColumnFilter(context),
       .exact = connector::ReadAnnExact(context),
     };
     ss.score.order = info.order;

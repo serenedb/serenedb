@@ -30,6 +30,8 @@
 
 namespace irs::detail {
 
+enum class PointRead : uint8_t { None, Row, Vector };
+
 struct TableFilter {
   virtual ~TableFilter() = default;
 
@@ -54,6 +56,13 @@ struct TableFilter {
   // earlier one has to say so between the two. A table with no scans to move
   // does nothing.
   virtual void Rewind() {}
+
+  virtual PointRead PointReads() const noexcept { return PointRead::None; }
+
+  virtual bool Admits(doc_id_t doc) {
+    Rewind();
+    return Narrow(&doc, nullptr, 1) == 1;
+  }
 };
 
 template<typename Table>

@@ -266,6 +266,7 @@ std::optional<catalog::PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 // The session's HNSW filter mode and exact flag (sdb_hnsw_filter_mode,
 // sdb_ann_exact), read at execution by a scan whose plan was cached.
 irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context);
+irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context);
 bool ReadAnnExact(duckdb::ClientContext& context);
 
 // The share of a global top-k that one of `segments` segments is expected to

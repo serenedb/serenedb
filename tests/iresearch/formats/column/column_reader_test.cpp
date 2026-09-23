@@ -25,12 +25,16 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <numeric>
+#include <random>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -531,6 +535,199 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
         s_val(g))
         << g;
     }
+  }
+}
+
+struct PointCodecCase {
+  std::string name;
+  duckdb::LogicalType type;
+  duckdb::CompressionType codec;
+  std::function<bool(uint64_t)> valid;
+  std::function<duckdb::Value(uint64_t)> value;
+};
+
+void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
+  constexpr uint64_t kRows = 20000;
+  constexpr uint32_t kRgSize = 8192;
+  constexpr irs::field_id kField = 1;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", db};
+    auto& cw = w.OpenColumn(kField, c.type, false, kRgSize, c.codec);
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{c.type, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        v.SetValue(k, c.valid(g) ? c.value(g) : duckdb::Value{c.type});
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", db};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr) << c.name;
+  std::string codecs;
+  for (const auto& block : col->DataBlocks()) {
+    codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+  }
+  ASSERT_TRUE(std::ranges::any_of(col->DataBlocks(), [&](const auto& block) {
+    return block.codec->type == c.codec;
+  })) << c.name << ": " << codecs;
+
+  std::vector<uint64_t> order(kRows);
+  std::iota(order.begin(), order.end(), uint64_t{0});
+  std::shuffle(order.begin(), order.end(), std::mt19937_64{42});
+  for (uint64_t g = kRows; g-- > 0;) {
+    order.push_back(g);
+  }
+  for (uint64_t g = 0; g < kRows; ++g) {
+    order.push_back(g);
+  }
+  irs::ColumnReader::PointReader reader{r, *col};
+  duckdb::Vector out{c.type, 1};
+  for (const auto g : order) {
+    duckdb::FlatVector::ValidityMutable(out).Reset();
+    const bool valid = reader.FetchRow(g, out, 0);
+    ASSERT_EQ(valid, c.valid(g)) << c.name << " row " << g;
+    if (valid) {
+      const auto got = out.GetValue(0);
+      const auto want = c.value(g);
+      ASSERT_TRUE(duckdb::Value::NotDistinctFrom(got, want))
+        << c.name << " row " << g << ": " << got.ToString()
+        << " != " << want.ToString();
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
+  using duckdb::CompressionType;
+  using duckdb::LogicalType;
+  using duckdb::Value;
+  const auto all = [](uint64_t) { return true; };
+  const auto sparse = [](uint64_t g) { return g % 997 != 0; };
+  const auto periodic = [](uint64_t g) { return g % 17 != 0; };
+  const auto dense = [](uint64_t g) { return (g * 2654435761U) % 3 != 0; };
+  const auto runs = [](uint64_t g) { return (g / 300) % 5 != 0; };
+  const auto mix = [](uint64_t g) { return g * 0x9E3779B97F4A7C15ULL; };
+  const std::vector<PointCodecCase> cases{
+    {"bigint for", LogicalType::BIGINT, CompressionType::COMPRESSION_BITPACKING,
+     periodic,
+     [](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
+     }},
+    {"bigint delta for", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>(g * 3 + (g * 7919) % 5));
+     }},
+    {"bigint delta for nulls", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::BIGINT(1'000'000'000'000 -
+                            static_cast<int64_t>(g * 1000 + (g * 31) % 7));
+     }},
+    {"bigint constant delta", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) { return Value::BIGINT(1000 + static_cast<int64_t>(g) * 5); }},
+    {"bigint constant groups", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, runs,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g / 5000)); }},
+    {"bigint rle", LogicalType::BIGINT, CompressionType::COMPRESSION_RLE, dense,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>((g / 37) % 11)); }},
+    {"bigint rle wide", LogicalType::BIGINT, CompressionType::COMPRESSION_RLE,
+     all,
+     [&](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(mix(g / 9))); }},
+    {"bigint uncompressed", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_UNCOMPRESSED, periodic,
+     [&](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(mix(g))); }},
+    {"integer for", LogicalType::INTEGER,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::INTEGER(static_cast<int32_t>(g % 3000) - 1500);
+     }},
+    {"smallint rle", LogicalType::SMALLINT, CompressionType::COMPRESSION_RLE,
+     all,
+     [](uint64_t g) {
+       return Value::SMALLINT(static_cast<int16_t>((g / 13) % 200));
+     }},
+    {"tinyint for", LogicalType::TINYINT,
+     CompressionType::COMPRESSION_BITPACKING, runs,
+     [](uint64_t g) { return Value::TINYINT(static_cast<int8_t>(g % 100)); }},
+    {"hugeint for", LogicalType::HUGEINT,
+     CompressionType::COMPRESSION_BITPACKING, periodic,
+     [](uint64_t g) {
+       return Value::HUGEINT(
+         duckdb::hugeint_t{static_cast<int64_t>((g * 31) % 100000)});
+     }},
+    {"hugeint delta for", LogicalType::HUGEINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) {
+       return Value::HUGEINT(
+         duckdb::hugeint_t{static_cast<int64_t>(g * 7 + g % 3)});
+     }},
+    {"double alp", LogicalType::DOUBLE, CompressionType::COMPRESSION_ALP,
+     periodic,
+     [](uint64_t g) {
+       return g % 101 == 0
+                ? Value::DOUBLE(std::sqrt(static_cast<double>(g)) * 1.000001)
+                : Value::DOUBLE(static_cast<double>(g % 10000) / 100.0);
+     }},
+    {"float alp", LogicalType::FLOAT, CompressionType::COMPRESSION_ALP, all,
+     [](uint64_t g) {
+       return Value::FLOAT(static_cast<float>(g % 1000) / 10.0F);
+     }},
+    {"double alprd", LogicalType::DOUBLE, CompressionType::COMPRESSION_ALPRD,
+     dense,
+     [](uint64_t g) {
+       return Value::DOUBLE(std::sin(static_cast<double>(g)) * 12345.678901234);
+     }},
+    {"float alprd", LogicalType::FLOAT, CompressionType::COMPRESSION_ALPRD,
+     sparse,
+     [](uint64_t g) {
+       return Value::FLOAT(std::sin(static_cast<float>(g)) * 123.456F);
+     }},
+    {"double rle", LogicalType::DOUBLE, CompressionType::COMPRESSION_RLE, runs,
+     [](uint64_t g) {
+       return Value::DOUBLE(static_cast<double>((g / 50) % 7) + 0.5);
+     }},
+    {"varchar dictionary", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_DICT_FSST, periodic,
+     [](uint64_t g) { return Value{"category_" + std::to_string(g % 50)}; }},
+    {"varchar fsst", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_DICT_FSST, sparse,
+     [](uint64_t g) {
+       return Value{"https://example.org/items/" + std::to_string(g * 7919) +
+                    "/detail"};
+     }},
+    {"varchar zstd", LogicalType::VARCHAR, CompressionType::COMPRESSION_ZSTD,
+     dense,
+     [](uint64_t g) {
+       return Value{std::string(200, static_cast<char>('a' + g % 26)) +
+                    std::to_string(g)};
+     }},
+    {"varchar uncompressed", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_UNCOMPRESSED, runs,
+     [](uint64_t g) { return Value{"u" + std::to_string(g)}; }},
+    {"boolean rle", LogicalType::BOOLEAN, CompressionType::COMPRESSION_RLE,
+     periodic, [](uint64_t g) { return Value::BOOLEAN((g / 100) % 2 == 0); }},
+    {"boolean bitpacking", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) { return Value::BOOLEAN(g % 3 == 0); }},
+    {"boolean roaring", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_ROARING, dense,
+     [](uint64_t g) { return Value::BOOLEAN(g % 97 == 0); }},
+    {"boolean uncompressed", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_UNCOMPRESSED, sparse,
+     [](uint64_t g) { return Value::BOOLEAN(g % 5 < 2); }},
+  };
+  for (const auto& c : cases) {
+    CheckPointFetch(Db(), c);
   }
 }
 

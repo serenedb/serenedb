@@ -537,6 +537,31 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_hnsw_column_filter",
+      {
+        LogicalTypeId::VARCHAR,
+        "How an HNSW graph walk answers a predicate only the columnstore can: "
+        "'fold' evaluates it over the whole segment before the walk; 'read' "
+        "reads the columns of each row the walk reaches; 'auto' reads while "
+        "the walk is expected to reach few enough rows for that to cost less "
+        "than the fold, weighing what one read costs in the columns' "
+        "encodings. Default 'auto'.",
+        [] { return duckdb::Value{"auto"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto mode = value.ToString();
+          if (!absl::EqualsIgnoreCase(mode, "auto") &&
+              !absl::EqualsIgnoreCase(mode, "fold") &&
+              !absl::EqualsIgnoreCase(mode, "read")) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("invalid value for parameter \"sdb_hnsw_column_filter\": "
+                      "\"",
+                      mode, "\" (auto, fold or read)"));
+          }
+        },
+      },
+    },
+    {
       "sdb_ann_force_exact",
       {
         LogicalTypeId::BOOLEAN,

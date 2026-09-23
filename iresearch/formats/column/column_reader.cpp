@@ -739,7 +739,23 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
 
 ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        const ColumnReader& col)
-  : _ctx{col_reader}, _reader{&col} {}
+  : _ctx{col_reader},
+    _reader{&col},
+    _blocks(col.DataRgCount()),
+    _validity_blocks(col.Validity() ? col.Validity()->DataRgCount() : 0) {}
+
+ColumnReader::PointReader::OpenBlock& ColumnReader::PointReader::Block(
+  std::vector<OpenBlock>& blocks, const ColumnReader& reader,
+  BlockWindow& window, uint64_t row) {
+  if (row < window.begin || row >= window.end) {
+    window = reader.Locate(row, window);
+  }
+  auto& block = blocks[window.block];
+  if (!block.segment) {
+    block.segment = reader.Open(window, _ctx);
+  }
+  return block;
+}
 
 bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
                                          duckdb::idx_t out_offset) {
@@ -750,29 +766,18 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
   const auto* validity = _reader->_validity.get();
   if (validity) {
-    _validity_window = validity->Locate(row, _validity_window);
-    if (_validity_window.block != _cached_validity_block) {
-      _validity_block = validity->Open(_validity_window, _ctx);
-      _validity_fetch_state = duckdb::ColumnFetchState{};
-      _cached_validity_block = _validity_window.block;
-    }
-    _validity_block->FetchRow(
-      _validity_fetch_state,
-      static_cast<duckdb::row_t>(row - _validity_window.begin), out,
-      out_offset);
+    auto& block = Block(_validity_blocks, *validity, _validity_window, row);
+    block.segment->FetchRow(
+      block.state, static_cast<duckdb::row_t>(row - _validity_window.begin),
+      out, out_offset);
     if (!duckdb::FlatVector::Validity(out).RowIsValid(out_offset)) {
       return false;
     }
   }
-  _window = _reader->Locate(row, _window);
-  if (_window.block != _cached_block) {
-    _block = _reader->Open(_window, _ctx);
-    _fetch_state = duckdb::ColumnFetchState{};
-    _cached_block = _window.block;
-  }
-  _block->FetchRow(_fetch_state,
-                   static_cast<duckdb::row_t>(row - _window.begin), out,
-                   out_offset);
+  auto& block = Block(_blocks, *_reader, _window, row);
+  block.segment->FetchRow(block.state,
+                          static_cast<duckdb::row_t>(row - _window.begin), out,
+                          out_offset);
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 

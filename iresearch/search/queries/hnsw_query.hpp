@@ -45,7 +45,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             uint32_t record_size, uint32_t ef, score_t threshold,
             size_t max_results, bool inclusive, score_t boost,
             QueryBuilder::ptr&& inner = nullptr,
-            HnswFilterMode filter_mode = HnswFilterMode::Auto)
+            HnswFilterMode filter_mode = HnswFilterMode::Auto,
+            HnswColumnFilter column_filter = HnswColumnFilter::Auto)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
@@ -60,6 +61,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
       _max_results{max_results},
       _boost{boost},
       _filter_mode{filter_mode},
+      _column_filter{column_filter},
       _inclusive{inclusive} {}
 
   // The hits of the graph search, ascending by doc, deleted docs dropped.
@@ -113,6 +115,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   size_t _max_results;
   score_t _boost;
   HnswFilterMode _filter_mode;
+  HnswColumnFilter _column_filter;
   bool _inclusive;
 };
 

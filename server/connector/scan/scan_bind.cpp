@@ -166,6 +166,7 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   const auto ef = gEfSearch.SignedInt(context);
   vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
   vs.hnsw_filter_mode = ReadHnswFilterMode(context);
+  vs.hnsw_column_filter = ReadHnswColumnFilter(context);
   vs.exact = ReadAnnExact(context);
 }
 
@@ -177,6 +178,17 @@ irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
     return irs::HnswFilterMode::Auto;
   }
   return static_cast<irs::HnswFilterMode>(mode);
+}
+
+irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context) {
+  static constexpr auto kModes =
+    magic_enum::enum_names<irs::HnswColumnFilter>();
+  static constinit SettingRef gColumnFilter{"sdb_hnsw_column_filter"};
+  const auto mode = gColumnFilter.Enum(context, kModes);
+  if (mode >= kModes.size()) {
+    return irs::HnswColumnFilter::Auto;
+  }
+  return static_cast<irs::HnswColumnFilter>(mode);
 }
 
 bool ReadAnnExact(duckdb::ClientContext& context) {
@@ -444,6 +456,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->top_k = vs.top_k;
   o->posting_size = vs.posting_size;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
+  o->hnsw_column_filter = vs.hnsw_column_filter;
   o->inner = std::move(inner);
   return f;
 }

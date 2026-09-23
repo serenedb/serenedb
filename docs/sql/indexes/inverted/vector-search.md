@@ -143,6 +143,8 @@ How a rejected row is treated is [`sdb_hnsw_filter_mode`](./maintenance.md#sessi
 
 Every walk is capped at what the scan would have cost and falls back to it, forced ones included: a mode is a preference, never a way to spend more than the exact answer costs.
 
+A predicate on an `INCLUDE`d column — one the index stores but does not index — is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper — a narrow beam over a large segment — and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
+
 ## Column types
 
 A vector column must be a fixed-size `FLOAT[N]` array — all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec — use `quant` instead to control its on-disk size.

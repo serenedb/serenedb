@@ -217,7 +217,10 @@ WalkFilterScratch& ThreadWalkScratch() {
 class WalkFilter {
  public:
   WalkFilter(detail::TableFilter& table, doc_id_t docs_count)
-    : _table{&table}, _s{ThreadWalkScratch()}, _docs_count{docs_count} {
+    : _table{&table},
+      _s{ThreadWalkScratch()},
+      _docs_count{docs_count},
+      _points{table.PointReads() != detail::PointRead::None} {
     _s.Grow((size_t{docs_count} + 63) / 64);
   }
 
@@ -228,6 +231,9 @@ class WalkFilter {
 
   // The hop, before anything is asked about a single node of it.
   void Prepare(std::span<const uint32_t> batch) const {
+    if (_points) {
+      return;
+    }
     auto& ask = _s.ask;
     ask.clear();
     for (const auto node : batch) {
@@ -260,10 +266,8 @@ class WalkFilter {
     if (!Bit(_s.known, node)) {
       // Reached without a hop of its own: the seed of the walk, or a node a
       // mode admits outside the batch. One question, still ascending on its own.
-      doc_id_t doc = node + doc_limits::min();
       Mark(node);
-      _table->Rewind();
-      if (_table->Narrow(&doc, nullptr, 1) == 1) {
+      if (_table->Admits(node + doc_limits::min())) {
         Set(_s.pass, node);
       }
     }
@@ -290,6 +294,7 @@ class WalkFilter {
   detail::TableFilter* _table;
   WalkFilterScratch& _s;
   doc_id_t _docs_count;
+  bool _points;
 };
 
 // A predicate the term index answers, conjoined with one only the columnstore answers.
@@ -372,6 +377,10 @@ long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
 // This is the columnstore's price alone. A predicate the term index answers
 // costs a bit test per node and never reaches this decision.
 inline constexpr long double kProbeFoldRatio = 4096;
+
+inline constexpr long double kPointReadFoldRatio = 32;
+
+inline constexpr long double kVectorPointReadFoldRatio = 456;
 
 // Windows of the set filled to estimate its size before a plan is chosen: about
 // thirty thousand docs, a twentieth of a millisecond on a million-row segment.
@@ -585,10 +594,20 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // to the whole segment up front, which is what building the set with the table does.
   // Where the walk is wide enough that probing costs more than the fold it
   // saves, the walk still runs -- against the folded set, one bit test a node.
+  const auto point_read = table == nullptr || two_hop
+                            ? detail::PointRead::None
+                            : table->PointReads();
+  const auto probe_ratio = point_read == detail::PointRead::Row
+                             ? kPointReadFoldRatio
+                           : point_read == detail::PointRead::Vector
+                             ? kVectorPointReadFoldRatio
+                             : kProbeFoldRatio;
   const bool ask_per_hop =
     table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk &&
-    HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * kProbeFoldRatio <=
-      static_cast<long double>(graph.Size());
+    (_column_filter == HnswColumnFilter::Read ||
+     (_column_filter == HnswColumnFilter::Auto &&
+      HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * probe_ratio <=
+        static_cast<long double>(graph.Size())));
   if (ask_per_hop) {
     // The walk asks the columnstore itself, so the sampled set -- which has the
     // predicate folded into it -- is not the set it walks against.

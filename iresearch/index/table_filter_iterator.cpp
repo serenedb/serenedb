@@ -38,6 +38,11 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+namespace {
+
+constexpr uint32_t kPointHeapFetches = 1024;
+
+}  // namespace
 
 duckdb::TableFilterState& ColFilterStateCache::State(
   duckdb::ClientContext& context, const duckdb::TableFilter& filter) {
@@ -76,6 +81,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
                           ColFilterStateCache& states) {
   _context = &context;
   _states = &states;
+  _col_reader = &col_reader;
   _cols.clear();
   _cols.reserve(specs.size());
   for (const auto& spec : specs) {
@@ -264,6 +270,60 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     i = j;
   }
   return w;
+}
+
+detail::PointRead ColFilterChain::PointReads() const noexcept {
+  auto read = detail::PointRead::Row;
+  for (const auto& c : _cols) {
+    if (c.nested) {
+      return detail::PointRead::None;
+    }
+    if (absl::c_any_of(c.reader->DataBlocks(), [](const auto& block) {
+          return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+        })) {
+      read = detail::PointRead::Vector;
+    }
+  }
+  return read;
+}
+
+bool ColFilterChain::AdmitRow(uint64_t row) {
+  SDB_ASSERT(_col_reader != nullptr);
+  for (auto& f : _cols) {
+    if (!f.point) {
+      f.point =
+        std::make_unique<irs::ColumnReader::PointReader>(*_col_reader, *f.reader);
+      f.point_scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
+      f.point_heap =
+        !duckdb::TypeIsConstantSize(f.reader->Type().InternalType());
+      auto& executor =
+        f.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
+      if (executor && executor->FiltersValues()) {
+        f.point_filter = executor.get();
+      }
+    }
+    auto* value = &f.point_scratch->vector;
+    if (f.point_heap && ++f.point_heap_fetches == kPointHeapFetches) {
+      f.point_heap_fetches = 0;
+      value = &f.point_scratch->Reset();
+    }
+    const bool valid = f.point->FetchRow(row, *value, 0);
+    if (f.point_filter) {
+      if (!f.point_filter->FilterValue(duckdb::FlatVector::GetData(*value),
+                                       valid)) {
+        return false;
+      }
+      continue;
+    }
+    duckdb::SelectionVector sel;
+    duckdb::idx_t approved = 1;
+    duckdb::ColumnSegment::FilterSelection(sel, *value, *f.state, 1, approved);
+    if (approved == 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template<bool Keep>

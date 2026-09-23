@@ -36,6 +36,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
@@ -138,6 +139,11 @@ class ColFilterChain {
     // DICTIONARY view over codec-owned buffers), so every use goes through
     // VectorScratch::Reset() -- never reuse it dirty. Cache-owned.
     irs::ColumnReader::VectorScratch* scratch = nullptr;
+    std::unique_ptr<irs::ColumnReader::PointReader> point;
+    std::unique_ptr<irs::ColumnReader::VectorScratch> point_scratch;
+    duckdb::ExpressionFilterExecutor* point_filter = nullptr;
+    uint32_t point_heap_fetches = 0;
+    bool point_heap = false;
   };
 
   bool Empty() const noexcept { return _cols.empty(); }
@@ -200,6 +206,10 @@ class ColFilterChain {
   duckdb::idx_t FilterDocs(irs::doc_id_t* docs, irs::score_t* scores,
                            duckdb::idx_t n);
 
+  detail::PointRead PointReads() const noexcept;
+
+  bool AdmitRow(uint64_t row);
+
   // The same over a set whose bit zero stands for document `base`: clears the
   // bits that do not pass, block by block, and returns how many survived. The
   // selection is built from the set bits instead of from a run of documents,
@@ -243,6 +253,7 @@ class ColFilterChain {
  private:
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
+  const irs::ColReader* _col_reader = nullptr;
   // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
   // survivors back, otherwise the words are left zeroed.
   template<bool Keep>

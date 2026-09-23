@@ -68,7 +68,7 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
 }  // namespace
 
 int main(int argc, const char* argv[]) {
-  irs::RemapExecutable();
+  irs::RemapExecutable(true);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the

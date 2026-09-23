@@ -120,6 +120,14 @@ size_t Populate(const Mapping& mapping) {
   return size;
 }
 
+size_t Lock(const Mapping& mapping) {
+  const auto size = mapping.end - mapping.begin;
+  if (mlock(reinterpret_cast<void*>(mapping.begin), size) != 0) {
+    return 0;
+  }
+  return size;
+}
+
 #endif
 
 #if defined(IRS_REMAP_EXECUTABLE)
@@ -244,7 +252,7 @@ bool RemapText(const Mapping& text) {
 
 }  // namespace
 
-ExecutableRemap RemapExecutable() {
+ExecutableRemap RemapExecutable(bool remap_text) {
   ExecutableRemap remap;
 #if defined(__linux__)
   const auto mappings = ExecutableMappings();
@@ -257,13 +265,18 @@ ExecutableRemap RemapExecutable() {
       remap.populated += Populate(mapping);
     }
   }
+  if (!remap_text) {
+    remap.skipped = "disabled";
+  }
 #if defined(IRS_REMAP_EXECUTABLE)
-  const bool background = SetAllocatorBackgroundThreads(false);
-  if (ThreadCount() != 1) {
+  const bool background = remap_text && SetAllocatorBackgroundThreads(false);
+  if (remap.skipped.empty() && ThreadCount() != 1) {
     remap.skipped = "other threads are already running";
   }
 #else
-  remap.skipped = "not supported by this build";
+  if (remap.skipped.empty()) {
+    remap.skipped = "not supported by this build";
+  }
 #endif
   for (const auto& mapping : mappings) {
     if (!mapping.exec) {
@@ -278,6 +291,10 @@ ExecutableRemap RemapExecutable() {
       remap.skipped = std::strerror(errno);
     }
 #endif
+    if (const auto locked = Lock(mapping); locked != 0) {
+      remap.locked += locked;
+      continue;
+    }
     remap.populated += Populate(mapping);
   }
 #if defined(IRS_REMAP_EXECUTABLE)

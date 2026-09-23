@@ -376,9 +376,9 @@ bool TryClaimIResearchConjunctImpl(
     connector::FilterScorers shaped_scorers;
     const auto column_getter = deferred->Recording(getter);
     const auto expression_getter = deferred->Recording(expr_getter);
-    const auto claimed =
-      connector::MakeSearchFilter(*node, single, column_getter, context,
-                                  expression_getter, &shaped_scorers);
+    const auto claimed = connector::MakeSearchFilter(
+      *node, single, column_getter, context, expression_getter,
+      &shaped_scorers, connector::WideRanges::DeclineAll);
     const bool built = absl::c_any_of(
       irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
     if (!claimed.ok() || !built || deferred->used_expr_getter ||
@@ -395,8 +395,9 @@ bool TryClaimIResearchConjunctImpl(
   // away once the whole request is claimed.
   auto node = std::make_unique<irs::BooleanFilter>();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  const auto claimed = connector::MakeSearchFilter(
-    *node, single, getter, context, expr_getter, scorers);
+  const auto claimed =
+    connector::MakeSearchFilter(*node, single, getter, context, expr_getter,
+                                scorers, connector::WideRanges::DeclineWide);
   const bool built = absl::c_any_of(
     irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
   if (!claimed.ok() || !built) {

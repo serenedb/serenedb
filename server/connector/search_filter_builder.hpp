@@ -38,6 +38,12 @@
 
 namespace sdb::connector {
 
+enum class WideRanges : uint8_t {
+  Build,
+  DeclineWide,
+  DeclineAll,
+};
+
 // `field_id` is the unified iresearch field id: both a plain indexed column's
 // id (`catalog::ColumnId`) and an indexed expression's id come from
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
@@ -214,7 +220,8 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers);
+  const ExpressionGetter& expr_getter, FilterScorers* scorers,
+  WideRanges wide_ranges = WideRanges::Build);
 
 inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
                                         duckdb::LogicalTypeId type_id) {

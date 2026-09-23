@@ -62,6 +62,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
+  WideRanges wide_ranges = WideRanges::Build;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
@@ -77,6 +78,7 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .wide_ranges = wide_ranges,
     };
   }
 
@@ -94,6 +96,7 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .wide_ranges = wide_ranges,
     };
   }
 
@@ -111,7 +114,14 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .wide_ranges = wide_ranges,
     };
+  }
+
+  FilterContext Claimed() const {
+    FilterContext ctx = *this;
+    ctx.wide_ranges = WideRanges::Build;
+    return ctx;
   }
 };
 

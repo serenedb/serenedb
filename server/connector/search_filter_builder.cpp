@@ -802,10 +802,12 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
       .assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTerm(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
-    if (column_info->column_stored) {
-      bool wide = false;
-      WithNumericValue(type_id, *const_val,
-                       [&](auto v) { wide = RangeEdgeTooWide(v, op); });
+    if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
+      bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
+      if (!wide) {
+        WithNumericValue(type_id, *const_val,
+                         [&](auto v) { wide = RangeEdgeTooWide(v, op); });
+      }
       if (wide) {
         return absl::UnimplementedError(
           "wide numeric range on a stored column: the column filter is "
@@ -1329,7 +1331,8 @@ bool TryDispatchSqlBoostCast(BoolTarget filter, const FilterContext& ctx,
   // ::boost is only meaningful inside an inverted-index match, so a child
   // predicate the index cannot claim is a user error even when building
   // speculatively.
-  if (auto s = FromExpression(filter, ctx.WithBoost(factor), *child); !s.ok()) {
+  if (auto s = FromExpression(filter, ctx.WithBoost(factor).Claimed(), *child);
+      !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("::boost(K) used on a predicate the inverted index could not "
@@ -1515,7 +1518,8 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
   }
   const auto* scorer = ResolveScoreOverride(ctx, *expr);
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
+  if (auto s =
+        FromExpression(ScopeTarget(scope), ctx.Claimed(), cast_expr.Child());
       !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1541,7 +1545,8 @@ bool TryDispatchSqlMergeCast(BoolTarget filter, const FilterContext& ctx,
     return false;
   }
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
+  if (auto s =
+        FromExpression(ScopeTarget(scope), ctx.Claimed(), cast_expr.Child());
       !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2316,7 +2321,8 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers,
+  WideRanges wide_ranges) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
@@ -2335,6 +2341,7 @@ absl::Status MakeSearchFilter(
     .client_context = context,
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
+    .wide_ranges = wide_ranges,
   };
 
   for (const auto& expr : conjuncts) {

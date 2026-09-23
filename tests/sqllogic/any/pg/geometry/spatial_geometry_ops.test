@@ -234,3 +234,33 @@ SELECT ST_Equals(ST_LineSubstring('LINESTRING(0 0,4 0)'::geometry, 0, 0.5), 'LIN
 ----
 v
 t
+
+query
+SELECT ST_X(g) AS x, ST_Y(g) AS y, ST_Z(g) AS z FROM (SELECT ST_Translate('POINT Z(1 2 3)'::geometry, 1, 1, 1) AS g) t;
+----
+x	y	z
+2	3	4
+
+query
+SELECT ST_X(g) AS x, ST_Y(g) AS y, ST_Z(g) AS z FROM (SELECT ST_Translate('POINT Z(1 2 3)'::geometry, 2, 3) AS g) t;
+----
+x	y	z
+3	5	3
+
+query
+SELECT ST_Equals(ST_Translate('POINT(1 1)'::geometry, 2, 3), 'POINT(3 4)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Equals(ST_Affine('POINT(1 1)'::geometry, 1, 0, 5, 0, 1, 5, 0, 0, 1, 0, 0, 0), 'POINT(1 1)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT abs(ST_X(g)) < 1e-9 AS x_zero, abs(ST_Y(g)) < 1e-9 AS y_zero FROM (SELECT ST_RotateX('POINT(0 1)'::geometry, pi() / 2) AS g) t;
+----
+x_zero	y_zero
+t	t

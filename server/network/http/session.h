@@ -32,6 +32,8 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -223,7 +225,37 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
+      co_return co_await Drive(
+        conn.PendingQuery(sql, /*allow_stream_result=*/false));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+        duckdb::ErrorData{ex});
+    }
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunPrepared(
+    duckdb::PreparedStatement& statement) override {
+    try {
+      duckdb::vector<duckdb::Value> params;
+      co_return co_await Drive(
+        statement.PendingQuery(params, /*allow_stream_result=*/false));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+        duckdb::ErrorData{ex});
+    }
+  }
+
+  duckdb::unique_ptr<duckdb::PreparedStatement>& PreparedSlot(
+    std::string_view key) override {
+    return _prepared[key];
+  }
+
+  std::string_view User() const override { return _user; }
+
+ private:
+  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> Drive(
+    duckdb::unique_ptr<duckdb::PendingQueryResult> pending) {
+    try {
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.
 #ifdef SDB_DEV
@@ -267,9 +299,6 @@ class HttpSession final
     }
   }
 
-  std::string_view User() const override { return _user; }
-
- private:
   using Transport<Kind, HttpSession<Kind>>::_socket;
   using Transport<Kind, HttpSession<Kind>>::_ioexec;
   using Transport<Kind, HttpSession<Kind>>::_recv;
@@ -333,6 +362,11 @@ class HttpSession final
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  // Statements prepared on _conn; declared after it so they are destroyed
+  // first.
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::PreparedStatement>>
+    _prepared;
   std::string _user;
 };
 

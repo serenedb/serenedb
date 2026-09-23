@@ -34,6 +34,7 @@ namespace duckdb {
 
 class Connection;
 class MaterializedQueryResult;
+class PreparedStatement;
 
 }  // namespace duckdb
 namespace sdb::network {
@@ -55,6 +56,13 @@ class RequestContext {
   // transaction. The result may carry an error (check HasError()).
   virtual yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
   RunQuery(std::string sql, bool writes) = 0;
+  // RunQuery for a statement prepared on Connection(), with no parameters.
+  virtual yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
+  RunPrepared(duckdb::PreparedStatement& statement) = 0;
+  // A per-session slot for a statement prepared on Connection(); a handler
+  // prepares into it once and re-executes it on later requests.
+  virtual duckdb::unique_ptr<duckdb::PreparedStatement>& PreparedSlot(
+    std::string_view key) = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;
 };

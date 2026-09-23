@@ -22,8 +22,10 @@
 
 #include <absl/strings/escaping.h>
 
+#include <array>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -448,13 +450,13 @@ void BuildMetricRows(const otel::ExportMetricsRequest& request,
 }
 
 void Emit(duckdb::DataChunk& output, const OtelBindData& data,
-          OtelState& state) {
+          const std::vector<Row>& rows, size_t& pos) {
   duckdb::idx_t emitted = 0;
-  while (emitted < STANDARD_VECTOR_SIZE && state.pos < data.rows.size()) {
+  while (emitted < STANDARD_VECTOR_SIZE && pos < rows.size()) {
     for (duckdb::idx_t column = 0; column < output.ColumnCount(); ++column) {
       output.SetValue(column, emitted, duckdb::Value{});
     }
-    for (const auto& cell : data.rows[state.pos]) {
+    for (const auto& cell : rows[pos]) {
       const auto it = data.columns.find(std::string{cell.column});
       if (it == data.columns.end()) {
         continue;
@@ -465,7 +467,7 @@ void Emit(duckdb::DataChunk& output, const OtelBindData& data,
       }
       output.SetValue(it->second, emitted, cell.value.DefaultCastAs(type));
     }
-    ++state.pos;
+    ++pos;
     ++emitted;
   }
   output.SetCardinality(emitted);
@@ -485,8 +487,286 @@ duckdb::unique_ptr<duckdb::FunctionData> OtelBind(
 
 void OtelExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                  duckdb::DataChunk& output) {
-  Emit(output, input.bind_data->Cast<OtelBindData>(),
-       input.global_state->Cast<OtelState>());
+  const auto& data = input.bind_data->Cast<OtelBindData>();
+  Emit(output, data, data.rows, input.global_state->Cast<OtelState>().pos);
+}
+
+// otel_source_logs(): the rows of the logs request the HTTP handler left on
+// the connection. Bind carries no data -- only the target's columns -- so the
+// statement can be prepared once and re-executed for every request. The scan
+// writes the decoded model straight into the output vectors; a schema whose
+// column types differ from the shipped DDL takes the generic row path instead.
+enum class LogColumn : uint8_t {
+  Timestamp,
+  ObservedTimestamp,
+  TraceId,
+  SpanId,
+  TraceFlags,
+  SeverityText,
+  SeverityNumber,
+  ServiceName,
+  EventName,
+  Body,
+  ResourceSchemaUrl,
+  ScopeSchemaUrl,
+  ScopeName,
+  ScopeVersion,
+  ResourceAttributes,
+  ScopeAttributes,
+  LogAttributes,
+};
+
+struct LogColumnSpec {
+  std::string_view name;
+  duckdb::LogicalTypeId type;
+};
+
+// resources/otel/otel_schema.sql, otel_logs; JSON is VARCHAR underneath.
+constexpr std::array<LogColumnSpec, 17> kLogColumns{{
+  {"timestamp", duckdb::LogicalTypeId::TIMESTAMP_NS},
+  {"observed_timestamp", duckdb::LogicalTypeId::TIMESTAMP_NS},
+  {"trace_id", duckdb::LogicalTypeId::VARCHAR},
+  {"span_id", duckdb::LogicalTypeId::VARCHAR},
+  {"trace_flags", duckdb::LogicalTypeId::INTEGER},
+  {"severity_text", duckdb::LogicalTypeId::VARCHAR},
+  {"severity_number", duckdb::LogicalTypeId::SMALLINT},
+  {"service_name", duckdb::LogicalTypeId::VARCHAR},
+  {"event_name", duckdb::LogicalTypeId::VARCHAR},
+  {"body", duckdb::LogicalTypeId::VARCHAR},
+  {"resource_schema_url", duckdb::LogicalTypeId::VARCHAR},
+  {"scope_schema_url", duckdb::LogicalTypeId::VARCHAR},
+  {"scope_name", duckdb::LogicalTypeId::VARCHAR},
+  {"scope_version", duckdb::LogicalTypeId::VARCHAR},
+  {"resource_attributes", duckdb::LogicalTypeId::VARCHAR},
+  {"scope_attributes", duckdb::LogicalTypeId::VARCHAR},
+  {"log_attributes", duckdb::LogicalTypeId::VARCHAR},
+}};
+
+inline constexpr duckdb::idx_t kAbsent = duckdb::DConstants::INVALID_INDEX;
+
+struct OtelSourceBindData final : duckdb::TableFunctionData {
+  OtelBindData generic;
+  std::array<duckdb::idx_t, kLogColumns.size()> slots;
+  bool direct = true;
+};
+
+// The columns shared by every record of one scope, computed once per scope.
+struct ScopeColumns {
+  std::string service_name;
+  bool has_service = false;
+  std::string resource_attributes;
+  std::string scope_attributes;
+};
+
+struct OtelSourceState final : duckdb::GlobalTableFunctionState {
+  const otel::ExportLogsRequest* request = nullptr;
+  size_t resource = 0;
+  size_t scope = 0;
+  size_t record = 0;
+  bool scope_ready = false;
+  ScopeColumns columns;
+  std::vector<Row> rows;
+  size_t pos = 0;
+
+  static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
+    duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+    auto state = duckdb::make_uniq<OtelSourceState>();
+    const auto* logs = GetSereneDBContext(context).GetOtelLogs();
+    if (logs == nullptr) {
+      return state;
+    }
+    if (input.bind_data->Cast<OtelSourceBindData>().direct) {
+      state->request = &logs->request;
+    } else {
+      BuildLogRows(logs->request, state->rows);
+    }
+    return state;
+  }
+
+  // The next record, or nullptr when the request is exhausted.
+  const otel::LogRecord* Next() {
+    while (request != nullptr && resource < request->resources.size()) {
+      const auto& scopes = request->resources[resource].scopes;
+      if (scope >= scopes.size()) {
+        ++resource;
+        scope = 0;
+        continue;
+      }
+      if (record >= scopes[scope].records.size()) {
+        ++scope;
+        record = 0;
+        scope_ready = false;
+        continue;
+      }
+      if (!scope_ready) {
+        const auto& res = request->resources[resource].resource;
+        const auto* service =
+          otel::FindAttribute(res.attributes, otel::kServiceNameKey);
+        columns.has_service = service != nullptr;
+        columns.service_name =
+          service == nullptr ? std::string{} : otel::BodyToText(service);
+        columns.resource_attributes = otel::AttributesToJson(res.attributes);
+        columns.scope_attributes =
+          otel::AttributesToJson(scopes[scope].scope.attributes);
+        scope_ready = true;
+      }
+      return &scopes[scope].records[record++];
+    }
+    return nullptr;
+  }
+};
+
+duckdb::unique_ptr<duckdb::FunctionData> OtelSourceBind(
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::string>& names) {
+  auto data = duckdb::make_uniq<OtelSourceBindData>();
+  BindTarget(context, kOtelLogsTable, data->generic, return_types, names);
+  for (size_t i = 0; i < kLogColumns.size(); ++i) {
+    const auto it =
+      data->generic.columns.find(std::string{kLogColumns[i].name});
+    if (it == data->generic.columns.end()) {
+      data->slots[i] = kAbsent;
+      continue;
+    }
+    data->slots[i] = it->second;
+    if (return_types[it->second].id() != kLogColumns[i].type) {
+      data->direct = false;
+    }
+  }
+  return data;
+}
+
+class LogRowWriter {
+ public:
+  LogRowWriter(duckdb::DataChunk& output, const OtelSourceBindData& data)
+    : _output{output}, _data{data} {}
+
+  void Null(LogColumn column, duckdb::idx_t row) {
+    if (auto* vector = Slot(column)) {
+      duckdb::FlatVector::SetNull(*vector, row, true);
+    }
+  }
+
+  // Empty text is NULL, as NullableText maps it.
+  void Text(LogColumn column, duckdb::idx_t row, std::string_view text) {
+    if (text.empty()) {
+      Null(column, row);
+    } else {
+      Json(column, row, text);
+    }
+  }
+
+  void Json(LogColumn column, duckdb::idx_t row, std::string_view text) {
+    if (auto* vector = Slot(column)) {
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(*vector)[row] =
+        duckdb::StringVector::AddString(*vector, text.data(), text.size());
+    }
+  }
+
+  template<typename T>
+  void Number(LogColumn column, duckdb::idx_t row, T value) {
+    if (auto* vector = Slot(column)) {
+      duckdb::FlatVector::GetDataMutable<T>(*vector)[row] = value;
+    }
+  }
+
+  void Timestamp(LogColumn column, duckdb::idx_t row, uint64_t unix_nano) {
+    Number(column, row, static_cast<int64_t>(unix_nano));
+  }
+
+ private:
+  duckdb::Vector* Slot(LogColumn column) {
+    const auto slot = _data.slots[std::to_underlying(column)];
+    return slot == kAbsent ? nullptr : &_output.data[slot];
+  }
+
+  duckdb::DataChunk& _output;
+  const OtelSourceBindData& _data;
+};
+
+void WriteLogRow(LogRowWriter& out, duckdb::idx_t row,
+                 const otel::LogRecord& record, const ScopeColumns& shared,
+                 const otel::ScopeRecords<otel::LogRecord>& scope,
+                 std::string_view resource_schema_url) {
+  const uint64_t observed = record.observed_time_unix_nano;
+  out.Timestamp(LogColumn::Timestamp, row,
+                record.time_unix_nano != 0 ? record.time_unix_nano : observed);
+  if (observed == 0) {
+    out.Null(LogColumn::ObservedTimestamp, row);
+  } else {
+    out.Timestamp(LogColumn::ObservedTimestamp, row, observed);
+  }
+  out.Text(LogColumn::TraceId, row, record.trace_id.hex);
+  out.Text(LogColumn::SpanId, row, record.span_id.hex);
+  out.Number(LogColumn::TraceFlags, row, static_cast<int32_t>(record.flags));
+  out.Text(LogColumn::SeverityText, row, record.severity_text);
+  if (record.severity_number == otel::SeverityNumber::Unspecified) {
+    out.Null(LogColumn::SeverityNumber, row);
+  } else {
+    out.Number(
+      LogColumn::SeverityNumber, row,
+      static_cast<int16_t>(std::to_underlying(record.severity_number)));
+  }
+  if (!record.event_name.empty()) {
+    out.Text(LogColumn::EventName, row, record.event_name);
+  } else if (const auto* attribute =
+               otel::FindAttribute(record.attributes, otel::kEventNameKey)) {
+    out.Text(LogColumn::EventName, row, otel::BodyToText(attribute));
+  } else {
+    out.Null(LogColumn::EventName, row);
+  }
+  out.Text(LogColumn::Body, row, otel::BodyToText(record.body));
+  if (shared.has_service) {
+    out.Text(LogColumn::ServiceName, row, shared.service_name);
+  } else {
+    out.Null(LogColumn::ServiceName, row);
+  }
+  out.Text(LogColumn::ResourceSchemaUrl, row, resource_schema_url);
+  out.Text(LogColumn::ScopeSchemaUrl, row, scope.schema_url);
+  out.Text(LogColumn::ScopeName, row, scope.scope.name);
+  out.Text(LogColumn::ScopeVersion, row, scope.scope.version);
+  out.Json(LogColumn::ResourceAttributes, row, shared.resource_attributes);
+  out.Json(LogColumn::ScopeAttributes, row, shared.scope_attributes);
+  out.Json(LogColumn::LogAttributes, row,
+           otel::AttributesToJson(record.attributes));
+}
+
+void OtelSourceExecute(duckdb::ClientContext&,
+                       duckdb::TableFunctionInput& input,
+                       duckdb::DataChunk& output) {
+  const auto& data = input.bind_data->Cast<OtelSourceBindData>();
+  auto& state = input.global_state->Cast<OtelSourceState>();
+  if (!data.direct) {
+    Emit(output, data.generic, state.rows, state.pos);
+    return;
+  }
+  LogRowWriter out{output, data};
+  duckdb::idx_t row = 0;
+  while (row < STANDARD_VECTOR_SIZE) {
+    const auto* record = state.Next();
+    if (record == nullptr) {
+      break;
+    }
+    const auto& resource = state.request->resources[state.resource];
+    WriteLogRow(out, row, *record, state.columns, resource.scopes[state.scope],
+                resource.schema_url);
+    ++row;
+  }
+  // Columns the mapping does not produce (a deployment's own additions).
+  std::array<bool, 256> produced{};
+  for (const auto slot : data.slots) {
+    if (slot != kAbsent && slot < produced.size()) {
+      produced[slot] = true;
+    }
+  }
+  for (duckdb::idx_t column = 0; column < output.ColumnCount(); ++column) {
+    if (column >= produced.size() || !produced[column]) {
+      duckdb::FlatVector::ValidityMutable(output.data[column])
+        .SetAllInvalid(row);
+    }
+  }
+  output.SetCardinality(row);
 }
 
 void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
@@ -566,6 +846,12 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
       OtelBind<kExponentialTable, BuildMetrics<ExponentialHistogramShape>>);
   add("otel_parse_metrics_summary",
       OtelBind<kSummaryTable, BuildMetrics<SummaryShape>>);
+
+  loader.RegisterFunction(duckdb::TableFunction{kOtelSourceLogsFunction,
+                                                {},
+                                                OtelSourceExecute,
+                                                OtelSourceBind,
+                                                OtelSourceState::Init});
 }
 
 }  // namespace sdb::connector

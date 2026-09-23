@@ -44,6 +44,12 @@ namespace sdb::connector {
 // promoted columns to its own DDL without breaking the INSERT.
 void RegisterOtelFunctions(duckdb::DatabaseInstance& db);
 
+// otel_source_logs(): no arguments; the rows of the OTLP logs request that is
+// on the connection (ConnectionContext::SetOtelLogs). Its bind carries no data,
+// so `INSERT INTO otel_logs SELECT * FROM otel_source_logs()` is prepared once
+// per connection and re-executed per request.
+inline constexpr const char* kOtelSourceLogsFunction = "otel_source_logs";
+
 inline constexpr std::string_view kOtelSchema = "public";
 inline constexpr std::string_view kOtelLogsTable = "otel_logs";
 inline constexpr std::string_view kOtelTracesTable = "otel_traces";

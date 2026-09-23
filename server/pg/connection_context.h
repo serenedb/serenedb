@@ -33,6 +33,7 @@
 
 namespace sdb::otel {
 
+struct DecodedLogs;
 struct DecodedMetrics;
 
 }  // namespace sdb::otel
@@ -135,6 +136,10 @@ class ConnectionContext final : public query::Transaction {
     _otel_metrics = metrics;
   }
 
+  // Set for the span of one OTLP logs request; otel_source_logs() reads it.
+  const otel::DecodedLogs* GetOtelLogs() const { return _otel_logs; }
+  void SetOtelLogs(const otel::DecodedLogs* logs) { _otel_logs = logs; }
+
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
@@ -185,6 +190,7 @@ class ConnectionContext final : public query::Transaction {
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   const otel::DecodedMetrics* _otel_metrics = nullptr;
+  const otel::DecodedLogs* _otel_logs = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

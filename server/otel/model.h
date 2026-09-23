@@ -566,16 +566,19 @@ enum class ExportRequestTag : uint32_t {
   ResourceRecords = 1,
 };
 
-// One decoded metrics payload, shared by the five otel_parse_metrics_* binds it
-// fans out into.
-struct DecodedMetrics;
-
 using ExportLogsRequest = ExportRequest<LogRecord>;
 using ExportTracesRequest = ExportRequest<Span>;
 using ExportMetricsRequest = ExportRequest<Metric>;
 
+// One decoded metrics payload, shared by the five otel_parse_metrics_* binds it
+// fans out into.
 struct DecodedMetrics {
   ExportMetricsRequest request;
+};
+
+// One decoded logs payload, read by otel_source_logs() at execution.
+struct DecodedLogs {
+  ExportLogsRequest request;
 };
 
 }  // namespace sdb::otel

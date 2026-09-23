@@ -29,6 +29,13 @@
 #include <array>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/star_expression.hpp>
+#include <duckdb/parser/query_node/select_node.hpp>
+#include <duckdb/parser/statement/insert_statement.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <memory>
 #include <protozero/pbf_writer.hpp>
 #include <span>
@@ -159,15 +166,58 @@ struct InsertOutcome {
   std::string error;
 };
 
+InsertOutcome Failed(std::string message) {
+  const bool missing = message.find("does not exist") != std::string::npos;
+  return {.ok = false, .missing_table = missing, .error = std::move(message)};
+}
+
 yaclib::Task<InsertOutcome> RunInsert(RequestContext& ctx, std::string sql) {
   auto result = co_await ctx.RunQuery(std::move(sql), /*writes=*/true);
   if (!result->HasError()) {
     co_return InsertOutcome{.ok = true};
   }
-  const auto message = result->GetError();
-  const bool missing = message.find("does not exist") != std::string::npos;
-  co_return InsertOutcome{
-    .ok = false, .missing_table = missing, .error = message};
+  co_return Failed(result->GetError());
+}
+
+// INSERT INTO public.otel_logs SELECT * FROM otel_source_logs(), built as an
+// AST: nothing is parsed, and it is prepared once per connection.
+duckdb::unique_ptr<duckdb::SQLStatement> SourceLogsInsert() {
+  auto source = duckdb::make_uniq<duckdb::TableFunctionRef>();
+  source->function = duckdb::make_uniq<duckdb::FunctionExpression>(
+    duckdb::Identifier{connector::kOtelSourceLogsFunction},
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
+  auto select_node = duckdb::make_uniq<duckdb::SelectNode>();
+  select_node->select_list.push_back(
+    duckdb::make_uniq<duckdb::StarExpression>());
+  select_node->from_table = std::move(source);
+  auto select = duckdb::make_uniq<duckdb::SelectStatement>();
+  select->node = std::move(select_node);
+
+  auto node = duckdb::make_uniq<duckdb::InsertQueryNode>();
+  node->SetQualifiedName(duckdb::Identifier{},
+                         duckdb::Identifier{connector::kOtelSchema},
+                         duckdb::Identifier{connector::kOtelLogsTable});
+  node->select_statement = std::move(select);
+  auto statement = duckdb::make_uniq<duckdb::InsertStatement>();
+  statement->node = std::move(node);
+  return statement;
+}
+
+yaclib::Task<InsertOutcome> RunSourceLogsInsert(RequestContext& ctx) {
+  auto& prepared = ctx.PreparedSlot(connector::kOtelSourceLogsFunction);
+  if (prepared == nullptr) {
+    auto statement = ctx.Connection().Prepare(SourceLogsInsert());
+    if (statement->HasError()) {
+      // Not cached: the schema may appear later.
+      co_return Failed(statement->GetError());
+    }
+    prepared = std::move(statement);
+  }
+  auto result = co_await ctx.RunPrepared(*prepared);
+  if (!result->HasError()) {
+    co_return InsertOutcome{.ok = true};
+  }
+  co_return Failed(result->GetError());
 }
 
 std::string InsertSql(std::string_view table, std::string_view function,
@@ -178,12 +228,32 @@ std::string InsertSql(std::string_view table, std::string_view function,
                       protobuf ? "'protobuf'" : "'json'", ")");
 }
 
+// Answers a failed insert; false when there is nothing to answer.
+bool WriteFailure(HttpResponseWriter& writer, const InsertOutcome& outcome,
+                  bool protobuf) {
+  if (outcome.missing_table) {
+    WriteStatus(
+      writer, HttpStatus::InternalError, kCodeInternal,
+      absl::StrCat("the OpenTelemetry schema is missing: ", outcome.error),
+      protobuf);
+    return true;
+  }
+  if (!outcome.ok) {
+    WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                outcome.error, protobuf);
+    return true;
+  }
+  return false;
+}
+
 class ExportHandler final : public HttpHandler {
  public:
   ExportHandler(
     std::span<const std::pair<std::string_view, std::string_view>> targets,
-    std::string_view rejected_field)
-    : _targets{targets}, _rejected_field{rejected_field} {}
+    std::string_view rejected_field, bool prepared_logs = false)
+    : _targets{targets},
+      _rejected_field{rejected_field},
+      _prepared_logs{prepared_logs} {}
 
   yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
                         HttpResponseWriter& writer) override {
@@ -208,6 +278,29 @@ class ExportHandler final : public HttpHandler {
     if (raw.empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   "empty request body", protobuf);
+      co_return {};
+    }
+
+    if (_prepared_logs) {
+      DecodedLogs logs;
+      try {
+        if (protobuf) {
+          DecodeLogsRequest(raw, logs.request);
+        } else {
+          ParseLogsRequest(raw, logs.request);
+        }
+      } catch (const std::exception& error) {
+        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                    error.what(), protobuf);
+        co_return {};
+      }
+      auto& logs_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
+      logs_ctx.SetOtelLogs(&logs);
+      const absl::Cleanup clear_logs = [&] { logs_ctx.SetOtelLogs(nullptr); };
+      const auto outcome = co_await RunSourceLogsInsert(ctx);
+      if (!WriteFailure(writer, outcome, protobuf)) {
+        WriteExportResponse(writer, _rejected_field, 0, {}, protobuf);
+      }
       co_return {};
     }
 
@@ -238,16 +331,7 @@ class ExportHandler final : public HttpHandler {
     for (const auto& [table, function] : _targets) {
       const auto outcome =
         co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
-      if (outcome.missing_table) {
-        WriteStatus(
-          writer, HttpStatus::InternalError, kCodeInternal,
-          absl::StrCat("the OpenTelemetry schema is missing: ", outcome.error),
-          protobuf);
-        co_return {};
-      }
-      if (!outcome.ok) {
-        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                    outcome.error, protobuf);
+      if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }
     }
@@ -259,6 +343,7 @@ class ExportHandler final : public HttpHandler {
  private:
   std::span<const std::pair<std::string_view, std::string_view>> _targets;
   std::string_view _rejected_field;
+  bool _prepared_logs;
 };
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 1>
@@ -284,9 +369,9 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 5>
 }  // namespace
 
 void RegisterHandlers(HttpRouter& router) {
-  router.Add(
-    HttpMethod::Post, "/v1/logs",
-    std::make_unique<ExportHandler>(kLogTargets, "rejectedLogRecords"));
+  router.Add(HttpMethod::Post, "/v1/logs",
+             std::make_unique<ExportHandler>(kLogTargets, "rejectedLogRecords",
+                                             /*prepared_logs=*/true));
   router.Add(HttpMethod::Post, "/v1/traces",
              std::make_unique<ExportHandler>(kTraceTargets, "rejectedSpans"));
   router.Add(

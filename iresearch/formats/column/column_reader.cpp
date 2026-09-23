@@ -353,9 +353,10 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   s->advised_end = b;
 }
 
-ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
+ColumnReader::ScanState ColumnReader::InitScan(
+  std::shared_ptr<ReadContext> ctx) const {
   ScanState s;
-  s.ctx = &ctx;
+  s.ctx = std::move(ctx);
   if (!_segments.empty()) {
     s.window = BlockWindow{0, _offsets[0], _offsets[1]};
   }
@@ -363,11 +364,50 @@ ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
   s.st.internal_index = 0;
   s.initialized = false;
   s.child_states.reserve(_children.size() + 1);
-  s.child_states.push_back(_validity ? _validity->InitScan(ctx) : ScanState{});
+  s.child_states.push_back(_validity ? _validity->InitScan(s.ctx)
+                                     : ScanState{});
   for (const auto& child : _children) {
-    s.child_states.push_back(child->InitScan(ctx));
+    s.child_states.push_back(child->InitScan(s.ctx));
   }
   return s;
+}
+
+namespace {
+
+struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
+  ScannedStrings(std::shared_ptr<ReadContext> ctx,
+                 duckdb::BufferHandle pin) noexcept
+    : ctx{std::move(ctx)}, pin{std::move(pin)} {}
+
+  bool CertifiesImmutablePayloads() const override { return true; }
+
+  std::shared_ptr<ReadContext> ctx;
+  duckdb::BufferHandle pin;
+};
+
+}  // namespace
+
+void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+                                  duckdb::Vector& result) const {
+  if (s.ctx.use_count() == 0 ||
+      _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return;
+  }
+  auto& block = segment.GetBlockHandle();
+  if (!block) {
+    return;
+  }
+  auto* target = &result;
+  if (result.GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR) {
+    if (s.certified_dictionary) {
+      return;
+    }
+    s.certified_dictionary = true;
+    target = &duckdb::DictionaryVector::Child(result);
+  }
+  auto& bm = s.ctx->Database().GetBufferManager();
+  duckdb::StringVector::AddAuxiliaryData(
+    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, bm.Pin(block)));
 }
 
 void ColumnReader::BeginScanVector(ScanState& s) const {
@@ -383,6 +423,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
     }
     s.segments.emplace_back(Open(s.window, *s.ctx, &s));
     s.segments.back()->InitializeScan(s.st);
+    s.certified_dictionary = false;
     s.st.internal_index = 0;
     s.initialized = true;
   }
@@ -435,6 +476,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
     if (scan_count > 0) {
       s.segments.back()->Scan(s.st, scan_count, result, result_offset,
                               scan_type);
+      CertifyStrings(s, *s.segments.back(), result);
       s.st.offset_in_column += scan_count;
       remaining -= scan_count;
     }
@@ -445,6 +487,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
       s.segments.emplace_back(Open(s.window, *s.ctx, &s));
       s.segments.back()->InitializeScan(s.st);
+      s.certified_dictionary = false;
       s.st.offset_in_column = 0;
       s.st.internal_index = 0;
     }

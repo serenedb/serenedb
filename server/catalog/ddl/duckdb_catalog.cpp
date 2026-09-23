@@ -1187,6 +1187,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
     auto& search_ctas = planner.Make<connector::SereneDBSearchInsert>(
       std::move(op.info), op.schema, op.estimated_cardinality);
     search_ctas.children.push_back(plan);
+    connector::ShareScanPayloads(plan);
     return search_ctas;
   }
 
@@ -1314,6 +1315,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       std::move(op.types), op.estimated_cardinality, op.return_chunk);
     if (plan) {
       insert.children.push_back(*plan);
+      connector::ShareScanPayloads(*plan);
     }
     return insert;
   }
@@ -1449,6 +1451,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       std::move(pk_indices), std::move(op.columns), std::move(op.types),
       op.estimated_cardinality, op.return_chunk);
     search_upd.children.push_back(proj);
+    connector::ShareScanPayloads(proj);
     return search_upd;
   }
 

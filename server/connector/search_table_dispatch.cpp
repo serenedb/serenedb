@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/string_util.hpp>
+#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -36,6 +37,7 @@
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_options_util.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
 #include "query/config_variable_names.h"
@@ -167,6 +169,19 @@ SearchWriteTarget ResolveSearchWriteTarget(
   target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
   SDB_ASSERT(target.generated_pk_seq);
   return target;
+}
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input) {
+  for (const auto& source : write_input.GetSources()) {
+    if (source.get().type != duckdb::PhysicalOperatorType::TABLE_SCAN) {
+      continue;
+    }
+    const auto& scan = source.get().Cast<duckdb::PhysicalTableScan>();
+    if (scan.function.bind != &ScanBind || !scan.bind_data) {
+      continue;
+    }
+    scan.bind_data->Cast<ScanBindData>().share_payloads = true;
+  }
 }
 
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,

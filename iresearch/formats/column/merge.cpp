@@ -100,10 +100,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     return true;
   }
 
-  std::vector<std::optional<ReadContext>> source_ctxs(sources.size());
+  std::vector<std::shared_ptr<ReadContext>> source_ctxs(sources.size());
   for (size_t i = 0; i < sources.size(); ++i) {
     if (sources[i].col_reader) {
-      source_ctxs[i].emplace(*sources[i].col_reader);
+      source_ctxs[i] = std::make_shared<ReadContext>(*sources[i].col_reader);
     }
   }
 
@@ -175,7 +175,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       const bool stored_hll =
         opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
 
-      auto state = col->InitScan(*source_ctxs[si]);
+      auto state = col->InitScan(source_ctxs[si]);
       cw.PadNullsTo(out_doc);
       const auto total = col->RowCount();
       uint64_t pos = 0;

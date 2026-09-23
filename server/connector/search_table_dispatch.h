@@ -33,6 +33,7 @@ namespace duckdb {
 
 class ClientContext;
 class DataChunk;
+class PhysicalOperator;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -77,6 +78,8 @@ struct SearchWriteTarget {
 
 SearchWriteTarget ResolveSearchWriteTarget(
   duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry);
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input);
 
 // One RETURNING row of a search DELETE or UPDATE, assembled out of the chunk
 // the child produced. `column_map` is indexed by the relation's own column

@@ -279,7 +279,7 @@ IndexOutput::ptr MemoryDirectory::create(std::string_view name) noexcept try {
         _files.erase(it);
       }
     };
-    file = std::make_unique<MemoryFile>(_files.get_allocator().Manager());
+    file = std::make_shared<MemoryFile>(_files.get_allocator().Manager());
   }
 
   return IndexOutput::ptr{new ChecksumMemoryIndexOutput{*file}};
@@ -325,7 +325,7 @@ IndexInput::ptr MemoryDirectory::open(std::string_view name,
   absl::ReaderMutexLock lock{&_flock};
   const auto it = _files.find(name);
   if (it != _files.end()) {
-    return std::make_unique<MemoryIndexInput>(*it->second);
+    return std::make_unique<MemoryIndexInput>(it->second);
   }
   SDB_ERROR(
     IRESEARCH,

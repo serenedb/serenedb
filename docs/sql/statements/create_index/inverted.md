@@ -38,7 +38,7 @@ The same flags can be set on the dictionary itself, in which case every column u
 
 ## `INCLUDE` columns
 
-Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec — one of `uncompressed`, `bitpacking`, `alp`, `rle` or `fsst` — for example `INCLUDE (payload included (compression = 'alp'))`.
+Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
 
 ## Index options
 

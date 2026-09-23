@@ -51,14 +51,16 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
   const std::string type{absl::StripSuffix(_fdw_name, "_fdw")};
   duckdb::AttachInfo info;
   info.name = name;
-  if (type == "iceberg") {
+  if (type == "clickhouse") {
+    info.path = ConnectionString(_options);
+  } else {
     for (const auto& [key, value] : _options) {
       info.options.emplace(key, duckdb::Value{value});
     }
-    auto warehouse = info.options.extract("warehouse");
-    info.path = warehouse ? warehouse.mapped().ToString() : "";
-  } else {
-    info.path = ConnectionString(_options);
+    if (type == "iceberg") {
+      auto warehouse = info.options.extract("warehouse");
+      info.path = warehouse ? warehouse.mapped().ToString() : "";
+    }
   }
   catalog::Attach(context, info, type, duckdb::AttachVisibility::SHOWN);
 }

@@ -258,7 +258,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |
 | random           | Yes           |                                                                         |
-| random_normal    | No            |                                                                         |
+| random_normal    | Yes           |                                                                         |
 | setseed          | Yes           |                                                                         |
 | acos             | Yes           |                                                                         |
 | acosd            | Yes           |                                                                         |

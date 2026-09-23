@@ -24,17 +24,19 @@
 
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/random_engine.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
-#include <random>
+#include <numbers>
 
 namespace sdb::connector {
 namespace {
@@ -53,17 +55,60 @@ void ErfcFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](double x) -> double { return std::erfc(x); });
 }
 
-void RandomNormalFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+struct RandomNormalLocalState : duckdb::FunctionLocalState {
+  explicit RandomNormalLocalState(uint64_t seed) : random_engine{0} {
+    random_engine.SetSeed(seed);
+  }
+
+  double Next(double mean, double stddev) {
+    const double u1 = 1.0 - random_engine.NextRandom();
+    const double u2 = random_engine.NextRandom();
+    return stddev * std::sqrt(-2.0 * std::log(u1)) *
+             std::sin(2.0 * std::numbers::pi * u2) +
+           mean;
+  }
+
+  duckdb::RandomEngine random_engine;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> RandomNormalInitLocalState(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  auto& random_engine = duckdb::RandomEngine::Get(state.GetContext());
+  duckdb::lock_guard<duckdb::mutex> guard(random_engine.lock);
+  return duckdb::make_uniq<RandomNormalLocalState>(
+    random_engine.NextRandomInteger64());
+}
+
+void RandomNormalFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  thread_local std::mt19937_64 gen{std::random_device{}()};
-  auto& mean_vec = args.data[0];
-  auto& stddev_vec = args.data[1];
-  duckdb::BinaryExecutor::Execute<double, double, double>(
-    mean_vec, stddev_vec, result, args.size(),
-    [](double mean, double stddev) -> double {
-      std::normal_distribution<double> dist(mean, stddev);
-      return dist(gen);
-    });
+  auto& lstate = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                   ->Cast<RandomNormalLocalState>();
+  const auto count = args.size();
+  std::array<duckdb::UnifiedVectorFormat, 2> params;
+  for (duckdb::idx_t p = 0; p < args.ColumnCount(); ++p) {
+    args.data[p].ToUnifiedFormat(params[p]);
+  }
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto out = duckdb::FlatVector::Writer<double>(result, count);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    std::array<double, 2> value{0.0, 1.0};
+    bool valid = true;
+    for (duckdb::idx_t p = 0; p < args.ColumnCount(); ++p) {
+      const auto idx = params[p].sel->get_index(i);
+      if (!params[p].validity.RowIsValid(idx)) {
+        valid = false;
+        break;
+      }
+      value[p] = duckdb::UnifiedVectorFormat::GetData<double>(params[p])[idx];
+    }
+    if (valid) {
+      out.WriteValue(lstate.Next(value[0], value[1]));
+    } else {
+      out.WriteNull();
+    }
+  }
 }
 
 // div(y, x) -> bigint -- PG-compatible, ported from Velox PgDiv
@@ -434,13 +479,17 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   }
 
   {
-    duckdb::ScalarFunction func{
-      "random_normal",
-      {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::DOUBLE,
-      RandomNormalFunction};
-    func.SetVolatile();
-    loader.RegisterFunction(func);
+    duckdb::ScalarFunctionSet random_normal_set("random_normal");
+    for (duckdb::idx_t arity = 0; arity <= 2; ++arity) {
+      duckdb::ScalarFunction func{
+        "random_normal",
+        duckdb::vector<duckdb::LogicalType>(arity, duckdb::LogicalType::DOUBLE),
+        duckdb::LogicalType::DOUBLE, RandomNormalFunction};
+      func.SetInitStateCallback(RandomNormalInitLocalState);
+      func.SetVolatile();
+      random_normal_set.AddFunction(func);
+    }
+    loader.RegisterFunction(random_normal_set);
   }
 }
 

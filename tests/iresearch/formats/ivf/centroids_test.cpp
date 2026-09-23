@@ -1293,6 +1293,12 @@ TEST(ivf_auto_nprobe, floors_the_limit_at_ten_and_stays_within_the_lists) {
   EXPECT_EQ(IvfAutoNprobe(2000, 0, 10), 59u);
 }
 
+TEST(ivf_auto_nprobe, counts_the_leaves_a_tree_has_when_it_knows_them) {
+  EXPECT_EQ(IvfAutoNprobe(64, 16, 50), 4u);
+  EXPECT_EQ(IvfAutoNprobe(64, 16, 50, 7), 6u);
+  EXPECT_EQ(IvfAutoNprobe(64, 16, 50, 2), 2u);
+}
+
 TEST(ivf_search_beam, follows_nprobe_within_the_bounds) {
   EXPECT_EQ(IvfSearchBeam(41, 0, 0), 41u);
   EXPECT_EQ(IvfSearchBeam(1, 0, 0), 1u);

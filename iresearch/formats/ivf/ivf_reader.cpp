@@ -40,10 +40,12 @@
 
 namespace irs {
 
-uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size,
-                       uint32_t top_k) noexcept {
+uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size, uint32_t top_k,
+                       uint64_t leaves) noexcept {
   const uint64_t posting = std::max<uint32_t>(posting_size, 1);
-  const uint64_t lists = std::max<uint64_t>((rows + posting - 1) / posting, 1);
+  const uint64_t lists =
+    leaves != 0 ? leaves
+                : std::max<uint64_t>((rows + posting - 1) / posting, 1);
   const double k = std::max<uint32_t>(top_k, 10);
   const double n =
     std::ceil(1.3 * std::log10(k) * std::sqrt(static_cast<double>(lists)));
@@ -111,7 +113,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
   const auto nprobe =
     effort != 0 ? effort
                 : IvfAutoNprobe(segment.docs_count(), opts.posting_size,
-                                opts.top_k);
+                                opts.top_k,
+                                _tree.Levels() == 1 ? _tree.RootSize() : 0);
   if (!PrepareVectorState(
         _tree, segment, ctx, opts, nprobe, state, inner,
         IvfSearchBeam(nprobe, opts.min_search_fanout,

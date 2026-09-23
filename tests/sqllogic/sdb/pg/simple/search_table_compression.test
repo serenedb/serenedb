@@ -1,0 +1,43 @@
+statement ok
+CREATE TABLE search_declared (a INTEGER PRIMARY KEY, b TEXT USING COMPRESSION zstd, c TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_declared SELECT i, repeat('declared ' || i, 50), repeat('plain ' || i, 50) FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_declared;
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('search_declared') WHERE column_name = 'b';
+----
+compression
+ZSTD
+
+statement ok
+SET GLOBAL force_compression = 'zstd';
+
+statement ok
+CREATE TABLE search_forced (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced SELECT i, repeat('forced ' || i, 50) FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('search_forced') WHERE column_name = 'b';
+----
+compression
+ZSTD
+
+statement ok
+DROP TABLE search_declared;
+
+statement ok
+DROP TABLE search_forced;

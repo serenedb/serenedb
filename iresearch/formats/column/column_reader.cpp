@@ -354,10 +354,9 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
 }
 
 ColumnReader::ScanState ColumnReader::InitScan(
-  ReadContext& ctx, std::shared_ptr<ReadContext> shared) const {
+  std::shared_ptr<ReadContext> ctx) const {
   ScanState s;
-  s.ctx = &ctx;
-  s.shared_ctx = shared;
+  s.ctx = std::move(ctx);
   if (!_segments.empty()) {
     s.window = BlockWindow{0, _offsets[0], _offsets[1]};
   }
@@ -365,10 +364,10 @@ ColumnReader::ScanState ColumnReader::InitScan(
   s.st.internal_index = 0;
   s.initialized = false;
   s.child_states.reserve(_children.size() + 1);
-  s.child_states.push_back(_validity ? _validity->InitScan(ctx, shared)
+  s.child_states.push_back(_validity ? _validity->InitScan(s.ctx)
                                      : ScanState{});
   for (const auto& child : _children) {
-    s.child_states.push_back(child->InitScan(ctx, shared));
+    s.child_states.push_back(child->InitScan(s.ctx));
   }
   return s;
 }
@@ -390,7 +389,8 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 
 void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
-  if (!s.shared_ctx || _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+  if (s.ctx.use_count() == 0 ||
+      _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
     return;
   }
   auto& block = segment.GetBlockHandle();
@@ -407,7 +407,7 @@ void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
   }
   auto& bm = s.ctx->Database().GetBufferManager();
   duckdb::StringVector::AddAuxiliaryData(
-    *target, duckdb::make_uniq<ScannedStrings>(s.shared_ctx, bm.Pin(block)));
+    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, bm.Pin(block)));
 }
 
 void ColumnReader::BeginScanVector(ScanState& s) const {

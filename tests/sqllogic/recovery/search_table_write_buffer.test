@@ -141,6 +141,137 @@ DROP TABLE wtrunc;
 
 
 ###############################################################################
+# 2c. UPDATE fills the same buffer and flushes on the same threshold -- it
+#     buffers a whole new row per updated row, so without the flush a large
+#     UPDATE holds the lot until commit. Each row's removal and its
+#     replacement are buffered as a pair, so a flush landing between them
+#     would either drop the new version (removed by its own delete, replayed
+#     after it) or leave the old one live. The counts below catch each of
+#     those: a stale row, a lost row, and a duplicate.
+###############################################################################
+
+statement ok
+CREATE TABLE wupd(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
+
+# An UPDATE matches through the index, and a search table publishes rows only
+# on refresh -- without this the UPDATE below sees an empty table and silently
+# updates nothing.
+statement ok
+VACUUM (REFRESH_TABLE) wupd;
+
+statement ok
+UPDATE wupd SET b = 'aupd' || a || repeat('y', 200);
+
+statement ok
+VACUUM (REFRESH_TABLE) wupd;
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE b LIKE 'aupd%') AS updated,
+       count(*) FILTER (WHERE b LIKE 'seed%') AS stale,
+       count(DISTINCT a) AS d
+FROM wupd;
+----
+n	updated	stale	d
+8000	8000	0	8000
+
+statement ok
+DROP TABLE wupd;
+
+
+###############################################################################
+# 2d. INSERT and UPDATE interleaved in ONE transaction, with the threshold
+#     crossed by the SECOND of the two. Which statement owns the flush decides
+#     what is already in the buffer when it fires, so both orders are pinned:
+#     2000 rows sit under the 1MB buffer, 6000 cross it.
+###############################################################################
+
+# The UPDATE crosses, with the INSERT's rows buffered ahead of it.
+statement ok
+CREATE TABLE wmixa(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wmixa;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO wmixa SELECT i, 'ains' || i || repeat('x', 200) FROM range(200000, 202000) t(i);
+
+statement ok
+UPDATE wmixa SET b = 'aupd' || a || repeat('y', 200) WHERE a < 6000;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) wmixa;
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE b LIKE 'aupd%') AS updated,
+       count(*) FILTER (WHERE b LIKE 'ains%') AS inserted,
+       count(*) FILTER (WHERE b LIKE 'seed%') AS stale,
+       count(DISTINCT a) AS d
+FROM wmixa;
+----
+n	updated	inserted	stale	d
+8000	6000	2000	0	8000
+
+statement ok
+DROP TABLE wmixa;
+
+# The INSERT crosses, with the UPDATE's remove/replace pair buffered ahead.
+statement ok
+CREATE TABLE wmixb(a INTEGER, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wmixb;
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE wmixb SET b = 'bupd' || a || repeat('y', 200) WHERE a < 2000;
+
+statement ok
+INSERT INTO wmixb SELECT i, 'bins' || i || repeat('x', 200) FROM range(300000, 306000) t(i);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) wmixb;
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE b LIKE 'bupd%') AS updated,
+       count(*) FILTER (WHERE b LIKE 'bins%') AS inserted,
+       count(*) FILTER (WHERE b LIKE 'seed%') AS stale,
+       count(DISTINCT a) AS d
+FROM wmixb;
+----
+n	updated	inserted	stale	d
+8000	2000	6000	0	8000
+
+statement ok
+DROP TABLE wmixb;
+
+
+###############################################################################
 # 3. A statement small enough to stay buffered never reaches iresearch until
 #    commit feeds it, so it has to survive a crash after the WAL commit like
 #    any other write.

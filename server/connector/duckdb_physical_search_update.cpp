@@ -53,6 +53,7 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
 
   std::shared_lock<std::shared_mutex> table_lock;
+  uint64_t write_buffer_max_bytes = 0;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -91,6 +92,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->column_ids = _target.column_ids;
   state->chunk_types = _target.chunk_types;
+  state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
 
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, 0);
@@ -150,10 +152,19 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   const uint64_t pk_base = gstate.generated_pk_seq->Reserve(num_rows);
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
-  gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  search_txn.AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,
     gstate.column_ids, new_row, pk_base);
+
+  // After the new row, never between it and the removal above: a flush replays
+  // the buffer in issue order, so the pair has to reach iresearch together for
+  // the new version to outrank the removal of the one it replaces.
+  if (search_txn.BufferedBytes(gstate.table_id) >
+      gstate.write_buffer_max_bytes) {
+    search_txn.FlushBuffer(gstate.search_table, context.client);
+  }
 
   if (gstate.returned) {
     // The new row, which is what postgres' RETURNING reports for an UPDATE. The

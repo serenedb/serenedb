@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -43,7 +44,7 @@ namespace sdb::otel {
 struct AnyValue;
 
 struct KeyValue {
-  std::string key;
+  std::string_view key;
   AnyValue* value = nullptr;
 };
 
@@ -81,8 +82,8 @@ struct BytesValue {
 };
 
 struct AnyValue {
-  std::variant<std::monostate, std::string, bool, int64_t, double, ArrayValue,
-               KvlistValue, BytesValue>
+  std::variant<std::monostate, std::string_view, bool, int64_t, double,
+               ArrayValue, KvlistValue, BytesValue>
     value;
 };
 
@@ -158,8 +159,8 @@ enum class ResourceTag : uint32_t {
 };
 
 struct InstrumentationScope {
-  std::string name;
-  std::string version;
+  std::string_view name;
+  std::string_view version;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
 };
@@ -177,8 +178,8 @@ struct LogRecord {
   uint64_t time_unix_nano = 0;
   uint64_t observed_time_unix_nano = 0;
   SeverityNumber severity_number = SeverityNumber::Unspecified;
-  std::string severity_text;
-  std::string event_name;
+  std::string_view severity_text;
+  std::string_view event_name;
   AnyValue* body = nullptr;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
@@ -220,7 +221,7 @@ enum class StatusCode : int32_t {
 
 struct Status {
   StatusCode code = StatusCode::Unset;
-  std::string message;
+  std::string_view message;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto
@@ -232,7 +233,7 @@ enum class StatusTag : uint32_t {
 
 struct SpanEvent {
   uint64_t time_unix_nano = 0;
-  std::string name;
+  std::string_view name;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
 };
@@ -249,7 +250,7 @@ enum class SpanEventTag : uint32_t {
 struct SpanLink {
   TraceId trace_id;
   SpanId span_id;
-  std::string trace_state;
+  std::string_view trace_state;
   KeyValueList attributes;
   uint32_t dropped_attributes_count = 0;
   uint32_t flags = 0;
@@ -269,10 +270,10 @@ enum class SpanLinkTag : uint32_t {
 struct Span {
   TraceId trace_id;
   SpanId span_id;
-  std::string trace_state;
+  std::string_view trace_state;
   SpanId parent_span_id;
   uint32_t flags = 0;
-  std::string name;
+  std::string_view name;
   SpanKind kind = SpanKind::Unspecified;
   uint64_t start_time_unix_nano = 0;
   uint64_t end_time_unix_nano = 0;
@@ -501,9 +502,9 @@ enum class MetricShapeTag : uint32_t {
 };
 
 struct Metric {
-  std::string name;
-  std::string description;
-  std::string unit;
+  std::string_view name;
+  std::string_view description;
+  std::string_view unit;
   std::variant<std::monostate, Gauge, Sum, Histogram, ExponentialHistogram,
                Summary>
     data;
@@ -528,7 +529,7 @@ template<typename Record>
 struct ScopeRecords {
   InstrumentationScope scope;
   std::vector<Record> records;
-  std::string schema_url;
+  std::string_view schema_url;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
@@ -543,7 +544,7 @@ template<typename Record>
 struct ResourceRecords {
   Resource resource;
   std::vector<ScopeRecords<Record>> scopes;
-  std::string schema_url;
+  std::string_view schema_url;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/logs/v1/logs.proto
@@ -558,6 +559,9 @@ template<typename Record>
 struct ExportRequest {
   std::vector<ResourceRecords<Record>> resources;
   ValueArena arena;
+  // The text fields are views: into the protobuf wire bytes (owned by the
+  // caller), or into the JSON parser's string buffer, which this keeps alive.
+  std::shared_ptr<const void> storage;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/logs/v1/logs_service.proto

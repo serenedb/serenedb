@@ -160,7 +160,7 @@ void SerdeWrite(Context ctx, const AnyValue* value) {
     [&]<typename Held>(const Held& held) {
       if constexpr (std::is_same_v<Held, std::monostate>) {
         sink.WriteNull();
-      } else if constexpr (std::is_same_v<Held, std::string>) {
+      } else if constexpr (std::is_same_v<Held, std::string_view>) {
         sink.WriteValue(std::string_view{held});
       } else if constexpr (std::is_same_v<Held, BytesValue>) {
         sink.WriteValue(std::string_view{held.data});
@@ -183,8 +183,8 @@ std::string BodyToText(const AnyValue* body) {
   if (body == nullptr) {
     return {};
   }
-  if (const auto* text = std::get_if<std::string>(&body->value)) {
-    return *text;
+  if (const auto* text = std::get_if<std::string_view>(&body->value)) {
+    return std::string{*text};
   }
   if (const auto* bytes = std::get_if<BytesValue>(&body->value)) {
     return bytes->data;

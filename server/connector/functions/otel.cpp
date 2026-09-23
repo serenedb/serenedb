@@ -227,7 +227,7 @@ void BuildLogRows(const otel::ExportLogsRequest& request,
              ? duckdb::Value{}
              : duckdb::Value::SMALLINT(static_cast<int16_t>(
                  std::to_underlying(record.severity_number)))});
-        std::string event_name = record.event_name;
+        std::string event_name{record.event_name};
         if (event_name.empty()) {
           if (const auto* attribute =
                 otel::FindAttribute(record.attributes, otel::kEventNameKey)) {
@@ -288,7 +288,7 @@ void BuildSpanRows(const otel::ExportTracesRequest& request,
         std::vector<std::string> event_names;
         event_names.reserve(span.events.size());
         for (const auto& event : span.events) {
-          event_names.push_back(event.name);
+          event_names.emplace_back(event.name);
         }
         std::vector<std::string> link_trace_ids;
         link_trace_ids.reserve(span.links.size());
@@ -772,8 +772,10 @@ void OtelSourceExecute(duckdb::ClientContext&,
 void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
                std::vector<Row>& rows) {
   otel::ExportLogsRequest request;
+  std::string wire;
   if (protobuf) {
-    otel::DecodeLogsRequest(DecodeBase64Payload(body), request);
+    wire = DecodeBase64Payload(body);
+    otel::DecodeLogsRequest(wire, request);
   } else {
     otel::ParseLogsRequest(body, request);
   }
@@ -783,8 +785,10 @@ void BuildLogs(duckdb::ClientContext&, const std::string& body, bool protobuf,
 void BuildTraces(duckdb::ClientContext&, const std::string& body, bool protobuf,
                  std::vector<Row>& rows) {
   otel::ExportTracesRequest request;
+  std::string wire;
   if (protobuf) {
-    otel::DecodeTracesRequest(DecodeBase64Payload(body), request);
+    wire = DecodeBase64Payload(body);
+    otel::DecodeTracesRequest(wire, request);
   } else {
     otel::ParseTracesRequest(body, request);
   }
@@ -799,8 +803,10 @@ void BuildMetrics(duckdb::ClientContext& context, const std::string& body,
     return;
   }
   otel::ExportMetricsRequest request;
+  std::string wire;
   if (protobuf) {
-    otel::DecodeMetricsRequest(DecodeBase64Payload(body), request);
+    wire = DecodeBase64Payload(body);
+    otel::DecodeMetricsRequest(wire, request);
   } else {
     otel::ParseMetricsRequest(body, request);
   }

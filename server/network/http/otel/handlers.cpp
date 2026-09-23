@@ -274,7 +274,9 @@ class ExportHandler final : public HttpHandler {
       co_return {};
     }
 
-    const auto raw = FlattenBody(request.body);
+    // One copy of the body, padded so the JSON parser reads it in place.
+    const auto buffer = FlattenBody(request.body, kJsonPadding);
+    const std::string_view raw{buffer.data(), buffer.size() - kJsonPadding};
     if (raw.empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   "empty request body", protobuf);
@@ -287,7 +289,7 @@ class ExportHandler final : public HttpHandler {
         if (protobuf) {
           DecodeLogsRequest(raw, logs.request);
         } else {
-          ParseLogsRequest(raw, logs.request);
+          ParseLogsRequest(raw, logs.request, /*padded=*/true);
         }
       } catch (const std::exception& error) {
         WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
@@ -311,13 +313,13 @@ class ExportHandler final : public HttpHandler {
     const absl::Cleanup clear_metrics = [&] {
       sdb_ctx.SetOtelMetrics(nullptr);
     };
-    std::string body = protobuf ? absl::Base64Escape(raw) : raw;
+    std::string body = protobuf ? absl::Base64Escape(raw) : std::string{raw};
     if (_targets.size() > 1) {
       try {
         if (protobuf) {
           DecodeMetricsRequest(raw, decoded.request);
         } else {
-          ParseMetricsRequest(raw, decoded.request);
+          ParseMetricsRequest(raw, decoded.request, /*padded=*/true);
         }
       } catch (const std::exception& error) {
         WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,

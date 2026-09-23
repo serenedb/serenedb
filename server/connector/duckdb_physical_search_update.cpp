@@ -63,7 +63,6 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 };
 
 struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
-  bool finished = false;
   duckdb::ColumnDataScanState scan;
 };
 
@@ -93,11 +92,10 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   const auto& columns = _table.GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
-  state->chunk_types.reserve(columns.LogicalColumnCount());
   for (const auto& column : columns.Logical()) {
     state->column_ids.emplace_back(column.Oid());
-    state->chunk_types.push_back(column.Type());
   }
+  state->chunk_types = columns.GetColumnTypes();
 
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);
@@ -139,9 +137,6 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   const auto num_rows = chunk.size();
-  if (num_rows == 0) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
 
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
     gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
@@ -164,10 +159,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);
-  for (size_t col = 0; col < gstate.column_ids.size(); ++col) {
-    new_row.data[col].Reference(chunk.data[gstate.new_row_src[col]]);
-  }
-  new_row.SetCardinality(num_rows);
+  new_row.ReferenceColumns(chunk, gstate.new_row_src);
 
   if (!gstate.insert_sink) {
     gstate.insert_sink = MakeSearchTableInsertSink(
@@ -196,11 +188,9 @@ duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchUpdate::GetGlobalSourceState(
   duckdb::ClientContext& /*context*/) const {
   auto state = duckdb::make_uniq<SearchUpdateSourceState>();
-  if (sink_state) {
-    auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
-    if (gstate.returned) {
-      gstate.returned->InitializeScan(state->scan);
-    }
+  auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
+  if (gstate.returned) {
+    gstate.returned->InitializeScan(state->scan);
   }
   return state;
 }
@@ -215,14 +205,10 @@ duckdb::SourceResultType SereneDBSearchUpdate::GetDataInternal(
     return chunk.size() == 0 ? duckdb::SourceResultType::FINISHED
                              : duckdb::SourceResultType::HAVE_MORE_OUTPUT;
   }
-  if (source.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-  source.finished = true;
 
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count));
-  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  return duckdb::SourceResultType::FINISHED;
 }
 
 }  // namespace sdb::connector

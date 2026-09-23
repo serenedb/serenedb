@@ -31,7 +31,6 @@
 #include <optional>
 
 #include "catalog/catalog.h"
-#include "connector/column_id.h"
 #include "connector/file_manifest.h"
 
 namespace sdb::catalog {
@@ -92,15 +91,6 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   }
 };
 
-// One column of the relation a CREATE INDEX reads. A base table's list comes
-// off its entry and a view's off the view body, so the operator carries the
-// three facts both can answer with rather than either relation's own shape.
-struct IndexRelationColumn {
-  std::string name;
-  duckdb::LogicalType type;
-  ColumnId id;
-};
-
 // Physical operator for CREATE INDEX on SereneDB tables.
 // Replaces DuckDB's native PhysicalCreateIndex which requires DuckTableEntry.
 //
@@ -132,8 +122,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
   SereneDBPhysicalCreateIndex(
     duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
-    std::vector<IndexRelationColumn> columns, duckdb::idx_t database_id,
-    duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+    duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
@@ -154,9 +143,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const final;
 
-  // Source interface -- returns CREATE INDEX tag
-  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
     duckdb::OperatorSourceInput& input) const final;
@@ -170,7 +156,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
   // Not const: the build reads and publishes into the relation's own storage.
   duckdb::CatalogEntry& _relation;
-  std::vector<IndexRelationColumn> _columns;
   duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;

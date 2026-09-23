@@ -166,8 +166,6 @@ SearchTableEntry::SearchTableEntry(
   : duckdb::TableCatalogEntry{catalog, schema, info.Base()},
     _storage{std::move(inherited_storage)} {
   auto& base = info.Base();
-  comment = base.comment;
-  tags = base.tags;
   dependencies = info.dependencies;
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
@@ -289,7 +287,6 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
   }
-  duckdb::TableCatalogEntry::Rollback(prev_entry);
 }
 
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,

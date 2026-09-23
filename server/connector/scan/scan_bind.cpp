@@ -85,12 +85,11 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
 
 const duckdb::ColumnDefinition* FindColumnById(
   const duckdb::TableCatalogEntry& entry, ColumnId col_id) {
-  for (const auto& column : entry.GetColumns().Logical()) {
-    if (ColumnId{column.Oid()} == col_id) {
-      return &column;
-    }
+  const auto& columns = entry.GetColumns();
+  if (col_id >= columns.LogicalColumnCount()) {
+    return nullptr;
   }
-  return nullptr;
+  return &columns.GetColumn(duckdb::LogicalIndex{col_id});
 }
 
 irs::DirectoryReader PinnedSearchReader(

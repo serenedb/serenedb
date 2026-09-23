@@ -29,7 +29,6 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -65,6 +64,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
@@ -152,23 +152,17 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 };
 
-struct CreateIndexSourceState final : public duckdb::GlobalSourceState {
-  bool finished = false;
-};
-
 }  // namespace
 
 SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
-  std::vector<IndexRelationColumn> columns, duckdb::idx_t database_id,
-  duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+  duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
   duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
     _relation(relation),
-    _columns(std::move(columns)),
     _database_id(database_id),
     _info(std::move(info)),
     _bound_expressions(std::move(bound_expressions)),
@@ -197,29 +191,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->progress = &metrics;
   }
 
-  const auto& columns = _columns;
   auto resolve_column = [&](std::string_view col_name) {
-    for (const auto& col : columns) {
-      if (absl::EqualsIgnoreCase(col.name, col_name)) {
-        return &col;
+    for (const auto& name : _info->names) {
+      if (absl::EqualsIgnoreCase(name.GetIdentifierName(), col_name)) {
+        return &name;
       }
     }
-    return static_cast<const IndexRelationColumn*>(nullptr);
-  };
-
-  auto make_column_ids = [&](auto&& positions) {
-    return std::forward<decltype(positions)>(positions) |
-           std::views::transform([&](size_t pos) { return columns[pos].id; }) |
-           std::ranges::to<std::vector<ColumnId>>();
-  };
-
-  const auto col_index_to_id = make_column_ids(_info->column_ids);
-  const auto relation_id = _relation.oid;
-
-  auto dependent_columns_of = [&](const duckdb::Expression& bound) {
-    auto normalized =
-      NormalizeBoundExpression(bound, relation_id, col_index_to_id, context);
-    return CollectDependentColumns(*normalized);
+    return static_cast<const duckdb::Identifier*>(nullptr);
   };
 
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
@@ -237,7 +215,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     SDB_ASSERT(i < _bound_expressions.size() && _bound_expressions[i],
                "bound expression is missing for inverted index expression");
-    if (dependent_columns_of(*_bound_expressions[i]).empty()) {
+    bool references_column = false;
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundColumnRefExpression>(
+      *_bound_expressions[i], [&](const duckdb::BoundColumnRefExpression&) {
+        references_column = true;
+      });
+    if (!references_column) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
         ERR_MSG(
@@ -285,15 +269,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         store->MergeIndexConfig(index_entry.oid, index_entry.Config());
         SearchBackfillTarget backfill;
-        backfill.shard = store;
-        backfill.catalog = &_relation.ParentCatalog();
-        backfill.table_id = _relation.oid;
-        backfill.column_ids.reserve(columns.size());
-        backfill.column_types.reserve(columns.size());
-        for (const auto& col : columns) {
-          backfill.column_ids.push_back(col.id);
-          backfill.column_types.push_back(col.type);
-        }
+        backfill.table = &_relation.Cast<catalog::SearchTableEntry>();
         backfill.group_bytes = uint64_t{1} << 30;
         duckdb::Value group_bytes;
         if (context.TryGetCurrentSetting(
@@ -365,10 +341,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->columns.reserve(_info->column_ids.size());
   for (size_t chunk_idx = 0; chunk_idx < _info->column_ids.size();
        ++chunk_idx) {
-    const auto& col = columns[_info->column_ids[chunk_idx]];
     state->columns.push_back(InsertColumnMeta{
-      .id = col.id,
-      .duckdb_type = col.type,
+      .id = _info->column_ids[chunk_idx],
+      .duckdb_type = _info->scan_types[chunk_idx],
       .input_col_idx = chunk_idx,
     });
   }
@@ -676,27 +651,15 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   return duckdb::SinkFinalizeType::READY;
 }
 
-duckdb::unique_ptr<duckdb::GlobalSourceState>
-SereneDBPhysicalCreateIndex::GetGlobalSourceState(
-  duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<CreateIndexSourceState>();
-}
-
 duckdb::SourceResultType SereneDBPhysicalCreateIndex::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
-  auto& source = input.global_state.Cast<CreateIndexSourceState>();
-  if (source.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-  source.finished = true;
-
   auto& gstate = sink_state->Cast<CreateIndexGlobalState>();
   chunk.SetCardinality(1);
   const auto count = static_cast<int64_t>(
     gstate.backfill_count_atomic.load(std::memory_order_relaxed));
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(count));
-  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  return duckdb::SourceResultType::FINISHED;
 }
 
 duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
@@ -719,39 +682,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     op.table.ParentSchema(input.context).Cast<duckdb::DuckSchemaEntry>();
   auto database_id = table_catalog.Cast<catalog::SereneDBCatalog>().GetOid();
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> relation;
-  std::vector<IndexRelationColumn> columns;
-
-  if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
-    auto& view = op.table.Cast<duckdb::ViewCatalogEntry>();
-    relation = &view;
-    const auto view_columns = view.GetColumnInfo();
-    if (!view_columns) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("view \"", op.table.name.GetIdentifierName(),
-                              "\" is not bound"));
-    }
-    const auto& vinfo = *view_columns;
-    // The whole declared column list, like a table's: which of them the scan
-    // carries, and in what order, is info.column_ids either way.
-    columns.reserve(vinfo.names.size());
-    for (size_t p = 0; p < vinfo.names.size(); ++p) {
-      columns.push_back({.name = vinfo.names[p].GetIdentifierName(),
-                         .type = vinfo.types[p],
-                         .id = ColumnId{p}});
-    }
-  } else {
-    auto& table_entry = op.table.Cast<duckdb::TableCatalogEntry>();
-    relation = &table_entry;
-    const auto& entry_columns = table_entry.GetColumns();
-    columns.reserve(entry_columns.LogicalColumnCount());
-    for (const auto& column : entry_columns.Logical()) {
-      columns.push_back({.name = column.Name().GetIdentifierName(),
-                         .type = column.Type(),
-                         .id = ColumnId{column.Oid()}});
-    }
-  }
-
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
     if (op.info->parsed_expressions[i]->GetExpressionType() ==
@@ -764,7 +694,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   const auto scan_column_count = input.table_scan.types.size();
 
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
-    *relation, std::move(columns), database_id, std::move(op.info),
+    op.table, database_id, std::move(op.info),
     std::move(op.unbound_expressions), schema_entry, op.estimated_cardinality);
   if (projected_exprs.empty()) {
     create_index.children.push_back(input.table_scan);

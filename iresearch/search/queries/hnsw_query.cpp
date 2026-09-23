@@ -410,13 +410,35 @@ long double ScanCandidateCost(uint32_t record_size) noexcept {
   return r / (r + kWalkCandidateOverhead);
 }
 
+inline constexpr uint64_t kTwoHopAdmittedNeighbours = 3;
+
+bool HnswBridgeRejected(uint32_t record_size, uint32_t m0) noexcept {
+  return static_cast<long double>(record_size) >
+         static_cast<long double>(m0) * sizeof(uint32_t) +
+           kWalkCandidateOverhead;
+}
+
+long double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
+                            uint32_t record_size) noexcept {
+  const auto p = std::min<long double>(
+    1, static_cast<long double>(matches) / static_cast<long double>(nodes));
+  const auto crossed = static_cast<long double>(m0) * sizeof(uint32_t) +
+                       kWalkCandidateOverhead;
+  const auto scored =
+    static_cast<long double>(record_size) + kWalkCandidateOverhead;
+  return p + (1 - p) * crossed / scored;
+}
+
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
                     uint32_t record_size, uint32_t parallel = 1,
-                    bool prefix = false) noexcept {
+                    bool prefix = false, bool two_hop = false) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
-  const long double walk = HnswWalkNodes(matches, ef, m0, nodes);
+  long double walk = HnswWalkNodes(matches, ef, m0, nodes);
+  if (two_hop && matches * m0 >= kTwoHopAdmittedNeighbours * nodes) {
+    walk *= HnswTwoHopShare(matches, nodes, m0, record_size);
+  }
   // A scan splits across `parallel` workers; the walk is one thread moving
   // through the graph, so only the scan's side of the comparison shrinks. A
   // scan that ranks on a prefix of each code reads a quarter of the rows it
@@ -557,8 +579,11 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     matches = _inner->EstimateMax();
   }
   auto mode = _filter_mode;
+  const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
+                       HnswBridgeRejected(_record_size, graph.M0());
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
-    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size)
+    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
+                          1, false, two_hop)
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
@@ -599,6 +624,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // the predicate admits enough docs lost the admitted subgraph's connectivity:
   // the scan answers exactly.
   const auto budget = matches;
+  if (two_hop && mode == HnswFilterMode::Walk && !ask_per_hop) {
+    mode = HnswFilterMode::TwoHop;
+  }
   const auto walked = [&](bool complete) {
     return complete &&
            (scratch.nearest.size() >= _ef || scratch.nearest.size() >= matches);
@@ -681,9 +709,11 @@ std::optional<uint64_t> HnswQuery::ScanCandidates(
   // with nothing spare to run it on. How wide to split, once a scan is the
   // answer, is still the caller's question and still uses `parallel`.
   (void)parallel;
+  const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
+                       HnswBridgeRejected(_record_size, graph.M0());
   if (_filter_mode != HnswFilterMode::Scan &&
       !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                      /*parallel=*/1, prefix)) {
+                      /*parallel=*/1, prefix, two_hop)) {
     return std::nullopt;
   }
   return matches;

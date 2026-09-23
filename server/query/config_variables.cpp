@@ -509,7 +509,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "How an HNSW vector index answers a query with a WHERE: 'auto' picks "
-        "by the predicate's estimated selectivity; 'scan' scores every row "
+        "by the predicate's estimated selectivity, and walks as 'twohop' "
+        "where a vector's code is long enough that crossing a rejected row "
+        "costs less than scoring it; 'scan' scores every row "
         "the predicate admits; 'walk' walks the graph scoring every "
         "neighbour and passing through rejected rows; 'prune' walks scoring "
         "and expanding admitted rows only; 'twohop' walks expanding a "

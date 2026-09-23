@@ -57,6 +57,10 @@ struct ColumnstoreProjection {
   bool IsExtract() const noexcept { return !extract_path.empty(); }
 };
 
+const irs::ColumnReader* DirectExtractLeaf(
+  const irs::ColumnReader& column, std::span<const std::string_view> path,
+  const duckdb::LogicalType& scan_type);
+
 class ExtractBinding {
  public:
   ExtractBinding() = default;

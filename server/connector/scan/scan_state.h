@@ -211,6 +211,7 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
     duckdb::LogicalType type;
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
+    std::vector<std::string_view> extract_path;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;

@@ -332,6 +332,16 @@ SET sdb_hnsw_column_filter = 'read';
 
 
 query
+SELECT pk FROM hnsw_nest_idx WHERE meta.cat = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+98
+103
+93
+
+
+query
 SELECT pk FROM hnsw_nest_idx WHERE tags IS NOT NULL
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
 ----

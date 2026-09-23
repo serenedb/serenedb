@@ -564,15 +564,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // Which plan answers this decides how the set is built, so the count comes first and costs
   // nothing: a bounded sample of the set stands in, and folding to decide costs more than either
   // plan does.
-  //
-  // An inner query alone knows its own upper bound, so it answers for itself. A columnstore
-  // conjunct does not: `WHERE cat10 = 3 AND num BETWEEN ...` is as selective as both together,
-  // and taking the term's bound for the pair reads a hundredth of the segment as a tenth. The
-  // walk then runs against a set ten times sparser than it was planned for, which is ten times
-  // the candidates before the beam fills. Sample the set that will actually be walked.
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
-  if (table != nullptr) {
+  if (table != nullptr || _inner->Kind() == QueryKind::Boolean) {
     probe.emplace(MakeSet(_inner.get(), table, docs_count));
     matches = probe->EstimateCount(kCountSampleWindows);
   } else {

@@ -281,6 +281,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         vs.min_ef = static_cast<uint32_t>(seg_pool > 0.0 ? seg_pool : share);
       }
     }
+    if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
+      vs.ef_search = std::max(
+        vs.ef_construction,
+        state->top_k ? static_cast<uint32_t>(*state->top_k) : uint32_t{1});
+    }
     state->vector_scorer = &vs;
     state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();

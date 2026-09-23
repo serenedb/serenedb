@@ -710,7 +710,8 @@ uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
 
 uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  return gEfSearch.Int(context);
+  const auto n = gEfSearch.SignedInt(context);
+  return n < 0 ? 0 : static_cast<uint32_t>(n);
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
@@ -818,6 +819,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
+      .ef_construction = ann_info->ef_construction,
       .hnsw_filter_mode = connector::ReadHnswFilterMode(context),
       .exact = connector::ReadAnnExact(context),
     };

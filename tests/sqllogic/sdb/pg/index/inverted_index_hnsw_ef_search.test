@@ -41,7 +41,7 @@ query
 SHOW sdb_hnsw_ef_search;
 ----
 sdb_hnsw_ef_search
-64
+-1
 
 
 # A wide beam ranks exactly. 1500.4 is off-lattice so no two neighbours tie.
@@ -113,9 +113,22 @@ count
 
 
 statement error
-SET sdb_hnsw_ef_search = -1;
+SET sdb_hnsw_ef_search = -2;
 ----
-db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-1"
+db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-2"
+
+
+statement ok
+SET sdb_hnsw_ef_search = -1;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM hnsw_ef_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 50)
+  WHERE pk BETWEEN 1476 AND 1525;
+----
+count
+50
 
 
 statement ok

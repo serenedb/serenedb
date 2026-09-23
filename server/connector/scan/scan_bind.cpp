@@ -156,7 +156,8 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
   vs.nprobe = gNprobe.Int(context);
   vs.max_search_fanout = gFanout.Int(context);
-  vs.ef_search = gEfSearch.Int(context);
+  const auto ef = gEfSearch.SignedInt(context);
+  vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
   vs.hnsw_filter_mode = ReadHnswFilterMode(context);
   vs.exact = ReadAnnExact(context);
 }

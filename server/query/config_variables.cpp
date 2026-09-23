@@ -80,6 +80,10 @@ uint32_t SettingRef::Int(duckdb::ClientContext& context) const {
   return Read(context).GetValue<uint32_t>();
 }
 
+int64_t SettingRef::SignedInt(duckdb::ClientContext& context) const {
+  return Read(context).GetValue<int64_t>();
+}
+
 double SettingRef::Double(duckdb::ClientContext& context) const {
   return Read(context).GetValue<double>();
 }
@@ -458,14 +462,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_hnsw_ef_search",
       {
         LogicalTypeId::INTEGER,
-        "Search-time beam width (ef) for HNSW vector indexes. Higher values "
-        "improve recall at the cost of latency. The beam is also the result "
-        "ceiling, so it is floored at the query's LIMIT; with a quantized "
-        "index every hit of the beam is rescored exactly. Default 64.",
-        [] { return duckdb::Value::INTEGER(64); },
+        "Search-time beam width (ef) of each segment's HNSW search. Higher "
+        "values improve recall at the cost of latency. A value is used as "
+        "written, floored only at what a segment must return for the query's "
+        "LIMIT. -1 (the default) lets the engine choose: the index's "
+        "ef_construction or the LIMIT, whichever is larger, so an untuned "
+        "query keeps its recall at any LIMIT. With a quantized index every "
+        "hit of the beam is rescored exactly.",
+        [] { return duckdb::Value::INTEGER(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n <= 0) {
+          if (n == 0 || n < -1) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_hnsw_ef_search\": \"",

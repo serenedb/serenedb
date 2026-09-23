@@ -52,7 +52,7 @@ The same kNN query works whether you select from the index by name or from the b
 
 <DocCallout type="tip">
 
-Scan more clusters for better recall with the [`sdb_ivf_search_nprobe` session setting](./maintenance.md#session-settings) (default `8`), or widen an HNSW beam with [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) (default `64`). Neither affects range queries, which always prune across every cluster.
+Scan more clusters for better recall with the [`sdb_ivf_search_nprobe` session setting](./maintenance.md#session-settings) (default `8`), or set an HNSW beam with [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) (default `-1`: the index's `ef_construction` or the `LIMIT`, whichever is larger). Neither affects range queries, which always prune across every cluster.
 
 </DocCallout>
 

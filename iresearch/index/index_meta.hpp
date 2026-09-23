@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include <optional>
 #include <span>
 #include <vector>
 
@@ -108,12 +107,7 @@ struct IndexMeta {
   uint64_t gen{index_gen_limits::invalid()};
   uint64_t seg_counter{0};
   std::vector<IndexSegment> segments;
-  std::optional<bstring> payload;
 };
-
-inline bytes_view GetPayload(const IndexMeta& meta) noexcept {
-  return meta.payload ? *meta.payload : bytes_view{};
-}
 
 struct DirectoryMeta {
   bool operator==(const DirectoryMeta&) const = default;

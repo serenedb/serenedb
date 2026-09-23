@@ -1054,10 +1054,9 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
   Directory& dir, Format::ptr codec, size_t segment_pool_size,
-  const SegmentOptions& segment_limits,
-  const PayloadProvider& meta_payload_provider,
+  const SegmentOptions& segment_limits, PayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _meta_payload_provider{meta_payload_provider},
+  : _meta_payload_writer{std::move(meta_payload_writer)},
     _codec{std::move(codec)},
     _dir{dir},
     _committed_reader{std::move(committed_reader)},
@@ -1087,14 +1086,7 @@ IndexWriter::IndexWriter(
   ctx->next = _flush_contexts.data();
 }
 
-void IndexWriter::InitMeta(IndexMeta& meta, uint64_t tick) const {
-  if (_meta_payload_provider) {
-    SDB_ASSERT(!meta.payload.has_value());
-    auto& payload = meta.payload.emplace(bstring{});
-    if (!_meta_payload_provider(tick, payload)) [[unlikely]] {
-      meta.payload.reset();
-    }
-  }
+void IndexWriter::InitMeta(IndexMeta& meta) const {
   meta.seg_counter = CurrentSegmentId();  // Ensure counter() >= max(seg#)
   meta.gen = _last_gen;                   // Clone index metadata generation
 }
@@ -1119,8 +1111,8 @@ void IndexWriter::Clear(uint64_t tick) {
     return;  // Already empty
   }
 
-  PendingContext to_commit{PendingBase{.tick = tick}, {}, {}, {}};
-  InitMeta(to_commit.meta, tick);
+  PendingContext to_commit{PendingBase{.tick = tick}, {}, tick, {}, {}};
+  InitMeta(to_commit.meta);
   to_commit.ctx = std::move(ctx);
 
   Abort();  // iff Clear called between Begin and Commit
@@ -1133,8 +1125,7 @@ void IndexWriter::Clear(uint64_t tick) {
 }
 
 IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
-                                   OpenMode mode,
-                                   const IndexWriterOptions& options) {
+                                   OpenMode mode, IndexWriterOptions options) {
   SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
@@ -1170,14 +1161,13 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
         reader->read(dir, meta.index_meta, meta.filename);
 
         meta.filename.clear();  // Empty index meta -> new index
-        auto& index_meta = meta.index_meta;
-        index_meta.payload.reset();
-        index_meta.segments.clear();
+        meta.index_meta.segments.clear();
       }
     } else if (!index_exists) {
       throw FileNotFound{meta.filename};  // no segments file found
     } else {
-      reader->read(dir, meta.index_meta, meta.filename);
+      reader->read(dir, meta.index_meta, meta.filename,
+                   std::move(options.meta_payload_reader));
     }
   }
 
@@ -1201,7 +1191,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
-    options.meta_payload_provider, std::move(reader));
+    std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
   // Wrap the provider callbacks into the fallback options (tests).
@@ -2424,12 +2414,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     return {};
   }
 
-  InitMeta(pending_meta, LimitTick(tick, flushed_tick));
+  InitMeta(pending_meta);
 
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
                 .tick = LimitTick(tick, _committed_tick)},
     std::move(pending_meta),  // Retain meta pending flush
+    LimitTick(tick, flushed_tick),
     std::move(readers),
     std::move(files_to_sync),
   };
@@ -2445,9 +2436,16 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   std::string index_meta_file;
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};
 
+  MetaPayloadWriter payload;
+  if (_meta_payload_writer) {
+    payload = [&](duckdb::Serializer& out) {
+      _meta_payload_writer(context.meta_tick, out);
+    };
+  }
+
   // Execute 1st phase of index meta transaction
   if (!_writer->prepare(dir, to_commit.index_meta, to_commit.filename,
-                        index_meta_file)) {
+                        index_meta_file, std::move(payload))) {
     throw IllegalState{absl::StrCat(
       "Failed to write index metadata for index: ", index_meta_file)};
   }

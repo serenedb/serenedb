@@ -110,12 +110,14 @@ struct SegmentOptions {
 using ProgressReportCallback =
   std::function<void(std::string_view phase, size_t current, size_t total)>;
 
-using PayloadProvider = std::function<bool(uint64_t, bstring&)>;
+using PayloadWriter = absl::AnyInvocable<void(uint64_t, duckdb::Serializer&)>;
 
 struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
 
-  PayloadProvider meta_payload_provider;
+  PayloadWriter meta_payload_writer;
+
+  MetaPayloadReader meta_payload_reader;
 
   size_t segment_pool_size = 128;
 
@@ -476,7 +478,7 @@ class IndexWriter : private util::Noncopyable {
               const MergeWriter::FlushProgress& progress = {});
 
   static IndexWriter::ptr Make(Directory& dir, Format::ptr codec, OpenMode mode,
-                               const IndexWriterOptions& opts = {});
+                               IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
@@ -506,7 +508,7 @@ class IndexWriter : private util::Noncopyable {
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
               Format::ptr codec, size_t segment_pool_size,
               const SegmentOptions& segment_limits,
-              const PayloadProvider& meta_payload_provider,
+              PayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
@@ -743,6 +745,7 @@ class IndexWriter : private util::Noncopyable {
 
   struct PendingContext : PendingBase {
     IndexMeta meta;
+    uint64_t meta_tick{writer_limits::kMinTick};
     std::vector<SegmentReader> readers;
     std::vector<std::string_view> files_to_sync;
 
@@ -783,7 +786,7 @@ class IndexWriter : private util::Noncopyable {
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
   uint64_t NextSegmentId() noexcept;
-  void InitMeta(IndexMeta& meta, uint64_t tick) const;
+  void InitMeta(IndexMeta& meta) const;
 
   bool Start(const CommitInfo& info);
   void Finish();
@@ -794,7 +797,7 @@ class IndexWriter : private util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
   std::shared_ptr<const IndexFieldOptions> _field_options;
-  PayloadProvider _meta_payload_provider;
+  PayloadWriter _meta_payload_writer;
   Format::ptr _codec;
   absl::Mutex _commit_lock;
   struct {

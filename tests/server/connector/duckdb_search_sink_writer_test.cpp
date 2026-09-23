@@ -212,7 +212,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     options.reader_options.db = &TestDb();
     _codec = irs::formats::Get("1_5simd");
     _data_writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, std::move(options));
   }
 
   void TearDown() final { _data_writer.reset(); }
@@ -946,7 +946,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
-      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, std::move(options));
     constexpr std::string_view kPk = {"pk1", 3};
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};

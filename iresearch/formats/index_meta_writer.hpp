@@ -50,7 +50,7 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
   bool prepare(Directory& dir, IndexMeta& meta, std::string& pending_filename,
-               std::string& filename) final;
+               std::string& filename, MetaPayloadWriter payload) final;
   bool commit() final;
   void rollback() noexcept final;
 
@@ -70,7 +70,8 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
 
 inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
                                          std::string& pending_filename,
-                                         std::string& filename) {
+                                         std::string& filename,
+                                         MetaPayloadWriter payload) {
   if (index_gen_limits::valid(_pending_gen)) {
     // prepare() was already called with no corresponding call to commit()
     return false;
@@ -108,13 +109,9 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
                          });
                        });
 
-    if (meta.payload.has_value()) {
-      const auto& payload = *meta.payload;
-      meta_out.WriteList(
-        kFieldPayload, "payload", payload.size(),
-        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-          list.WriteElement<char>(static_cast<char>(payload[i]));
-        });
+    if (payload) {
+      meta_out.WriteObject(kFieldPayload, "payload",
+                           [&](duckdb::Serializer& obj) { payload(obj); });
     }
 
     meta_out.End();

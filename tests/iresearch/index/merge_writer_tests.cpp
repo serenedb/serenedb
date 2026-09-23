@@ -176,7 +176,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
 
   auto opts = irs::tests::DefaultWriterOptions();
 
-  auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, opts);
+  auto writer =
+    irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   {
@@ -790,7 +791,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   // populate directory
   {
     auto query_doc4 = MakeByTerm("doc_string", "string4_data");
-    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, opts);
+    auto writer =
+      irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, std::move(opts));
 
     ASSERT_TRUE(Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
     ASSERT_TRUE(Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));

@@ -2337,7 +2337,8 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;  // flush every 2nd document
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer =
+      irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // initial commit
@@ -2386,7 +2387,8 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer =
+      irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // CREATE failure on the very first segment's cs file: insert
@@ -2446,7 +2448,8 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer =
+      irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // initial commit so a DirectoryReader can be opened at the end

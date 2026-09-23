@@ -27,7 +27,6 @@
 #include <absl/strings/strip.h>
 
 #include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <optional>
 #include <vector>
 
 #include "iresearch/formats/formats.hpp"
@@ -38,8 +37,8 @@ namespace irs {
 struct IndexMetaReaderImpl : public IndexMetaReader {
   bool last_segments_file(const Directory& dir, std::string& name) const final;
 
-  void read(const Directory& dir, IndexMeta& meta,
-            std::string_view filename) final;
+  void read(const Directory& dir, IndexMeta& meta, std::string_view filename,
+            MetaPayloadReader payload) final;
 };
 
 inline uint64_t ParseGeneration(std::string_view file) noexcept {
@@ -69,7 +68,8 @@ inline bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
 }
 
 inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
-                                      std::string_view filename) {
+                                      std::string_view filename,
+                                      MetaPayloadReader payload) {
   SDB_ASSERT(!IsNull(filename));
 
   // Every caller names a file that last_segments_file already parsed.
@@ -110,15 +110,10 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
           "uncommitted_count", 0);
       });
     });
-  std::optional<bstring> payload;
-  if (meta_in.CanDeserializeProperty(IndexMetaWriterImpl::kFieldPayload,
-                                     "payload")) {
-    auto& bytes = payload.emplace();
-    meta_in.ReadList(
-      IndexMetaWriterImpl::kFieldPayload, "payload",
-      [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-        bytes.push_back(static_cast<byte_type>(list.ReadElement<char>()));
-      });
+  if (payload && meta_in.CanDeserializeProperty(
+                   IndexMetaWriterImpl::kFieldPayload, "payload")) {
+    meta_in.ReadObject(IndexMetaWriterImpl::kFieldPayload, "payload",
+                       [&](duckdb::Deserializer& obj) { payload(obj); });
   }
 
   for (size_t i = 0; auto& segment : segments) {
@@ -143,7 +138,6 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   meta.gen = gen;
   meta.seg_counter = cnt;
   meta.segments = std::move(segments);
-  meta.payload = std::move(payload);
 }
 
 }  // namespace irs

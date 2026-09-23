@@ -230,14 +230,16 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(dir, _codec, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(*_dir, _codec, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
@@ -291,14 +293,14 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void add_segments(irs::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
-  void add_segment(
-    tests::DocGeneratorBase& gen, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions(),
-    const StoreHook& store = {});
+  void add_segment(tests::DocGeneratorBase& gen,
+                   irs::OpenMode mode = irs::kOmCreate,
+                   irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
+                   const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions());
+    irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:
   index_t _index;

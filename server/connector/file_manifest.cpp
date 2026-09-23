@@ -26,9 +26,8 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -44,24 +43,18 @@
 
 namespace sdb::search {
 
-void FileManifest::Serialize(irs::bstring& out) const {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
+void FileManifest::Write(duckdb::Serializer& out) const {
   SDB_IF_FAILURE("manifest_version_only") {
-    irs::utils::WriteTuple(serializer, FileManifest{.version = version});
-    out.append(stream.GetData(), stream.GetPosition());
+    irs::utils::WriteTuple(out, FileManifest{.version = version});
     return;
   }
-  irs::utils::WriteTuple(serializer, *this);
-  out.append(stream.GetData(), stream.GetPosition());
+  irs::utils::WriteTuple(out, *this);
 }
 
-std::shared_ptr<const FileManifest> FileManifest::Parse(irs::bytes_view tail) {
-  duckdb::MemoryStream stream{const_cast<duckdb::data_t*>(tail.data()),
-                              tail.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
+std::shared_ptr<const FileManifest> FileManifest::Read(
+  duckdb::Deserializer& in) {
   auto manifest = std::make_shared<FileManifest>();
-  irs::utils::ReadTuple(deserializer, *manifest);
+  irs::utils::ReadTuple(in, *manifest);
   return manifest;
 }
 

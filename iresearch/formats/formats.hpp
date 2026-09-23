@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 
 #include "iresearch/formats/column/norm_reader.hpp"
@@ -33,7 +34,10 @@
 namespace duckdb {
 
 class DatabaseInstance;
-}
+class Deserializer;
+class Serializer;
+
+}  // namespace duckdb
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -259,13 +263,16 @@ struct SegmentMetaReader : memory::Managed {
                     std::string_view filename) = 0;
 };
 
+using MetaPayloadWriter = absl::AnyInvocable<void(duckdb::Serializer&)>;
+using MetaPayloadReader = absl::AnyInvocable<void(duckdb::Deserializer&)>;
+
 struct IndexMetaWriter {
   using ptr = std::unique_ptr<IndexMetaWriter>;
 
   virtual ~IndexMetaWriter() = default;
   virtual bool prepare(Directory& dir, IndexMeta& meta,
-                       std::string& pending_filename,
-                       std::string& filename) = 0;
+                       std::string& pending_filename, std::string& filename,
+                       MetaPayloadWriter payload = {}) = 0;
   virtual bool commit() = 0;
   virtual void rollback() noexcept = 0;
 };
@@ -277,7 +284,8 @@ struct IndexMetaReader : memory::Managed {
                                   std::string& name) const = 0;
 
   virtual void read(const Directory& dir, IndexMeta& meta,
-                    std::string_view filename) = 0;
+                    std::string_view filename,
+                    MetaPayloadReader payload = {}) = 0;
 };
 
 class Format {

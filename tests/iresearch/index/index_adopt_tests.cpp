@@ -102,7 +102,7 @@ class IndexAdoptTest : public TestBase {
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
-    _writer = irs::IndexWriter::Make(*_dir, _codec, mode, options);
+    _writer = irs::IndexWriter::Make(*_dir, _codec, mode, std::move(options));
   }
 
   // Drops the Directory too, so no in-memory IndexFileRefs survive.

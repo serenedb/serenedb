@@ -116,7 +116,8 @@ TEST(directory_reader_test, open_newest_index) {
       return true;
     }
     void read(const irs::Directory& /*dir*/, irs::IndexMeta& /*meta*/,
-              std::string_view filename = std::string_view{}) final {
+              std::string_view filename,
+              irs::MetaPayloadReader /*payload*/) final {
       read_file.assign(filename.data(), filename.size());
     }
     std::string segments_file;

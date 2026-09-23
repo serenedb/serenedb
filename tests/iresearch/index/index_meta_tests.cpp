@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -49,15 +51,11 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::IndexMeta meta_orig;
   std::string filename;
   std::string tmp_filename;
-  ASSERT_TRUE(irs::IsNull(irs::GetPayload(meta_orig)));
 
-  // set payload
-  const irs::bytes_view payload =
-    ViewCast<byte_type>(std::string_view("payload"));
-  meta_orig.payload.emplace(payload);
-
-  ASSERT_TRUE(writer->prepare(dir, meta_orig, tmp_filename, filename));
-  ASSERT_TRUE(meta_orig.payload.has_value());
+  ASSERT_TRUE(writer->prepare(
+    dir, meta_orig, tmp_filename, filename, [](duckdb::Serializer& out) {
+      out.WriteProperty<std::string>(0, "payload", "payload");
+    }));
   ASSERT_EQ("segments_1", filename);
   ASSERT_EQ("pending_segments_1", tmp_filename);
 
@@ -75,6 +73,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
 
   // create index metadata and read it from the specified  directory
   irs::IndexMeta meta_read;
+  std::string payload;
   {
     std::string segments_file;
 
@@ -82,10 +81,13 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
     const bool index_exists = reader->last_segments_file(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    reader->read(dir, meta_read, segments_file);
+    reader->read(dir, meta_read, segments_file, [&](duckdb::Deserializer& in) {
+      payload = in.ReadProperty<std::string>(0, "payload");
+    });
   }
 
   EXPECT_EQ(meta_orig, meta_read);
+  EXPECT_EQ("payload", payload);
 }
 
 TEST(index_meta_tests, uncommitted_count_round_trip) {
@@ -147,7 +149,6 @@ TEST(index_meta_tests, ctor) {
   irs::IndexMeta meta;
   EXPECT_EQ(0, meta.seg_counter);
   EXPECT_EQ(0, meta.segments.size());
-  EXPECT_TRUE(irs::IsNull(irs::GetPayload(meta)));
   EXPECT_EQ(irs::index_gen_limits::invalid(), meta.gen);
 }
 

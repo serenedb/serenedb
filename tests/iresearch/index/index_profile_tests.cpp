@@ -138,7 +138,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       // match original implementation or may run out of file handles
       // (e.g. MacOS/Travis)
       options.segment_count_max = 8;
-      writer = open_writer(irs::kOmCreate, options);
+      writer = open_writer(irs::kOmCreate, std::move(options));
     }
 
     // initialize reader data source for import threads
@@ -514,7 +514,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                                     // out of file handles (e.g. MacOS/Travis)
 
     irs::async_utils::ThreadPool<> thread_pool(commit_threads);
-    auto writer = open_writer(irs::kOmCreate, options);
+    auto writer = open_writer(irs::kOmCreate, std::move(options));
 
     for (size_t i = 0; i < commit_threads; ++i) {
       thread_pool.run(
@@ -551,7 +551,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     options.segment_count_max = 8;  // match original implementation or may run
                                     // out of file handles (e.g. MacOS/Travis)
 
-    auto writer = open_writer(irs::kOmCreate, options);
+    auto writer = open_writer(irs::kOmCreate, std::move(options));
 
     thread_pool.run([compact_interval, &working, &writer, &policy]() -> void {
       while (working.load()) {

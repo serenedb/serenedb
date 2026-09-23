@@ -27,6 +27,8 @@
 #include <string>
 #include <string_view>
 
+#include "query/config_variable_names.h"
+
 namespace duckdb {
 
 class BoundFunctionExpression;
@@ -42,7 +44,7 @@ std::optional<irs::ScorerOptions> ExtractScorerFromBound(
 
 irs::ScorerOptions ParseScorerExpression(
   duckdb::ClientContext* context, std::string input,
-  std::string_view what = "optimize_top_k");
+  std::string_view what = kOptimizeTopKSetting);
 
 }  // namespace sdb::search
 namespace magic_enum {

@@ -61,7 +61,6 @@ namespace {
 
 constexpr std::string_view kPayloadOption = "sdb_payload";
 constexpr std::string_view kKeyColumnsOption = "key_columns";
-constexpr std::string_view kTopKScorerOption = "optimize_top_k";
 constexpr std::string_view kStorePkOption = "store_pk";
 
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {
@@ -90,7 +89,7 @@ std::optional<persistence::InvertedIndexData> Unpack(
 
 std::string TopKScorerOption(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  const auto* value = FindOption(options, kTopKScorerOption);
+  const auto* value = FindOption(options, kOptimizeTopKSetting);
   if (!value || value->IsNull()) {
     return {};
   }
@@ -146,7 +145,7 @@ constexpr auto kCreateOnlyOptions = std::to_array({
   kRowGroupSizeSetting,
   kStorePkOption,
   kKeyColumnsOption,
-  kTopKScorerOption,
+  kOptimizeTopKSetting,
   kPayloadOption,
 });
 
@@ -394,7 +393,7 @@ std::optional<ScorerOptions> TopKScorer(
   if (text.empty()) {
     return std::nullopt;
   }
-  return search::ParseScorerExpression(&context, text, "optimize_top_k");
+  return search::ParseScorerExpression(&context, text);
 }
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {

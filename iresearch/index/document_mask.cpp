@@ -20,6 +20,8 @@
 
 #include "iresearch/index/document_mask.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -79,17 +81,34 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
 }
 
 DocumentMask DocumentMask::Read(const char* buf, size_t size) {
-  const auto compressed = roaring::Roaring::readSafe(buf, size);
+  const auto compressed = [&] {
+    try {
+      return roaring::Roaring::readSafe(buf, size);
+    } catch (const std::exception& e) {
+      throw IndexError{absl::StrCat("Corrupted document mask of ", size,
+                                    " byte(s): ", e.what())};
+    }
+  }();
+
   DocumentMask mask;
   if (!compressed.isEmpty()) {
-    if (compressed.minimum() < kBase) [[unlikely]] {
-      throw IllegalState{"Invalid document id in a document mask"};
+    const auto max = compressed.maximum();
+
+    if (compressed.minimum() < kBase || doc_limits::eof(max)) [[unlikely]] {
+      throw IndexError{absl::StrCat("Invalid document id in a document mask, [",
+                                    compressed.minimum(), ", ", max, "]")};
     }
-    const size_t words = (compressed.maximum() - kBase) / 64 + 1;
+
+    const size_t words = (max - kBase) / 64 + 1;
     if (!roaring::api::bitset_grow(&mask._bits, words)) [[unlikely]] {
       throw IllegalState{"Failed to grow the document mask"};
     }
+
     for (const auto doc : compressed) {
+      if (doc < kBase || doc > max) [[unlikely]] {
+        throw IndexError{
+          absl::StrCat("Invalid document id in a document mask: ", doc)};
+      }
       roaring::api::bitset_set(&mask._bits, doc - kBase);
     }
   }
@@ -113,9 +132,21 @@ void DocumentMask::Merge(const DocumentMask& other) {
   }
 }
 
+void DocumentMask::Grow(size_t at) {
+  const size_t words = at / 64 + 1;
+  if (words > _bits.arraysize && !roaring::api::bitset_grow(&_bits, words))
+    [[unlikely]] {
+    throw IllegalState{"Failed to grow the document mask"};
+  }
+}
+
 void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
   SDB_ASSERT(doc_limits::valid(first));
   SDB_ASSERT(first <= last);
+  if (first == last) {
+    return;
+  }
+  Grow(last - 1 - kBase);
   for (auto doc = first; doc != last; ++doc) {
     roaring::api::bitset_set(&_bits, doc - kBase);
   }

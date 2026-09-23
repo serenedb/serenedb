@@ -439,7 +439,7 @@ TEST(segment_reader_test, segment_reader_has) {
 
     irs::SegmentMeta meta;
 
-    reader->read(dir, meta);
+    reader->read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));

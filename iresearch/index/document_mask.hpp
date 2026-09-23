@@ -131,6 +131,7 @@ class DocumentMask final {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
     const bool added = !Contains(doc);
+    Grow(doc - kBase);
     roaring::api::bitset_set(&_bits, doc - kBase);
     return added;
   }
@@ -152,6 +153,8 @@ class DocumentMask final {
 
  private:
   static constexpr doc_id_t kBase = doc_limits::min();
+
+  void Grow(size_t at);
 
   void Assign(const roaring::api::bitset_t& other);
 

@@ -23,6 +23,9 @@
 
 #pragma once
 
+#include <absl/strings/numbers.h>
+#include <absl/strings/strip.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <optional>
 #include <vector>
@@ -40,14 +43,11 @@ struct IndexMetaReaderImpl : public IndexMetaReader {
 };
 
 inline uint64_t ParseGeneration(std::string_view file) noexcept {
-  if (file.starts_with(IndexMetaWriterImpl::kFormatPrefix)) {
-    constexpr size_t kPrefixLength = IndexMetaWriterImpl::kFormatPrefix.size();
-
-    if (uint64_t gen; absl::SimpleAtoi(file.substr(kPrefixLength), &gen)) {
-      return gen;
-    }
+  uint64_t gen;
+  if (absl::ConsumePrefix(&file, IndexMetaWriterImpl::kFormatPrefix) &&
+      absl::SimpleAtoi(file, &gen)) {
+    return gen;
   }
-
   return index_gen_limits::invalid();
 }
 
@@ -70,11 +70,11 @@ inline bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
 
 inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
                                       std::string_view filename) {
-  std::string meta_file;
-  if (IsNull(filename)) {
-    meta_file = IndexMetaWriterImpl::FileName(meta.gen);
-    filename = meta_file;
-  }
+  SDB_ASSERT(!IsNull(filename));
+
+  // Every caller names a file that last_segments_file already parsed.
+  const auto gen = ParseGeneration(filename);
+  SDB_ASSERT(index_gen_limits::valid(gen));
 
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
@@ -84,8 +84,6 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
 
   duckdb::BinaryDeserializer meta_in{*in};
   meta_in.Begin();
-  const auto gen =
-    meta_in.ReadProperty<uint64_t>(IndexMetaWriterImpl::kFieldGen, "gen");
   const auto cnt = meta_in.ReadProperty<uint64_t>(
     IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
   std::vector<IndexSegment> segments;
@@ -96,8 +94,15 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
       list.ReadObject([&](duckdb::Deserializer& obj) {
         segment.filename = obj.ReadProperty<std::string>(
           IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
-        segment.meta.codec = formats::Get(obj.ReadProperty<std::string>(
-          IndexMetaWriterImpl::kSegmentFieldCodec, "codec"));
+        auto codec = obj.ReadProperty<std::string>(
+          IndexMetaWriterImpl::kSegmentFieldCodec, "codec");
+        segment.meta.codec = formats::Get(codec);
+
+        if (!segment.meta.codec) [[unlikely]] {
+          throw IndexError{absl::StrCat("Unknown codec '", codec,
+                                        "' of segment '", segment.filename,
+                                        "', path: ", filename)};
+        }
       });
     });
   std::optional<bstring> payload;

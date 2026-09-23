@@ -256,7 +256,7 @@ struct SegmentMetaReader : memory::Managed {
   using ptr = memory::managed_ptr<SegmentMetaReader>;
 
   virtual void read(const Directory& dir, SegmentMeta& meta,
-                    std::string_view filename = {}) = 0;  // null == use meta
+                    std::string_view filename) = 0;
 };
 
 struct IndexMetaWriter {
@@ -276,7 +276,6 @@ struct IndexMetaReader : memory::Managed {
   virtual bool last_segments_file(const Directory& dir,
                                   std::string& name) const = 0;
 
-  // null == use meta
   virtual void read(const Directory& dir, IndexMeta& meta,
                     std::string_view filename) = 0;
 };

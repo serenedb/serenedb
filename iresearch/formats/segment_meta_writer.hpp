@@ -43,12 +43,9 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
 
   static constexpr duckdb::field_id_t kFieldParent = 0;
   static constexpr duckdb::field_id_t kFieldFiles = 1;
-  static constexpr duckdb::field_id_t kFieldName = 2;
-  static constexpr duckdb::field_id_t kFieldVersion = 3;
-  static constexpr duckdb::field_id_t kFieldLiveDocsCount = 4;
-  static constexpr duckdb::field_id_t kFieldRemovalCount = 5;
-  static constexpr duckdb::field_id_t kFieldUncommittedCount = 6;
-  static constexpr duckdb::field_id_t kFieldByteSize = 7;
+  static constexpr duckdb::field_id_t kFieldLiveDocsCount = 2;
+  static constexpr duckdb::field_id_t kFieldUncommittedCount = 3;
+  static constexpr duckdb::field_id_t kFieldByteSize = 4;
 
   void write(Directory& dir, std::string& filename, SegmentMeta& meta) final {
     Write(dir, filename, meta, nullptr, kNoParent);
@@ -98,33 +95,45 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
 
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
-  SDB_ASSERT(meta.docs_mask_chain <= meta.files.size() + 1);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
   const auto& docs_mask = meta.docs_mask;
   const bool has_mask = docs_mask && !docs_mask->Empty();
 
+  const bool append = has_mask && patch != nullptr &&
+                      meta.docs_mask_chain != 0 &&
+                      meta.docs_mask_size > kMinChainBytes;
+
   roaring::Roaring compressed;
-  if (has_mask) {
+  if (has_mask && !append) {
     compressed = docs_mask->Compress();
   }
 
-  const bool append = has_mask && patch != nullptr &&
-                      meta.docs_mask_chain != 0 &&
-                      compressed.getSizeInBytes() > kMinChainBytes;
-
   const size_t ancestors =
     meta.docs_mask_chain != 0 ? meta.docs_mask_chain - 1 : 0;
-  size_t chain_files = ancestors;
-  uint64_t chain_bytes = meta.docs_mask_size;
+
+  SDB_ASSERT(ancestors <= meta.files.size());
+  SDB_ASSERT(std::all_of(
+    meta.files.end() - ancestors, meta.files.end(), [&](const auto& file) {
+      uint64_t link = 0;
+      std::string_view name;
+      return ParseFileName(file, kFormatExt, name, link) && name == meta.name;
+    }));
+
+  std::vector<std::string> files;
+  uint64_t chain_bytes = 0;
+  size_t chain_files = 0;
   if (append) {
     SDB_ASSERT(parent < meta.version);
-    meta.files.emplace_back(irs::FileName(meta.name, parent, kFormatExt));
-    ++chain_files;
+    files.reserve(meta.files.size() + 1);
+    files.assign(meta.files.begin(), meta.files.end());
+    files.emplace_back(irs::FileName(meta.name, parent, kFormatExt));
+    chain_bytes = meta.docs_mask_size;
+    chain_files = ancestors + 1;
   } else {
-    meta.files.resize(meta.files.size() - ancestors);
-    chain_files = 0;
-    chain_bytes = 0;
+    const auto data =
+      std::span{meta.files}.first(meta.files.size() - ancestors);
+    files.assign(data.begin(), data.end());
     parent = kNoParent;
   }
 
@@ -142,9 +151,6 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     mask_size = WriteDocumentMask(*out, compressed);
   }
 
-  const auto files =
-    std::span{meta.files}.first(meta.files.size() - chain_files);
-
   duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
   meta_out.Begin();
   meta_out.WritePropertyWithDefault<uint64_t>(kFieldParent, "parent", parent,
@@ -155,12 +161,8 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
                          list.WriteElement<std::string>(files[i]);
                        });
   }
-  meta_out.WriteProperty<std::string>(kFieldName, "name", meta.name);
-  meta_out.WriteProperty<uint64_t>(kFieldVersion, "version", meta.version);
   meta_out.WriteProperty<uint32_t>(kFieldLiveDocsCount, "live_docs_count",
                                    meta.live_docs_count);
-  meta_out.WritePropertyWithDefault<uint32_t>(
-    kFieldRemovalCount, "removal_count", RemovalCount(meta), 0);
   meta_out.WritePropertyWithDefault<uint32_t>(
     kFieldUncommittedCount, "uncommitted_count", UncommittedCount(meta), 0);
   meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
@@ -169,6 +171,7 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
 
   out->WriteU64(mask_size);
 
+  meta.files = std::move(files);
   meta.docs_mask_size = chain_bytes + mask_size;
   meta.docs_mask_chain = has_mask ? static_cast<uint32_t>(chain_files) + 1 : 0;
   meta.byte_size = size_without_mask + meta.docs_mask_size;

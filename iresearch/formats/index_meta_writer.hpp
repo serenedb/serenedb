@@ -35,10 +35,9 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   static constexpr std::string_view kFormatPrefix = "segments_";
   static constexpr std::string_view kFormatPrefixTmp = "pending_segments_";
 
-  static constexpr duckdb::field_id_t kFieldGen = 0;
-  static constexpr duckdb::field_id_t kFieldSegCounter = 1;
-  static constexpr duckdb::field_id_t kFieldSegments = 2;
-  static constexpr duckdb::field_id_t kFieldPayload = 3;
+  static constexpr duckdb::field_id_t kFieldSegCounter = 0;
+  static constexpr duckdb::field_id_t kFieldSegments = 1;
+  static constexpr duckdb::field_id_t kFieldPayload = 2;
 
   static constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
   static constexpr duckdb::field_id_t kSegmentFieldCodec = 1;
@@ -90,7 +89,6 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
   {
     duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
     meta_out.Begin();
-    meta_out.WriteProperty<uint64_t>(kFieldGen, "gen", meta.gen);
     meta_out.WriteProperty<uint64_t>(kFieldSegCounter, "seg_counter",
                                      meta.seg_counter);
     meta_out.WriteList(kFieldSegments, "segments", meta.segments.size(),

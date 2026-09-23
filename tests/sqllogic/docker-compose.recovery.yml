@@ -123,5 +123,14 @@ services:
       - MINIO_BUCKET=testbucket
       - ICEBERG_REST_URL=http://iceberg-rest:8181
       - ICEBERG_WAREHOUSE=demo
+      - ICEBERG_BACKEND
+      - JOBS
+      - SDB_RECOVERY_TESTS
+      - SDB_RECOVERY_JUNIT
+      - BIGLAKE_PROJECT
+      - BIGLAKE_CATALOG
+      - BIGLAKE_CLIENT_EMAIL
+      - BIGLAKE_PRIVATE_KEY
+      - BIGLAKE_PRIVATE_KEY_ID
     working_dir: /sqllogic
     command: ./run_recovery_tests.sh --runner /sqllogictest-rs

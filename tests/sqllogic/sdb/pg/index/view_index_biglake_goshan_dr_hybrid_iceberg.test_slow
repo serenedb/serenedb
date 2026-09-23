@@ -1,0 +1,188 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vkq_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.docs (id INTEGER, body TEXT, emb FLOAT[]);
+
+statement count 1539
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.docs
+SELECT s,
+       'doc ' || s || CASE s % 4 WHEN 0 THEN ' red fox' WHEN 1 THEN ' blue cat' WHEN 2 THEN ' green bird' ELSE ' yellow dog' END,
+       [sin(s * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]
+FROM generate_series(1, 1539) t(s);
+
+statement count 1539
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.docs
+SELECT s,
+       'doc ' || s || CASE s % 4 WHEN 0 THEN ' red fox' WHEN 1 THEN ' blue cat' WHEN 2 THEN ' green bird' ELSE ' yellow dog' END,
+       [sin(s * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]
+FROM generate_series(1540, 3078) t(s);
+
+statement count 1539
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.docs
+SELECT s,
+       'doc ' || s || CASE s % 4 WHEN 0 THEN ' red fox' WHEN 1 THEN ' blue cat' WHEN 2 THEN ' green bird' ELSE ' yellow dog' END,
+       [sin(s * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]
+FROM generate_series(3079, 4617) t(s);
+
+statement ok
+CREATE VIEW vkq_v AS SELECT id, body, emb::FLOAT[3072] AS emb FROM srv_${__DATABASE__}.${__DATABASE__}.docs;
+
+statement ok
+CREATE INDEX vkq_idx ON vkq_v USING inverted(id, body vkq_en, emb ivf (metric = 'l2')) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM vkq_idx;
+----
+count
+4617
+
+query
+SELECT split_part(body, ' ', 3) AS colour, count(*) FROM vkq_idx GROUP BY colour ORDER BY colour;
+----
+colour	count
+blue	1155
+green	1154
+red	1154
+yellow	1154
+
+query
+SELECT count(*) FROM vkq_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+query
+SELECT id FROM vkq_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
+----
+id
+4
+8
+12
+
+query
+SELECT id, body FROM vkq_idx WHERE body @@ ts_phrase('fox') ORDER BY bm25(tableoid) DESC, id LIMIT 2;
+----
+id	body
+4	doc 4 red fox
+8	doc 8 red fox
+
+query
+SELECT id FROM vkq_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+7
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM vkq_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 10
+);
+----
+count
+10
+
+query
+SELECT body FROM vkq_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+query
+SELECT id FROM vkq_idx WHERE id BETWEEN 2000 AND 2003 ORDER BY id;
+----
+id
+2000
+2001
+2002
+2003
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vkq_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.docs)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.docs EXCEPT SELECT id, body FROM vkq_idx)
+);
+----
+count
+0
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.docs WHERE id = 4;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('vkq_idx');
+----
+action	files_added	files_changed
+delta	1	1
+
+query
+SELECT count(*) FROM vkq_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+query
+SELECT id FROM vkq_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 2;
+----
+id
+8
+12
+
+query
+SELECT id FROM vkq_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+4618
+
+query
+SELECT count(*) FROM vkq_idx WHERE id = 4;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('vkq_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vkq_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.docs)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.docs EXCEPT SELECT id, body FROM vkq_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vkq_idx;
+
+statement ok
+DROP VIEW vkq_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.docs;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

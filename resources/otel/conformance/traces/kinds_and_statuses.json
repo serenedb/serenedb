@@ -1,0 +1,40 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "fanout"}}
+      ]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "kinds"},
+          "spans": [
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000001",
+             "name": "unspecified", "kind": 0,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000001"},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000002",
+             "name": "internal", "kind": 1,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000002",
+             "status": {"code": 1}},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000003",
+             "name": "server", "kind": 2,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000003",
+             "status": {"code": 2, "message": "boom"}},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000004",
+             "name": "client", "kind": 3,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000004",
+             "status": {"code": 0}},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000005",
+             "name": "producer", "kind": 4,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000005"},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000006",
+             "name": "consumer", "kind": 5,
+             "startTimeUnixNano": "1788868800000000000", "endTimeUnixNano": "1788868800000000006"},
+            {"traceId": "aa000000000000000000000000000001", "spanId": "aa00000000000007",
+             "name": "no end timestamp", "kind": 1,
+             "startTimeUnixNano": "1788868800000000000"}
+          ]
+        }
+      ]
+    }
+  ]
+}

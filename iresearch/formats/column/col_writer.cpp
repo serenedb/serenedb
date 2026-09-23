@@ -209,15 +209,29 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
 
 void ColWriter::Rollback() noexcept { _out.reset(); }
 
-void ColWriter::Commit(uint64_t target_row) {
+constexpr auto kNoCancel = [] { return true; };
+
+bool ColWriter::Commit(uint64_t target_row) {
+  return Commit(target_row, kNoCancel);
+}
+
+yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+  return ComputeAnn(env, kNoCancel);
+}
+
+bool ColWriter::Commit(uint64_t target_row,
+                       absl::FunctionRef<bool()> progress) {
   if (_committed) {
-    return;
+    return true;
   }
   if (Empty() && !_out) {
     _committed = true;
-    return;
+    return true;
   }
   for (auto& cw : _columns) {
+    if (!progress()) {
+      return false;
+    }
     cw->SealRowGroup();
   }
   for (auto& nw : _norm_writers) {
@@ -252,21 +266,26 @@ void ColWriter::Commit(uint64_t target_row) {
   format_utils::WriteFooter(*_out);
   _out.reset();
   _committed = true;
+  return true;
 }
 
-yaclib::Task<> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
+                                         absl::FunctionRef<bool()> progress) {
   if (!_committed || _ann_writers.empty()) {
-    co_return {};
+    co_return true;
   }
   ColReader reader{*_dir, _segment_name, *_db};
   for (auto& entry : _ann_writers) {
+    if (!progress()) {
+      co_return false;
+    }
     const auto* col = reader.Column(entry->column_id);
     if (!col) {
       continue;
     }
     co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
-  co_return {};
+  co_return true;
 }
 
 }  // namespace irs

@@ -88,6 +88,8 @@ struct HttpServerContext {
   yaclib::WaitGroup<>* sessions = nullptr;
   // CORS allow-origin list (comma-separated, or "*"); empty disables CORS.
   std::string_view cors_origins;
+  // The database sessions connect to; empty means the default database.
+  std::string database;
   // HAProxy PROXY-protocol preface policy (off / optional / require); never
   // set on an https listener (the header precedes the TLS handshake).
   ProxyMode proxy = ProxyMode::Off;
@@ -121,6 +123,7 @@ class HttpSession final
       _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
+      _database{ctx.database},
       _proxy{ctx.proxy} {}
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
@@ -135,6 +138,7 @@ class HttpSession final
       _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
+      _database{ctx.database},
       _proxy{ctx.proxy} {}
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
@@ -161,9 +165,13 @@ class HttpSession final
   // authenticated the request that first touched the connection.
   duckdb::Connection& Connection() override {
     if (!_conn) {
-      const auto dbname = irs::StaticStrings::kDefaultDatabase;
+      const std::string_view dbname =
+        _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
       auto database = catalog::FindDatabase(nullptr, dbname);
-      SDB_ENSURE(database);
+      if (database == nullptr) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
+                        ERR_MSG("database \"", dbname, "\" does not exist"));
+      }
       const auto database_id = catalog::IdOf(*database);
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
@@ -312,6 +320,7 @@ class HttpSession final
   yaclib::WaitGroup<>* _sessions = nullptr;
   uint32_t _max_conn = 0;
   std::string_view _cors_origins;
+  std::string_view _database;
   ProxyMode _proxy = ProxyMode::Off;
   H1Codec _codec;
 

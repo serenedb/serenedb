@@ -90,6 +90,15 @@ TEST(ListenSpec, MultipleCommaSeparated) {
   EXPECT_EQ(specs[1].apis[0], network::HttpApi::Es);
 }
 
+TEST(ListenSpec, HttpDatabaseParam) {
+  const auto specs = Parse({"http://127.0.0.1:4318?api=otel&db=telemetry"});
+  ASSERT_EQ(specs.size(), 1u);
+  ASSERT_EQ(specs[0].apis.size(), 1u);
+  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Otel);
+  EXPECT_EQ(specs[0].database, "telemetry");
+  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].database.empty());
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

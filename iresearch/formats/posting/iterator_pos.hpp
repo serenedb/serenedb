@@ -127,6 +127,8 @@ class PositionImpl final : public PosAttr {
     _cookie.pos_file_pointer = state.term_state->pos_start;
     _cookie.pend_pos = state.term_state->pos_offset;
     irs::utils::downCast<InputType>(*_pos_in).Seek(state.term_state->pos_start);
+    LimitPosReadahead(irs::utils::downCast<InputType>(*_pos_in),
+                      *state.term_state);
     _enc_buf = state.enc_buf;
     _pend_pos = _cookie.pend_pos;
 

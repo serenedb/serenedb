@@ -1,0 +1,153 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS}, max_table_staleness '10 minutes');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vrs_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vrs_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (1, 'pudge goes mid'), (2, 'arrives before the restart'), (3, 'lands after the restart');
+
+statement ok
+CREATE VIEW vrs_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vrs_t;
+
+statement ok
+CREATE INDEX vrs_idx ON vrs_v USING inverted(id, body vrs_en) WITH (compaction_interval=0);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (4, 'after the restart too');
+
+statement ok
+REINDEX INDEX vrs_idx;
+
+query
+SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT * FROM serenedb_reindex('vrs_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vrs_t WHERE id = 2;
+
+statement ok
+REINDEX INDEX CONCURRENTLY vrs_idx;
+
+query
+SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT body FROM vrs_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+query
+SELECT * FROM serenedb_reindex('vrs_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+ALTER INDEX vrs_idx SET (reindex_interval=200);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (5, 'restart number five');
+
+query ok retry 200 backoff 500ms
+SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+3
+4
+5
+
+query
+SELECT body FROM vrs_idx WHERE id = 5;
+----
+body
+restart number five
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vrs_t WHERE id = 3;
+
+query ok retry 200 backoff 500ms
+SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+4
+5
+
+statement ok
+ALTER INDEX vrs_idx SET (reindex_interval=0);
+
+# Switching the interval off stops new ticks, but one already running still
+# holds the claim: drain it before the insert, so the reindex below is the
+# statement that reports the delta.
+statement ok retry 200 backoff 250ms
+SELECT * FROM serenedb_reindex('vrs_idx');
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (6, 'restart number six');
+
+query
+SELECT * FROM serenedb_reindex('vrs_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+4
+5
+6
+
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vrs_idx EXCEPT SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vrs_t)
+  UNION ALL
+  (SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.vrs_t EXCEPT SELECT id, body FROM vrs_idx)
+);
+----
+count
+0
+
+statement ok
+DROP INDEX vrs_idx;
+
+statement ok
+DROP VIEW vrs_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vrs_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

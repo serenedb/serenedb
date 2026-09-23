@@ -641,39 +641,65 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
                           index, "]: expected ", expected));
 }
 
+// A document field, read exactly once. An ondemand value cannot be re-read:
+// every get_string() unescapes into the parser's string buffer again, so
+// asking twice walks it off the end.
+struct FieldValue {
+  simdjson::ondemand::json_type type{};
+  // Set when type is string; the only unescape of this value.
+  std::string_view text;
+};
+
+FieldValue ReadFieldValue(simdjson::ondemand::value& value,
+                          std::string_view index, std::string_view field) {
+  FieldValue out;
+  if (value.type().get(out.type) != simdjson::SUCCESS) {
+    ThrowFieldParseError(index, field, "a JSON value");
+  }
+  if (out.type == simdjson::ondemand::json_type::string &&
+      value.get_string().get(out.text) != simdjson::SUCCESS) {
+    ThrowFieldParseError(index, field, "a string");
+  }
+  return out;
+}
+
 // ES default coercion: numeric fields accept JSON strings ("42") and
 // truncate floating points; real corpora (e.g. rally's pmc) depend on it.
-int64_t CoerceInt64(simdjson::ondemand::value value, std::string_view index,
-                    std::string_view field) {
-  int64_t v = 0;
-  if (value.get_int64().get(v) == simdjson::SUCCESS) {
-    return v;
-  }
-  if (double d = 0; value.get_double().get(d) == simdjson::SUCCESS) {
-    return static_cast<int64_t>(d);
-  }
-  if (std::string_view text;
-      value.get_string().get(text) == simdjson::SUCCESS) {
-    if (absl::SimpleAtoi(text, &v)) {
+int64_t CoerceInt64(simdjson::ondemand::value& value, const FieldValue& read,
+                    std::string_view index, std::string_view field) {
+  if (read.type == simdjson::ondemand::json_type::number) {
+    // One scan of the number, whichever of the three shapes it turns out to be.
+    if (simdjson::ondemand::number parsed;
+        value.get_number().get(parsed) == simdjson::SUCCESS) {
+      if (parsed.is_int64()) {
+        return parsed.get_int64();
+      }
+      if (parsed.is_uint64()) {
+        return static_cast<int64_t>(parsed.get_uint64());
+      }
+      return static_cast<int64_t>(parsed.get_double());
+    }
+  } else if (read.type == simdjson::ondemand::json_type::string) {
+    if (int64_t v = 0; absl::SimpleAtoi(read.text, &v)) {
       return v;
     }
-    if (double d = 0; absl::SimpleAtod(text, &d)) {
+    if (double d = 0; absl::SimpleAtod(read.text, &d)) {
       return static_cast<int64_t>(d);
     }
   }
   ThrowFieldParseError(index, field, "an integer");
 }
 
-double CoerceDouble(simdjson::ondemand::value value, std::string_view index,
-                    std::string_view field) {
-  double v = 0;
-  if (value.get_double().get(v) == simdjson::SUCCESS) {
-    return v;
-  }
-  if (std::string_view text;
-      value.get_string().get(text) == simdjson::SUCCESS &&
-      absl::SimpleAtod(text, &v)) {
-    return v;
+double CoerceDouble(simdjson::ondemand::value& value, const FieldValue& read,
+                    std::string_view index, std::string_view field) {
+  if (read.type == simdjson::ondemand::json_type::number) {
+    if (double v = 0; value.get_double().get(v) == simdjson::SUCCESS) {
+      return v;
+    }
+  } else if (read.type == simdjson::ondemand::json_type::string) {
+    if (double v = 0; absl::SimpleAtod(read.text, &v)) {
+      return v;
+    }
   }
   ThrowFieldParseError(index, field, "a number");
 }
@@ -683,29 +709,33 @@ double CoerceDouble(simdjson::ondemand::value value, std::string_view index,
 bool WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
                    simdjson::ondemand::value value, std::string_view index,
                    std::string_view field) {
-  if (vec.GetType().id() != duckdb::LogicalTypeId::VARCHAR) {
-    if (std::string_view text;
-        value.get_string().get(text) == simdjson::SUCCESS && text.empty()) {
-      return false;
-    }
+  using JsonType = simdjson::ondemand::json_type;
+  const auto read = ReadFieldValue(value, index, field);
+  const auto id = vec.GetType().id();
+
+  // ES treats an empty string as null for every non-string field type.
+  if (id != duckdb::LogicalTypeId::VARCHAR && read.type == JsonType::string &&
+      read.text.empty()) {
+    return false;
   }
-  switch (vec.GetType().id()) {
+
+  switch (id) {
     case duckdb::LogicalTypeId::VARCHAR: {
-      std::string_view text;
-      if (value.get_string().get(text) != simdjson::SUCCESS) {
+      if (read.type != JsonType::string) {
         ThrowFieldParseError(index, field, "a string");
       }
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
-        duckdb::StringVector::AddString(vec, text.data(), text.size());
+        duckdb::StringVector::AddString(vec, read.text.data(),
+                                        read.text.size());
       return true;
     }
     case duckdb::LogicalTypeId::BIGINT: {
       duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
-        CoerceInt64(value, index, field);
+        CoerceInt64(value, read, index, field);
       return true;
     }
     case duckdb::LogicalTypeId::INTEGER: {
-      const int64_t v = CoerceInt64(value, index, field);
+      const int64_t v = CoerceInt64(value, read, index, field);
       if (v < std::numeric_limits<int32_t>::min() ||
           v > std::numeric_limits<int32_t>::max()) {
         ThrowFieldParseError(index, field, "a 32-bit integer");
@@ -716,24 +746,27 @@ bool WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
     }
     case duckdb::LogicalTypeId::DOUBLE: {
       duckdb::FlatVector::GetDataMutable<double>(vec)[row] =
-        CoerceDouble(value, index, field);
+        CoerceDouble(value, read, index, field);
       return true;
     }
     case duckdb::LogicalTypeId::FLOAT: {
       duckdb::FlatVector::GetDataMutable<float>(vec)[row] =
-        static_cast<float>(CoerceDouble(value, index, field));
+        static_cast<float>(CoerceDouble(value, read, index, field));
       return true;
     }
     case duckdb::LogicalTypeId::BOOLEAN: {
-      bool v = false;
-      if (value.get_bool().get(v) == simdjson::SUCCESS) {
+      if (read.type == JsonType::boolean) {
+        bool v = false;
+        if (value.get_bool().get(v) != simdjson::SUCCESS) {
+          ThrowFieldParseError(index, field, "a boolean");
+        }
         duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = v;
         return true;
       }
-      if (std::string_view text;
-          value.get_string().get(text) == simdjson::SUCCESS &&
-          (text == "true" || text == "false")) {
-        duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = text == "true";
+      if (read.type == JsonType::string &&
+          (read.text == "true" || read.text == "false")) {
+        duckdb::FlatVector::GetDataMutable<bool>(vec)[row] =
+          read.text == "true";
         return true;
       }
       ThrowFieldParseError(index, field, "a boolean");
@@ -742,22 +775,19 @@ bool WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
       // ES default date leniency: ISO-8601 (offsets applied, named zones
       // rejected) or epoch milliseconds.
       duckdb::timestamp_t ts;
-      if (simdjson::ondemand::json_type t;
-          value.type().get(t) == simdjson::SUCCESS &&
-          t == simdjson::ondemand::json_type::number) {
+      if (read.type == JsonType::number) {
         int64_t ms = 0;
         if (value.get_int64().get(ms) != simdjson::SUCCESS) {
           ThrowFieldParseError(index, field, "epoch milliseconds");
         }
         ts = duckdb::Timestamp::FromEpochMsPossiblyInfinite(ms);
       } else {
-        std::string_view text;
         bool has_offset = false;
         duckdb::string_t tz{nullptr, 0};
-        if (value.get_string().get(text) != simdjson::SUCCESS ||
+        if (read.type != JsonType::string ||
             duckdb::Timestamp::TryConvertTimestampTZ(
-              text.data(), text.size(), ts, /*use_offset=*/true, has_offset,
-              tz) != duckdb::TimestampCastResult::SUCCESS ||
+              read.text.data(), read.text.size(), ts, /*use_offset=*/true,
+              has_offset, tz) != duckdb::TimestampCastResult::SUCCESS ||
             tz.GetSize() != 0) {
           ThrowFieldParseError(index, field,
                                "an ISO-8601 date or epoch milliseconds");

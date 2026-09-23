@@ -1,0 +1,37 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {"attributes": []},
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "timeUnixNano": "1788868800000000000",
+              "body": {"stringValue": "every AnyValue shape"},
+              "attributes": [
+                {"key": "a.string", "value": {"stringValue": "text"}},
+                {"key": "b.bool", "value": {"boolValue": true}},
+                {"key": "c.int", "value": {"intValue": "-9007199254740993"}},
+                {"key": "d.double", "value": {"doubleValue": 0.1}},
+                {"key": "e.bytes", "value": {"bytesValue": "3q2+7w=="}},
+                {"key": "f.array", "value": {"arrayValue": {"values": [
+                  {"stringValue": "x"},
+                  {"intValue": "2"},
+                  {"boolValue": false}
+                ]}}},
+                {"key": "g.map", "value": {"kvlistValue": {"values": [
+                  {"key": "inner.key", "value": {"stringValue": "inner"}},
+                  {"key": "inner.nested", "value": {"kvlistValue": {"values": [
+                    {"key": "deep", "value": {"intValue": "1"}}
+                  ]}}}
+                ]}}},
+                {"key": "h.empty", "value": {}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

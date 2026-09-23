@@ -205,6 +205,18 @@ add_subdirectory(abseil-cpp)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
+### protozero library -- header-only protobuf wire format, used for OTLP
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "protozero" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_library(protozero INTERFACE)
+target_include_directories(
+    protozero
+    SYSTEM
+    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protozero/include"
+)
+
+################################################################################
 ### re2 library
 ################################################################################
 

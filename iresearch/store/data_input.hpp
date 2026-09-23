@@ -118,6 +118,14 @@ class IndexInput : public DataInput {
 
   virtual uint64_t CountMappedMemory() const { return 0; }
 
+  virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
+
+  virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
+
+  virtual void EnableReadahead() noexcept {}
+
+  virtual void LimitReadahead(uint64_t) noexcept {}
+
   IndexInput& operator=(const IndexInput&) = delete;
 
  protected:

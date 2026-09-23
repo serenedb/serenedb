@@ -1,0 +1,195 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vkhl FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vkhl_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vkhl.${__DATABASE__};
+
+statement ok
+CREATE TABLE vkhl.${__DATABASE__}.docs (id INTEGER, body TEXT, emb FLOAT[]);
+
+statement count 4617
+INSERT INTO vkhl.${__DATABASE__}.docs
+SELECT s,
+       'doc ' || s || CASE s % 4 WHEN 0 THEN ' red fox' WHEN 1 THEN ' blue cat' WHEN 2 THEN ' green bird' ELSE ' yellow dog' END,
+       [sin(s * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]
+FROM generate_series(1, 4617) t(s);
+
+statement ok
+CREATE VIEW vkhl_v AS SELECT id, body, emb::FLOAT[3072] AS emb FROM vkhl.${__DATABASE__}.docs;
+
+statement ok
+CREATE INDEX vkhl_idx ON vkhl_v USING inverted(id, body vkhl_en, emb ivf (metric = 'l2')) WITH (reindex_interval=200, compaction_interval=0);
+
+query
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+query
+SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+7
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_crash
+query
+SELECT id FROM vkhl_idx WHERE body @@ ts_phrase('fox') ORDER BY bm25(tableoid) DESC, id LIMIT 3;
+----
+id
+4
+8
+12
+
+connection after_crash
+query
+SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(7 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+7
+
+connection after_crash
+query
+SELECT body FROM vkhl_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_shutdown
+query
+SELECT body FROM vkhl_idx WHERE id = 4617;
+----
+body
+doc 4617 blue cat
+
+connection after_shutdown
+statement count 1
+INSERT INTO vkhl.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]);
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1155
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+4618
+
+connection after_shutdown
+statement count 1
+DELETE FROM vkhl.${__DATABASE__}.docs WHERE id = 4;
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vkhl_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1154
+
+connection after_shutdown
+query
+SELECT id FROM vkhl_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 2;
+----
+id
+8
+12
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM vkhl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2;
+----
+id
+4618
+4616
+
+connection after_shutdown
+query
+SELECT count(*) FROM vkhl_idx WHERE id = 4;
+----
+count
+0
+
+connection after_shutdown
+query
+SELECT id FROM vkhl_idx ORDER BY emb <-> [sin(4618 * 0.1 + i * 0.01)::FLOAT FOR i IN range(3072)]::FLOAT[3072] LIMIT 1;
+----
+id
+4618
+
+connection after_shutdown
+query
+SELECT count(*) FROM (
+  (SELECT id, body FROM vkhl_idx EXCEPT SELECT id, body FROM vkhl.${__DATABASE__}.docs)
+  UNION ALL
+  (SELECT id, body FROM vkhl.${__DATABASE__}.docs EXCEPT SELECT id, body FROM vkhl_idx)
+);
+----
+count
+0
+
+connection after_shutdown
+statement ok
+ALTER INDEX vkhl_idx SET (reindex_interval=0);
+
+connection after_shutdown
+statement ok
+DROP INDEX vkhl_idx;
+
+connection after_shutdown
+statement ok
+DROP VIEW vkhl_v;
+
+connection after_shutdown
+statement ok
+DROP TABLE vkhl.${__DATABASE__}.docs;
+
+connection after_shutdown
+statement ok
+DROP SCHEMA vkhl.${__DATABASE__};
+
+connection after_shutdown
+statement ok
+DROP SERVER vkhl;

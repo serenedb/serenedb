@@ -1,0 +1,53 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "payments"}}
+      ]},
+      "scopeMetrics": [
+        {
+          "scope": {},
+          "metrics": [
+            {
+              "name": "queue.depth",
+              "unit": "{item}",
+              "gauge": {
+                "dataPoints": [
+                  {"timeUnixNano": "1788868800000000000", "asInt": "-9007199254740993",
+                   "attributes": [{"key": "queue", "value": {"stringValue": "a"}}]},
+                  {"timeUnixNano": "1788868800000000000", "asDouble": 0.5,
+                   "attributes": [{"key": "queue", "value": {"stringValue": "b"}}]},
+                  {"timeUnixNano": "1788868860000000000", "asInt": "0",
+                   "attributes": [{"key": "queue", "value": {"stringValue": "c"}}],
+                   "flags": 1}
+                ]
+              }
+            },
+            {
+              "name": "jobs.completed",
+              "unit": "{job}",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": false,
+                "dataPoints": [
+                  {"startTimeUnixNano": "1788865200000000000",
+                   "timeUnixNano": "1788868800000000000", "asInt": "7"}
+                ]
+              }
+            },
+            {
+              "name": "batch.size",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {"timeUnixNano": "1788868800000000000", "count": "0",
+                   "bucketCounts": ["0"], "explicitBounds": []}
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

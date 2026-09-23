@@ -504,6 +504,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->index_storage = storage;
 
   if (storage && !IsReindexPass()) {
+    storage->SetFileManifest(state->file_manifest);
     storage->StartTasks();
 
     if (IsDuckDBTable()) {
@@ -902,6 +903,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
         gstate.backfill_wal_cursor.offset != 0) {
       inverted_storage.RecordFlushCursor(irs::writer_limits::kMinTick + 1,
                                          gstate.backfill_wal_cursor);
+    }
+    SDB_IF_FAILURE("refresh_before_manifest_publish") {
+      inverted_storage.Refresh();
     }
     if (gstate.file_manifest) {
       inverted_storage.SetFileManifest(gstate.file_manifest);

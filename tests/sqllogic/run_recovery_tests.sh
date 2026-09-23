@@ -78,10 +78,22 @@ if [[ "$FAST" == "true" ]]; then
 fi
 if [[ ${#EXPLICIT_TESTS[@]} -gt 0 ]]; then
 	test_files=("${EXPLICIT_TESTS[@]}")
+elif [[ -n "${SDB_RECOVERY_TESTS:-}" ]]; then
+	while IFS= read -r file; do
+		[[ -n "$file" ]] && test_files+=("$file")
+	done <<<"$(compgen -G "$SDB_RECOVERY_TESTS" || true)"
 else
 	while IFS= read -r -d '' file; do
 		test_files+=("${file#./}")
 	done < <(find "${find_args[@]}" -print0 | sort -z)
+fi
+
+if [[ "${ICEBERG_BACKEND:-local}" == "biglake" ]]; then
+	declare -a biglake_files=()
+	for file in "${test_files[@]}"; do
+		[[ "$file" == *_fixture_iceberg.test_slow ]] || biglake_files+=("$file")
+	done
+	test_files=("${biglake_files[@]}")
 fi
 
 if [[ ${#test_files[@]} -eq 0 ]]; then
@@ -357,7 +369,7 @@ run_worker() {
 			--host "$host" \
 			--single-port "$run_port" \
 			--test "$test_file" \
-			--junit "tests-serenedb-recovery-w${worker_id}" \
+			--junit "${SDB_RECOVERY_JUNIT:-tests-serenedb-recovery}-w${worker_id}" \
 			--engines pg-wire-simple \
 			"${RUNNER_ARGS[@]}" 2>&1 | sed "s/^/[test] /"
 

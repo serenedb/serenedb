@@ -150,9 +150,15 @@ int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   duckdb::CatalogType type,
                   const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
-    schema.Scan(context, type, callback);
-  });
+  std::vector<duckdb::reference<duckdb::CatalogEntry>> entries;
+  for (auto& schema : catalog.GetSchemas(context)) {
+    schema.get().Scan(context, type, [&](duckdb::CatalogEntry& entry) {
+      entries.emplace_back(entry);
+    });
+  }
+  for (auto& entry : entries) {
+    callback(entry.get());
+  }
 }
 
 }  // namespace

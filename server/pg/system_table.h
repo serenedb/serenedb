@@ -40,6 +40,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/entry/role.h"
@@ -122,13 +123,17 @@ inline void VisitSchemas(
 template<typename T>
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
                   absl::FunctionRef<void(T&)> visitor) {
+  std::vector<duckdb::reference<T>> entries;
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(context, T::Type, [&](duckdb::CatalogEntry& entry) {
       if (entry.type == T::Type) {
-        visitor(entry.template Cast<T>());
+        entries.emplace_back(entry.template Cast<T>());
       }
     });
   });
+  for (auto& entry : entries) {
+    visitor(entry.get());
+  }
 }
 
 // Write a single field value into a DuckDB Vector at the given row.

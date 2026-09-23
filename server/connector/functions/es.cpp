@@ -107,15 +107,19 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
 void VisitInvertedIndexes(
   duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
   absl::FunctionRef<void(duckdb::DuckIndexEntry&)> visitor) {
+  std::vector<duckdb::reference<duckdb::DuckIndexEntry>> indexes;
   table.ParentSchema(context).Scan(
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::DuckIndexEntry>();
       if (index.GetTableName() == table.name &&
           index.index_type == InvertedStoreIndex::kTypeName) {
-        visitor(index);
+        indexes.emplace_back(index);
       }
     });
+  for (auto& index : indexes) {
+    visitor(index.get());
+  }
 }
 
 // Field names mirror the wire JSON (boost.pfr name matching in ReadObject);

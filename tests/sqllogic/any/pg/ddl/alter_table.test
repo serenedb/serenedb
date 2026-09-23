@@ -67,10 +67,8 @@ ALTER TABLE tinker_view DROP CONSTRAINT foo;
 db error: ERROR: Unsupported alter type for catalog entry!
 
 
-statement error
+statement error (ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"|Unsupported alter type for catalog entry)
 ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
-----
-db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement ok

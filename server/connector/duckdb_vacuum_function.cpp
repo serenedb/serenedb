@@ -310,17 +310,22 @@ struct MaintainTarget {
   duckdb::Permissions perm;
 };
 
-MaintainTarget MakeMaintainTarget(duckdb::ClientContext& context,
+MaintainTarget MakeMaintainTarget(duckdb::SchemaCatalogEntry& schema,
                                   duckdb::TableCatalogEntry& table) {
   const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
   return {.id = table.oid,
-          .schema_entry = &table.ParentSchema(context),
+          .schema_entry = &schema,
           .schema = table.ParentSchemaName().GetIdentifierName(),
           .name = std::string{table.name.GetIdentifierName()},
           .engine = search ? catalog::TableEngine::Search
                            : catalog::TableEngine::Transactional,
           .search_data = search ? search->Storage() : nullptr,
           .perm = table.permissions};
+}
+
+MaintainTarget MakeMaintainTarget(duckdb::ClientContext& context,
+                                  duckdb::TableCatalogEntry& table) {
+  return MakeMaintainTarget(table.ParentSchema(context), table);
 }
 
 // Every base table of `database`, or of one schema of it when `schema` is set.
@@ -340,7 +345,7 @@ std::vector<MaintainTarget> CollectMaintainTargets(
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
         if (schema.empty() ||
             table.ParentSchemaName() == duckdb::Identifier{schema}) {
-          out.push_back(MakeMaintainTarget(context, table));
+          out.push_back(MakeMaintainTarget(schema_ref.get(), table));
         }
       });
   }

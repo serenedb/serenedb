@@ -167,17 +167,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
       result = &entry;
     }
   };
-  const auto scan = [&](duckdb::SchemaCatalogEntry& schema) {
-    if (context) {
-      schema.Scan(*context, type, match);
-    } else {
-      schema.Scan(type, match);
-    }
-  };
   if (context) {
-    duckdb::DuckCatalog::ScanSchemas(*context, scan);
-  } else {
-    duckdb::DuckCatalog::ScanSchemas(scan);
+    for (auto& schema : GetSchemas(*context)) {
+      schema.get().Scan(*context, type, match);
+    }
+    return result;
+  }
+  duckdb::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  duckdb::DuckCatalog::ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+  for (auto& schema : schemas) {
+    schema.get().Scan(type, match);
   }
   return result;
 }

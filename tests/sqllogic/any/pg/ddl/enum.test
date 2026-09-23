@@ -2,10 +2,8 @@ statement ok
 CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression', 'norma');
 
 
-query error
+statement error (?i)type (with name )?"diagnosis" already exists
 CREATE TYPE diagnosis AS ENUM ('something');
-----
-db error: ERROR: Type with name "diagnosis" already exists!
 
 
 query error

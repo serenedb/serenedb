@@ -129,38 +129,37 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
         catalog::SereneDBCatalog::kStorageType) {
       auto& catalog = duck_catalog.Cast<catalog::SereneDBCatalog>();
       const auto transaction = catalog.GetCatalogTransaction(context);
-      catalog.ScanSchemas(
-        context, [&](duckdb::SchemaCatalogEntry& schema_entry) {
-          auto& schema = schema_entry.Cast<duckdb::DuckSchemaEntry>();
-          // The schema entry itself, which is what owns the sets below. The two
-          // static schemas have no definition of their own and are reported by
-          // name alone.
-          state.rows.push_back(
-            {.schema = schema.name.GetIdentifierName(),
-             .entry_type = duckdb::CatalogTypeToString(schema.type),
-             .name = schema.name.GetIdentifierName(),
-             .entry_oid = schema.oid,
-             .visible = true});
-          // One type per set, and the entry's own type is reported rather than
-          // the set's: tables, views and sequences share a set, as do the two
-          // flavours of macro.
-          for (const auto type : {duckdb::CatalogType::TABLE_ENTRY,
-                                  duckdb::CatalogType::INDEX_ENTRY,
-                                  duckdb::CatalogType::SEQUENCE_ENTRY,
-                                  duckdb::CatalogType::MACRO_ENTRY,
-                                  duckdb::CatalogType::TYPE_ENTRY,
-                                  duckdb::CatalogType::TOKENIZER_ENTRY}) {
-            schema.GetCatalogSet(type).Scan(
-              transaction, [&](duckdb::CatalogEntry& entry) {
-                state.rows.push_back(
-                  {.schema = schema.name.GetIdentifierName(),
-                   .entry_type = duckdb::CatalogTypeToString(entry.type),
-                   .name = entry.name.GetIdentifierName(),
-                   .entry_oid = entry.oid,
-                   .visible = true});
-              });
-          }
-        });
+      for (auto& schema_entry : catalog.GetSchemas(context)) {
+        auto& schema = schema_entry.get().Cast<duckdb::DuckSchemaEntry>();
+        // The schema entry itself, which is what owns the sets below. The two
+        // static schemas have no definition of their own and are reported by
+        // name alone.
+        state.rows.push_back(
+          {.schema = schema.name.GetIdentifierName(),
+           .entry_type = duckdb::CatalogTypeToString(schema.type),
+           .name = schema.name.GetIdentifierName(),
+           .entry_oid = schema.oid,
+           .visible = true});
+        // One type per set, and the entry's own type is reported rather than
+        // the set's: tables, views and sequences share a set, as do the two
+        // flavours of macro.
+        for (const auto type :
+             {duckdb::CatalogType::TABLE_ENTRY,
+              duckdb::CatalogType::INDEX_ENTRY,
+              duckdb::CatalogType::SEQUENCE_ENTRY,
+              duckdb::CatalogType::MACRO_ENTRY, duckdb::CatalogType::TYPE_ENTRY,
+              duckdb::CatalogType::TOKENIZER_ENTRY}) {
+          schema.GetCatalogSet(type).Scan(
+            transaction, [&](duckdb::CatalogEntry& entry) {
+              state.rows.push_back(
+                {.schema = schema.name.GetIdentifierName(),
+                 .entry_type = duckdb::CatalogTypeToString(entry.type),
+                 .name = entry.name.GetIdentifierName(),
+                 .entry_oid = entry.oid,
+                 .visible = true});
+            });
+        }
+      }
       // Foreign servers are database children, so their set hangs off the
       // catalog and has no schema name to report.
       catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)

@@ -77,7 +77,7 @@ duckdb::optional_ptr<duckdb::TypeCatalogEntry> UserTypeEntry(
                                     duckdb::Identifier{INVALID_SCHEMA},
                                     duckdb::Identifier{type.GetAlias()},
                                     duckdb::OnEntryNotFound::RETURN_NULL);
-    if (entry) {
+    if (entry && !entry->internal) {
       result = &entry->Cast<duckdb::TypeCatalogEntry>();
     }
   };

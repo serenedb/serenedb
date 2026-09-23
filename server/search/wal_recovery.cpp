@@ -69,39 +69,42 @@ void InitInvertedIndexes() {
         continue;
       }
       const auto transaction = catalog.GetCatalogTransaction(context);
+      std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
       catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
-        [&](duckdb::SchemaCatalogEntry& schema) {
-          schema.Scan(
-            duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-              if (!connector::IsInvertedIndex(
-                    entry.Cast<duckdb::IndexCatalogEntry>())) {
-                return;
-              }
-              auto& index = entry.Cast<catalog::InvertedIndexEntry>();
-              const auto& storage = index.Storage();
-              if (!storage) {
-                return;
-              }
-              TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
-              storage->StartTasks();
-              auto relation =
-                schema.GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
-                                index.GetTableName());
-              const bool table_backed =
-                relation &&
-                relation->type == duckdb::CatalogType::TABLE_ENTRY &&
-                relation->Cast<duckdb::TableCatalogEntry>().IsDuckTable();
-              if (!table_backed) {
-                statics.push_back(storage);
-                return;
-              }
-              storage->StartRecovery();
-              recovering.push_back(storage);
-              if (seen_tables.insert(relation->oid).second) {
-                tables.push_back(&relation->Cast<duckdb::DuckTableEntry>());
-              }
-            });
-        });
+        [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+      for (auto& schema : schemas) {
+        std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
+        schema.get().Scan(
+          duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+            if (connector::IsInvertedIndex(
+                  entry.Cast<duckdb::IndexCatalogEntry>())) {
+              indexes.emplace_back(entry.Cast<catalog::InvertedIndexEntry>());
+            }
+          });
+        for (auto& index : indexes) {
+          const auto& storage = index.get().Storage();
+          if (!storage) {
+            continue;
+          }
+          TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
+          storage->StartTasks();
+          auto relation =
+            schema.get().GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
+                                  index.get().GetTableName());
+          const bool table_backed =
+            relation && relation->type == duckdb::CatalogType::TABLE_ENTRY &&
+            relation->Cast<duckdb::TableCatalogEntry>().IsDuckTable();
+          if (!table_backed) {
+            statics.push_back(storage);
+            continue;
+          }
+          storage->StartRecovery();
+          recovering.push_back(storage);
+          if (seen_tables.insert(relation->oid).second) {
+            tables.push_back(&relation->Cast<duckdb::DuckTableEntry>());
+          }
+        }
+      }
     }
 
     absl::Cleanup finish = [&] {

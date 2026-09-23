@@ -74,15 +74,21 @@ auto SereneDatabases() {
 void ForEachSearchTable(
   duckdb::AttachedDatabase& database,
   const std::function<void(catalog::SearchTableEntry&)>& callback) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   database.GetCatalog().Cast<catalog::SereneDBCatalog>().ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) {
-      schema.Scan(
-        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-          if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&entry)) {
-            callback(*search);
-          }
-        });
-    });
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+  std::vector<duckdb::reference<catalog::SearchTableEntry>> tables;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&entry)) {
+          tables.emplace_back(*search);
+        }
+      });
+  }
+  for (auto& table : tables) {
+    callback(table.get());
+  }
 }
 
 }  // namespace

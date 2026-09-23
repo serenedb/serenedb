@@ -10,9 +10,15 @@ statement ok
 CREATE SERVER vtcr_b FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY vtcr_en AS
-    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
-    WITH (frequency, position);
+CREATE TEXT SEARCH DICTIONARY vtcr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 statement ok
 CREATE SCHEMA vtcr_a.${__DATABASE__}_a;

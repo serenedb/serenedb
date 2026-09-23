@@ -22,9 +22,15 @@ statement ok
 CREATE TABLE cmd.${__DATABASE__}.t (id INTEGER, body TEXT);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY cmd_en AS
-    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
-    WITH (frequency, position);
+CREATE TEXT SEARCH DICTIONARY cmd_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 # One file per snapshot, so a file's rows are a contiguous key range and the
 # merged term dictionary spans several blocks.

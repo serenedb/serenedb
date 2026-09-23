@@ -164,9 +164,9 @@ class Workload:
             cur.execute(f"CREATE SCHEMA {self.server}.{self.schema}")
             cur.execute(f"CREATE TABLE {self.table} (id INTEGER, category TEXT, body TEXT, "
                         f"ver INTEGER, emb FLOAT[])")
-            cur.execute(f"CREATE TEXT SEARCH DICTIONARY {self.dictionary} AS "
-                        f"split_text() | normalize_tokens('en_US.UTF-8', accent := false) "
-                        f"WITH (frequency, position)")
+            cur.execute(f"CREATE TEXT SEARCH DICTIONARY {self.dictionary}("
+                        f"template = 'text', locale = 'en_US.UTF-8', case = 'none', "
+                        f"stemming = false, accent = false, frequency = true, position = true)")
             cur.execute(self.ingest_sql(1, self.seed_docs))
             cur.execute(f"CREATE VIEW {self.view} AS SELECT id, category, body, ver, "
                         f"emb::FLOAT[{self.dim}] AS emb FROM {self.table}")

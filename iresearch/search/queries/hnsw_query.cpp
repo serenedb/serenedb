@@ -50,12 +50,6 @@ struct HnswQueryDist {
     HnswComputeDistances<M>(q, base, d, ids, out);
   }
 
-  uint32_t PrefixDims() const noexcept { return 0; }
-
-  void BatchPrefix(std::span<const uint32_t> ids, score_t* out) const noexcept {
-    Batch(ids, out);
-  }
-
   score_t One(uint32_t id) const noexcept {
     score_t s{};
     Batch({&id, 1}, &s);
@@ -85,12 +79,6 @@ struct HnswCodeDist {
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t threshold = kHnswNoThreshold) {
     qr->ComputeGathered(codes, record_size, ids, threshold, out);
-  }
-
-  uint32_t PrefixDims() const noexcept { return qr->PrefixDims(); }
-
-  void BatchPrefix(std::span<const uint32_t> ids, score_t* out) {
-    qr->ComputeGatheredPrefix(codes, record_size, ids, out);
   }
 
   void Prefetch(uint32_t id) const noexcept {
@@ -351,10 +339,6 @@ inline constexpr long double kVectorPointReadFoldRatio = 456;
 // thirty thousand docs, a twentieth of a millisecond on a million-row segment.
 inline constexpr uint32_t kCountSampleWindows = 8;
 
-// The rows a two-pass scan scores in full, as a multiple of the beam: the
-// `keep` of the scan.
-inline constexpr long double kScanPrefixPool = 8;
-
 // What one scanned row costs against one walked candidate. They are not the
 // same work, and the difference is not a constant. Both read one row's codes,
 // so both carry `record_size` bytes; on top of that a walked candidate arrives
@@ -404,8 +388,7 @@ long double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
 }
 
 bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
-                    uint32_t record_size, uint32_t parallel = 1,
-                    bool prefix = false, bool two_hop = false) noexcept {
+                    uint32_t record_size, bool two_hop) noexcept {
   if (matches == 0 || nodes == 0) {
     return true;
   }
@@ -413,16 +396,8 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   if (two_hop && matches * m0 >= kTwoHopAdmittedNeighbours * nodes) {
     walk *= HnswTwoHopShare(matches, nodes, m0, record_size);
   }
-  // A scan splits across `parallel` workers; the walk is one thread moving
-  // through the graph, so only the scan's side of the comparison shrinks. A
-  // scan that ranks on a prefix of each code reads a quarter of the rows it
-  // scores, and scores a pool of them in full on top.
-  long double scan =
+  const long double scan =
     static_cast<long double>(matches) * ScanCandidateCost(record_size);
-  if (prefix) {
-    scan = scan / 4 + kScanPrefixPool * ef;
-  }
-  scan /= std::max<uint32_t>(parallel, 1);
   return scan <= walk;
 }
 
@@ -447,50 +422,14 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   s.batch.clear();
 }
 
-
-// Two passes over the part's rows when the codes are long enough that reading
-// a quarter of one ranks it well: the first scores every row on that prefix
-// and keeps the best `keep`, the second scores those in full. The answer is
-// the exact top-`ef` of what the first pass kept.
-template<typename Dist>
-void HnswScanPrefix(std::span<const uint32_t> rows, Dist& dist, uint32_t ef,
-                    HnswSearchScratch& s, uint32_t keep) {
-  constexpr size_t kBatch = 256;
-  auto& partial = s.prefix_scores;
-  partial.resize(rows.size());
-  for (size_t i = 0; i < rows.size(); i += kBatch) {
-    const auto n = std::min<size_t>(kBatch, rows.size() - i);
-    dist.BatchPrefix(rows.subspan(i, n), partial.data() + i);
-  }
-  auto& order = s.prefix_order;
-  order.resize(rows.size());
-  std::iota(order.begin(), order.end(), uint32_t{0});
-  std::nth_element(
-    order.begin(), order.begin() + keep, order.end(),
-    [&](uint32_t l, uint32_t r) { return partial[l] > partial[r]; });
-  s.nearest.clear();
-  s.batch.clear();
-  for (uint32_t i = 0; i < keep; ++i) {
-    s.batch.push_back(rows[order[i]]);
-    if (s.batch.size() == kBatch) {
-      HnswAdmit(dist, ef, s);
-    }
-  }
-  if (!s.batch.empty()) {
-    HnswAdmit(dist, ef, s);
-  }
-}
-
-// Top-`ef` over the docs the set names within [first, last).
 template<typename Dist>
 void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
-                  uint32_t ef, HnswSearchScratch& s, doc_id_t first,
-                  doc_id_t last) {
+                  uint32_t ef, HnswSearchScratch& s) {
   constexpr size_t kBatch = 256;
   s.nearest.clear();
   s.batch.clear();
   const auto size = graph.Size();
-  for (auto doc = set.Probe(first); !doc_limits::eof(doc) && doc < last;
+  for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
        doc = set.Probe(doc + 1)) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
     if (node >= size) {
@@ -516,33 +455,20 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
 
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
-                            HnswSearchScratch& scratch, doc_id_t first,
-                            doc_id_t last) const {
+                            HnswSearchScratch& scratch) const {
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  const auto end = doc_limits::min() + docs_count;
-  first = std::clamp(first, doc_limits::min(), end);
-  last = doc_limits::eof(last) ? end : std::clamp(last, first, end);
-  // A range narrower than the segment is one worker's share of a split scan.
-  // The caller only splits where the answer is a scan -- a walk moves through
-  // the whole graph, so a doc range says nothing about where it goes -- and
-  // the ranges come from the scan's row-group units, which its work stealing
-  // rebalances. That is cheaper than folding the whole segment up front to
-  // cut it into equal-popcount parts, which is most of the scan's own work.
-  if (first != doc_limits::min() || last != end) {
-    auto set = MakeSet(_inner.get(), table, docs_count);
-    HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
-    return;
-  }
   // Which plan answers this decides how the set is built, so the count comes first and costs
   // nothing: a bounded sample of the set stands in, and folding to decide costs more than either
   // plan does.
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
+  bool bounded = true;
   if (table != nullptr || _inner->Kind() == QueryKind::Boolean) {
     probe.emplace(MakeSet(_inner.get(), table, docs_count));
     matches = probe->EstimateCount(kCountSampleWindows);
+    bounded = probe->Filled() >= probe->End();
   } else {
     matches = _inner->EstimateMax();
   }
@@ -551,7 +477,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                        HnswBridgeRejected(_record_size, graph.M0());
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
     mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                          1, false, two_hop)
+                          two_hop)
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
@@ -606,8 +532,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     mode = HnswFilterMode::TwoHop;
   }
   const auto walked = [&](bool complete) {
-    return complete &&
-           (scratch.nearest.size() >= _ef || scratch.nearest.size() >= matches);
+    return complete && (scratch.nearest.size() >= _ef ||
+                        (bounded && scratch.nearest.size() >= matches));
   };
   const auto run = [&](const auto& acc) {
     switch (mode) {
@@ -649,79 +575,18 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   } else if (run(admit)) {
     return;
   }
-  HnswScanTopK(set, graph, dist, _ef, scratch, first, last);
+  HnswScanTopK(set, graph, dist, _ef, scratch);
 }
 
-
-std::optional<uint64_t> HnswQuery::ScanCandidates(
-  uint32_t parallel, std::optional<uint64_t> table_rows) const {
-  // The same rule RunFiltered uses, from what is known without evaluating the
-  // predicate: an inner query's own upper bound, and whatever bound the caller
-  // has for its table filter. Both are upper bounds, and a scan only gets
-  // cheaper as the true count falls, so preferring it here still holds.
-  if (_ef == 0 || _filter_mode == HnswFilterMode::Walk ||
-      _filter_mode == HnswFilterMode::Prune ||
-      _filter_mode == HnswFilterMode::TwoHop ||
-      _filter_mode == HnswFilterMode::Bridge) {
-    return std::nullopt;
-  }
-  const auto& graph = _data->graph;
-  uint64_t matches = 0;
-  if (_inner != nullptr) {
-    matches = _inner->EstimateMax();
-    if (table_rows) {
-      matches = std::min<uint64_t>(matches, *table_rows);
-    }
-  } else if (table_rows) {
-    matches = *table_rows;
-  } else {
-    return std::nullopt;
-  }
-  // The two-pass scan applies to a quantized index whose codes are long
-  // enough for a quarter of one to be fewer cache lines.
-  const bool prefix = _codebook != nullptr && _d >= 512;
-  // Whether to scan is decided on one thread's work, not on the cores the
-  // split might get. Dividing the scan's side by them assumes cores that are
-  // free, and under concurrent load they are not: every client already has
-  // one. Crediting two of them here chose a split scan over a walk that was
-  // three and a half times cheaper per query, and then ran it on a machine
-  // with nothing spare to run it on. How wide to split, once a scan is the
-  // answer, is still the caller's question and still uses `parallel`.
-  (void)parallel;
-  const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
-                       HnswBridgeRejected(_record_size, graph.M0());
-  if (_filter_mode != HnswFilterMode::Scan &&
-      !HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                      /*parallel=*/1, prefix, two_hop)) {
-    return std::nullopt;
-  }
-  return matches;
-}
-
-
-std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
-                                           doc_id_t first,
-                                           doc_id_t last) const {
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   HnswSearchScratch scratch;
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
   }
-  const auto end =
-    doc_limits::min() + static_cast<doc_id_t>(_segment.docs_count());
-  const bool whole = first <= doc_limits::min() &&
-                     (doc_limits::eof(last) || last >= end);
-  if (!whole && _inner == nullptr && table == nullptr) {
-    // Nothing to split by doc range after all (the table filter turned out not
-    // to fold), so the whole answer belongs to the range that starts the
-    // segment and the rest answer nothing.
-    if (first > doc_limits::min()) {
-      return {};
-    }
-  }
   WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                [&](auto& dist) {
                  if (_inner != nullptr || table != nullptr) {
-                   RunFiltered(dist, table, scratch, first, last);
+                   RunFiltered(dist, table, scratch);
                    return;
                  }
                  if (_ef != 0) {

@@ -82,6 +82,9 @@ class ColFilterVerify : public irs::detail::TableFilter {
   }
 
   bool Admits(irs::doc_id_t doc) final {
+    if (PointReads() == irs::detail::PointRead::None) {
+      return TableFilter::Admits(doc);
+    }
     return _chain.AdmitRow(doc - irs::doc_limits::min());
   }
 

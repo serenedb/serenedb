@@ -70,26 +70,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   // keeps moving through every node but admits what the set passes, and a
   // set too sparse for the graph is answered by scanning its docs. A table
   // that does not fold is left to the caller to apply to the hits.
-  // `parts` splits the segment's rows into equal doc ranges for concurrent
-  // callers, each running one `part`: only a scan can be split that way, so a
-  // split query scans (the caller asked for it because ScanCandidates said a
-  // scan is how this query answers its filter).
-  std::vector<ScoreDoc> RunSearch(
-    detail::TableFilter* table = nullptr,
-    doc_id_t first = doc_limits::min(),
-    doc_id_t last = doc_limits::eof()) const;
-
-
-  // How many docs a scan would score, when scanning is how this query would
-  // answer its inner filter; nullopt when it would walk the graph, has no
-  // inner filter, or is a radius search.
-  // `parallel` is how many workers a scan may spread over: a scan that splits
-  // is cheaper per worker, so it wins the comparison at selectivities where a
-  // single-threaded scan would not. `table_rows` is an upper bound on what the
-  // caller's table filter admits, for a query whose predicate lives there.
-  std::optional<uint64_t> ScanCandidates(
-    uint32_t parallel = 1,
-    std::optional<uint64_t> table_rows = std::nullopt) const;
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
@@ -100,8 +81,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  private:
   template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
-                   HnswSearchScratch& scratch, doc_id_t first,
-                   doc_id_t last) const;
+                   HnswSearchScratch& scratch) const;
 
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;

@@ -748,30 +748,6 @@ class ScalarQuantizerReader final : public QuantizerReader {
     }
   }
 
-  // A quarter of the dimensions, rounded to a cache line, once that is enough
-  // of the code to rank by: below it the read is a cache line either way.
-  uint32_t PrefixDims() const noexcept final {
-    if (!_fast || _weights.d < 512) {
-      return 0;
-    }
-    return (_weights.d / 4 + 63) & ~uint32_t{63};
-  }
-
-  void ComputeGatheredPrefix(const byte_type* base, uint32_t record_size,
-                             std::span<const uint32_t> ids,
-                             score_t* out) final {
-    const auto dims = PrefixDims();
-    if (dims != 0) {
-      const auto row = [&](size_t j) {
-        return base + static_cast<size_t>(ids[j]) * record_size;
-      };
-      faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, ids.size(), out,
-                                               dims);
-      return;
-    }
-    ComputeGathered(base, record_size, ids, kHnswNoThresholdValue, out);
-  }
-
   void ComputeGathered(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t /*threshold*/,
                        score_t* out) final {

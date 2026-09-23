@@ -83,11 +83,6 @@ class QuantizerWriter {
   virtual VectorQuantization Kind() const noexcept = 0;
 };
 
-// The "no threshold" score a gathered scoring pass is given when nothing has
-// been collected yet.
-inline constexpr score_t kHnswNoThresholdValue =
-  -std::numeric_limits<score_t>::max();
-
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
@@ -99,18 +94,6 @@ class QuantizerReader {
   virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
                                std::span<const uint32_t> ids, score_t threshold,
                                score_t* out);
-
-  // Scores over the first `PrefixDims()` dimensions only, for a first pass
-  // that ranks many rows while reading a quarter of each code. Zero means the
-  // reader has no such pass and every row must be scored in full.
-  virtual uint32_t PrefixDims() const noexcept { return 0; }
-
-  virtual void ComputeGatheredPrefix(const byte_type* base,
-                                     uint32_t record_size,
-                                     std::span<const uint32_t> ids,
-                                     score_t* out) {
-    ComputeGathered(base, record_size, ids, kHnswNoThresholdValue, out);
-  }
 
   virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
     return false;

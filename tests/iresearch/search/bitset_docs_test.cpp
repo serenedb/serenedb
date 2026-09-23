@@ -34,6 +34,7 @@
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
+#include <iresearch/search/lead/docs_mask.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
 #include <iresearch/search/probe/docs_mask.hpp>
 #include <iresearch/utils/bit_utils.hpp>
@@ -980,6 +981,121 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
         const auto doc = static_cast<irs::doc_id_t>(base + w * kBits + bit);
         const bool excluded = probe.Probe(doc) == doc;
         ASSERT_EQ(excluded, irs::CheckBit(words[w], bit)) << "doc " << doc;
+      }
+    }
+  }
+}
+
+TEST(docs_mask_test, lead_walks_the_live_docs) {
+  const auto removals = MakeMask({1, 3, 64, 65, 66, 128});
+  irs::lead::DocsMask lead{&removals, irs::doc_limits::eof(), 130};
+
+  std::vector<irs::doc_id_t> expected;
+  for (irs::doc_id_t doc = 1; doc <= 130; ++doc) {
+    if (!removals.Contains(doc)) {
+      expected.push_back(doc);
+    }
+  }
+  std::vector<irs::doc_id_t> actual;
+  for (auto doc = lead.Next(); !irs::doc_limits::eof(doc); doc = lead.Next()) {
+    actual.push_back(doc);
+  }
+  ASSERT_EQ(expected, actual);
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+}
+
+TEST(docs_mask_test, lead_seek_skips_a_dead_run) {
+  std::vector<irs::doc_id_t> docs;
+  for (irs::doc_id_t doc = 10; doc < 1000; ++doc) {
+    docs.push_back(doc);
+  }
+  const auto removals = MakeMask(docs);
+  irs::lead::DocsMask lead{&removals, irs::doc_limits::eof(), 2000};
+
+  ASSERT_EQ(1, lead.Seek(1));
+  ASSERT_EQ(1, lead.Seek(1));
+  ASSERT_EQ(9, lead.Seek(9));
+  ASSERT_EQ(1000, lead.Seek(10));
+  ASSERT_EQ(1000, lead.Seek(500));
+  ASSERT_EQ(1001, lead.Next());
+  ASSERT_EQ(2000, lead.Seek(2000));
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+}
+
+TEST(docs_mask_test, lead_stops_at_the_uncommitted_tail) {
+  const auto removals = MakeMask({3});
+  irs::lead::DocsMask lead{&removals, 70, 200};
+
+  ASSERT_EQ(69, lead.Seek(69));
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+
+  irs::lead::DocsMask seek{&removals, 70, 200};
+  ASSERT_TRUE(irs::doc_limits::eof(seek.Seek(70)));
+}
+
+TEST(docs_mask_test, lead_treats_docs_past_the_mask_words_as_live) {
+  const auto removals = MakeMask({2});
+  irs::lead::DocsMask lead{&removals, irs::doc_limits::eof(), 300};
+
+  ASSERT_EQ(1, lead.Next());
+  ASSERT_EQ(3, lead.Next());
+  ASSERT_EQ(65, lead.Seek(65));
+  ASSERT_EQ(299, lead.Seek(299));
+  ASSERT_EQ(300, lead.Next());
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+}
+
+TEST(docs_mask_test, lead_without_removals_walks_every_doc) {
+  irs::lead::DocsMask lead{nullptr, irs::doc_limits::eof(), 100};
+
+  for (irs::doc_id_t doc = 1; doc <= 100; ++doc) {
+    ASSERT_EQ(doc, lead.Next());
+  }
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+}
+
+TEST(docs_mask_test, lead_over_an_empty_segment_is_exhausted) {
+  irs::lead::DocsMask lead{nullptr, irs::doc_limits::eof(), 0};
+
+  ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
+}
+
+TEST(docs_mask_test, lead_agrees_with_probe_across_windows) {
+  std::vector<irs::doc_id_t> docs;
+  for (irs::doc_id_t doc = 1; doc < 20000; ++doc) {
+    if (doc % 7 == 0 || doc % 13 == 0 || (doc >= 8000 && doc < 9000)) {
+      docs.push_back(doc);
+    }
+  }
+  const auto removals = MakeMask(docs);
+  constexpr irs::doc_id_t kDocs = 17000;
+  auto probe = ProbeOver(&removals, 15000);
+
+  irs::lead::DocsMask lead{&removals, 15000, kDocs};
+  auto doc = lead.Next();
+  for (irs::doc_id_t target = 1; target <= kDocs; ++target) {
+    const bool live = probe.Probe(target) != target;
+    ASSERT_EQ(live, doc == target) << "doc " << target;
+    if (doc == target) {
+      doc = lead.Next();
+    }
+  }
+  ASSERT_TRUE(irs::doc_limits::eof(doc));
+
+  for (irs::doc_id_t step : {1, 5, 63, 64, 65, 777}) {
+    irs::lead::DocsMask seek{&removals, 15000, kDocs};
+    for (irs::doc_id_t target = 1; target <= kDocs; target += step) {
+      const auto found = seek.Seek(target);
+      if (irs::doc_limits::eof(found)) {
+        for (auto doc = target; doc <= kDocs; ++doc) {
+          ASSERT_EQ(doc, probe.Probe(doc)) << "doc " << doc;
+        }
+        break;
+      }
+      ASSERT_GE(found, target);
+      ASSERT_NE(found, probe.Probe(found)) << "doc " << found;
+      for (auto doc = target; doc < found; ++doc) {
+        ASSERT_EQ(doc, probe.Probe(doc)) << "doc " << doc;
       }
     }
   }

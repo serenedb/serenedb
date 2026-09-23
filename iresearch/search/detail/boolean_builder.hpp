@@ -343,6 +343,13 @@ Result<Api> MakeSparseExclusionOf(
     });
 }
 
+inline bool ExcludesDocsMask(
+  std::span<const PostingClause> exclude_terms,
+  std::span<const QueryBuilder::ptr> exclude_filters) noexcept {
+  return exclude_terms.empty() && exclude_filters.size() == 1 &&
+         exclude_filters.front()->Kind() == QueryKind::DocsMask;
+}
+
 template<typename Api>
 Result<Api> MakeSparseNegation(
   std::span<const PostingClause> exclude_terms,

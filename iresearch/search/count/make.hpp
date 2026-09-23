@@ -44,6 +44,7 @@ Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
 Root::ptr MakeTerm(const detail::PostingClause& posting,
                    const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx);
+Root::ptr MakeLive(const SubReader& segment, const Context& ctx);
 
 Root::ptr Make(const TermQuery& query, const Context& ctx);
 Root::ptr Make(const MultiTermQuery& query, const Context& ctx);

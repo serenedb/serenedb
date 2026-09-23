@@ -25,6 +25,9 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/lead/docs_mask.hpp>
+#include <iresearch/search/lead/impl.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -422,6 +425,62 @@ TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
     ASSERT_FALSE(masked.Contains(results[i].doc))
       << "deleted doc " << results[i].doc << " reached the top-k";
   }
+}
+
+TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kNameFieldId;
+    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    trx.Remove(irs::Filter::ptr{std::move(removal)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  irs::All filter;
+  size_t walked = 0;
+  for (auto& segment : reader) {
+    ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+    const irs::PrepareContext ctx;
+    auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx), segment,
+                                   ctx.memory, nullptr, false);
+    ASSERT_NE(nullptr, query);
+    auto lead = query->PlanLead({});
+    ASSERT_NE(nullptr, lead);
+    ASSERT_NE(nullptr,
+              dynamic_cast<irs::lead::Impl<irs::lead::DocsMask>*>(lead.get()));
+
+    std::vector<irs::doc_id_t> expected;
+    auto live = segment.docs_iterator();
+    for (auto doc = live->Next(); !irs::doc_limits::eof(doc);
+         doc = live->Next()) {
+      expected.push_back(doc);
+    }
+    std::vector<irs::doc_id_t> actual;
+    for (auto doc = lead->Next(); !irs::doc_limits::eof(doc);
+         doc = lead->Next()) {
+      actual.push_back(doc);
+    }
+    ASSERT_EQ(expected, actual);
+    ASSERT_EQ(segment.live_docs_count(), actual.size());
+    walked += actual.size();
+  }
+  ASSERT_GT(walked, 0);
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {

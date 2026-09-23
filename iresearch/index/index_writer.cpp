@@ -1583,8 +1583,10 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
 
   // The tick is the caller's, unlike Import: a removal reaches an imported
   // segment only when `import.tick <= query.tick` (PrepareFlush stage 2).
-  flush->imports.emplace_back(std::move(segment), tick, std::move(refs),
-                              std::move(adopted_reader));
+  flush->imports
+    .emplace_back(std::move(segment), tick, std::move(refs),
+                  std::move(adopted_reader))
+    .synced = true;
 
   return true;
 }
@@ -1730,10 +1732,12 @@ bool IndexWriter::ReplaceSegments(
     // A copy per import: the ctor takes the pin by rvalue, and every import
     // needs its own so the files stay referenced until the commit.
     // MinTick used here as pending removes must reach replaced segments.
-    flush->imports.emplace_back(std::move(entry.segment),
-                                writer_limits::kMinTick, std::move(entry.refs),
-                                Compaction{}, std::move(entry.reader),
-                                decltype(committed_reader){committed_reader});
+    flush->imports
+      .emplace_back(std::move(entry.segment), writer_limits::kMinTick,
+                    std::move(entry.refs), Compaction{},
+                    std::move(entry.reader),
+                    decltype(committed_reader){committed_reader})
+      .synced = true;
   }
   for (const auto name : masked) {
     segment_mask.emplace(name);
@@ -2046,6 +2050,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   size_t current_imports_index = 0;
   size_t import_candidates_count = 0;
   size_t partial_sync_threshold = readers.size();
+  std::vector<size_t> durable;
+  std::vector<size_t> patched;
 
   for (auto& import : ctx->imports) {
     progress("Stage 2: Handling compacted/imported segments",
@@ -2158,6 +2164,16 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       import_reader = import_reader->UpdateMeta(dir, meta);
     }
 
+    if (import.synced) {
+      SDB_ASSERT(!pending_compaction);
+      const auto offset = pending_meta.segments.size() - partial_sync_threshold;
+      if (docs_mask_modified) {
+        patched.emplace_back(offset);
+      }
+      durable.emplace_back(offset);
+      modified = true;
+    }
+
     readers.emplace_back(std::move(import_reader));
     pending_meta.segments.emplace_back(std::move(import.segment));
   }
@@ -2179,8 +2195,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
           !segment_mask.contains(segment->Meta().name)) {
         partial_sync_begin =
           std::find_if(partial_sync_begin, partial_sync.end(),
-                       [i](const auto& v) { return i == v.segment_index; });
-        if (partial_sync_begin != partial_sync.end()) {
+                       [i](const auto& v) { return i <= v.segment_index; });
+        if (partial_sync_begin != partial_sync.end() &&
+            partial_sync_begin->segment_index == i) {
           tmp_partial_sync.emplace_back(tmp_readers.size());
         }
         tmp_readers.emplace_back(std::move(segment));
@@ -2205,6 +2222,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     pending_meta = std::move(tmp_meta);
   }
 
+  for (auto& index : durable) {
+    index += partial_sync_threshold;
+  }
+  for (const auto offset : patched) {
+    partial_sync.emplace_back(partial_sync_threshold + offset);
+  }
+
   auto& curr_cached = ctx->cached;
   auto& next_cached = ctx->next->cached;
 
@@ -2219,8 +2243,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     curr_cached.clear();
     next_cached.clear();
   }
-
-  std::vector<size_t> durable;
 
   // Stage 3
   // create new segments
@@ -2336,6 +2358,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         new_segment.meta.docs_mask =
           std::make_shared<DocumentMask>(std::move(document_mask));
       }
+      const bool synced =
+        published != partially_committed.end() ||
+        (segment_ctx.flushed.meta_on_disk && !segment_ctx.flushed.was_flush);
       const bool need_flush =
         segment_ctx.flushed.was_flush || RemovalCount(new_segment.meta) != 0;
       segment_ctx.flushed.was_flush = true;
@@ -2351,10 +2376,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         segment_ctx.reader =
           segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
       }
-      if (published != partially_committed.end()) {
-        SDB_ASSERT(need_flush);
-        partial_sync.emplace_back(pending_meta.segments.size());
+      if (synced) {
+        if (need_flush) {
+          partial_sync.emplace_back(pending_meta.segments.size());
+        }
         durable.emplace_back(pending_meta.segments.size());
+        modified = true;
       }
       readers.emplace_back(std::move(segment_ctx.reader));
       pending_meta.segments.emplace_back(std::move(new_segment));

@@ -45,7 +45,7 @@ uint32_t MaskedCount(const SubReader& segment) noexcept {
 class MaskQuery : public QueryBuilder {
  public:
   MaskQuery(const SubReader& segment, uint32_t masked) noexcept
-    : QueryBuilder{segment, masked, QueryKind::Other} {}
+    : QueryBuilder{segment, masked, QueryKind::DocsMask} {}
 
   probe::Node::ptr PlanProbe(const detail::ScoredCtx&, uint64_t) const final {
     return memory::make_managed<probe::Impl<probe::DocsMask>>(_segment);

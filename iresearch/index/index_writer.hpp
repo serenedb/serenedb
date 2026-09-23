@@ -562,6 +562,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
+    bool synced = false;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<ImportContext>);

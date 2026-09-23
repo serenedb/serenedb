@@ -26,6 +26,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
+#include "iresearch/search/lead/docs_mask.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -257,6 +258,10 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
       static_cast<doc_id_t>(segment.docs_count()));
   }
   return MakeShape<Walk, lead::AllDocs>(ctx, segment);
+}
+
+Root::ptr MakeLive(const SubReader& segment, const Context& ctx) {
+  return MakeShape<Walk, lead::DocsMask>(ctx, segment);
 }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {

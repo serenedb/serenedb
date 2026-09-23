@@ -35,6 +35,10 @@ namespace fill {
 
 class DocsMask;
 }
+namespace lead {
+
+class DocsMask;
+}
 namespace probe {
 
 class DocsMask;
@@ -145,6 +149,7 @@ class DocumentMask final {
 
  protected:
   friend class fill::DocsMask;
+  friend class lead::DocsMask;
   friend class probe::DocsMask;
 
   const uint64_t* Words() const noexcept { return _bits.array; }

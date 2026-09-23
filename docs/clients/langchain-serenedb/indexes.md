@@ -211,7 +211,7 @@ Per-query IVF tuning, passed once as `index_query_options` to the store factory 
 | `nprobe` | `Optional[int]` | `None` | IVF cluster lists scanned per query, as `sdb_ivf_search_nprobe`. Higher means better recall and slower queries. |
 | `rerank_factor` | `Optional[int]` | `None` | For a **quantized** index, the exact-distance rescore pool is `rerank_factor * k`, as `sdb_ann_oversample`. `0` answers from the codes; ignored for unquantized indexes. |
 
-A field left `None` is omitted, so SereneDB's own default applies (`8` and `-1` respectively).
+A field left `None` is omitted, so SereneDB's own default applies (`-1` for both, which lets the engine choose).
 
 ```python
 from langchain_serenedb import IVFQueryOptions

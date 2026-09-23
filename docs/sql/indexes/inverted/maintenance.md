@@ -53,6 +53,8 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 
 Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
 
+A compaction merges an index's segments into one by default. [`sdb_compact_target_segments`](#session-settings) sets how many it leaves instead: with `N` above `1` it merges `N` disjoint stripes of the segment list at once and stops there, which finishes sooner and bounds peak memory, since no single merge holds the whole index. An index already at `N` segments or fewer is left as it is.
+
 ## Rebuilding
 
 A [view- or external-data-backed index](./views.md) is a static snapshot taken at `CREATE INDEX` time — it does not track later changes to its source. To pick up new data, rebuild it with `DROP INDEX` followed by `CREATE INDEX`.
@@ -96,6 +98,7 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_scan_split` | `auto` | When an index scan splits a segment into row-group units across worker threads. `tail` claims whole segments while more segments remain than workers, then row groups of the remaining ones; `always` claims row groups from the first unit; `never` claims whole segments only. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests: whole-segment units run with no per-unit overhead, row-group units keep every core busy on one large segment. |
 | `sdb_scan_order` | `auto` | The order an index scan claims its units in. `smallest_first` leaves the large segments for the row-group tail; `largest_first` is plain largest-job-first over whole segments (with `sdb_scan_split = never` this reproduces a scan without row-group units); `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `smallest_first` otherwise. |
 | `sdb_scan_no_split_row_groups` | `1` | A segment with at most this many row groups is always one unit of an index scan and is never split across workers. |
+| `sdb_compact_target_segments` | `1` | How many segments `VACUUM (COMPACT_*)` leaves. `0` or `1` merges everything into one segment; a larger `N` merges `N` disjoint stripes of the segment list concurrently and stops there. An index at `N` segments or fewer is left as it is. |
 
 ```sql
 SET sdb_ivf_search_nprobe = 32;  -- scan more IVF clusters for this session

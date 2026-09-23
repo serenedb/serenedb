@@ -704,9 +704,16 @@ uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
   return n < 0 ? 0 : static_cast<uint32_t>(n);
 }
 
+uint32_t ReadMinSearchFanout(duckdb::ClientContext& context) {
+  static constinit SettingRef gFanout{"sdb_ivf_min_search_fanout"};
+  const auto n = gFanout.SignedInt(context);
+  return n < 0 ? 0 : static_cast<uint32_t>(n);
+}
+
 uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
   static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
-  return gFanout.Int(context);
+  const auto n = gFanout.SignedInt(context);
+  return n < 0 ? 0 : static_cast<uint32_t>(n);
 }
 
 uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
@@ -818,6 +825,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .quant_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,
       .nprobe = ReadSearchNprobe(context),
+      .min_search_fanout = ReadMinSearchFanout(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
       .ef_construction = ann_info->ef_construction,

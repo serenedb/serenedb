@@ -56,6 +56,9 @@ VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size,
                        uint32_t top_k) noexcept;
 
+uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
+                       uint32_t max_fanout) noexcept;
+
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
 
 class IvfVectorReader {

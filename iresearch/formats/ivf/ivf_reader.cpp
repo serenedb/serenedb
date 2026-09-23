@@ -51,6 +51,12 @@ uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size,
     std::clamp(n, 1.0, static_cast<double>(lists)));
 }
 
+uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
+                       uint32_t max_fanout) noexcept {
+  const auto beam = std::max(nprobe, min_fanout);
+  return max_fanout != 0 ? std::min(beam, max_fanout) : beam;
+}
+
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
   VectorDistanceFn fn = nullptr;
   ResolveEnum<VectorMetric>(
@@ -106,8 +112,10 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
     effort != 0 ? effort
                 : IvfAutoNprobe(segment.docs_count(), opts.posting_size,
                                 opts.top_k);
-  if (!PrepareVectorState(_tree, segment, ctx, opts, nprobe, state, inner,
-                          opts.max_search_fanout)) {
+  if (!PrepareVectorState(
+        _tree, segment, ctx, opts, nprobe, state, inner,
+        IvfSearchBeam(nprobe, opts.min_search_fanout,
+                      opts.max_search_fanout))) {
     return QueryBuilder::Empty();
   }
 

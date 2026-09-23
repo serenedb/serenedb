@@ -85,7 +85,7 @@ struct CentroidsNode {
 
   template<VectorMetric Metric>
   static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t fanout, bool want_centroids, size_t level,
+                     uint32_t beam, bool want_centroids, size_t level,
                      std::span<const CentroidsNodeView> nodes,
                      size_t layer_base, size_t layer_total,
                      std::vector<Candidate>& leaves) {
@@ -101,7 +101,6 @@ struct CentroidsNode {
     std::vector<size_t> starts, sizes;
     std::vector<Scored> scored;
     for (const auto& node : nodes) {
-      scored.clear();
       for (size_t i = 0; i < node.size; ++i) {
         const auto centroid = node.centroids.subspan(i * d, d);
         const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
@@ -117,14 +116,14 @@ struct CentroidsNode {
                             node.child_offsets[i + 1] - node.child_offsets[i]});
         }
       }
-      const auto k = std::min<size_t>(fanout, scored.size());
-      const auto mid = scored.begin() + k;
-      std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
-      std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
-      for (auto it = scored.begin(); it != mid; ++it) {
-        starts.emplace_back(it->start);
-        sizes.emplace_back(it->count);
-      }
+    }
+    const auto k = std::min<size_t>(beam, scored.size());
+    const auto mid = scored.begin() + k;
+    std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
+    std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
+    for (auto it = scored.begin(); it != mid; ++it) {
+      starts.emplace_back(it->start);
+      sizes.emplace_back(it->count);
     }
     if (level == 0 || starts.empty()) {
       return;
@@ -133,7 +132,7 @@ struct CentroidsNode {
     size_t n_total = 0;
     auto next =
       CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
-    Search<Metric>(query, in, fanout, want_centroids, level - 1, next,
+    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
                    layer_base + layer_total, n_total, leaves);
   }
 };
@@ -158,10 +157,7 @@ class CentroidsTree {
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
               std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t max_search_fanout) const;
-
-  uint32_t EffectiveFanout(uint32_t nprobe,
-                           uint32_t max_search_fanout) const noexcept;
+              uint32_t beam = 0) const;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }

@@ -53,18 +53,6 @@ constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
 
-uint32_t CeilRoot(uint32_t target, uint32_t exp) noexcept {
-  if (exp <= 1 || target <= 1) {
-    return target;
-  }
-  auto w = static_cast<uint32_t>(std::ceill(
-    std::pow(static_cast<double>(target), 1.0 / static_cast<double>(exp))));
-  w = std::max<uint32_t>(w, 1);
-  SDB_ASSERT(std::pow(static_cast<double>(w), static_cast<double>(exp)) >=
-             target);
-  return w;
-}
-
 struct LayerLayout {
   size_t n_total;
   size_t body_start;
@@ -420,22 +408,15 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   return {std::move(head), std::move(node), next_level_offset};
 }
 
-uint32_t CentroidsTree::EffectiveFanout(
-  uint32_t nprobe, uint32_t max_search_fanout) const noexcept {
-  return std::max(max_search_fanout,
-                  CeilRoot(nprobe, static_cast<uint32_t>(_root.level)));
-}
-
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
                            std::vector<float>* out_centroids,
-                           uint32_t max_search_fanout) const {
+                           uint32_t beam) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
     return;
   }
-  SDB_ASSERT(max_search_fanout > 0);
-  const auto fanout = EffectiveFanout(nprobe, max_search_fanout);
+  const auto width = beam != 0 ? beam : nprobe;
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -446,7 +427,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .size = _root.size};
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, fanout, out_centroids != nullptr,
+    CentroidsNode::Search<Metric>(query, in, width, out_centroids != nullptr,
                                   _root.level, std::span{&root_view, 1}, 0,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());

@@ -47,8 +47,6 @@ using namespace irs;
 
 namespace {
 
-constexpr uint32_t kDefaultMaxFanout = 16;
-
 // Writes [IVFHeader][root level][layer blobs...] exactly as
 // CentroidsBuilder::Serialize does: nodes coarsest-first, each layer's
 // centroids followed by its child_offsets (size+1, absolute) unless it is the
@@ -215,7 +213,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
     }
 
     std::vector<uint32_t> ids;
-    tree.Search(query, in, /*nprobe=*/8, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(query, in, /*nprobe=*/8, ids, nullptr);
     ASSERT_FALSE(ids.empty()) << "query " << q;
     const bool hit =
       std::find(ids.begin(), ids.end(),
@@ -283,7 +281,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
   }
@@ -324,7 +322,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
     const std::span<const float> q{data.data() + assigned.perm[j] * d, d};
     std::vector<uint32_t> ids;
     std::vector<float> cens;
-    tree.Search(q, in, /*nprobe=*/1, ids, &cens, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, &cens);
     ASSERT_EQ(ids.size(), 1u);
     ASSERT_EQ(cens.size(), d);
     EXPECT_EQ(0,
@@ -371,7 +369,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   {
     const std::vector<float> q{0.2f};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 0u);
   }
@@ -379,14 +377,14 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   {
     const std::vector<float> q{10.1f};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 2u);
   }
   {
     const std::vector<float> q{11.1f};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 3u);
   }
@@ -394,7 +392,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   {
     const std::vector<float> q{5.f};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/100, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/100, ids, nullptr);
     EXPECT_EQ(ids.size(), 3u);
   }
 }
@@ -456,7 +454,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   const std::span<const float> q{data.data(), d};
   std::vector<uint32_t> ids;
-  tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+  tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
   ASSERT_EQ(ids.size(), 1u);
   EXPECT_EQ(ids[0], 0u);
 }
@@ -546,7 +544,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
   }
@@ -631,24 +629,14 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
   }
 }
 
-// Recall regression for the search fanout. On a genuine multi-level (>=3-layer)
-// tree, Search(q, nprobe) must recover the true top-nprobe leaves ranked by
-// exact centroid distance. An earlier scheme scaled the per-node fanout as
-// 3*nprobe^(1/L), which collapsed as the tree deepened and greedily pruned true
-// leaves. The fanout is now an explicit setting floored at nprobe, and Fanout()
-// splits every interior node at least 2 ways, so no interior layer here holds
-// more than n_leaves/2 == nprobe rows and the descent stays exhaustive.
 TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   constexpr uint32_t d = 8;
-  // posting_size=1 with a small max_fanout forces a deep tree whose every
-  // internal layer stays below the query nprobe, so a correct fanout visits
-  // every node and Search is exact.
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
   const size_t n = data.size() / d;
 
@@ -675,8 +663,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   std::vector<uint32_t> leaf_ids;
   std::vector<float> leaf_cens;
   tree.Search(std::span<const float>{data.data(), d}, in,
-              static_cast<uint32_t>(n), leaf_ids, &leaf_cens,
-              kDefaultMaxFanout);
+              static_cast<uint32_t>(n), leaf_ids, &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
   ASSERT_GT(n_leaves, 1u);
   ASSERT_EQ(leaf_cens.size(), n_leaves * d);
@@ -705,8 +692,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
     std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
 
     std::vector<uint32_t> got;
-    tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr,
-                kDefaultMaxFanout);
+    tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr);
     for (uint32_t t = 0; t < k; ++t) {
       if (std::find(got.begin(), got.end(), scored[t].second) != got.end()) {
         ++hit;
@@ -860,12 +846,7 @@ std::vector<CentroidsNode> MakeGreedyTrapTree(uint32_t d) {
 
 }  // namespace
 
-// max_search_fanout caps the children expanded per node, so it decides whether
-// the descent can escape a wrong greedy turn. On MakeGreedyTrapTree with
-// nprobe=1: fanout 1 follows the root's best child and lands on leaf 1.5
-// (global id 9), while fanout 2 expands both root subtrees and finds the true
-// nearest, leaf 5.0 (global id 10).
-TEST(centroids_node_test, fanout_caps_children_per_node) {
+TEST(centroids_node_test, beam_escapes_greedy_trap) {
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
 
@@ -888,80 +869,53 @@ TEST(centroids_node_test, fanout_caps_children_per_node) {
   const std::vector<float> q{4.9f};
   {
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, /*max_search_fanout=*/1);
-    ASSERT_EQ(ids.size(), 1u);
-    EXPECT_EQ(ids[0], 9u);
+    tree.Search(q, in, 1, ids, nullptr);
+    EXPECT_EQ(ids, (std::vector<uint32_t>{9}));
   }
   {
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, /*max_search_fanout=*/2);
-    ASSERT_EQ(ids.size(), 1u);
-    EXPECT_EQ(ids[0], 10u);
+    tree.Search(q, in, 4, ids, nullptr);
+    EXPECT_EQ(ids, (std::vector<uint32_t>{10, 9, 8, 7}));
   }
-}
-
-// The width is floored at the root-level-th root of nprobe, not at nprobe: it
-// applies per node and compounds over _root.level expansion steps, so w^level
-// is what has to reach nprobe. On a 3-layer tree that is sqrt(nprobe); on a
-// 2-layer tree the single expansion step makes it nprobe itself, which is the
-// shape where one expanded node yields one leaf candidate.
-TEST(centroids_node_test, fanout_floored_at_root_of_nprobe) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 1;
-  const auto nodes = MakeGreedyTrapTree(d);
-
-  uint64_t offset;
-  uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
-    offset = WriteTree(out, VectorMetric::L2Sqr, d, nodes);
-    byte_size = out.Position() - offset;
-    out.Flush();
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, 1, ids, nullptr, 2);
+    EXPECT_EQ(ids, (std::vector<uint32_t>{9}));
   }
-  MemoryIndexInput in{file};
-  in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
-  ASSERT_EQ(tree.Levels(), 3u);
-
-  // Two expansion steps: w^2 >= nprobe. Exact integer roots must not round up.
-  EXPECT_EQ(tree.EffectiveFanout(/*nprobe=*/100, /*max_search_fanout=*/1), 10u);
-  EXPECT_EQ(tree.EffectiveFanout(10000, 1), 100u);
-  EXPECT_EQ(tree.EffectiveFanout(101, 1), 11u);
-  EXPECT_EQ(tree.EffectiveFanout(1, 1), 1u);
-  // An explicit width wider than the floor wins.
-  EXPECT_EQ(tree.EffectiveFanout(100, 64), 64u);
-  EXPECT_EQ(tree.EffectiveFanout(4, kDefaultMaxFanout), kDefaultMaxFanout);
-
-  const std::vector<float> q{4.9f};
-  std::vector<uint32_t> floored;
-  std::vector<uint32_t> explicit_width;
-  tree.Search(q, in, /*nprobe=*/4, floored, nullptr, /*max_search_fanout=*/1);
-  tree.Search(q, in, /*nprobe=*/4, explicit_width, nullptr,
-              /*max_search_fanout=*/2);
-  EXPECT_EQ(floored, explicit_width);
-  ASSERT_EQ(floored.size(), 4u);
-  EXPECT_EQ(floored[0], 10u);
+  {
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, 1, ids, nullptr, 3);
+    EXPECT_EQ(ids, (std::vector<uint32_t>{10}));
+  }
 }
 
-// A single expansion step means the floor is nprobe itself, so a 2-layer tree
-// keeps supplying nprobe leaf candidates however small the setting is.
-TEST(centroids_node_test, two_layer_tree_floors_at_nprobe) {
+TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
 
   constexpr uint32_t d = 1;
-  CentroidsNode root{1, d};
-  root.centroids = {0.f, 10.5f};
-  root.child_offsets = {0, 1, 2};
-  root.size = 2;
+  constexpr size_t kRows = 32;
+  CentroidsNode root{2, d};
+  CentroidsNode mid{1, d};
   CentroidsNode leaf{0, d};
-  leaf.centroids = {0.f, 10.f};
-  leaf.size = 2;
+  root.child_offsets.push_back(0);
+  mid.child_offsets.push_back(0);
+  for (size_t i = 0; i < kRows; ++i) {
+    const auto x = static_cast<float>(i) * 10.f;
+    root.centroids.push_back(x);
+    root.child_offsets.push_back(i + 1);
+    mid.centroids.push_back(x);
+    mid.child_offsets.push_back(2 * (i + 1));
+    leaf.centroids.push_back(x - 1.f);
+    leaf.centroids.push_back(x + 1.f);
+  }
+  root.size = kRows;
+  mid.size = kRows;
+  leaf.size = 2 * kRows;
 
   std::vector<CentroidsNode> nodes;
   nodes.emplace_back(std::move(root));
+  nodes.emplace_back(std::move(mid));
   nodes.emplace_back(std::move(leaf));
 
   uint64_t offset;
@@ -975,26 +929,30 @@ TEST(centroids_node_test, two_layer_tree_floors_at_nprobe) {
   MemoryIndexInput in{file};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
-  ASSERT_EQ(tree.Levels(), 2u);
+  ASSERT_EQ(tree.Levels(), 3u);
 
-  EXPECT_EQ(tree.EffectiveFanout(/*nprobe=*/1000, /*max_search_fanout=*/1),
-            1000u);
-  EXPECT_EQ(tree.EffectiveFanout(2, 1), 2u);
+  std::vector<uint32_t> all(2 * kRows);
+  std::iota(all.begin(), all.end(), static_cast<uint32_t>(2 * kRows));
+  for (const float x : {0.f, 155.f, 310.f}) {
+    const std::vector<float> q{x};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, static_cast<uint32_t>(2 * kRows), ids, nullptr);
+    std::ranges::sort(ids);
+    EXPECT_EQ(ids, all) << "query " << x;
+  }
+
+  const std::vector<float> q{155.f};
+  std::vector<uint32_t> ids;
+  tree.Search(q, in, static_cast<uint32_t>(2 * kRows), ids, nullptr, 4);
+  std::ranges::sort(ids);
+  EXPECT_EQ(ids, (std::vector<uint32_t>{92, 93, 94, 95, 96, 97, 98, 99}));
 }
 
-// Raising the fanout expands a superset of nodes at every layer, so the
-// explored leaf set can only grow and recall against brute force can only rise.
-// This is the property that makes an increase in the shipped default safe by
-// construction. Once the fanout reaches the build-side max_fanout every
-// retained node expands all of its children, so the descent is exhaustive and
-// exact.
-TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
+TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
   constexpr uint32_t d = 8;
-  constexpr size_t kMaxBuildFanout = 4;
-  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
+  const auto data = MakeClusters(d, 256, 1);
 
-  const CentroidsBuildParams params{.posting_size = 1,
-                                    .max_fanout = kMaxBuildFanout};
+  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
@@ -1014,13 +972,11 @@ TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   ASSERT_GE(tree.Levels(), 3u);
 
-  // Enumerate every leaf id + centroid with a fanout wide enough to be
-  // exhaustive.
   const auto n = static_cast<uint32_t>(data.size() / d);
   std::vector<uint32_t> leaf_ids;
   std::vector<float> leaf_cens;
   tree.Search(std::span<const float>{data.data(), d}, in, n, leaf_ids,
-              &leaf_cens, /*max_search_fanout=*/n);
+              &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
   ASSERT_GT(n_leaves, 1u);
   ASSERT_EQ(leaf_cens.size(), n_leaves * d);
@@ -1034,9 +990,6 @@ TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
     return s;
   };
 
-  // Queries off the training points, so a greedy descent has boundary cells to
-  // get wrong -- querying the training rows would just replay the build's own
-  // greedy assignment and hide the effect of the fanout.
   std::mt19937 rng{7};
   std::uniform_real_distribution<float> pos{0.f, 15000.f};
   std::vector<float> queries(200 * d);
@@ -1045,38 +998,34 @@ TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
   }
   const size_t nq = queries.size() / d;
 
-  const auto recall_at = [&](uint32_t fanout) {
+  const auto recall_at = [&](uint32_t nprobe, uint32_t beam) {
+    const auto k = std::min<size_t>(nprobe, n_leaves);
     size_t hit = 0;
     for (size_t i = 0; i < nq; ++i) {
       const float* q = queries.data() + i * d;
-      size_t best = 0;
-      float best_dist = std::numeric_limits<float>::max();
+      std::vector<std::pair<float, uint32_t>> scored;
+      scored.reserve(n_leaves);
       for (size_t l = 0; l < n_leaves; ++l) {
-        const float dist = l2(q, leaf_cens.data() + l * d);
-        if (dist < best_dist) {
-          best_dist = dist;
-          best = l;
+        scored.emplace_back(l2(q, leaf_cens.data() + l * d), leaf_ids[l]);
+      }
+      std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
+      std::vector<uint32_t> got;
+      tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr,
+                  beam);
+      for (size_t t = 0; t < k; ++t) {
+        if (std::ranges::find(got, scored[t].second) != got.end()) {
+          ++hit;
         }
       }
-      std::vector<uint32_t> got;
-      tree.Search(std::span<const float>{q, d}, in, /*nprobe=*/1, got, nullptr,
-                  fanout);
-      if (got.size() == 1 && got[0] == leaf_ids[best]) {
-        ++hit;
-      }
     }
-    return static_cast<double>(hit) / static_cast<double>(nq);
+    return static_cast<double>(hit) / static_cast<double>(nq * k);
   };
 
-  const double greedy = recall_at(1);
-  double prev = greedy;
-  for (const uint32_t fanout : {2u, 4u, 16u, 64u}) {
-    const double recall = recall_at(fanout);
-    EXPECT_GE(recall, prev) << "recall dropped at fanout " << fanout;
-    prev = recall;
-  }
-  EXPECT_LT(greedy, 1.0) << "fanout=1 should miss boundary queries";
-  EXPECT_DOUBLE_EQ(recall_at(static_cast<uint32_t>(kMaxBuildFanout)), 1.0);
+  EXPECT_LT(recall_at(1, 0), 0.6);
+  EXPECT_DOUBLE_EQ(recall_at(1, 16), 1.0);
+  EXPECT_GE(recall_at(16, 0), 0.99);
+  EXPECT_DOUBLE_EQ(recall_at(64, 0), 1.0);
+  EXPECT_DOUBLE_EQ(recall_at(static_cast<uint32_t>(n_leaves), 0), 1.0);
 }
 
 TEST(matrix_qr_test, blocked_qr_orthonormal_and_spanning) {
@@ -1253,7 +1202,7 @@ TEST(centroids_builder_test,
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
     std::vector<uint32_t> ids;
-    tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     ASSERT_LT(ids[0], n_clusters) << "row " << i;
     matches += (ids[0] == build_id[i]);
@@ -1342,4 +1291,15 @@ TEST(ivf_auto_nprobe, floors_the_limit_at_ten_and_stays_within_the_lists) {
   EXPECT_EQ(IvfAutoNprobe(4096, 1024, 1000), 4u);
   EXPECT_EQ(IvfAutoNprobe(0, 1024, 10), 1u);
   EXPECT_EQ(IvfAutoNprobe(2000, 0, 10), 59u);
+}
+
+TEST(ivf_search_beam, follows_nprobe_within_the_bounds) {
+  EXPECT_EQ(IvfSearchBeam(41, 0, 0), 41u);
+  EXPECT_EQ(IvfSearchBeam(1, 0, 0), 1u);
+  EXPECT_EQ(IvfSearchBeam(41, 64, 0), 64u);
+  EXPECT_EQ(IvfSearchBeam(41, 16, 0), 41u);
+  EXPECT_EQ(IvfSearchBeam(41, 0, 8), 8u);
+  EXPECT_EQ(IvfSearchBeam(41, 0, 100), 41u);
+  EXPECT_EQ(IvfSearchBeam(41, 32, 32), 32u);
+  EXPECT_EQ(IvfSearchBeam(41, 64, 16), 16u);
 }

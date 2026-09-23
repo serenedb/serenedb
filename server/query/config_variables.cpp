@@ -420,24 +420,43 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ivf_max_search_fanout",
       {
         LogicalTypeId::INTEGER,
-        "Maximum number of IVF centroid-tree children expanded per node while "
-        "descending to the probed clusters. Decouples the descent width from "
-        "sdb_ivf_search_nprobe: lower values cut centroid work on deep "
-        "(multi-level) "
-        "trees at some recall cost. The width applies per node and so "
-        "compounds "
-        "over the tree's levels; it is raised when smaller than the width "
-        "whose "
-        "compounded value reaches sdb_ivf_search_nprobe, so the descent can "
-        "always supply "
-        "the requested number of clusters. Default 16.",
-        [] { return duckdb::Value::INTEGER(16); },
+        "Upper bound on the beam of the descent through a multi-level IVF "
+        "centroid tree, where each level keeps the beam\'s worth of its "
+        "nearest centroids and scores only their children. The beam follows "
+        "sdb_ivf_search_nprobe as the query resolves it; a narrower one "
+        "scores fewer centroids at some recall cost. Applied after "
+        "sdb_ivf_min_search_fanout. -1 (the default) leaves the beam "
+        "unbounded.",
+        [] { return duckdb::Value::INTEGER(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n < 1) {
+          if (n == 0 || n < -1) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_ivf_max_search_fanout\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "sdb_ivf_min_search_fanout",
+      {
+        LogicalTypeId::INTEGER,
+        "Lower bound on the beam of the descent through a multi-level IVF "
+        "centroid tree, where each level keeps the beam\'s worth of its "
+        "nearest centroids and scores only their children. The beam follows "
+        "sdb_ivf_search_nprobe as the query resolves it; a wider one reaches "
+        "clusters a narrow descent misses, and one as wide as the segment\'s "
+        "list count makes the descent exact. -1 (the default) leaves the "
+        "beam unbounded.",
+        [] { return duckdb::Value::INTEGER(-1); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n == 0 || n < -1) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ivf_min_search_fanout\": \"",
                                     value.ToString(), "\""));
           }
         },

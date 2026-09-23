@@ -152,11 +152,17 @@ double AnnOversample(duckdb::ClientContext& context,
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context) {
   static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
-  static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
+  static constinit SettingRef gMinFanout{"sdb_ivf_min_search_fanout"};
+  static constinit SettingRef gMaxFanout{"sdb_ivf_max_search_fanout"};
   static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
   const auto nprobe = gNprobe.SignedInt(context);
   vs.nprobe = nprobe < 0 ? 0 : static_cast<uint32_t>(nprobe);
-  vs.max_search_fanout = gFanout.Int(context);
+  const auto min_fanout = gMinFanout.SignedInt(context);
+  vs.min_search_fanout =
+    min_fanout < 0 ? 0 : static_cast<uint32_t>(min_fanout);
+  const auto max_fanout = gMaxFanout.SignedInt(context);
+  vs.max_search_fanout =
+    max_fanout < 0 ? 0 : static_cast<uint32_t>(max_fanout);
   const auto ef = gEfSearch.SignedInt(context);
   vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
   vs.hnsw_filter_mode = ReadHnswFilterMode(context);
@@ -431,6 +437,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->min_search_fanout = vs.min_search_fanout;
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;

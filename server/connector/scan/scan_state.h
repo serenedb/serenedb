@@ -384,6 +384,8 @@ struct TopKLocalState : public ScanLocalState, FetchLocalState {
   // decides between two segments -- each segment trains its own quantizer, so
   // their estimates are not comparable. Qdrant merges segments this way.
   bool per_segment_rescore = false;
+  std::atomic<irs::score_t> segment_kth_score{
+    std::numeric_limits<irs::score_t>::lowest()};
   std::vector<irs::ScoreDoc> answer;
   size_t answer_size = 0;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();

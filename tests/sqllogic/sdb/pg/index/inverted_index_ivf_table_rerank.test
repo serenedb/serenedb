@@ -13,9 +13,6 @@ hash-threshold 100
 #     rows must still agree because both consult the same gate
 #   - MVCC: the index snapshot and the source read must agree
 
-# `auto` no longer re-scores eight-bit codes, so the distance it reports is
-# the estimate. This file is about the re-score, so it asks for one.
-
 statement ok
 SET sdb_ann_oversample = 4
 

@@ -126,7 +126,9 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
       g.topk.rerank_pool != 0 && !g.has_lookup_filter &&
       g.vector_scorer != nullptr &&
       g.vector_scorer->quant != irs::VectorQuantization::None;
-    l.collector.emplace(g.topk.global_kth_score, l.hit_slice);
+    l.collector.emplace(
+      l.per_segment_rescore ? l.segment_kth_score : g.topk.global_kth_score,
+      l.hit_slice);
   }
   auto& collector = *l.collector;
   if (l.pool_seg != unit.seg) {

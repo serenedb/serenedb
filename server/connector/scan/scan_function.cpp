@@ -28,9 +28,12 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/operator/helper/physical_limit.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/bound_result_modifier.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/queries/hnsw_query.hpp>
@@ -80,27 +83,59 @@ void ClassifySegments(ScanGlobalState& g) {
   }
 }
 
-// The LIMIT of a parameterized statement, from the parameters bound to this
-// execution. A value the scan cannot use (NULL, negative, or wider than a
-// size_t) leaves the top-k unset: the scan then streams and the sort above it
-// trims, which is what the plan would do without the pushdown.
-std::optional<size_t> EvaluateTopK(duckdb::ClientContext& context,
-                                   const duckdb::Expression& expr) {
-  duckdb::Value folded;
-  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, folded) ||
-      folded.IsNull()) {
+std::optional<uint64_t> EvaluateLimitValue(duckdb::ClientContext& context,
+                                           const duckdb::Expression& expr) {
+  const auto value =
+    duckdb::ExpressionExecutor::EvaluateScalar(context, expr, true);
+  if (value.IsNull()) {
     return std::nullopt;
   }
-  duckdb::Value casted;
-  if (!folded.DefaultTryCastAs(duckdb::LogicalType::UBIGINT, casted, nullptr) ||
-      casted.IsNull()) {
-    return std::nullopt;
+  const auto n = value.GetValue<duckdb::idx_t>();
+  if (n > duckdb::PhysicalLimit::MAX_LIMIT_VALUE) {
+    throw duckdb::BinderException("Max value %lld for LIMIT/OFFSET is %lld", n,
+                                  duckdb::PhysicalLimit::MAX_LIMIT_VALUE);
   }
-  const auto k = casted.GetValue<uint64_t>();
-  if (k == 0 || k > std::numeric_limits<uint32_t>::max()) {
-    return std::nullopt;
+  return n;
+}
+
+void EvaluateTopK(duckdb::ClientContext& context, const ScanBindData& ss,
+                  ScanGlobalState& g) {
+  const auto limit = EvaluateLimitValue(context, *ss.score.top_k_expr);
+  const uint64_t offset =
+    ss.score.top_offset_expr
+      ? EvaluateLimitValue(context, *ss.score.top_offset_expr).value_or(0)
+      : 0;
+  constexpr uint64_t kMaxTopK = std::numeric_limits<uint32_t>::max();
+  if (!ss.score.top_n_consumed) {
+    if (limit && *limit != 0 && *limit + offset <= kMaxTopK) {
+      g.top_k = *limit + offset;
+    }
+    return;
   }
-  return static_cast<size_t>(k);
+  const uint64_t live = g.reader->live_docs_count();
+  if ((limit && *limit == 0) || offset >= live) {
+    g.empty_answer = true;
+    g.top_k = 1;
+    return;
+  }
+  g.top_k = std::min({limit ? *limit + offset : kMaxTopK, live, kMaxTopK});
+  g.top_offset = offset;
+}
+
+bool SameLimit(const duckdb::BoundLimitNode& node,
+               const duckdb::Expression* expr) {
+  switch (node.Type()) {
+    case duckdb::LimitNodeType::UNSET:
+      return expr == nullptr;
+    case duckdb::LimitNodeType::CONSTANT_VALUE:
+      return expr != nullptr &&
+             expr->Equals(duckdb::BoundConstantExpression{duckdb::Value::BIGINT(
+               static_cast<int64_t>(node.GetConstantValue()))});
+    case duckdb::LimitNodeType::EXPRESSION_VALUE:
+      return expr != nullptr && expr->Equals(node.GetValueExpression());
+    default:
+      return false;
+  }
 }
 
 // The query vector of a parameterized statement, from the parameters bound to
@@ -159,15 +194,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->scan = &ss;
   if (ss.plan_cache.cache_plan && ss.plan_cache.reacquire_snapshot) {
     state->snapshot = ss.plan_cache.reacquire_snapshot(context);
+    ss.search.snapshot.reset();
+  } else {
+    state->snapshot = ss.search.snapshot;
   }
-  const auto& snapshot =
-    state->snapshot ? *state->snapshot : *ss.search.snapshot;
+  const auto& snapshot = *state->snapshot;
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
+  state->top_offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
   if (!state->top_k && ss.score.top_k_expr) {
-    state->top_k = EvaluateTopK(context, *ss.score.top_k_expr);
+    EvaluateTopK(context, ss, *state);
+  }
+  if (state->top_k) {
+    state->top_k = std::min<uint64_t>(
+      {*state->top_k,
+       std::max<uint64_t>(state->reader->live_docs_count(), 1),
+       std::numeric_limits<uint32_t>::max()});
   }
 
   ClassifyColumnstoreProjections(*state, bind_data);
@@ -278,7 +322,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         const double share = SegmentBeamShare(k, state->total_segments);
         const double seg_pool =
           factor > 0.0 ? std::max(share, std::ceil(factor * share)) : 0.0;
-        vs.min_ef = static_cast<uint32_t>(seg_pool > 0.0 ? seg_pool : share);
+        vs.min_ef = static_cast<uint32_t>(std::min(
+          {seg_pool > 0.0 ? seg_pool : share,
+           std::max(k, static_cast<double>(state->reader->live_docs_count())),
+           static_cast<double>(std::numeric_limits<uint32_t>::max())}));
       }
     }
     if (state->top_k) {
@@ -424,6 +471,9 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& g = data.global_state->Cast<ScanGlobalState>();
+  if (g.empty_answer) {
+    return;
+  }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
   if (reorder) {
@@ -521,6 +571,7 @@ void IResearchSetScanOrder(
       bd.score.top_k = options->row_limit.GetIndex();
     } else {
       bd.score.top_k_expr = options->row_limit_expression;
+      bd.score.top_offset_expr = options->row_offset_expression;
     }
   };
   if (bd.score.text) {
@@ -539,19 +590,28 @@ void IResearchSetScanOrder(
 }
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
-                          duckdb::FunctionData& bind_data, duckdb::idx_t limit,
-                          duckdb::idx_t offset) {
+                          duckdb::FunctionData& bind_data,
+                          const duckdb::BoundLimitNode& limit,
+                          const duckdb::BoundLimitNode& offset) {
   auto& bd = bind_data.Cast<ScanBindData>();
-  // A parameterized LIMIT is not a number here, so the offset cannot be
-  // checked against it; the scan applies both at execution.
   if (bd.score.top_k_expr) {
-    if (offset != 0) {
+    if (!SameLimit(limit, bd.score.top_k_expr.get()) ||
+        !SameLimit(offset, bd.score.top_offset_expr.get())) {
       return false;
     }
-  } else if (!bd.score.top_k || *bd.score.top_k != limit + offset) {
-    return false;
+  } else {
+    if (limit.Type() != duckdb::LimitNodeType::CONSTANT_VALUE ||
+        offset.Type() == duckdb::LimitNodeType::EXPRESSION_VALUE) {
+      return false;
+    }
+    const auto skip = offset.Type() == duckdb::LimitNodeType::CONSTANT_VALUE
+                        ? offset.GetConstantValue()
+                        : duckdb::idx_t{0};
+    if (!bd.score.top_k || *bd.score.top_k != limit.GetConstantValue() + skip) {
+      return false;
+    }
+    bd.score.top_offset = skip;
   }
-  bd.score.top_offset = offset;
   bd.score.top_n_consumed = true;
   return true;
 }

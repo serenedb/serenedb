@@ -635,7 +635,7 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
     // and each policy is handed its own snapshot, so a bucket defined by
     // position would shift under the rounds that finish first and leave
     // segments unmerged -- which is what striping by index did.
-    std::vector<std::vector<std::string>> buckets(target_segments);
+    std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot = _writer->GetSnapshot();
       const auto count = static_cast<uint32_t>(snapshot.size());
@@ -643,6 +643,7 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
         CleanupUnsafe();
         return;
       }
+      buckets.resize(target_segments);
       for (uint32_t i = 0; i < count; ++i) {
         buckets[i % target_segments].emplace_back(snapshot[i].Meta().name);
       }

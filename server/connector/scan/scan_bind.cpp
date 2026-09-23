@@ -327,6 +327,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   if (ts_dict.Active()) {
     return TsDictEstimation(*this);
   }
+  if (!search.snapshot) {
+    return nullptr;
+  }
   const auto live = search.snapshot->reader.live_docs_count();
   const auto* filter = search.filter.get();
   const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;

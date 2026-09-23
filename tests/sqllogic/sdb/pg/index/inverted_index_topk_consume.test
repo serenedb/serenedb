@@ -192,3 +192,57 @@ id	tag	s
 3	c	0.233
 2	b	0.212
 1	a	0.168
+
+query
+SELECT id FROM tk_idx WHERE body @@ 'fox'
+ORDER BY bm25(tk_idx.tableoid) DESC LIMIT 5001 OFFSET 1;
+----
+id
+3
+2
+1
+
+query
+EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
+        ORDER BY bm25(tk_idx.tableoid) DESC LIMIT 5001 OFFSET 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tk_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 5001, offset 1         │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+statement ok
+PREPARE tk_page AS SELECT id FROM tk_idx WHERE body @@ 'fox'
+  ORDER BY bm25(tk_idx.tableoid) DESC LIMIT $1 OFFSET $2;
+
+query
+EXECUTE tk_page(2, 1);
+----
+id
+3
+2
+
+query
+EXECUTE tk_page(NULL, 3);
+----
+id
+1
+
+query
+EXECUTE tk_page(0, 0);
+----
+id
+
+
+statement ok
+DEALLOCATE tk_page;

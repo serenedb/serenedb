@@ -181,3 +181,144 @@ DEALLOCATE apq_knn;
 
 statement ok
 RESET sdb_hnsw_ef_search;
+
+statement ok
+PREPARE ap_page AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2 OFFSET $3;
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 3, 2);
+----
+pk
+101
+99
+102
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 2, 0);
+----
+pk
+5000
+100
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], 0, 0);
+----
+pk
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+EXECUTE ap_page([100.4, 0, 0, 0, 0, 0, 0, 0], NULL, 1995);
+----
+pk
+1994
+1995
+1996
+1997
+1998
+1999
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement ok
+DEALLOCATE ap_page;
+
+statement ok
+PREPARE ap_offset AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 2 OFFSET $2;
+
+query
+EXECUTE ap_offset([100.4, 0, 0, 0, 0, 0, 0, 0], 1);
+----
+pk
+100
+101
+
+statement ok
+DEALLOCATE ap_offset;
+
+statement ok
+PREPARE ap_limit AS SELECT pk FROM ap
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2 OFFSET 1;
+
+query
+EXECUTE ap_limit([100.4, 0, 0, 0, 0, 0, 0, 0], 2);
+----
+pk
+100
+101
+
+statement ok
+DEALLOCATE ap_limit;
+
+statement ok
+PREPARE ap_or AS SELECT pk FROM ap WHERE label = 'odd' OR num > 1000
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT $2;
+
+query
+EXECUTE ap_or([100.4, 0, 0, 0, 0, 0, 0, 0], 3);
+----
+pk
+5000
+101
+99
+
+statement ok
+DEALLOCATE ap_or;
+
+statement ok
+PREPARE ap_mixed AS SELECT pk FROM ap WHERE label = $2 AND num = 100
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_mixed([100.4, 0, 0, 0, 0, 0, 0, 0], 'even');
+----
+pk
+100
+
+statement ok
+DEALLOCATE ap_mixed;
+
+statement ok
+PREPARE ap_mixed_range AS SELECT pk FROM ap WHERE label = $2 AND num <= 500
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_mixed_range([100.4, 0, 0, 0, 0, 0, 0, 0], 'odd');
+----
+pk
+101
+99
+103
+
+statement ok
+DEALLOCATE ap_mixed_range;
+
+statement ok
+CREATE TABLE ap_empty (i INTEGER);
+
+statement ok
+INSERT INTO ap_empty VALUES (1);
+
+statement ok
+PREPARE ap_empty_q AS SELECT i + $1 AS v FROM ap_empty WHERE i > 5;
+
+query
+EXECUTE ap_empty_q(1);
+----
+v
+
+statement ok
+INSERT INTO ap_empty VALUES (10);
+
+query
+EXECUTE ap_empty_q(1);
+----
+v
+11
+
+statement ok
+DEALLOCATE ap_empty_q;

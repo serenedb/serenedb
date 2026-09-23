@@ -298,3 +298,135 @@ RESET sdb_hnsw_column_filter;
 
 statement ok
 RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+CREATE TABLE hnsw_nest (pk INTEGER PRIMARY KEY, emb FLOAT[8],
+  meta STRUCT(cat INTEGER, name VARCHAR), tags INTEGER[], pair INTEGER[2]);
+
+
+statement ok
+CREATE INDEX hnsw_nest_idx ON hnsw_nest
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (meta, tags, pair);
+
+
+statement ok
+INSERT INTO hnsw_nest SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  {'cat': i % 5, 'name': 'n' || i},
+  CASE WHEN i % 4 = 0 THEN NULL ELSE [i] END,
+  (CASE WHEN i % 3 = 0 THEN NULL ELSE [i, i] END)::INTEGER[2]
+FROM range(2000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_nest;
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+query
+SELECT pk FROM hnsw_nest_idx WHERE tags IS NOT NULL
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+102
+
+
+query
+SELECT pk FROM hnsw_nest_idx WHERE pair IS NOT NULL
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+98
+
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+
+statement ok
+CREATE TABLE hnsw_late (pk INTEGER PRIMARY KEY, emb FLOAT[8], seq BIGINT);
+
+
+statement ok
+CREATE INDEX hnsw_late_idx ON hnsw_late
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (seq);
+
+
+statement ok
+INSERT INTO hnsw_late SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
+FROM range(40000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_late;
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'prune';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'bridge';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'twohop';
+
+
+query
+SELECT pk FROM hnsw_late_idx WHERE seq >= 39000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+39000
+39001
+39002
+
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+SET sdb_compact_target_segments = 4000000000;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) hnsw_late;
+
+
+statement ok
+RESET sdb_compact_target_segments;

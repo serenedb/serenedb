@@ -422,6 +422,10 @@ void ScanBindData::AppendSummary(
     if (score.top_n_consumed && score.top_offset != 0) {
       absl::StrAppend(&topk_val, ", offset ", score.top_offset);
     }
+    if (!score.top_k && score.top_offset_expr) {
+      absl::StrAppend(&topk_val, score.top_n_consumed ? ", offset " : " + ",
+                      score.top_offset_expr->ToString());
+    }
     const auto* pruning = ResolvePruneScorer(score.prune, query_scorer.get());
     if (pruning) {
       absl::StrAppend(&topk_val, ", optimized");

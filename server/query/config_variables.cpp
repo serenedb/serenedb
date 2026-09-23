@@ -26,6 +26,7 @@
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
+#include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
@@ -635,7 +636,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value::DOUBLE(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
-          if (n < -1.0 || (n > 0.0 && n < 1.0) || (n < 0.0 && n != -1.0)) {
+          if (!std::isfinite(n) || n < -1.0 || (n > 0.0 && n < 1.0) ||
+              (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_ann_oversample\": \"",

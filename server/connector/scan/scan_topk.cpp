@@ -398,7 +398,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   } else {
     if (!l.index_source) {
       l.index_source =
-        MakeIndexSource(ctx, g.Bind(), g.lookup_projected_columns,
+        MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
                         g.projected_types, g.Bind().columns.ids,
                         const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
@@ -463,9 +463,8 @@ void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
 
 void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   auto& t = g.topk;
-  const auto& ss = g.Bind();
   t.limit = *g.top_k;
-  t.offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
+  t.offset = g.top_offset;
   const auto* vs = g.vector_scorer;
   if (vs != nullptr && !vs->exact &&
       (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
@@ -502,10 +501,22 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
           : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
       pool = std::max(pool, std::max(k, reachable));
     }
-    t.rerank_pool = pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
+    t.rerank_pool =
+      pool == 0
+        ? 0
+        : static_cast<uint32_t>(std::min(
+            {std::max(pool, k),
+             std::max(k, static_cast<double>(g.reader->live_docs_count())),
+             static_cast<double>(std::numeric_limits<uint32_t>::max())}));
   }
   t.pool =
     t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
+  if (vs != nullptr && vs->exact && g.has_lookup_filter) {
+    g.workers = 1;
+    t.pool = static_cast<uint32_t>(
+      std::clamp<uint64_t>(g.reader->live_docs_count(), t.pool,
+                           std::numeric_limits<uint32_t>::max()));
+  }
   t.hits.resize(size_t{g.workers} * t.pool);
   t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
   for (uint32_t w = 0; w < g.workers; ++w) {

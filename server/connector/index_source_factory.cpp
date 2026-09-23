@@ -39,6 +39,7 @@ namespace sdb::connector {
 
 std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const ScanBindData& bind_data,
+  const search::InvertedIndexSnapshot& snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::ColumnId> bind_column_ids,
@@ -60,10 +61,8 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
     // from: the pin travels with the pinned snapshot's manifest, so a
     // refresh mid-query cannot skew this read. No manifest = an external-pk
     // view index, which has no pin to carry.
-    SDB_ASSERT(bind_data.search.snapshot);
-    if (bind_data.search.snapshot->file_manifest) {
-      fp.pinned_iceberg_snapshot_id =
-        bind_data.search.snapshot->file_manifest->version;
+    if (snapshot.file_manifest) {
+      fp.pinned_iceberg_snapshot_id = snapshot.file_manifest->version;
     }
     if (fp.catalog_ref && fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
@@ -78,8 +77,7 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
     if (catalog::IsGlobPK(fp.pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
-        bind_column_ids, pushed_filters,
-        bind_data.search.snapshot->file_manifest);
+        bind_column_ids, pushed_filters, snapshot.file_manifest);
     }
     return std::make_unique<ViewFileSingleFileIndexSource>(
       context, std::move(fp), projected_columns, projected_types,

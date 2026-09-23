@@ -57,7 +57,7 @@ enum class ScanEntryKind : uint8_t {
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
-  search::InvertedIndexSnapshotPtr snapshot;
+  mutable search::InvertedIndexSnapshotPtr snapshot;
 
   bool MatchAll() const noexcept { return filter == nullptr; }
 };
@@ -68,6 +68,7 @@ struct ScoreSpec {
   // time. It is kept as the expression the scan evaluates at execution, so
   // the top-k still runs inside the scan instead of a sort above it.
   std::shared_ptr<const duckdb::Expression> top_k_expr;
+  std::shared_ptr<const duckdb::Expression> top_offset_expr;
   std::optional<VectorScorerOptions> vector;
   std::optional<catalog::ScorerOptions> prune;
   std::optional<duckdb::OrderType> order;

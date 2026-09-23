@@ -727,7 +727,7 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   }
   if (!f.index_source) {
     f.index_source =
-      MakeIndexSource(ctx, g.Bind(), g.lookup_projected_columns,
+      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
                       g.projected_types, g.Bind().columns.ids,
                       const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }

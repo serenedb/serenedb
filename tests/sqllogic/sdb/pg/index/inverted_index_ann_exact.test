@@ -96,3 +96,35 @@ pk	d
 
 statement ok
 RESET sdb_ann_force_exact;
+
+statement ok
+CREATE TABLE axl (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER);
+
+statement ok
+CREATE INDEX axl_idx ON axl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO axl SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10
+  FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) axl;
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT pk FROM axl_idx WHERE cat = 1
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+91
+111
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement error invalid value for parameter "sdb_ann_oversample"
+SET sdb_ann_oversample = 'inf';

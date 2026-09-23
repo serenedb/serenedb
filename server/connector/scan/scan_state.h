@@ -163,9 +163,6 @@ struct ScanMetrics {
 };
 
 struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
-  // Held for the scan's lifetime so a concurrent scan's plan knows this one
-  // is using cores; see FairShare.
-  ScanInFlight in_flight;
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
@@ -176,6 +173,8 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   const VectorScorerOptions* vector_scorer = nullptr;
   // The query's top-k, from the plan or from this execution's parameters.
   std::optional<size_t> top_k;
+  size_t top_offset = 0;
+  bool empty_answer = false;
   // The executing session's copy: its knobs and beam floor are read at scan
   // init, not at plan time, so a cached plan follows the current SETs.
   std::optional<VectorScorerOptions> owned_vector_scorer;

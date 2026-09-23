@@ -264,3 +264,21 @@ SELECT abs(ST_X(g)) < 1e-9 AS x_zero, abs(ST_Y(g)) < 1e-9 AS y_zero FROM (SELECT
 ----
 x_zero	y_zero
 t	t
+
+query
+SELECT ST_X(g) AS x, ST_Y(g) AS y, ST_M(g) AS m FROM (SELECT ST_Translate('POINT M(1 2 7)'::geometry, 1, 1, 1) AS g) t;
+----
+x	y	m
+2	3	7
+
+query
+SELECT ST_X(g) AS x, ST_Y(g) AS y, ST_Z(g) AS z, ST_M(g) AS m FROM (SELECT ST_Translate('POINT ZM(1 2 3 7)'::geometry, 1, 1, 1) AS g) t;
+----
+x	y	z	m
+2	3	4	7
+
+query
+SELECT ST_X(g) AS x, ST_Y(g) AS y, ST_Z(g) AS z, ST_M(g) AS m FROM (SELECT ST_Affine('POINT ZM(1 2 3 7)'::geometry, 2, 0, 0, 2, 0, 0) AS g) t;
+----
+x	y	z	m
+2	4	3	7

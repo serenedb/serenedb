@@ -430,7 +430,7 @@ std::vector<std::string_view> GetFilesToSync(
                         full_sync_count * kMaxFilesPerSegment);
 
   for (auto sync : partial_sync) {
-    SDB_ASSERT(sync.segment_index < partial_sync_threshold);
+    SDB_ASSERT(sync.segment_index < segments.size());
     const auto& segment = segments[sync.segment_index];
     files_to_sync.emplace_back(segment.filename);
   }
@@ -2313,13 +2313,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         continue;
       }
       SDB_ASSERT(segment_ctx.flushed.meta.version == new_segment.meta.version);
-      if (const auto it = partially_committed.find(new_segment.meta.name);
-          it != partially_committed.end()) {
-        const auto& committed = it->second->meta;
+      const auto published = partially_committed.find(new_segment.meta.name);
+      if (published != partially_committed.end()) {
+        const auto& committed = published->second->meta;
         SDB_ASSERT(committed.version == new_segment.meta.version);
         if (document_mask.Count() + UncommittedCount(committed) ==
             RemovalCount(committed)) {
-          auto segment = *it->second;
+          auto segment = *published->second;
           segment.meta.uncommitted_begin = new_segment.meta.uncommitted_begin;
           segment.meta.live_docs_count =
             segment.meta.docs_count - RemovalCount(segment.meta);
@@ -2350,6 +2350,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       if (need_flush) {
         segment_ctx.reader =
           segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
+      }
+      if (published != partially_committed.end()) {
+        SDB_ASSERT(need_flush);
+        partial_sync.emplace_back(pending_meta.segments.size());
+        durable.emplace_back(pending_meta.segments.size());
       }
       readers.emplace_back(std::move(segment_ctx.reader));
       pending_meta.segments.emplace_back(std::move(new_segment));

@@ -248,6 +248,19 @@ class SubReaderMock final : public irs::SubReader {
   irs::SegmentInfo _meta;
 };
 
+struct SyncRecorder : tests::DirectoryMock {
+  explicit SyncRecorder(irs::Directory& impl) : DirectoryMock(impl) {}
+
+  bool sync(std::span<const std::string_view> files) noexcept final {
+    for (const auto file : files) {
+      synced.emplace_back(file);
+    }
+    return DirectoryMock::sync(files);
+  }
+
+  std::vector<std::string> synced;
+};
+
 }  // namespace
 namespace tests {
 
@@ -12521,19 +12534,6 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
 }
 
 TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
-  struct SyncRecorder : tests::DirectoryMock {
-    explicit SyncRecorder(irs::Directory& impl) : DirectoryMock(impl) {}
-
-    bool sync(std::span<const std::string_view> files) noexcept final {
-      for (const auto file : files) {
-        synced.emplace_back(file);
-      }
-      return DirectoryMock::sync(files);
-    }
-
-    std::vector<std::string> synced;
-  };
-
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
@@ -12605,7 +12605,9 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
   auto* doc1 = gen.next();
   auto* doc2 = gen.next();
 
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  SyncRecorder recorder{directory};
+  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
 
   constexpr uint64_t kVisibleTick = 10;
   constexpr uint64_t kRemoveTick = 15;
@@ -12647,6 +12649,7 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
     trx.Commit(kRemoveTick);
   }
 
+  recorder.synced.clear();
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = irs::DirectoryReader(directory, nullptr,
@@ -12655,7 +12658,11 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
   ASSERT_EQ(3, reader[0].docs_count());
   ASSERT_EQ(2, reader[0].live_docs_count());
   ASSERT_FALSE(irs::HasUncommitted(reader[0].Meta()));
-  ASSERT_NE(partial_meta, reader.Meta().index_meta.segments[0].filename);
+  const auto& rewritten = reader.Meta().index_meta.segments[0].filename;
+  ASSERT_NE(partial_meta, rewritten);
+  ASSERT_EQ(2, recorder.synced.size());
+  ASSERT_EQ(rewritten, recorder.synced[0]);
+  ASSERT_TRUE(recorder.synced[1].starts_with("pending_segments_"));
   AssertSnapshotEquality(*writer);
 }
 

@@ -126,8 +126,10 @@ in `segments_N`, next to the `.sm` file name:
 
 The run shrinks or disappears at a later commit while the segment itself stays the
 same. Every commit rewrites and syncs `segments_N` anyway, so that commit writes and
-syncs nothing else for the segment: the `.sm` it already has is reused as is. After
-a crash the run stays skipped: recovery replays those transactions' rows into new
+syncs nothing else for the segment: the `.sm` it already has is reused as is. If
+rows of that segment were also deleted in between, the commit writes a new `.sm` and
+syncs only that file, since the segment's data files are already on disk. After a
+crash the run stays skipped: recovery replays those transactions' rows into new
 segments, so the old copies must not come back.
 
 ## Format changes

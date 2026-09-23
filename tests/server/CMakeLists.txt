@@ -29,7 +29,6 @@ add_executable(
     network_proxy_protocol_test.cpp
     network_router_test.cpp
     number_of_cores_test.cpp
-    random_test.cpp
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp

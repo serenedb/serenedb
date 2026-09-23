@@ -252,7 +252,6 @@ int main(int argc, char* argv[]) {
            " MB pre-read",
            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
-  sdb::app::ShutdownGlobals();
 
   engine.Shutdown();
   return rc;

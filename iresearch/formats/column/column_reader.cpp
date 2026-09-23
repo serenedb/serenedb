@@ -751,10 +751,33 @@ ColumnReader::PointReader::OpenBlock& ColumnReader::PointReader::Block(
     window = reader.Locate(row, window);
   }
   auto& block = blocks[window.block];
+  block.last_use = ++_uses;
   if (!block.segment) {
+    const auto bytes = reader._segments[window.block].byte_size;
+    Evict(bytes);
     block.segment = reader.Open(window, _ctx);
+    block.bytes = bytes;
+    _open_bytes += bytes;
+    _open.push_back(&block);
   }
   return block;
+}
+
+void ColumnReader::PointReader::Evict(uint64_t incoming) {
+  constexpr uint64_t kOpenBytes = uint64_t{64} << 20;
+  while (!_open.empty() && _open_bytes + incoming > kOpenBytes) {
+    const auto oldest = absl::c_min_element(
+      _open, [](const OpenBlock* l, const OpenBlock* r) {
+        return l->last_use < r->last_use;
+      });
+    auto& block = **oldest;
+    block.state.ReleaseSegments();
+    block.segment.reset();
+    _open_bytes -= block.bytes;
+    block.bytes = 0;
+    *oldest = _open.back();
+    _open.pop_back();
+  }
 }
 
 bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,

@@ -277,17 +277,23 @@ class ColumnReader {
     struct OpenBlock {
       std::unique_ptr<duckdb::ColumnSegment> segment;
       duckdb::ColumnFetchState state;
+      uint64_t bytes = 0;
+      uint64_t last_use = 0;
     };
 
     OpenBlock& Block(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
                      BlockWindow& window, uint64_t row);
+    void Evict(uint64_t incoming);
 
     ReadContext _ctx;
     const ColumnReader* _reader;
     std::vector<OpenBlock> _blocks;
     std::vector<OpenBlock> _validity_blocks;
+    std::vector<OpenBlock*> _open;
     BlockWindow _window{};
     BlockWindow _validity_window{};
+    uint64_t _open_bytes = 0;
+    uint64_t _uses = 0;
   };
 
   class BlobPointReader final : public PointReader {

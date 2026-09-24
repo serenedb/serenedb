@@ -27,6 +27,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
@@ -544,6 +545,28 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 duckdb::optional_ptr<duckdb::CatalogEntry> RelationEntryByOid(
   duckdb::ClientContext& context, uint64_t oid) {
   return catalog::LookupEntryById(context, ObjectId{oid});
+}
+
+void PgGetViewdefFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
+                          duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
+      auto entry = RelationEntryByOid(context, static_cast<uint64_t>(oid));
+      if (!entry || entry->type != duckdb::CatalogType::VIEW_ENTRY) {
+        return duckdb::nullopt;
+      }
+      const auto& view = entry->Cast<duckdb::ViewCatalogEntry>();
+      const auto* schema =
+        dynamic_cast<const catalog::SereneDBSchemaEntry*>(&view.Schema());
+      if (schema == nullptr || schema->IsStatic()) {
+        return duckdb::nullopt;
+      }
+      return duckdb::StringVector::AddString(
+        result, absl::StrCat(view.query->ToString(), ";"));
+    });
 }
 
 [[noreturn]] void ThrowNoRelationWithOid(uint64_t oid) {
@@ -2105,6 +2128,23 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     format_type_fn.SetNullHandling(
       duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     duckdb::CreateScalarFunctionInfo info{std::move(format_type_fn)};
+    info.SetSchema("pg_catalog");
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
+  }
+  {
+    duckdb::ScalarFunctionSet viewdef{"pg_get_viewdef"};
+    viewdef.AddFunction(duckdb::ScalarFunction{
+      {pg::OID()}, duckdb::LogicalType::VARCHAR, PgGetViewdefFunction});
+    viewdef.AddFunction(
+      duckdb::ScalarFunction{{pg::OID(), duckdb::LogicalType::BOOLEAN},
+                             duckdb::LogicalType::VARCHAR,
+                             PgGetViewdefFunction});
+    viewdef.AddFunction(
+      duckdb::ScalarFunction{{pg::OID(), duckdb::LogicalType::INTEGER},
+                             duckdb::LogicalType::VARCHAR,
+                             PgGetViewdefFunction});
+    duckdb::CreateScalarFunctionInfo info{std::move(viewdef)};
     info.SetSchema("pg_catalog");
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));

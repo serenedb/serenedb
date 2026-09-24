@@ -24,10 +24,13 @@
 #include <absl/strings/match.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstring>
 #include <duckdb/inet/inet_html_table.hpp>
 #include <string_view>
 
+#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
@@ -78,8 +81,22 @@ IRS_FORCE_INLINE bool IsSpaceCodePoint(uint32_t cp) noexcept {
 
 IRS_FORCE_INLINE const char* FindChar(const char* p, const char* end,
                                       char c) noexcept {
+  constexpr size_t kBlock = classify::kClassifyBlock;
+  const auto* bytes = reinterpret_cast<const byte_type*>(p);
+  const auto left = static_cast<size_t>(end - p);
+  const auto target = static_cast<byte_type>(c);
+  if (left < kBlock) {
+    const uint32_t hits =
+      classify::MoveMask(classify::LoadPadded(bytes, left) == target) &
+      classify::LowBits(left);
+    return hits != 0 ? p + std::countr_zero(hits) : end;
+  }
+  if (const uint32_t hits = classify::ClassifyEqBlock(bytes, target);
+      hits != 0) {
+    return p + std::countr_zero(hits);
+  }
   const auto* hit =
-    static_cast<const char*>(std::memchr(p, c, static_cast<size_t>(end - p)));
+    static_cast<const char*>(std::memchr(p + kBlock, c, left - kBlock));
   return hit ? hit : end;
 }
 
@@ -103,6 +120,9 @@ IRS_FORCE_INLINE bool HasPrefixIgnoreCase(const char* p, const char* end,
 }
 
 std::string_view RawTextElement(const char* name, const char* end) noexcept {
+  if ((*name | 0x20) != 's') {
+    return {};
+  }
   for (const auto element : kRawTextElements) {
     if (!HasPrefixIgnoreCase(name, end, element)) {
       continue;
@@ -115,6 +135,23 @@ std::string_view RawTextElement(const char* name, const char* end) noexcept {
   return {};
 }
 
+constexpr uint64_t PackName(std::string_view name) noexcept {
+  uint64_t key = 0;
+  for (size_t i = 0; i < name.size(); ++i) {
+    key |= uint64_t{static_cast<uint8_t>(name[i])} << (8 * i);
+  }
+  return key;
+}
+
+constexpr auto kInlineKeys = [] {
+  std::array<uint64_t, std::size(kInlineElements)> keys{};
+  for (size_t i = 0; i < keys.size(); ++i) {
+    keys[i] = PackName(kInlineElements[i]);
+  }
+  std::ranges::sort(keys);
+  return keys;
+}();
+
 bool IsInlineElement(const char* name, const char* end) noexcept {
   const char* after = name;
   while (after != end && IsAlnum(*after)) {
@@ -123,10 +160,15 @@ bool IsInlineElement(const char* name, const char* end) noexcept {
   if (after != end && !IsSpace(*after) && *after != '>' && *after != '/') {
     return false;
   }
-  const std::string_view tag{name, static_cast<size_t>(after - name)};
-  return std::ranges::any_of(kInlineElements, [&](std::string_view element) {
-    return absl::EqualsIgnoreCase(tag, element);
-  });
+  const auto size = static_cast<size_t>(after - name);
+  if (size == 0 || size > sizeof(uint64_t)) {
+    return false;
+  }
+  uint64_t key = 0;
+  for (size_t i = 0; i < size; ++i) {
+    key |= uint64_t{static_cast<uint8_t>(name[i] | 0x20)} << (8 * i);
+  }
+  return std::ranges::binary_search(kInlineKeys, key);
 }
 
 const char* SkipRawText(const char* p, const char* end,
@@ -339,15 +381,28 @@ class TextRuns {
   void OpenWord(const char* first) noexcept {
     _word_first = first;
     _word_last = first;
-    _word.clear();
+    _word_size = 0;
     _pieces = 0;
     _decoded = false;
   }
 
+  IRS_FORCE_INLINE char* Grow(size_t n) {
+    if (_word_size + n > _word.size()) [[unlikely]] {
+      _word.resize(std::max(2 * _word.size(), _word_size + n + 64));
+    }
+    char* out = _word.data() + _word_size;
+    _word_size += n;
+    return out;
+  }
+
+  IRS_FORCE_INLINE void Append(const char* first, const char* last) {
+    const auto n = static_cast<size_t>(last - first);
+    std::memcpy(Grow(n), first, n);
+  }
+
   void AppendCodePoint(uint32_t cp) {
-    byte_type utf8[utf8_utils::kMaxCharSize];
-    _word.append(reinterpret_cast<const char*>(utf8),
-                 utf8_utils::FromChar32(cp, utf8));
+    auto* out = reinterpret_cast<byte_type*>(Grow(utf8_utils::kMaxCharSize));
+    _word_size -= utf8_utils::kMaxCharSize - utf8_utils::FromChar32(cp, out);
   }
 
   const char* ExtendWord(const char* p, const char* last) {
@@ -366,7 +421,7 @@ class TextRuns {
       if (IsSpaceRef(ref)) {
         break;
       }
-      _word.append(piece, p);
+      Append(piece, p);
       AppendCodePoint(ref.cp[0]);
       if (ref.cp[1] != 0) {
         AppendCodePoint(ref.cp[1]);
@@ -375,7 +430,7 @@ class TextRuns {
       p = piece = ref.end;
     }
     if (p != first) {
-      _word.append(piece, p);
+      Append(piece, p);
       _word_last = p;
       ++_pieces;
     }
@@ -389,7 +444,7 @@ class TextRuns {
       _sink.template EmitSlice<Layout>(_base, _end, offs);
     } else {
       _sink.template Emit<Layout>(_word.data(),
-                                  static_cast<uint32_t>(_word.size()), offs);
+                                  static_cast<uint32_t>(_word_size), offs);
     }
   }
 
@@ -397,6 +452,7 @@ class TextRuns {
   const char* _base;
   const char* _end;
   std::string& _word;
+  size_t _word_size = 0;
   const char* _word_first = nullptr;
   const char* _word_last = nullptr;
   uint32_t _pieces = 0;

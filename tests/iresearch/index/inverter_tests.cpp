@@ -983,6 +983,41 @@ TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
   AssertSameScatter(*a, *b, mem);
 }
 
+TEST(InverterRejectTest, ZeroPosLeavesLogUntouched) {
+  const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
+  auto mem = DefaultMemory();
+  FieldsInverter inv_a{mem};
+  FieldsInverter inv_b{mem};
+  auto* a = inv_a.Emplace(1, features);
+  auto* b = inv_b.Emplace(1, features);
+  a->Configure({.explicit_pos = true});
+  b->Configure({.explicit_pos = true});
+
+  auto batch = std::make_unique<TokenBatch>();
+  std::vector<DocRun> runs;
+  const RejectFill fill{*batch, runs};
+  const auto doc0 = doc_limits::min();
+
+  fill(doc0, {"alpha", "bravo"}, {1, 2});
+  ASSERT_TRUE(a->InvertBlock(*batch, {{runs}}));
+  fill(doc0, {"alpha", "bravo"}, {1, 2});
+  ASSERT_TRUE(b->InvertBlock(*batch, {{runs}}));
+
+  const auto log_size = a->Log().Size();
+  const auto doc_slots = a->Log().DocTokens().Size();
+  fill(doc0 + 1, {"charlie", "delta"}, {0, 0});
+  ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ(log_size, a->Log().Size());
+  ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
+
+  fill(doc0 + 2, {"echo"}, {1});
+  ASSERT_TRUE(a->InvertBlock(*batch, {{runs}}));
+  fill(doc0 + 2, {"echo"}, {1});
+  ASSERT_TRUE(b->InvertBlock(*batch, {{runs}}));
+
+  AssertSameScatter(*a, *b, mem);
+}
+
 TEST(InverterRejectTest, OffsetRegressionLeavesLogUntouched) {
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;

@@ -55,14 +55,25 @@ IRS_FORCE_INLINE inline WordMasks ClassifyWordBlock(
           classify::MoveMask(c.digit)};
 }
 
+template<bool KeepNonAscii = false>
 IRS_FORCE_INLINE inline uint32_t ClassifyAlnum(classify::Block b) noexcept {
   const auto c = detail::WordCmpsOf(b);
-  return classify::MoveMask(c.alpha | c.digit);
+  if constexpr (KeepNonAscii) {
+    return classify::MoveMask(c.alpha | c.digit | (b >= uint8_t{0x80}));
+  } else {
+    return classify::MoveMask(c.alpha | c.digit);
+  }
 }
 
+template<bool KeepNonAscii = false>
 IRS_FORCE_INLINE inline uint32_t ClassifyAlnumBlock(
   const byte_type* block) noexcept {
-  return ClassifyAlnum(classify::Load(block));
+  return ClassifyAlnum<KeepNonAscii>(classify::Load(block));
+}
+
+IRS_FORCE_INLINE inline uint32_t ClassifyAlphaBlock(
+  const byte_type* block) noexcept {
+  return classify::MoveMask(detail::WordCmpsOf(classify::Load(block)).alpha);
 }
 
 struct WordBridgeMasks {

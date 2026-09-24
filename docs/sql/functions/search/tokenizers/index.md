@@ -59,18 +59,20 @@ messages are on the page each row links to.
 
 | Function | What it does |
 | :--- | :--- |
-| [`split_text(value, case := 'none', break := 'alpha')`](./split_text.md) | Split text into words on Unicode word boundaries, optionally case-folded |
+| [`split_text(value, case := 'none', break := 'alpha')`](./split_text.md) | Split text into words, sentences, lines, paragraphs or grapheme clusters on Unicode boundaries, optionally case-folded |
 | [`split_text_icu(value, locale, break := 'alpha')`](./split_text_icu.md) | Segment text into words or sentences with the ICU break iterator for `locale` |
 | [`split_text_csv(value, delimiter)`](./split_text_csv.md) | Cut the value at every occurrence of `delimiter`, honouring `"` quoting |
 | [`split_by_delimiters(value, delimiters)`](./split_by_delimiters.md) | Cut the value at every occurrence of any of the `delimiters` |
-| [`split_by_non_alpha(value, case := 'none')`](./split_by_non_alpha.md) | Runs of ASCII letters and digits, everything else a separator |
+| [`split_by_non_alpha(value, case := 'none', break := 'ascii')`](./split_by_non_alpha.md) | Runs of word characters, everything else a separator; `break` picks them: ASCII letters and digits, those plus every byte from `0x80` up, letters and digits or letters alone in any script, or everything but whitespace |
 | [`split_by_pattern(value, pattern, group := -1)`](./split_by_pattern.md) | Match or split with an RE2 regular expression |
 | [`expand_path(value, delimiter := '/', replacement := '', reverse := false, skip := 0)`](./expand_path.md) | The cumulative prefixes of a delimited path |
-| [`normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')`](./normalize_tokens.md) | Unicode normalization, locale-aware case folding and accent stripping of each token |
+| [`normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')`](./normalize_tokens.md) | Unicode normalization, locale-aware case conversion or full case folding, and accent stripping of each token |
 | [`stem_words(value, locale := '')`](./stem_words.md) | The Snowball stem of each token for the language of `locale`, which has no usable default |
 | [`remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)`](./remove_stopwords.md) | Drop the listed tokens |
+| [`filter_tokens(value, min_length := 0, max_length := 0)`, `filter_tokens(tokens, lambda x: <predicate>)`](./filter_tokens.md) | Drop the tokens outside a range of character lengths, or those a lambda rejects |
+| [`strip_html(value, join_inline_tags := false)`](./strip_html.md) | The text runs between HTML markup with character references decoded and `script` and `style` content dropped; `join_inline_tags` keeps words whole across inline tags |
 | [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'` |
-| [`generate_sparse_ngrams(value, max_ngram_length := 16, covering := false)`](./generate_sparse_ngrams.md) | Sparse variable-length n-grams for substring search |
+| [`generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)`](./generate_sparse_ngrams.md) | Sparse variable-length n-grams for substring search |
 | [`generate_wildcard_ngrams(value, ngram_size := 3)`](./generate_wildcard_ngrams.md) | Boundary-marked n-grams for wildcard and prefix matching; a list is the token stream, a `VARCHAR` one token |
 | [`generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')`](./generate_shingles.md) | Word n-grams over the token stream; a list is the token stream, a `VARCHAR` one token |
 | [`collate_tokens(value, locale := '')`](./collate_tokens.md) | The collation sort key of each token for `locale`, as `BLOB[]` |

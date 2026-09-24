@@ -120,9 +120,9 @@ void FromTokenizeListInAnyAllOf(
                             "column"),
                     ERR_HINT(kSyntaxHint));
   }
-  std::vector<irs::bstring> tokens;
+  TokenGroups groups;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens value_tokens;
+  irs::ValueTokens<irs::TokenLayout::TermsPos> value_tokens{analyzer->Traits()};
   const auto& elems = ListOrArrayChildren(*list_const);
   for (const auto& elem : elems) {
     if (elem.IsNull()) {
@@ -139,7 +139,7 @@ void FromTokenizeListInAnyAllOf(
     auto raw = duckdb::StringValue::Get(elem);
     if (use_identity) {
       auto bytes = irs::ViewCast<irs::byte_type>(std::string_view{raw});
-      tokens.emplace_back(bytes.begin(), bytes.end());
+      groups.emplace_back().emplace_back(bytes.begin(), bytes.end());
       continue;
     }
     if (!value_analyzer.Analyze(*analyzer, raw, value_tokens)) {
@@ -148,40 +148,19 @@ void FromTokenizeListInAnyAllOf(
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    for (const auto& t : value_tokens.terms()) {
-      tokens.emplace_back(irs::AsBytesView(t));
-    }
+    AppendTokenGroups(value_tokens.terms(), value_tokens.pos(), groups);
   }
 
-  if (tokens.empty()) {
+  if (groups.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
 
-  const auto field =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-
-  // Single-token short-circuit -> one term clause.
-  if (tokens.size() == 1) {
-    AddTerm(MaybeNegated(parent, ctx, column_info), field, tokens[0], ctx.boost,
-            LeafScorer(column_info));
-    return;
-  }
-
-  // Aggregate as one term-set node with the min_match policy:
-  //   ts_any without min_match -> 1
-  //   ts_any(min_match=N) -> N (capped at tokens.size())
-  //   ts_all -> tokens.size()
-  size_t min_match_value = 1;
-  if (!is_any) {
-    min_match_value = tokens.size();
-  } else if (min_match) {
-    min_match_value = std::min<size_t>(*min_match, tokens.size());
-  }
-  auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field, tokens,
-                          min_match_value);
-  node.SetBoost(ctx.boost);
-  node.SetScorer(LeafScorer(column_info));
+  const size_t min_match_value = is_any ? min_match.value_or(1) : groups.size();
+  AddTokenGroups(
+    MaybeNegated(parent, ctx, column_info),
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
+    min_match_value, ctx.boost, LeafScorer(column_info));
 }
 
 }  // namespace

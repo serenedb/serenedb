@@ -315,8 +315,8 @@ class FieldInverter : util::Noncopyable {
       _state.CaptureValueBases<Log::kLayout>();
     }
 
-    const auto last_pos = ValidatePos(batch, base, n);
-    if (pos_limits::eof(last_pos)) [[unlikely]] {
+    const auto run = ValidatePos(batch, base, n);
+    if (pos_limits::eof(run.last)) [[unlikely]] {
       return false;
     }
     if constexpr (Log::kLayout == TokenLayout::TermsPosOffs) {
@@ -324,11 +324,11 @@ class FieldInverter : util::Noncopyable {
         return false;
       }
     }
-    if (!CheckDocBudget(id, n)) [[unlikely]] {
+    if (!CheckDocBudget(id, run.len)) [[unlikely]] {
       return false;
     }
 
-    CommitRun(log, id, ids, batch, base, n, last_pos);
+    CommitRun(log, id, ids, batch, base, n, run);
     return true;
   }
 
@@ -336,30 +336,38 @@ class FieldInverter : util::Noncopyable {
     return _dense_pos ? _state.last_pos : _state.value_pos;
   }
 
-  IRS_FORCE_INLINE uint32_t ValidatePos(const TokenBatch& batch, uint32_t base,
-                                        uint32_t count) const {
+  struct PosRun {
+    uint32_t last;
+    uint32_t len;
+  };
+
+  IRS_FORCE_INLINE PosRun ValidatePos(const TokenBatch& batch, uint32_t base,
+                                      uint32_t count) const {
     const auto* pos_arr = batch.pos + base;
     const uint32_t pos_base = PosBase();
-    uint32_t last_pos;
     if (_dense_pos) {
-      last_pos = pos_base + count;
+      const uint32_t last_pos = pos_base + count;
       if (last_pos < pos_base || last_pos >= pos_limits::eof()) [[unlikely]] {
         SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
-        return pos_limits::eof();
+        return {pos_limits::eof(), 0};
       }
-    } else {
-      bool monotonic = pos_base + pos_arr[0] >= _state.last_pos;
-      for (uint32_t i = 1; i < count; ++i) {
-        monotonic &= pos_arr[i] >= pos_arr[i - 1];
-      }
-      last_pos = pos_base + pos_arr[count - 1];
-      if (!monotonic || last_pos < pos_base || last_pos >= pos_limits::eof())
-        [[unlikely]] {
-        SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
-        return pos_limits::eof();
-      }
+      return {last_pos, count};
     }
-    return last_pos;
+    const uint32_t first_pos = pos_base + pos_arr[0];
+    bool monotonic =
+      pos_arr[0] >= pos_limits::min() && first_pos >= _state.last_pos;
+    uint32_t len = first_pos != _state.last_pos;
+    for (uint32_t i = 1; i < count; ++i) {
+      monotonic &= pos_arr[i] >= pos_arr[i - 1];
+      len += pos_arr[i] != pos_arr[i - 1];
+    }
+    const uint32_t last_pos = pos_base + pos_arr[count - 1];
+    if (!monotonic || last_pos < pos_base || last_pos >= pos_limits::eof())
+      [[unlikely]] {
+      SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+      return {pos_limits::eof(), 0};
+    }
+    return {last_pos, len};
   }
 
   IRS_FORCE_INLINE bool ValidateOffs(const TokenBatch& batch, uint32_t base,
@@ -392,7 +400,7 @@ class FieldInverter : util::Noncopyable {
   template<typename Log>
   IRS_FORCE_INLINE void CommitRun(Log& log, doc_id_t id, const uint32_t* ids,
                                   const TokenBatch& batch, uint32_t base,
-                                  uint32_t count, uint32_t last_pos) {
+                                  uint32_t count, PosRun run) {
     const auto* pos_arr = batch.pos + base;
     if constexpr (Log::kLayout == TokenLayout::TermsPos) {
       log.PushBatch(id, {ids, count}, _dense_pos, {pos_arr, count}, PosBase());
@@ -403,7 +411,7 @@ class FieldInverter : util::Noncopyable {
       AdvanceOffs(_state.value_offs + batch.offs_start[base + count - 1],
                   _state.value_offs + batch.offs_end[base + count - 1]);
     }
-    _state.AdvancePos(last_pos, count);
+    _state.AdvancePos(run.last, run.len);
   }
 
   IRS_FORCE_INLINE bool CheckDocBudget(doc_id_t doc, uint64_t n) const {
@@ -617,8 +625,8 @@ class FieldInverter : util::Noncopyable {
       }
     }
 
-    void AdvancePos(uint32_t last, uint32_t count) noexcept {
-      stats.len += count;
+    void AdvancePos(uint32_t last, uint32_t len) noexcept {
+      stats.len += len;
       last_pos = last;
     }
 

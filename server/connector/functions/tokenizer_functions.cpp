@@ -20,6 +20,7 @@
 
 #include "connector/functions/tokenizer_functions.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -27,11 +28,13 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizer_pool.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -72,6 +75,8 @@ duckdb::LogicalType ParameterType(const pg::OptionInfo& info) {
       return duckdb::LogicalType::VARCHAR;
     case pg::OptionInfo::Type::StringList:
       return StringListType();
+    case pg::OptionInfo::Type::Lambda:
+      return duckdb::LogicalType::LAMBDA;
   }
   return duckdb::LogicalType::VARCHAR;
 }
@@ -90,8 +95,24 @@ duckdb::Value DefaultValue(const pg::OptionInfo& info) {
       return duckdb::Value{std::string(1, info.GetDefaultValue<char>())};
     case pg::OptionInfo::Type::StringList:
       return duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, {});
+    case pg::OptionInfo::Type::Lambda:
+      return duckdb::Value{};
   }
   return duckdb::Value{};
+}
+
+std::vector<pg::OptionInfo> SignatureOptions(const pg::OptionGroup& group) {
+  auto options = group.FlatOptions();
+  std::erase_if(options, [](const pg::OptionInfo& info) {
+    return info.type == pg::OptionInfo::Type::Lambda;
+  });
+  return options;
+}
+
+bool TakesLambda(const pg::OptionGroup& group) {
+  return absl::c_any_of(group.FlatOptions(), [](const pg::OptionInfo& info) {
+    return info.type == pg::OptionInfo::Type::Lambda;
+  });
 }
 
 const pg::OptionGroup& FindGroup(std::string_view function) {
@@ -240,7 +261,7 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   auto& fn = input.GetBoundFunction();
   const std::string name = fn.GetName().GetIdentifierName();
   const auto& group = FindGroup(name);
-  const auto flat = group.FlatOptions();
+  const auto flat = SignatureOptions(group);
   auto& args = input.GetArguments();
   SDB_ASSERT(args.size() == flat.size() + 1);
   const bool list_input =
@@ -311,6 +332,52 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   return bind;
 }
 
+duckdb::LogicalType BindTokenLambda(
+  duckdb::ClientContext& /*context*/,
+  const duckdb::vector<duckdb::LogicalType>& /*function_child_types*/,
+  duckdb::idx_t parameter_idx,
+  duckdb::optional_ptr<duckdb::BindLambdaContext> /*bind_lambda_context*/) {
+  if (parameter_idx != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("the lambda of a token filter takes exactly one parameter"));
+  }
+  return duckdb::LogicalType::VARCHAR;
+}
+
+duckdb::unique_ptr<duckdb::Expression> RewriteLambdaCall(
+  duckdb::FunctionBindExpressionInput& input) {
+  auto& children = input.children;
+  SDB_ASSERT(children.size() == 2);
+  const std::string name = input.bound_function.GetName().GetIdentifierName();
+  const auto& type = children[1]
+                       ->Cast<duckdb::BoundLambdaExpression>()
+                       .LambdaExpr()
+                       ->GetReturnType();
+  if (type != duckdb::LogicalType::BOOLEAN) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(name, "(): the lambda must return BOOLEAN, got ",
+                            type.ToString()));
+  }
+  duckdb::FunctionBinder binder{input.context};
+  duckdb::ErrorData error;
+  auto filtered = binder.BindScalarFunction(duckdb::Identifier{DEFAULT_SCHEMA},
+                                            duckdb::Identifier{"list_filter"},
+                                            std::move(children), error);
+  if (!filtered) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(name, "(): ", error.RawMessage()));
+  }
+  return filtered;
+}
+
+void UnrewrittenLambdaCall(duckdb::DataChunk& /*args*/,
+                           duckdb::ExpressionState& /*state*/,
+                           duckdb::Vector& /*result*/) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("a lambda token filter call was not rewritten"));
+}
+
 duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
                                     duckdb::LogicalType value_type) {
   duckdb::ScalarFunction fn{
@@ -323,7 +390,7 @@ duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
   };
   auto& signature = fn.GetSignature();
   signature.AddParameter(duckdb::Identifier{"value"}, std::move(value_type));
-  for (const auto& info : group.FlatOptions()) {
+  for (const auto& info : SignatureOptions(group)) {
     if (info.IsRequired()) {
       signature.AddParameter(duckdb::Identifier{info.name},
                              ParameterType(info));
@@ -333,6 +400,28 @@ duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
                            DefaultValue(info));
   }
   fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  if (TakesLambda(group)) {
+    fn.SetBindLambdaCallback(BindTokenLambda);
+  }
+  return fn;
+}
+
+duckdb::ScalarFunction MakeLambdaFunction() {
+  duckdb::ScalarFunction fn{
+    {},
+    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    UnrewrittenLambdaCall,
+    nullptr,
+  };
+  auto& signature = fn.GetSignature();
+  signature.AddParameter(
+    duckdb::Identifier{"value"},
+    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
+  signature.AddParameter(duckdb::Identifier{"predicate"},
+                         duckdb::LogicalType::LAMBDA);
+  fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  fn.SetBindLambdaCallback(BindTokenLambda);
+  fn.SetBindExpressionCallback(RewriteLambdaCall);
   return fn;
 }
 
@@ -350,6 +439,9 @@ void RegisterTokenizerFunctions(duckdb::ExtensionLoader& loader) {
       set.AddFunction(MakeFunction(group, duckdb::LogicalType::VARCHAR));
       set.AddFunction(MakeFunction(
         group, duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)));
+      if (TakesLambda(group)) {
+        set.AddFunction(MakeLambdaFunction());
+      }
     }
     loader.RegisterFunction(std::move(set));
   }

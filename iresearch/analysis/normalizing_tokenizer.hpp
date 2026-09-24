@@ -24,8 +24,10 @@
 #include <unicode/normalizer2.h>
 #include <unicode/translit.h>
 
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 #include "iresearch/analysis/process_tokens.hpp"
@@ -39,6 +41,9 @@ namespace analysis {
 enum class NormForm : uint8_t {
   Nfc,
   Nfkc,
+  Nfd,
+  Nfkd,
+  NfkcCf,
 };
 
 class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
@@ -51,6 +56,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     Case case_convert{Case::None};
     bool accent{true};
     NormForm form{NormForm::Nfc};
+    bool fold{false};
   };
   static ptr Make(Options opts);
 
@@ -95,16 +101,46 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
   template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
   bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  bool DecomposedEmit(const duckdb::string_t& raw, Sink& sink);
+  template<Case C>
+  size_t CaseBound(size_t size) const noexcept;
+  template<Case C>
+  size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
 
   Options _options;
   icu::UnicodeString _udata;
   icu::UnicodeString _token;
   const icu::Normalizer2* _normalizer{};
+  const icu::Normalizer2* _renormalizer{};
   std::unique_ptr<icu::Transliterator> _transliterator;
   std::string _norm_buf;
   std::string _strip_buf;
+  uint32_t _fold_options{0};
   CasePath _case_path = CasePath::Fast;
 };
 
 }  // namespace analysis
 }  // namespace irs
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t customize::enum_name<irs::analysis::NormForm>(
+  irs::analysis::NormForm value) noexcept {
+  using NormForm = irs::analysis::NormForm;
+  switch (value) {
+    case NormForm::Nfc:
+      return "nfc";
+    case NormForm::Nfkc:
+      return "nfkc";
+    case NormForm::Nfd:
+      return "nfd";
+    case NormForm::Nfkd:
+      return "nfkd";
+    case NormForm::NfkcCf:
+      return "nfkc_cf";
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum

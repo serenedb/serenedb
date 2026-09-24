@@ -112,3 +112,57 @@ split_by_non_alpha
 {the,quick,brown,fox}
 {42,widgets}
 NULL
+
+
+query
+SELECT split_by_non_alpha(body, case := 'lower', break := 'letters') FROM docs ORDER BY id;
+----
+split_by_non_alpha
+{the,quick,brown,fox}
+{widgets}
+NULL
+
+
+query
+SELECT split_by_non_alpha('Hello World', break := 'ALNUM');
+----
+split_by_non_alpha
+{Hello,World}
+
+
+query
+SELECT split_by_non_alpha('snake_case kebab-case  x=1;y', break := 'whitespace');
+----
+split_by_non_alpha
+{snake_case,kebab-case,x=1;y}
+
+
+query
+SELECT split_by_non_alpha('Grüße Welt' || chr(160) || '北京123' || chr(12288) || 'ÜBER—bar', case := 'lower', break := 'whitespace');
+----
+split_by_non_alpha
+{grüße,welt,北京123,über—bar}
+
+
+query
+SELECT split_by_non_alpha('a' || chr(8203) || 'b' || chr(8195) || chr(13) || chr(10) || 'c', break := 'whitespace') =
+       ['a' || chr(8203) || 'b', 'c'] AS same;
+----
+same
+t
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY non_alpha_bad_break AS
+    split_by_non_alpha(break := 'word')
+----
+db error: ERROR: invalid value in "break" parameter
+HINT: Token boundary mode: ascii, ascii_bytes, alnum, letters, whitespace
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY non_alpha_old_option AS
+    split_by_non_alpha(keep_non_ascii := true)
+----
+db error: ERROR: split_by_non_alpha(): unknown option "keep_non_ascii"
+HINT: known names: case, break

@@ -51,33 +51,86 @@ void DecomposeInto(std::string_view in, std::string& out) {
                            });
 }
 
-std::unique_ptr<icu::Transliterator> MakeStripTransliterator(bool nfkc,
+const icu::Normalizer2* MakeNormalizer(NormForm form, UErrorCode& err) {
+  switch (form) {
+    case NormForm::Nfc:
+      return icu::Normalizer2::getNFCInstance(err);
+    case NormForm::Nfkc:
+      return icu::Normalizer2::getNFKCInstance(err);
+    case NormForm::Nfd:
+      return icu::Normalizer2::getNFDInstance(err);
+    case NormForm::Nfkd:
+      return icu::Normalizer2::getNFKDInstance(err);
+    case NormForm::NfkcCf:
+      return icu::Normalizer2::getNFKCCasefoldInstance(err);
+  }
+  return nullptr;
+}
+
+std::unique_ptr<icu::Transliterator> MakeStripTransliterator(NormForm form,
                                                              UErrorCode& err) {
-  const icu::UnicodeString rule(nfkc ? "NFKD; [:Nonspacing Mark:] Remove; NFKC"
-                                     : "NFD; [:Nonspacing Mark:] Remove; NFC");
+  const char* rule = "NFD; [:Nonspacing Mark:] Remove; NFC";
+  switch (form) {
+    case NormForm::Nfc:
+      break;
+    case NormForm::Nfkc:
+    case NormForm::NfkcCf:
+      rule = "NFKD; [:Nonspacing Mark:] Remove; NFKC";
+      break;
+    case NormForm::Nfd:
+      rule = "NFD; [:Nonspacing Mark:] Remove";
+      break;
+    case NormForm::Nfkd:
+      rule = "NFKD; [:Nonspacing Mark:] Remove";
+      break;
+  }
   return std::unique_ptr<icu::Transliterator>{
-    icu::Transliterator::createInstance(rule, UTransDirection::UTRANS_FORWARD,
-                                        err)};
+    icu::Transliterator::createInstance(icu::UnicodeString{rule},
+                                        UTransDirection::UTRANS_FORWARD, err)};
 }
 
 template<Case C>
 void NormalizeCaseStrip(const icu::Normalizer2& normalizer,
-                        const icu::Locale& locale, icu::Transliterator* strip,
-                        const icu::UnicodeString& data,
-                        icu::UnicodeString& out) {
+                        const icu::Normalizer2& renormalizer,
+                        const icu::Locale& locale, bool fold,
+                        uint32_t fold_options, icu::Transliterator* strip,
+                        icu::UnicodeString& data, icu::UnicodeString& out) {
   auto err = UErrorCode::U_ZERO_ERROR;
   normalizer.normalize(data, out, err);
   if (!U_SUCCESS(err)) {
     out = data;
   }
-  if constexpr (C == Case::Lower) {
-    out.toLower(locale);
-  } else if constexpr (C == Case::Upper) {
-    out.toUpper(locale);
+  if constexpr (C != Case::None) {
+    if constexpr (C == Case::Lower) {
+      if (fold) {
+        out.foldCase(fold_options);
+      } else {
+        out.toLower(locale);
+      }
+    } else {
+      out.toUpper(locale);
+    }
+    if (strip == nullptr) {
+      err = UErrorCode::U_ZERO_ERROR;
+      if (!renormalizer.isNormalized(out, err) && U_SUCCESS(err)) {
+        renormalizer.normalize(out, data, err);
+        if (U_SUCCESS(err)) {
+          out.swap(data);
+        }
+      }
+    }
   }
   if (strip != nullptr) {
     strip->transliterate(out);
   }
+}
+
+bool IsTurkic(const icu::Locale& locale) noexcept {
+  if (locale.isBogus()) {
+    return false;
+  }
+  const std::string_view language{locale.getLanguage()};
+  return language == "tr" || language == "az";
 }
 
 }  // namespace
@@ -86,8 +139,14 @@ NormalizingTokenizer::NormalizingTokenizer(Options options)
   : _options{std::move(options)} {
   const char* locale_name =
     _options.locale.isBogus() ? "" : _options.locale.getName();
-  if (_options.case_convert == Case::None ||
-      casing::SimpleCaseSafe(locale_name)) {
+  if (_options.fold) {
+    _options.case_convert = Case::Lower;
+    const bool turkic = IsTurkic(_options.locale);
+    _fold_options =
+      turkic ? U_FOLD_CASE_EXCLUDE_SPECIAL_I : U_FOLD_CASE_DEFAULT;
+    _case_path = turkic ? CasePath::Icu : CasePath::Fast;
+  } else if (_options.case_convert == Case::None ||
+             casing::SimpleCaseSafe(locale_name)) {
     _case_path = CasePath::Fast;
   } else if (casing::AsciiCaseSafe(locale_name)) {
     _case_path = CasePath::IcuNonAscii;
@@ -98,25 +157,50 @@ NormalizingTokenizer::NormalizingTokenizer(Options options)
 
 std::tuple<Case, bool, bool> NormalizingTokenizer::PrepareBatch(
   BlockTraits traits) {
-  if (_case_path != CasePath::Fast && !_normalizer) {
+  const bool casefold_form = _options.form == NormForm::NfkcCf;
+  if ((_case_path != CasePath::Fast || casefold_form) && !_normalizer) {
     auto err = UErrorCode::U_ZERO_ERROR;
-    const bool nfkc = _options.form == NormForm::Nfkc;
-    _normalizer = nfkc ? icu::Normalizer2::getNFKCInstance(err)
-                       : icu::Normalizer2::getNFCInstance(err);
-    if (!U_SUCCESS(err) || !_normalizer) {
+    _normalizer = MakeNormalizer(_options.form, err);
+    _renormalizer =
+      MakeNormalizer(casefold_form ? NormForm::Nfkc : _options.form, err);
+    if (!U_SUCCESS(err) || !_normalizer || !_renormalizer) {
       THROW_SQL_ERROR(ERR_MSG("normalize_tokens: failed to create normalizer"));
     }
 
     if (!_options.accent) {
-      _transliterator = MakeStripTransliterator(nfkc, err);
+      _transliterator = MakeStripTransliterator(_options.form, err);
       if (!U_SUCCESS(err) || !_transliterator) {
         THROW_SQL_ERROR(
           ERR_MSG("normalize_tokens: failed to create transliterator"));
       }
     }
   }
-  return {_options.case_convert, _options.accent,
+  const Case convert = casefold_form && _options.case_convert == Case::None
+                         ? Case::Lower
+                         : _options.case_convert;
+  return {convert, _options.accent,
           traits.ascii && _case_path != CasePath::Icu};
+}
+
+template<Case C>
+size_t NormalizingTokenizer::CaseBound(size_t size) const noexcept {
+  if constexpr (C == Case::Lower) {
+    if (_options.fold) {
+      return sz::kFoldGrowth * size;
+    }
+  }
+  return casing::CaseConvertUtf8Bound(size);
+}
+
+template<Case C>
+size_t NormalizingTokenizer::ConvertCase(std::string_view bytes,
+                                         byte_type* out) const noexcept {
+  if constexpr (C == Case::Lower) {
+    if (_options.fold) {
+      return sz::Fold(bytes.data(), bytes.size(), reinterpret_cast<char*>(out));
+    }
+  }
+  return casing::CaseConvertUtf8<C == Case::Lower>(bytes, out);
 }
 
 Tokenizer::ptr NormalizingTokenizer::Make(Options opts) {
@@ -147,9 +231,9 @@ bool NormalizingTokenizer::UnicodeEmit(const duckdb::string_t& raw,
   } else {
     _udata.remove();
   }
-  NormalizeCaseStrip<C>(*_normalizer, _options.locale,
-                        Accent ? nullptr : _transliterator.get(), _udata,
-                        _token);
+  NormalizeCaseStrip<C>(
+    *_normalizer, *_renormalizer, _options.locale, _options.fold, _fold_options,
+    Accent ? nullptr : _transliterator.get(), _udata, _token);
   const auto cap = 3 * static_cast<size_t>(_token.length());
   if (cap == 0) {
     sink.template Emit<Layout>(duckdb::string_t{});
@@ -209,9 +293,9 @@ bool NormalizingTokenizer::FastUnicodeEmit(const duckdb::string_t& raw,
     bytes = _norm_buf;
   }
   sink.template Emit<Layout>(
-    normalize::Bound<kForm>(casing::CaseConvertUtf8Bound(bytes.size())),
+    normalize::Bound<kForm>(CaseBound<C>(bytes.size())),
     [&](byte_type* out) IRS_FORCE_INLINE {
-      const auto n = casing::CaseConvertUtf8<C == Case::Lower>(bytes, out);
+      const auto n = ConvertCase<C>(bytes, out);
       const std::string_view converted{reinterpret_cast<const char*>(out), n};
       if (!normalize::Denormalized<kForm>(converted.data(), converted.size()))
         [[likely]] {
@@ -221,6 +305,61 @@ bool NormalizingTokenizer::FastUnicodeEmit(const duckdb::string_t& raw,
       std::memcpy(out, _norm_buf.data(), _norm_buf.size());
       return _norm_buf.size();
     });
+  return true;
+}
+
+template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+bool NormalizingTokenizer::DecomposedEmit(const duckdb::string_t& raw,
+                                          Sink& sink) {
+  constexpr auto kForm =
+    F == NormForm::Nfkd ? sz_normal_form_nfkd_k : sz_normal_form_nfd_k;
+  constexpr auto kComposed =
+    F == NormForm::Nfkd ? sz_normal_form_nfkc_k : sz_normal_form_nfc_k;
+  const char* data = raw.GetData();
+  const uint32_t size = raw.GetSize();
+  if (classify::IsAsciiValue(data, size)) {
+    if constexpr (C == Case::None) {
+      sink.template Emit<Layout>(raw);
+    } else {
+      sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
+    }
+    return true;
+  }
+  std::string_view bytes{data, size};
+  bool decomposed = false;
+  if constexpr (!Accent) {
+    if (!normalize::StripSafe<kComposed>(data, size)) {
+      ComposeInto<kForm>(bytes, _norm_buf);
+      normalize::StripNonspacingMarks(_norm_buf, _strip_buf);
+      bytes = _strip_buf;
+      decomposed = true;
+    }
+  }
+  if constexpr (C == Case::None) {
+    if (decomposed) {
+      sink.template Emit<Layout>(bytes.size(),
+                                 [&](byte_type* out) IRS_FORCE_INLINE {
+                                   std::memcpy(out, bytes.data(), bytes.size());
+                                   return bytes.size();
+                                 });
+      return true;
+    }
+  } else {
+    if (!decomposed) {
+      ComposeInto<kForm>(bytes, _strip_buf);
+      bytes = _strip_buf;
+    }
+    _norm_buf.resize_and_overwrite(
+      CaseBound<C>(bytes.size()), [&](char* p, size_t) IRS_FORCE_INLINE {
+        return ConvertCase<C>(bytes, reinterpret_cast<byte_type*>(p));
+      });
+    bytes = _norm_buf;
+  }
+  sink.template Emit<Layout>(normalize::Bound<kForm>(bytes.size()),
+                             [&](byte_type* out) IRS_FORCE_INLINE {
+                               return normalize::Compose<kForm>(
+                                 bytes, reinterpret_cast<char*>(out));
+                             });
   return true;
 }
 
@@ -235,13 +374,27 @@ bool NormalizingTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
     }
     return true;
   } else {
+    if (_options.form == NormForm::NfkcCf) {
+      if (_options.case_convert == Case::None) {
+        return UnicodeEmit<Layout, Case::None, Accent>(raw, sink);
+      }
+      return UnicodeEmit<Layout, C, Accent>(raw, sink);
+    }
     if constexpr (C != Case::None) {
       if (_case_path != CasePath::Fast) {
         return UnicodeEmit<Layout, C, Accent>(raw, sink);
       }
     }
-    if (_options.form == NormForm::Nfkc) {
-      return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfkc>(raw, sink);
+    switch (_options.form) {
+      case NormForm::Nfkc:
+        return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfkc>(raw, sink);
+      case NormForm::Nfd:
+        return DecomposedEmit<Layout, C, Accent, NormForm::Nfd>(raw, sink);
+      case NormForm::Nfkd:
+        return DecomposedEmit<Layout, C, Accent, NormForm::Nfkd>(raw, sink);
+      case NormForm::Nfc:
+      case NormForm::NfkcCf:
+        break;
     }
     return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfc>(raw, sink);
   }

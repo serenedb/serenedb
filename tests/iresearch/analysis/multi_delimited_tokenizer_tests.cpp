@@ -536,3 +536,101 @@ TEST_F(MultiDelimitedTokenizerTests, long_needle_oracle) {
     }
   }
 }
+
+TEST_F(MultiDelimitedTokenizerTests, short_needle_oracle) {
+  uint64_t seed = 0x51ab0de;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  for (size_t needle_len = 2; needle_len <= 8; ++needle_len) {
+    for (size_t variant = 0; variant < 4; ++variant) {
+      std::string needle;
+      for (size_t i = 0; i < needle_len; ++i) {
+        needle += static_cast<char>('a' + next() % 2);
+      }
+      auto stream = MultiDelimitedTokenizer::Make(
+        {.delimiters = {
+           irs::bstring{reinterpret_cast<const irs::byte_type*>(needle.data()),
+                        needle.size()}}});
+      for (size_t iter = 0; iter < 60; ++iter) {
+        std::string v;
+        const size_t len = next() % 120;
+        for (size_t i = 0; i < len; ++i) {
+          if (next() % 6 == 0) {
+            v += needle;
+          } else {
+            v += static_cast<char>('a' + next() % 3);
+          }
+        }
+        const std::string_view vv{v};
+        std::vector<BlockTok> expected;
+        for (size_t at = 0, tok = 0;;) {
+          const size_t hit = v.find(needle, at);
+          const size_t end = hit == std::string::npos ? v.size() : hit;
+          if (end != tok) {
+            expected.push_back({vv.substr(tok, end - tok),
+                                static_cast<uint32_t>(tok),
+                                static_cast<uint32_t>(end)});
+          }
+          if (hit == std::string::npos) {
+            break;
+          }
+          at = tok = hit + needle.size();
+        }
+        SCOPED_TRACE(testing::Message() << "needle=" << needle << " iter="
+                                        << iter << " value.size=" << v.size());
+        AssertBlockTokens(*stream, v, expected);
+      }
+    }
+  }
+}
+
+TEST_F(MultiDelimitedTokenizerTests, many_single_char_delimiters_oracle) {
+  uint64_t seed = 0xde11a5;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  for (size_t variant = 0; variant < 24; ++variant) {
+    const size_t count = 9 + variant % 16;
+    const bool spread = variant % 3 == 0;
+    std::vector<irs::bstring> delimiters;
+    bool is_delim[256]{};
+    while (delimiters.size() < count) {
+      const auto b = static_cast<irs::byte_type>(spread ? next() % 256
+                                                        : 0x20 + next() % 0x60);
+      if (is_delim[b]) {
+        continue;
+      }
+      is_delim[b] = true;
+      delimiters.emplace_back(1, b);
+    }
+    auto stream = MultiDelimitedTokenizer::Make({.delimiters = delimiters});
+    for (size_t iter = 0; iter < 40; ++iter) {
+      std::string v;
+      const size_t len = next() % 200;
+      for (size_t i = 0; i < len; ++i) {
+        v += static_cast<char>(next() % 4 == 0 ? next() % 256
+                                               : 0x20 + next() % 0x60);
+      }
+      const std::string_view vv{v};
+      std::vector<BlockTok> expected;
+      size_t tok = 0;
+      for (size_t i = 0; i <= v.size(); ++i) {
+        if (i != v.size() && !is_delim[static_cast<irs::byte_type>(v[i])]) {
+          continue;
+        }
+        if (i != tok) {
+          expected.push_back({vv.substr(tok, i - tok),
+                              static_cast<uint32_t>(tok),
+                              static_cast<uint32_t>(i)});
+        }
+        tok = i + 1;
+      }
+      SCOPED_TRACE(testing::Message() << "variant=" << variant << " iter="
+                                      << iter << " value.size=" << v.size());
+      AssertBlockTokens(*stream, v, expected);
+    }
+  }
+}

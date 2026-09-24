@@ -67,16 +67,22 @@ struct ManyCharsFinder {
       return;
     }
     bytes.Add(b);
+    nibbles.Add(b);
     if (ndelims < kMaxBlockDelims) {
       delims[ndelims] = b;
     }
     ++ndelims;
   }
 
-  bool Blockable() const noexcept { return ndelims <= kMaxBlockDelims; }
+  bool Compared() const noexcept { return ndelims <= kMaxBlockDelims; }
+
+  bool Blockable() const noexcept { return Compared() || nibbles.Blockable(); }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
-    return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+    if (Compared()) {
+      return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+    }
+    return classify::ClassifyNibbleBlock(block, nibbles);
   }
 
   template<typename OnDelim>
@@ -90,6 +96,7 @@ struct ManyCharsFinder {
   }
 
   classify::ByteSet bytes;
+  classify::NibbleSet nibbles;
   std::array<byte_type, kMaxBlockDelims> delims{};
   size_t ndelims = 0;
 };
@@ -103,6 +110,7 @@ struct ByteRangesFinder {
       if (!set.Contains(static_cast<byte_type>(b))) {
         continue;
       }
+      nibbles.Add(static_cast<byte_type>(b));
       if (b == prev + 1) {
         if (nranges <= kMaxBlockRanges) {
           ++ranges[nranges - 1].span;
@@ -117,10 +125,15 @@ struct ByteRangesFinder {
     }
   }
 
-  bool Blockable() const noexcept { return nranges <= kMaxBlockRanges; }
+  bool Ranged() const noexcept { return nranges <= kMaxBlockRanges; }
+
+  bool Blockable() const noexcept { return Ranged() || nibbles.Blockable(); }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
-    return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
+    if (Ranged()) {
+      return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
+    }
+    return classify::ClassifyNibbleBlock(block, nibbles);
   }
 
   template<typename OnDelim>
@@ -134,6 +147,7 @@ struct ByteRangesFinder {
   }
 
   classify::ByteSet bytes;
+  classify::NibbleSet nibbles;
   std::array<classify::ByteRange, kMaxBlockRanges> ranges{};
   size_t nranges = 0;
 };
@@ -148,19 +162,85 @@ IRS_FORCE_INLINE inline bool BytesEqual(const byte_type* a, const byte_type* b,
   return true;
 }
 
+template<typename Verify, typename OnDelim>
+IRS_FORCE_INLINE void ForEachFirstLastMatch(bytes_view data, bytes_view needle,
+                                            Verify&& verify,
+                                            OnDelim&& on_delim) {
+  const auto* p = data.data();
+  const size_t size = data.size();
+  const size_t n = needle.size();
+  if (size < n) {
+    return;
+  }
+  const auto first = needle.front();
+  const auto last = needle.back();
+  const size_t last_start = size - n;
+  size_t pos = 0;
+  if (last_start + 1 >= classify::kClassifyBlock) {
+    for (;;) {
+      const size_t base =
+        std::min(pos, last_start + 1 - classify::kClassifyBlock);
+      auto mask = (classify::ClassifyEqBlock(p + base, first) &
+                   classify::ClassifyEqBlock(p + base + n - 1, last)) &
+                  (~uint32_t{0} << (pos - base));
+      size_t next = base + classify::kClassifyBlock;
+      while (mask != 0) {
+        const size_t at = base + std::countr_zero(mask);
+        if (!verify(at)) {
+          mask &= mask - 1;
+          continue;
+        }
+        on_delim(at, n);
+        const size_t end = at + n;
+        if (end >= next) {
+          next = end;
+          break;
+        }
+        mask &= ~uint32_t{0} << (end - base);
+      }
+      if (next > last_start) {
+        return;
+      }
+      pos = next;
+    }
+  }
+  while (pos <= last_start) {
+    if (p[pos] == first && p[pos + n - 1] == last && verify(pos)) {
+      on_delim(pos, n);
+      pos += n;
+      continue;
+    }
+    ++pos;
+  }
+}
+
 struct OneStringFinder {
   bstring delim;
+  uint64_t prefix = 0;
+  uint64_t mask = 0;
 
-  explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {}
+  explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {
+    SDB_ASSERT(delim.size() >= 2 && delim.size() <= kLongNeedleThreshold);
+    std::memcpy(&prefix, delim.data(), delim.size());
+    mask = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - delim.size()));
+  }
 
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
-    const bytes_view needle{delim};
-    for (size_t pos = data.find(needle); pos != bytes_view::npos;
-         pos = data.find(needle, pos + needle.size())) {
-      on_delim(pos, needle.size());
-    }
+    const auto* p = data.data();
+    const size_t size = data.size();
+    ForEachFirstLastMatch(
+      data, delim,
+      [&](size_t at) IRS_FORCE_INLINE {
+        if (at + sizeof(uint64_t) <= size) {
+          uint64_t window;
+          std::memcpy(&window, p + at, sizeof window);
+          return ((window ^ prefix) & mask) == 0;
+        }
+        return BytesEqual(p + at, delim.data(), delim.size());
+      },
+      on_delim);
   }
 };
 
@@ -176,54 +256,13 @@ struct OneLongStringFinder {
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
     const auto* p = data.data();
-    const size_t size = data.size();
     const size_t n = delim.size();
-    if (size < n) {
-      return;
-    }
-    const auto first = delim.front();
-    const auto last = delim.back();
-    const size_t last_start = size - n;
-    const auto middle = [&](size_t at) IRS_FORCE_INLINE {
-      return std::memcmp(p + at + 1, delim.data() + 1, n - 2) == 0;
-    };
-    size_t pos = 0;
-    if (last_start + 1 >= classify::kClassifyBlock) {
-      for (;;) {
-        const size_t base =
-          std::min(pos, last_start + 1 - classify::kClassifyBlock);
-        auto mask = (classify::ClassifyEqBlock(p + base, first) &
-                     classify::ClassifyEqBlock(p + base + n - 1, last)) &
-                    (~uint32_t{0} << (pos - base));
-        size_t next = base + classify::kClassifyBlock;
-        while (mask != 0) {
-          const size_t at = base + std::countr_zero(mask);
-          if (!middle(at)) {
-            mask &= mask - 1;
-            continue;
-          }
-          on_delim(at, n);
-          const size_t end = at + n;
-          if (end >= next) {
-            next = end;
-            break;
-          }
-          mask &= ~uint32_t{0} << (end - base);
-        }
-        if (next > last_start) {
-          return;
-        }
-        pos = next;
-      }
-    }
-    while (pos <= last_start) {
-      if (p[pos] == first && p[pos + n - 1] == last && middle(pos)) {
-        on_delim(pos, n);
-        pos += n;
-        continue;
-      }
-      ++pos;
-    }
+    ForEachFirstLastMatch(
+      data, delim,
+      [&](size_t at) IRS_FORCE_INLINE {
+        return std::memcmp(p + at + 1, delim.data() + 1, n - 2) == 0;
+      },
+      on_delim);
   }
 };
 
@@ -353,7 +392,7 @@ inline Finder FinderFor(const classify::ByteSet& set) {
   if (chars.ndelims == 1) {
     return OneCharFinder{chars.delims.front()};
   }
-  if (!chars.Blockable()) {
+  if (!chars.Compared()) {
     return ByteRangesFinder{set};
   }
   return chars;

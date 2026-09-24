@@ -36,21 +36,36 @@ class SplitByNonAlphaTokenizer final
 
   struct Options {
     using Owner = SplitByNonAlphaTokenizer;
+    enum class Chars : uint8_t {
+      Ascii = 0,
+      AsciiBytes,
+      Alnum,
+      Letters,
+      Whitespace,
+    };
     Case case_convert{Case::None};
+    Chars chars{Chars::Ascii};
   };
   static ptr Make(Options opts);
 
   explicit SplitByNonAlphaTokenizer(Options opts) noexcept : _options{opts} {}
 
-  auto PrepareBatch(BlockTraits) const {
-    return std::tuple{_options.case_convert};
+  BlockTraits WantedBlockTraits() const noexcept final {
+    return {.ascii = _options.chars == Options::Chars::Alnum ||
+                     _options.chars == Options::Chars::Letters};
+  }
+
+  auto PrepareBatch(BlockTraits traits) const {
+    return std::tuple{_options.case_convert, _options.chars, traits.ascii};
   }
 
   TokenTraits Traits() const noexcept final {
-    return {.offsets = true, .stable = _options.case_convert == Case::None};
+    return {.offsets = true,
+            .stable = _options.case_convert == Case::None,
+            .keeps_ascii = true};
   }
 
-  template<TokenLayout Layout, Case C>
+  template<TokenLayout Layout, Case C, Options::Chars W, bool KnownAscii>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
@@ -59,13 +74,27 @@ class SplitByNonAlphaTokenizer final
 
 template<typename Context>
 void SerdeWrite(Context ctx, const SplitByNonAlphaTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.case_convert));
+  irs::utils::WriteTupleOrObject(ctx, std::tie(o.case_convert, o.chars));
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, SplitByNonAlphaTokenizer::Options& o) {
-  auto refs = std::tie(o.case_convert);
+  auto refs = std::tie(o.case_convert, o.chars);
   irs::utils::ReadTupleOrObject(ctx, refs);
 }
 
 }  // namespace irs::analysis
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::SplitByNonAlphaTokenizer::Options::Chars>(
+  irs::analysis::SplitByNonAlphaTokenizer::Options::Chars value) noexcept {
+  if (value ==
+      irs::analysis::SplitByNonAlphaTokenizer::Options::Chars::AsciiBytes) {
+    return "ascii_bytes";
+  }
+  return default_tag;
+}
+
+}  // namespace magic_enum

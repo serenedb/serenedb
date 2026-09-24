@@ -121,3 +121,13 @@ SELECT split_text('The Quick fox-trot.', case := 'lower') AS tokens;
 ----
 tokens
 {the,quick,fox,trot}
+
+# DOCS_TEST: grapheme
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_text('Hi 👍🏽🇩🇪!', break := 'grapheme') AS tokens;
+----
+tokens
+{H,i,👍🏽,🇩🇪,!}

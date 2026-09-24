@@ -56,17 +56,12 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
   MaybeNegated(parent, ctx, column_info).Add(std::move(clause));
 }
 
-void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info, std::string_view text,
-                    bool require_all) {
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
-      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
-    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
-    return;
-  }
-  auto& analyzer = ctx.tokenizer;
+namespace {
+
+template<typename Tokens>
+void AnalyzeText(irs::analysis::Tokenizer& analyzer, std::string_view text,
+                 Tokens& tokens) {
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens tokens;
   if (!value_analyzer.Analyze(
         analyzer,
         duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
@@ -75,29 +70,105 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto toks = tokens.terms();
+}
 
-  if (toks.empty()) {
+void AddTokenGroup(BoolTarget parent, irs::field_id field,
+                   std::span<irs::bstring> group, const irs::Scorer* scorer) {
+  SDB_ASSERT(!group.empty());
+  if (group.size() == 1) {
+    AddTerm(parent, field, group.front(), irs::kNoBoost, scorer);
+    return;
+  }
+  auto& node = AddTermSet(parent, field, group, 1);
+  node.SetMergeType(irs::ScoreMergeType::Max);
+  node.SetScorer(scorer);
+}
+
+}  // namespace
+
+void AppendTokenGroups(std::span<const duckdb::string_t> terms,
+                       std::span<const uint32_t> pos, TokenGroups& groups) {
+  SDB_ASSERT(terms.size() == pos.size());
+  for (size_t i = 0; i < terms.size();) {
+    size_t end = i + 1;
+    while (end < terms.size() && pos[end] == pos[i]) {
+      ++end;
+    }
+    auto& group = groups.emplace_back();
+    group.reserve(end - i);
+    for (size_t k = i; k < end; ++k) {
+      group.emplace_back(irs::AsBytesView(terms[k]));
+    }
+    std::sort(group.begin(), group.end());
+    group.erase(std::unique(group.begin(), group.end()), group.end());
+    i = end;
+  }
+}
+
+void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
+                    size_t min_match, irs::score_t boost,
+                    const irs::Scorer* scorer) {
+  SDB_ASSERT(!groups.empty());
+  std::sort(groups.begin(), groups.end());
+  groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
+  min_match = std::min(min_match, groups.size());
+  const bool stacked = std::ranges::any_of(
+    groups, [](const auto& group) { return group.size() > 1; });
+  if (!stacked) {
+    if (groups.size() == 1) {
+      AddTerm(parent, field, groups.front().front(), boost, scorer);
+      return;
+    }
+    std::vector<irs::bstring> terms;
+    terms.reserve(groups.size());
+    for (auto& group : groups) {
+      terms.push_back(std::move(group.front()));
+    }
+    auto& node = AddTermSet(parent, field, terms, min_match);
+    node.SetBoost(boost);
+    node.SetScorer(scorer);
+    return;
+  }
+  if (groups.size() == 1) {
+    auto& node = AddTermSet(parent, field, groups.front(), 1);
+    node.SetMergeType(irs::ScoreMergeType::Max);
+    node.SetBoost(boost);
+    node.SetScorer(scorer);
+    return;
+  }
+  const bool all = min_match >= groups.size();
+  const auto node =
+    AddGroup(parent, all ? irs::Occur::Must : irs::Occur::Should);
+  node.node->SetBoost(boost);
+  for (auto& group : groups) {
+    AddTokenGroup(node, field, group, scorer);
+  }
+  if (!all) {
+    SetMinMatch(*node.node, min_match);
+  }
+}
+
+void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info, std::string_view text,
+                    bool require_all) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
+    return;
+  }
+  irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
+  AnalyzeText(ctx.tokenizer, text, tokens);
+  if (tokens.terms().empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
-  const auto field_id =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  if (toks.size() == 1) {
-    AddTerm(MaybeNegated(parent, ctx, column_info), field_id,
-            irs::AsBytesView(toks[0]), ctx.boost);
-    return;
-  }
-  // Multi-token: one term-set node, every token required (AND) or one of
-  // them (OR).
-  std::vector<irs::bstring> terms;
-  terms.reserve(toks.size());
-  for (const auto& t : toks) {
-    terms.emplace_back(irs::AsBytesView(t));
-  }
-  AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms,
-             require_all ? terms.size() : 1)
-    .SetBoost(ctx.boost);
+  TokenGroups groups;
+  AppendTokenGroups(tokens.terms(), tokens.pos(), groups);
+  const auto min_match = require_all ? groups.size() : size_t{1};
+  AddTokenGroups(
+    MaybeNegated(parent, ctx, column_info),
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
+    min_match, ctx.boost);
 }
 void FromTerm(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,

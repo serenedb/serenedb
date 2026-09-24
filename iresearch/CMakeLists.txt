@@ -51,6 +51,8 @@ set(IResearch_core_sources
     ./analysis/shingle_tokenizer.cpp
     ./analysis/sql_tokenizer.cpp
     ./analysis/wildcard_tokenizer.cpp
+    ./analysis/html_strip_tokenizer.cpp
+    ./analysis/filter_tokens_tokenizer.cpp
     ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp

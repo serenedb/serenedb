@@ -73,7 +73,8 @@ TEST(wordnet_synonyms_tests, test_masking) {
 
     const auto tokens = tests::Analyze(stream, data0);
     ASSERT_TRUE(tokens.has_value());
-    ASSERT_TRUE(tokens->empty());
+    ASSERT_EQ(1, tokens->size());
+    ASSERT_EQ((tests::AnalyzerToken{"come", 1, 0, 4}), (*tokens)[0]);
   }
 
   {
@@ -94,7 +95,8 @@ TEST(wordnet_synonyms_tests, test_masking) {
     {
       const auto tokens = tests::Analyze(stream, data1);
       ASSERT_TRUE(tokens.has_value());
-      ASSERT_TRUE(tokens->empty());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"advance", 1, 0, 7}), (*tokens)[0]);
     }
   }
 
@@ -146,7 +148,7 @@ TEST(wordnet_synonyms_tests, test_homonyms) {
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(2, tokens->size());
     ASSERT_EQ((tests::AnalyzerToken{"100000002", 1, 0, 5}), (*tokens)[0]);
-    ASSERT_EQ((tests::AnalyzerToken{"100000003", 2, 0, 5}), (*tokens)[1]);
+    ASSERT_EQ((tests::AnalyzerToken{"100000003", 1, 0, 5}), (*tokens)[1]);
   }
 
   {
@@ -202,7 +204,7 @@ TEST(wordnet_synonyms_tests, test_homonyms_double_reset) {
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(2, tokens->size());
     ASSERT_EQ((tests::AnalyzerToken{"100000002", 1, 0, 5}), (*tokens)[0]);
-    ASSERT_EQ((tests::AnalyzerToken{"100000003", 2, 0, 5}), (*tokens)[1]);
+    ASSERT_EQ((tests::AnalyzerToken{"100000003", 1, 0, 5}), (*tokens)[1]);
   }
 }
 

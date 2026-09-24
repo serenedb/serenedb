@@ -97,6 +97,7 @@ The same two dictionaries written as expressions, with the SQL inline:
 ## See also
 
 - [`split_by_pattern`](../../functions/search/tokenizers/split_by_pattern.md) — split or extract with a regular expression, without a SQL expression
+- [`filter_tokens`](../../functions/search/tokenizers/filter_tokens.md) — drop tokens with an SQL predicate while keeping their offsets
 - [keyword](./keyword.md) — keep the whole value as one verbatim token
 - [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md) — case and accent normalization as built-in options
 - [pipeline](./pipeline/index.md) — chain `sql` with other analyzers

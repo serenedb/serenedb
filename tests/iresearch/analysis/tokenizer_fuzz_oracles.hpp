@@ -47,6 +47,7 @@ struct ModelParams {
   std::bitset<256> token_bytes;
   bool ascii_only = false;
   irs::Case convert = irs::Case::None;
+  bool unicode_case = false;
   size_t min_gram = 0;
   size_t max_gram = 0;
   std::string expression;

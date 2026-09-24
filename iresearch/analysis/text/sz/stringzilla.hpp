@@ -20,19 +20,27 @@
 
 #pragma once
 
+#include <stringzilla/utf8_graphemes/serial.h>
 #include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_sentences/serial.h>
 #include <stringzilla/utf8_tokens/serial.h>
+#include <stringzilla/utf8_uncased_fold/serial.h>
 #if defined(__x86_64__)
+#include <stringzilla/utf8_graphemes/haswell.h>
+#include <stringzilla/utf8_graphemes/icelake.h>
 #include <stringzilla/utf8_norm/haswell.h>
 #include <stringzilla/utf8_sentences/haswell.h>
 #include <stringzilla/utf8_sentences/icelake.h>
 #include <stringzilla/utf8_tokens/haswell.h>
 #include <stringzilla/utf8_tokens/icelake.h>
+#include <stringzilla/utf8_uncased_fold/haswell.h>
+#include <stringzilla/utf8_uncased_fold/icelake.h>
 #elif defined(__aarch64__)
+#include <stringzilla/utf8_graphemes/neon.h>
 #include <stringzilla/utf8_norm/neon.h>
 #include <stringzilla/utf8_sentences/neon.h>
 #include <stringzilla/utf8_tokens/neon.h>
+#include <stringzilla/utf8_uncased_fold/neon.h>
 #endif
 
 #include <cstddef>
@@ -43,7 +51,9 @@ namespace irs::analysis::sz {
 inline bool HasAvx512() noexcept {
   static const bool kHas = __builtin_cpu_supports("avx512bw") &&
                            __builtin_cpu_supports("avx512vl") &&
-                           __builtin_cpu_supports("avx512vbmi");
+                           __builtin_cpu_supports("avx512dq") &&
+                           __builtin_cpu_supports("avx512vbmi") &&
+                           __builtin_cpu_supports("avx512vbmi2");
   return kHas;
 }
 #endif
@@ -56,6 +66,21 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
   return sz_utf8_norm_neon(in, n, form, out);
 #else
   return sz_utf8_norm_serial(in, n, form, out);
+#endif
+}
+
+inline constexpr size_t kFoldGrowth = 3;
+
+inline size_t Fold(const char* in, size_t n, char* out) noexcept {
+#ifdef __x86_64__
+  if (HasAvx512()) {
+    return sz_utf8_uncased_fold_icelake(in, n, out);
+  }
+  return sz_utf8_uncased_fold_haswell(in, n, out);
+#elif defined(__aarch64__)
+  return sz_utf8_uncased_fold_neon(in, n, out);
+#else
+  return sz_utf8_uncased_fold_serial(in, n, out);
 #endif
 }
 
@@ -83,6 +108,13 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
   return Dispatch<sz_utf8_newlines_haswell, sz_utf8_newlines_icelake>(
     text, length, offsets, lengths, capacity, consumed);
 }
+
+inline size_t Graphemes(const char* text, size_t length, size_t* starts,
+                        size_t* lengths, size_t capacity,
+                        size_t* consumed) noexcept {
+  return Dispatch<sz_utf8_graphemes_haswell, sz_utf8_graphemes_icelake>(
+    text, length, starts, lengths, capacity, consumed);
+}
 #elif defined(__aarch64__)
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
                         size_t* lengths, size_t capacity,
@@ -97,6 +129,13 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
   return sz_utf8_newlines_neon(text, length, offsets, lengths, capacity,
                                consumed);
 }
+
+inline size_t Graphemes(const char* text, size_t length, size_t* starts,
+                        size_t* lengths, size_t capacity,
+                        size_t* consumed) noexcept {
+  return sz_utf8_graphemes_neon(text, length, starts, lengths, capacity,
+                                consumed);
+}
 #else
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
                         size_t* lengths, size_t capacity,
@@ -110,6 +149,13 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
                        size_t* consumed) noexcept {
   return sz_utf8_newlines_serial(text, length, offsets, lengths, capacity,
                                  consumed);
+}
+
+inline size_t Graphemes(const char* text, size_t length, size_t* starts,
+                        size_t* lengths, size_t capacity,
+                        size_t* consumed) noexcept {
+  return sz_utf8_graphemes_serial(text, length, starts, lengths, capacity,
+                                  consumed);
 }
 #endif
 

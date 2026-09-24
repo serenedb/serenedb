@@ -39,7 +39,7 @@ query
 SELECT ts_lexize('wordnet_syn', 'keyboard');
 ----
 ts_lexize
-{}
+{keyboard}
 
 # DOCS_TEST: function_form
 

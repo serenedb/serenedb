@@ -58,26 +58,26 @@ duckdb::LogicalTypeId ElementType(const duckdb::LogicalType& type) noexcept {
            : type.id();
 }
 
-void ValidateParsed(duckdb::ParsedExpression& expr) {
+void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::SUBQUERY:
-      THROW_SQL_ERROR(ERR_MSG("sql: subqueries are not allowed"));
+      THROW_SQL_ERROR(ERR_MSG(owner, ": subqueries are not allowed"));
     case duckdb::ExpressionClass::PARAMETER:
-      THROW_SQL_ERROR(ERR_MSG("sql: parameters are not allowed"));
+      THROW_SQL_ERROR(ERR_MSG(owner, ": parameters are not allowed"));
     case duckdb::ExpressionClass::FUNCTION: {
       auto& func = expr.Cast<duckdb::FunctionExpression>();
       const auto& name = func.GetQualifiedName();
       if ((!name.Catalog().empty() && name.Catalog() != SYSTEM_CATALOG) ||
           (!name.Schema().empty() && name.Schema() != DEFAULT_SCHEMA)) {
-        THROW_SQL_ERROR(ERR_MSG("sql: function \"",
+        THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
                                 name.Name().GetIdentifierName(),
                                 "\": only built-in functions are allowed"));
       }
       if (name.Name().GetIdentifierName().starts_with("ts_")) {
         THROW_SQL_ERROR(ERR_MSG(
-          "sql: text-search function \"", name.Name().GetIdentifierName(),
-          "\" is not allowed in a sql tokenizer expression (it would "
-          "recurse into the tokenizer)"));
+          owner, ": text-search function \"", name.Name().GetIdentifierName(),
+          "\" is not allowed in a ", owner,
+          " tokenizer expression (it would recurse into the tokenizer)"));
       }
       func.SetQualifiedName(duckdb::Identifier{SYSTEM_CATALOG},
                             duckdb::Identifier{DEFAULT_SCHEMA}, name.Name());
@@ -86,10 +86,26 @@ void ValidateParsed(duckdb::ParsedExpression& expr) {
       break;
   }
   duckdb::ParsedExpressionIterator::EnumerateChildren(
-    expr, [](duckdb::ParsedExpression& child) { ValidateParsed(child); });
+    expr,
+    [owner](duckdb::ParsedExpression& child) { ValidateParsed(owner, child); });
 }
 
-void VerifyFunctionsExist(duckdb::ClientContext& ctx,
+std::unique_ptr<duckdb::ParsedExpression> ParseInputExpression(
+  std::string_view owner, std::string_view text) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
+  try {
+    exprs = duckdb::Parser::ParseExpressionList(std::string{text});
+  } catch (const std::exception& e) {
+    THROW_SQL_ERROR(ERR_MSG(owner, ": ", e.what()));
+  }
+  if (exprs.size() != 1) {
+    THROW_SQL_ERROR(ERR_MSG(owner, ": expected exactly one expression"));
+  }
+  ValidateParsed(owner, *exprs[0]);
+  return std::move(exprs[0]);
+}
+
+void VerifyFunctionsExist(duckdb::ClientContext& ctx, std::string_view owner,
                           const duckdb::ParsedExpression& expr) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
     const auto& name =
@@ -104,14 +120,49 @@ void VerifyFunctionsExist(duckdb::ClientContext& ctx,
     if (!exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) &&
         !exists(duckdb::CatalogType::MACRO_ENTRY) &&
         !exists(duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY)) {
-      THROW_SQL_ERROR(ERR_MSG("sql: function \"", name.GetIdentifierName(),
+      THROW_SQL_ERROR(ERR_MSG(owner, ": function \"", name.GetIdentifierName(),
                               "\": only built-in functions are allowed"));
     }
   }
   duckdb::ParsedExpressionIterator::EnumerateChildren(
     expr, [&](const duckdb::ParsedExpression& child) {
-      VerifyFunctionsExist(ctx, child);
+      VerifyFunctionsExist(ctx, owner, child);
     });
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindInputExpression(
+  duckdb::ClientContext& ctx, std::string_view owner,
+  const duckdb::ParsedExpression& parsed) {
+  VerifyFunctionsExist(ctx, owner, parsed);
+  auto expr = parsed.Copy();
+  auto binder = duckdb::Binder::CreateBinder(ctx);
+  duckdb::ColumnList columns;
+  columns.AddColumn(duckdb::ColumnDefinition{duckdb::Identifier{kInputColumn},
+                                             duckdb::LogicalType::VARCHAR});
+  duckdb::physical_index_set_t bound_columns;
+  duckdb::CheckBinder check_binder{*binder, ctx, duckdb::Identifier{owner},
+                                   columns, bound_columns};
+  check_binder.target_type =
+    duckdb::LogicalType{duckdb::LogicalTypeId::INVALID};
+  duckdb::unique_ptr<duckdb::Expression> bound;
+  try {
+    bound = check_binder.Bind(expr);
+  } catch (const std::exception& e) {
+    THROW_SQL_ERROR(ERR_MSG(owner, ": ", duckdb::ErrorData{e}.RawMessage()));
+  }
+  if (bound->IsVolatile()) {
+    THROW_SQL_ERROR(ERR_MSG(owner, ": volatile expressions are not allowed"));
+  }
+  return bound;
+}
+
+template<typename Fn>
+void RunInTransaction(duckdb::ClientContext& ctx, Fn&& fn) {
+  if (ctx.transaction.HasActiveTransaction()) {
+    fn();
+  } else {
+    ctx.RunFunctionInTransaction(fn);
+  }
 }
 
 bool IsDirectCall(const duckdb::Expression& expr) {
@@ -197,7 +248,7 @@ struct ResultRows {
 
 }  // namespace
 
-struct SqlTokenizer::Call {
+struct SqlCall {
   struct Node;
 
   struct Child {
@@ -263,7 +314,7 @@ struct SqlTokenizer::Call {
     std::vector<Child> children;
   };
 
-  Call(duckdb::ClientContext& ctx, const duckdb::Expression& expr)
+  SqlCall(duckdb::ClientContext& ctx, const duckdb::Expression& expr)
     : executor{ctx, expr},
       result_cache{executor.GetAllocator(), expr.GetReturnType()},
       result{result_cache},
@@ -284,7 +335,7 @@ struct SqlTokenizer::Call {
   }
 
   size_t MemoryUsage() const noexcept {
-    return sizeof(Call) + result.GetAllocationSize();
+    return sizeof(SqlCall) + result.GetAllocationSize();
   }
 
   std::array<duckdb::string_t, kBatch> values;
@@ -295,19 +346,8 @@ struct SqlTokenizer::Call {
   Node root;
 };
 
-SqlTokenizer::SqlTokenizer(Options opts) {
-  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
-  try {
-    exprs = duckdb::Parser::ParseExpressionList(opts.expression);
-  } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
-  }
-  if (exprs.size() != 1) {
-    THROW_SQL_ERROR(ERR_MSG("sql: expected exactly one expression"));
-  }
-  ValidateParsed(*exprs[0]);
-  _parsed = std::move(exprs[0]);
-}
+SqlTokenizer::SqlTokenizer(Options opts)
+  : _parsed{ParseInputExpression(type_name(), opts.expression)} {}
 
 SqlTokenizer::~SqlTokenizer() = default;
 
@@ -316,26 +356,7 @@ Tokenizer::ptr SqlTokenizer::Make(Options opts) {
 }
 
 void SqlTokenizer::BindExpression(duckdb::ClientContext& ctx) {
-  VerifyFunctionsExist(ctx, *_parsed);
-  auto expr = _parsed->Copy();
-  auto binder = duckdb::Binder::CreateBinder(ctx);
-  duckdb::ColumnList columns;
-  columns.AddColumn(duckdb::ColumnDefinition{duckdb::Identifier{kInputColumn},
-                                             duckdb::LogicalType::VARCHAR});
-  duckdb::physical_index_set_t bound_columns;
-  duckdb::CheckBinder check_binder{
-    *binder, ctx, duckdb::Identifier{type_name()}, columns, bound_columns};
-  check_binder.target_type =
-    duckdb::LogicalType{duckdb::LogicalTypeId::INVALID};
-  duckdb::unique_ptr<duckdb::Expression> bound;
-  try {
-    bound = check_binder.Bind(expr);
-  } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("sql: ", duckdb::ErrorData{e}.RawMessage()));
-  }
-  if (bound->IsVolatile()) {
-    THROW_SQL_ERROR(ERR_MSG("sql: volatile expressions are not allowed"));
-  }
+  auto bound = BindInputExpression(ctx, type_name(), *_parsed);
   const auto& type = bound->GetReturnType();
   const auto element = ElementType(type);
   if (element != duckdb::LogicalTypeId::VARCHAR &&
@@ -359,14 +380,10 @@ TokenTraits SqlTokenizer::Traits() const noexcept {
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
   if (!_expr) {
-    if (ctx.transaction.HasActiveTransaction()) {
-      BindExpression(ctx);
-    } else {
-      ctx.RunFunctionInTransaction([&] { BindExpression(ctx); });
-    }
+    RunInTransaction(ctx, [&] { BindExpression(ctx); });
   }
   try {
-    _call = std::make_unique<Call>(ctx, *_expr);
+    _call = std::make_unique<SqlCall>(ctx, *_expr);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
   }
@@ -422,6 +439,93 @@ void SqlTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
       }
     }
   });
+}
+
+namespace {
+
+bool Accepted(const duckdb::UnifiedVectorFormat& verdicts, uint32_t row) {
+  const auto idx = verdicts.sel->get_index(row);
+  return verdicts.validity.RowIsValid(idx) &&
+         duckdb::UnifiedVectorFormat::GetData<bool>(verdicts)[idx];
+}
+
+}  // namespace
+
+SqlPredicate::SqlPredicate(std::string_view owner, std::string_view expression)
+  : _owner{owner}, _parsed{ParseInputExpression(owner, expression)} {}
+
+SqlPredicate::~SqlPredicate() = default;
+
+void SqlPredicate::BindExpression(duckdb::ClientContext& ctx) {
+  auto bound = BindInputExpression(ctx, _owner, *_parsed);
+  if (bound->GetReturnType() != duckdb::LogicalType::BOOLEAN) {
+    THROW_SQL_ERROR(ERR_MSG(_owner, ": the lambda must return BOOLEAN, got ",
+                            bound->GetReturnType().ToString()));
+  }
+  _expr = std::move(bound);
+  _parsed.reset();
+}
+
+void SqlPredicate::Bind(duckdb::ClientContext& ctx) {
+  if (!_expr) {
+    RunInTransaction(ctx, [&] { BindExpression(ctx); });
+  }
+  try {
+    _call = std::make_unique<SqlCall>(ctx, *_expr);
+  } catch (const std::exception& e) {
+    THROW_SQL_ERROR(ERR_MSG(_owner, ": ", e.what()));
+  }
+}
+
+void SqlPredicate::Unbind() noexcept { _call.reset(); }
+
+size_t SqlPredicate::MemoryUsage() const noexcept {
+  return _call ? _call->MemoryUsage() : 0;
+}
+
+bool SqlPredicate::Test(const duckdb::string_t& value) {
+  SDB_ASSERT(_call);
+  auto& call = *_call;
+  call.values[0] = value;
+  call.Run(1);
+  duckdb::UnifiedVectorFormat verdicts;
+  call.result.ToUnifiedFormat(verdicts);
+  return Accepted(verdicts, 0);
+}
+
+bool SqlPredicate::Apply(const duckdb::string_t* terms, uint32_t count,
+                         uint64_t* valid) {
+  SDB_ASSERT(_call);
+  auto& call = *_call;
+  bool all_kept = true;
+  uint32_t staged = 0;
+  const auto flush = [&] {
+    call.Run(staged);
+    duckdb::UnifiedVectorFormat verdicts;
+    call.result.ToUnifiedFormat(verdicts);
+    for (uint32_t v = 0; v < staged; ++v) {
+      if (!Accepted(verdicts, v)) {
+        const uint32_t row = call.rows[v];
+        valid[row >> 6] &= ~(uint64_t{1} << (row & 63));
+        all_kept = false;
+      }
+    }
+    staged = 0;
+  };
+  for (uint32_t i = 0; i < count; ++i) {
+    if (((valid[i >> 6] >> (i & 63)) & 1) == 0) {
+      continue;
+    }
+    call.values[staged] = terms[i];
+    call.rows[staged] = i;
+    if (++staged == kBatch) {
+      flush();
+    }
+  }
+  if (staged != 0) {
+    flush();
+  }
+  return all_kept;
 }
 
 }  // namespace irs::analysis

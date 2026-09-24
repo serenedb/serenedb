@@ -282,7 +282,8 @@ void OpenBootStorage() {
       }
       table->SetSearchData(search::SearchTable::Create(
         database_id, ObjectId{table->ParentSchema().oid}, ObjectId{table->oid},
-        /*is_new=*/false, table->SearchOptions(), std::move(pk_columns)));
+        /*is_new=*/false, table->SearchOptions(), std::move(pk_columns),
+        search::SearchTable::DeclaredCompression(columns)));
     }
     // The sequences: replay read each definition mid-log, where the counter
     // records after it had not been folded in yet.

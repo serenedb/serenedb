@@ -5,7 +5,8 @@ control substitution on
 statement ok
 DETACH IF EXISTS db111;
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 statement ok
@@ -28,7 +29,8 @@ DETACH db111;
 statement ok
 DETACH IF EXISTS db111;
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 # DOCS_TEST: example_002
@@ -36,7 +38,8 @@ ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 statement ok
 DETACH IF EXISTS db111;
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 # DOCS_TEST_BODY

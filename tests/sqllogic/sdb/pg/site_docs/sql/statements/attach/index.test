@@ -248,7 +248,8 @@ DETACH db18;
 
 # DOCS_TEST_BODY
 
-statement ok
+# db18b was attached and detached earlier; the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
 
 statement ok

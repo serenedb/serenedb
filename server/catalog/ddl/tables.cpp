@@ -215,7 +215,8 @@ const SereneDBTableEntry* CreateTable(
     search_data = search::SearchTable::Create(
       database_id, *schema_id, table_id,
       /*is_new=*/true, catalog::ReadSearchOptionTags(table->tags),
-      std::move(pk_columns));
+      std::move(pk_columns),
+      search::SearchTable::DeclaredCompression(table->columns));
   }
 
   // Checked before anything is placed. Two generated sequences can collide with

@@ -86,9 +86,6 @@ struct Api {
     std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t candidates, const Context& ctx) {
-    if (detail::builder::ExcludesDocsMask(exclude_terms, exclude_filters)) {
-      return MakeLiveDocs(segment);
-    }
     return detail::builder::MakeSparseNegation<Api>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }

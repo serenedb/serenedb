@@ -1126,8 +1126,6 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       irs::FileName(meta.name, 101, irs::SegmentMetaWriterImpl::kFormatExt));
     ASSERT_EQ(expected_files, meta.files);
 
-    // Only the root of the chain carries the file list; the links inherit it
-    // along the same walk that merges their patches.
     auto link_of = [&](uint64_t version, std::vector<std::string>& files) {
       const auto file = irs::FileName(meta.name, version,
                                       irs::SegmentMetaWriterImpl::kFormatExt);
@@ -1140,12 +1138,15 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     {
       std::vector<std::string> head_files;
-      ASSERT_EQ(101, link_of(105, head_files));
+      ASSERT_EQ((std::vector<uint64_t>{100, 101}), link_of(105, head_files));
       ASSERT_TRUE(head_files.empty());
 
+      std::vector<std::string> link_files;
+      ASSERT_EQ((std::vector<uint64_t>{100}), link_of(101, link_files));
+      ASSERT_TRUE(link_files.empty());
+
       std::vector<std::string> root_files;
-      ASSERT_EQ(irs::SegmentMetaWriterImpl::kNoParent,
-                link_of(100, root_files));
+      ASSERT_TRUE(link_of(100, root_files).empty());
       ASSERT_EQ(data_files, root_files);
     }
 
@@ -1442,7 +1443,8 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   };
 
   auto write = [&](std::string_view name, uint64_t version,
-                   std::string_view mask, uint64_t parent, bool files) {
+                   std::string_view mask,
+                   std::initializer_list<uint64_t> parents, bool files) {
     auto out = create(name, version);
     if (!mask.empty()) {
       out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
@@ -1450,8 +1452,12 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     }
     duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
     meta_out.Begin();
-    meta_out.WritePropertyWithDefault<uint64_t>(Writer::kFieldParent, "parent",
-                                                parent, Writer::kNoParent);
+    if (parents.size() != 0) {
+      meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<uint64_t>(parents.begin()[i]);
+                         });
+    }
     if (files) {
       meta_out.WriteList(Writer::kFieldFiles, "files", 1,
                          [](duckdb::Serializer::List& list, duckdb::idx_t) {
@@ -1491,23 +1497,94 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   rejected("mask_fills_file", 1, "leaves no metadata");
 
   // the mask is not a bitmap at all
-  write("not_a_bitmap", 1, "garbage!", Writer::kNoParent, true);
+  write("not_a_bitmap", 1, "garbage!", {}, true);
   rejected("not_a_bitmap", 1, "Corrupted document mask");
 
   // a document id at the eof sentinel, i.e. an unbounded mask
-  write("mask_at_eof", 1, serialize({irs::doc_limits::eof()}),
-        Writer::kNoParent, true);
+  write("mask_at_eof", 1, serialize({irs::doc_limits::eof()}), {}, true);
   rejected("mask_at_eof", 1, "Invalid document id");
 
   // a document id below the first valid one
-  write("mask_below_min", 1, serialize({0}), Writer::kNoParent, true);
+  write("mask_below_min", 1, serialize({0}), {}, true);
   rejected("mask_below_min", 1, "Invalid document id");
 
   // only the root of a chain may carry the segment's file list
   const auto mask = serialize({1, 2, 3});
-  write("two_file_lists", 1, mask, Writer::kNoParent, true);
-  write("two_file_lists", 2, mask, 1, true);
+  write("two_file_lists", 1, mask, {}, true);
+  write("two_file_lists", 2, mask, {1}, true);
   rejected("two_file_lists", 2, "a second link carries");
+
+  write("maskless_head", 1, mask, {}, true);
+  write("maskless_head", 2, {}, {1}, false);
+  rejected("maskless_head", 2, "maskless head derives from 1 link(s)");
+
+  write("self_parent", 2, mask, {2}, true);
+  rejected("self_parent", 2, "out of order");
+
+  write("unordered_parents", 1, mask, {}, true);
+  write("unordered_parents", 2, mask, {1}, false);
+  write("unordered_parents", 3, mask, {2, 1}, false);
+  rejected("unordered_parents", 3, "out of order");
+}
+
+TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
+  using Writer = irs::SegmentMetaWriterImpl;
+
+  constexpr std::string_view kName = "listed_meta_name";
+
+  auto write = [&](uint64_t version, irs::doc_id_t doc,
+                   std::initializer_list<uint64_t> parents, bool files) {
+    auto out = dir().create(irs::FileName(kName, version, Writer::kFormatExt));
+    ASSERT_NE(nullptr, out);
+    roaring::Roaring compressed;
+    compressed.add(doc);
+    std::string blob(compressed.getSizeInBytes(), 0);
+    compressed.write(blob.data());
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
+                   blob.size());
+    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
+    meta_out.Begin();
+    if (parents.size() != 0) {
+      meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<uint64_t>(parents.begin()[i]);
+                         });
+    }
+    if (files) {
+      meta_out.WriteList(Writer::kFieldFiles, "files", 1,
+                         [](duckdb::Serializer::List& list, duckdb::idx_t) {
+                           list.WriteElement<std::string>("file1");
+                         });
+    }
+    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                     100);
+    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    meta_out.End();
+    out->WriteU64(blob.size());
+  };
+
+  write(1, 1, {}, true);
+  write(2, 2, {1}, false);
+  write(3, 3, {1, 2}, false);
+  write(5, 5, {1, 3}, false);
+
+  irs::SegmentMeta meta;
+  auto reader = codec()->get_segment_meta_reader();
+  reader->read(dir(), meta, irs::FileName(kName, 5, Writer::kFormatExt));
+
+  irs::DocumentMask expected;
+  expected.Add(1);
+  expected.Add(3);
+  expected.Add(5);
+  expected.Trim();
+  ASSERT_NE(nullptr, meta.docs_mask);
+  ASSERT_EQ(expected, *meta.docs_mask);
+  ASSERT_EQ(97, meta.live_docs_count);
+  ASSERT_EQ(3, meta.docs_mask_chain);
+  ASSERT_EQ((std::vector<std::string>{
+              "file1", irs::FileName(kName, 1, Writer::kFormatExt),
+              irs::FileName(kName, 3, Writer::kFormatExt)}),
+            meta.files);
 }
 
 TEST_P(FormatTestCase, format_utils_checksum) {

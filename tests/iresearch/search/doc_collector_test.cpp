@@ -26,8 +26,6 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/lead/docs_mask.hpp>
-#include <iresearch/search/lead/impl.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -463,8 +461,6 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
     ASSERT_NE(nullptr, query);
     auto lead = query->PlanLead({});
     ASSERT_NE(nullptr, lead);
-    ASSERT_NE(nullptr,
-              dynamic_cast<irs::lead::Impl<irs::lead::DocsMask>*>(lead.get()));
 
     std::vector<irs::doc_id_t> expected;
     auto live = segment.docs_iterator();
@@ -549,6 +545,60 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
       }));
     ASSERT_EQ(reader.live_docs_count() - live_excluded, counted);
   }
+}
+
+TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kNameFieldId;
+    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    trx.Remove(irs::Filter::ptr{std::move(removal)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  irs::All filter;
+  size_t counted = 0;
+  for (auto& segment : reader) {
+    ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+    const irs::PrepareContext ctx;
+    auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx), segment,
+                                   ctx.memory, nullptr, false);
+    ASSERT_NE(nullptr, query);
+
+    auto count = query->PlanCount({});
+    ASSERT_NE(nullptr, count);
+    ASSERT_EQ(segment.live_docs_count(),
+              count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
+
+    auto split = query->PlanCount({.partial = true});
+    ASSERT_NE(nullptr, split);
+    constexpr irs::doc_id_t kBounds[]{irs::doc_limits::min(), 3, 20,
+                                      irs::doc_limits::eof()};
+    uint64_t total = 0;
+    for (size_t i = 1; i != std::size(kBounds); ++i) {
+      total += split->Run(kBounds[i - 1], kBounds[i]);
+    }
+    total += split->Finish();
+    ASSERT_EQ(segment.live_docs_count(), total);
+    counted += total;
+  }
+  ASSERT_EQ(reader.live_docs_count(), counted);
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {

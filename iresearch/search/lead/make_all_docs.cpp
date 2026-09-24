@@ -20,7 +20,6 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
-#include "iresearch/search/lead/docs_mask.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 
@@ -28,10 +27,6 @@ namespace irs::lead {
 
 Node::ptr MakeAllDocs(const SubReader& segment) {
   return memory::make_managed<Impl<AllDocs>>(segment);
-}
-
-Node::ptr MakeLiveDocs(const SubReader& segment) {
-  return memory::make_managed<Impl<DocsMask>>(segment);
 }
 
 }  // namespace irs::lead

@@ -36,7 +36,8 @@ Root::ptr Api::MakeNegation(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context& ctx) {
   if (detail::builder::ExcludesDocsMask(exclude_terms, exclude_filters)) {
-    return MakeLive(segment, ctx);
+    return detail::builder::MakeWindowNegation<Api>(
+      exclude_terms, exclude_filters, segment, ctx);
   }
   if (ctx.table != nullptr) {
     return detail::builder::MakeSparseNegation<Api>(

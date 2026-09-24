@@ -24,7 +24,6 @@
 #pragma once
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
-#include <limits>
 #include <span>
 
 #include "iresearch/formats/format_utils.hpp"
@@ -39,15 +38,13 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
 
   static constexpr size_t kMinChainBytes = 4096;
 
-  static constexpr uint64_t kNoParent = std::numeric_limits<uint64_t>::max();
-
-  static constexpr duckdb::field_id_t kFieldParent = 0;
+  static constexpr duckdb::field_id_t kFieldParents = 0;
   static constexpr duckdb::field_id_t kFieldFiles = 1;
   static constexpr duckdb::field_id_t kFieldDocsCount = 2;
   static constexpr duckdb::field_id_t kFieldByteSize = 3;
 
   void write(Directory& dir, std::string& filename, SegmentMeta& meta) final {
-    Write(dir, filename, meta, nullptr, kNoParent);
+    Write(dir, filename, meta, nullptr, 0);
   }
 
   void WritePatch(Directory& dir, std::string& filename, SegmentMeta& meta,
@@ -120,10 +117,19 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     }));
 
   std::vector<std::string> files;
+  std::vector<uint64_t> parents;
   uint64_t chain_bytes = 0;
   size_t chain_files = 0;
   if (append) {
     SDB_ASSERT(parent < meta.version);
+    parents.reserve(ancestors + 1);
+    for (const auto& file : std::span{meta.files}.last(ancestors)) {
+      std::string_view name;
+      uint64_t link = 0;
+      ParseFileName(file, kFormatExt, name, link);
+      parents.push_back(link);
+    }
+    parents.push_back(parent);
     files.reserve(meta.files.size() + 1);
     files.assign(meta.files.begin(), meta.files.end());
     files.emplace_back(irs::FileName(meta.name, parent, kFormatExt));
@@ -133,7 +139,6 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     const auto data =
       std::span{meta.files}.first(meta.files.size() - ancestors);
     files.assign(data.begin(), data.end());
-    parent = kNoParent;
   }
 
   meta_file = FileName<SegmentMetaWriter>(meta);
@@ -152,8 +157,12 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
 
   duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
   meta_out.Begin();
-  meta_out.WritePropertyWithDefault<uint64_t>(kFieldParent, "parent", parent,
-                                              kNoParent);
+  if (!parents.empty()) {
+    meta_out.WriteList(kFieldParents, "parents", parents.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         list.WriteElement<uint64_t>(parents[i]);
+                       });
+  }
   if (!append) {
     meta_out.WriteList(kFieldFiles, "files", files.size(),
                        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {

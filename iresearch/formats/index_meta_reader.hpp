@@ -110,10 +110,15 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
           0);
       });
     });
-  if (payload && meta_in.CanDeserializeProperty(
-                   IndexMetaWriterImpl::kFieldPayload, "payload")) {
-    meta_in.ReadObject(IndexMetaWriterImpl::kFieldPayload, "payload",
-                       [&](duckdb::Deserializer& obj) { payload(obj); });
+  if (payload) {
+    const bool present = meta_in.OnOptionalPropertyBegin(
+      IndexMetaWriterImpl::kFieldPayload, "payload");
+    if (present) {
+      meta_in.OnObjectBegin();
+      payload(meta_in);
+      meta_in.OnObjectEnd();
+    }
+    meta_in.OnOptionalPropertyEnd(present);
   }
 
   for (size_t i = 0; auto& segment : segments) {

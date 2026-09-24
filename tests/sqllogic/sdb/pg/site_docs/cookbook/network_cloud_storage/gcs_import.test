@@ -66,7 +66,8 @@ statement ok
 DETACH db52;
 
 
-statement ok
+# re-attach of a just-detached file in another access mode: see sql/statements/attach/index.test
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db51.duckdb' AS db51 (READ_ONLY);
 
 statement ok

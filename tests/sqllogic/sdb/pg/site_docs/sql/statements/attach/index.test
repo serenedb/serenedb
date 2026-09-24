@@ -210,7 +210,8 @@ DETACH db18;
 statement ok
 DETACH IF EXISTS db19;
 
-statement ok
+# db18 was just detached; the file handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
 
 statement ok

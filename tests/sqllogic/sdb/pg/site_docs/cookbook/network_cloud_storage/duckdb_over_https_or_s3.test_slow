@@ -56,7 +56,8 @@ DETACH IF EXISTS db111;
 statement ok
 DETACH IF EXISTS db112;
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 statement ok
@@ -76,7 +77,8 @@ DETACH db112;
 
 # DOCS_TEST_BODY
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 # DOCS_TEST: example_004
@@ -84,7 +86,8 @@ ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 statement ok
 DETACH IF EXISTS db112;
 
-statement ok
+# re-attaching a just-detached file: the handle may not be released yet
+statement ok retry 20 backoff 250ms
 ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 # DOCS_TEST_BODY

@@ -150,7 +150,10 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   std::vector<duckdb::reference<const duckdb::CompressionFunction>> candidates =
     config.GetCompressionFunctions(codec_type.InternalType());
 
-  auto forced_method = forced;
+  auto forced_method =
+    forced != duckdb::CompressionType::COMPRESSION_AUTO
+      ? forced
+      : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     const bool available = std::ranges::any_of(
       candidates, [&](const auto& f) { return f.get().type == forced_method; });

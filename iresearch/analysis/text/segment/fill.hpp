@@ -29,6 +29,7 @@
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
+#include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
 #include "iresearch/analysis/text/words/unicode.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -55,6 +56,12 @@ bool AcceptBytes(std::string_view bytes) noexcept {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isgraph);
     } else {
+      const auto lead = static_cast<uint8_t>(bytes.front());
+      if (lead < 0x80
+            ? lead > ' ' && lead != 0x7F
+            : lead < 0xC0 || (lead > 0xC2 && (lead < 0xE1 || lead > 0xE3))) {
+        return true;
+      }
       return AnyOfChar32(bytes, [](uint32_t c) {
         return c > ' ' && c != 0x7F && !utf8_utils::CharIsWhiteSpace(c);
       });
@@ -63,18 +70,13 @@ bool AcceptBytes(std::string_view bytes) noexcept {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isalnum);
     } else {
-      return AnyOfChar32(bytes, [](uint32_t c) {
-        const auto g = utf8_utils::CharPrimaryCategory(c);
-        return g == 'L' || g == 'N';
-      });
+      return AnyOfChar32(bytes, words::detail::IsLetterCodePoint<true>);
     }
   } else {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isalpha);
     } else {
-      return AnyOfChar32(bytes, [](uint32_t c) {
-        return utf8_utils::CharPrimaryCategory(c) == 'L';
-      });
+      return AnyOfChar32(bytes, words::detail::IsLetterCodePoint<false>);
     }
   }
 }

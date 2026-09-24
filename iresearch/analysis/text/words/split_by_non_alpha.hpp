@@ -40,6 +40,7 @@ struct WordCodePoints {
 
   std::array<uint64_t, kEnd / 64> alnum{};
   std::array<uint64_t, kEnd / 64> letters{};
+  std::array<uint64_t, kEnd / 64> marks{};
 };
 
 inline const WordCodePoints& WordCodePointTable() noexcept {
@@ -51,6 +52,9 @@ inline const WordCodePoints& WordCodePointTable() noexcept {
       if (category == 'L' || category == 'M') {
         table.alnum[c >> 6] |= bit;
         table.letters[c >> 6] |= bit;
+        if (category == 'M') {
+          table.marks[c >> 6] |= bit;
+        }
       } else if (category == 'N') {
         table.alnum[c >> 6] |= bit;
       }
@@ -58,6 +62,21 @@ inline const WordCodePoints& WordCodePointTable() noexcept {
     return table;
   }();
   return kTable;
+}
+
+template<bool Digits>
+IRS_FORCE_INLINE bool IsLetterCodePoint(uint32_t c) noexcept {
+  if (c < 0x80) {
+    const auto folded = c | 0x20;
+    return (folded >= 'a' && folded <= 'z') || (Digits && c - '0' <= 9);
+  }
+  if (c < WordCodePoints::kEnd) [[likely]] {
+    const auto& table = WordCodePointTable();
+    const auto& bits = Digits ? table.alnum : table.letters;
+    return (((bits[c >> 6] & ~table.marks[c >> 6]) >> (c & 63)) & 1) != 0;
+  }
+  const char category = utf8_utils::CharPrimaryCategory(c);
+  return category == 'L' || (Digits && category == 'N');
 }
 
 template<bool Letters>

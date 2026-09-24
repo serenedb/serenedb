@@ -51,8 +51,10 @@ class SplitByNonAlphaTokenizer final
   explicit SplitByNonAlphaTokenizer(Options opts) noexcept : _options{opts} {}
 
   BlockTraits WantedBlockTraits() const noexcept final {
-    return {.ascii = _options.chars == Options::Chars::Alnum ||
-                     _options.chars == Options::Chars::Letters};
+    using enum Options::Chars;
+    return {.ascii =
+              _options.chars == Alnum || _options.chars == Letters ||
+              (_options.chars != Ascii && _options.case_convert != Case::None)};
   }
 
   auto PrepareBatch(BlockTraits traits) const {

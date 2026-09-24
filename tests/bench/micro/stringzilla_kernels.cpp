@@ -218,8 +218,11 @@ size_t CountSegments(std::string_view v) {
   size_t offset = 0;
   while (offset < v.size()) {
     sz_size_t consumed = 0;
-    count += Fn(v.data() + offset, v.size() - offset, starts, lengths, kBatch,
-                &consumed);
+    const size_t found = Fn(v.data() + offset, v.size() - offset, starts,
+                            lengths, kBatch, &consumed);
+    for (size_t i = 0; i < found; ++i) {
+      count += starts[i] + lengths[i];
+    }
     if (consumed == 0) {
       break;
     }
@@ -244,22 +247,40 @@ void BmNonSpaceRuns(benchmark::State& state, const Values& values) {
   size_t runs = 0;
   for (auto _ : state) {
     for (const auto& v : values) {
-      words::SplitByNonSpace(
-        duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())},
-        [&](size_t, size_t) { ++runs; });
+      words::ForEachNonSpaceRun<false>(
+        reinterpret_cast<const irs::byte_type*>(v.data()), v.size(),
+        [](size_t, classify::Block) {},
+        [&](size_t begin, size_t end) { runs += begin + end; });
     }
   }
   benchmark::DoNotOptimize(runs);
   SetBytes(state, values);
 }
 
+#if defined(__x86_64__)
+void BmNonSpaceRuns512(benchmark::State& state, const Values& values) {
+  size_t runs = 0;
+  auto on_block = [](size_t, classify::Block) {};
+  auto on_run = [&](size_t begin, size_t end) { runs += begin + end; };
+  for (auto _ : state) {
+    for (const auto& v : values) {
+      words::ForEachNonSpaceRunWide<false>(
+        reinterpret_cast<const irs::byte_type*>(v.data()), v.size(), on_block,
+        on_run);
+    }
+  }
+  benchmark::DoNotOptimize(runs);
+  SetBytes(state, values);
+}
+#endif
+
 void BmAlnumRuns(benchmark::State& state, const Values& values) {
   size_t runs = 0;
   for (auto _ : state) {
     for (const auto& v : values) {
-      words::SplitByNonAlnum<false>(
-        duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())},
-        [&](size_t, size_t) { ++runs; });
+      words::ForEachAlnumRun<false>(
+        reinterpret_cast<const irs::byte_type*>(v.data()), v.size(),
+        [&](size_t begin, size_t end) { runs += begin + end; });
     }
   }
   benchmark::DoNotOptimize(runs);
@@ -369,6 +390,7 @@ std::vector<Candidate> Candidates() {
     {"whitespace", "icelake", BmSegments<sz_utf8_whitespaces_icelake>,
      Isa::Icelake, true},
     {"whitespace", "ours", BmNonSpaceRuns, Isa::Any, true},
+    {"whitespace", "ours512", BmNonSpaceRuns512, Isa::Icelake, true},
     {"alnum", "serial", BmSegments<sz_utf8_delimiters_serial>, Isa::Any, true},
     {"alnum", "haswell", BmSegments<sz_utf8_delimiters_haswell>, Isa::Any,
      true},

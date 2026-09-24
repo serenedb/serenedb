@@ -100,6 +100,32 @@ Runs SplitRunsKeepNonAscii(std::string_view v) {
   return out;
 }
 
+template<bool Wide>
+Runs NonSpaceRuns(std::string_view v) {
+  Runs out;
+  auto on_block = [](size_t, irs::analysis::classify::Block) {};
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachNonSpaceRunWide<false>(data, v.size(),
+                                                        on_block, on_run);
+#endif
+  } else {
+    irs::analysis::words::ForEachNonSpaceRun<false>(data, v.size(), on_block,
+                                                    on_run);
+  }
+  return out;
+}
+
+bool HasWideKernels() {
+#if defined(__x86_64__)
+  return irs::analysis::classify::HasAvx512Bw();
+#else
+  return false;
+#endif
+}
+
 struct Tok {
   std::string term;
   uint32_t offs_start;
@@ -489,6 +515,28 @@ TEST(split_by_non_alpha_tokenizer_test, letter_crosses_block_boundary) {
   }
 }
 
+TEST(split_by_non_alpha_tokenizer_test, fast_word_ranges_are_words) {
+  constexpr std::pair<uint32_t, uint32_t> kRanges[] = {
+    {0x00C0, 0x00D6}, {0x00D8, 0x00F6}, {0x00F8, 0x027F}, {0x0400, 0x047F},
+    {0x04C0, 0x04FF}, {0x4000, 0x4DBF}, {0x4E00, 0x9FFF}, {0xAC00, 0xD77F},
+  };
+  for (const auto chars : {Chars::Alnum, Chars::Letters}) {
+    SCOPED_TRACE(static_cast<int>(chars));
+    auto a = SplitByNonAlphaTokenizer::Make({.chars = chars});
+    for (const auto [lo, hi] : kRanges) {
+      for (uint32_t cp = lo; cp <= hi; ++cp) {
+        std::string v(2 + irs::utf8_utils::kMaxCharSize, 'a');
+        v.resize(1 + irs::utf8_utils::FromChar32(
+                       cp, reinterpret_cast<irs::byte_type*>(v.data() + 1)));
+        v += 'b';
+        const auto tokens = Pull(*a, v);
+        ASSERT_EQ(1u, tokens.size()) << std::hex << cp;
+        ASSERT_EQ(v, tokens[0].term) << std::hex << cp;
+      }
+    }
+  }
+}
+
 TEST(split_by_non_alpha_tokenizer_test, unicode_oracle_all_sizes) {
   struct Piece {
     std::string_view bytes;
@@ -512,6 +560,18 @@ TEST(split_by_non_alpha_tokenizer_test, unicode_oracle_all_sizes) {
     {"\xE3\x80\x80", false, false},
     {"\xF0\x9F\x98\x80", false, false},
     {"\xF0\x9D\x90\x80", true, true},
+    {"\xC3\x97", false, false},
+    {"\xC3\xB7", false, false},
+    {"\xC4\x80", true, true},
+    {"\xD0\x96", true, true},
+    {"\xD2\x82", false, false},
+    {"\xD3\xBF", true, true},
+    {"\xE4\xB7\x80", false, false},
+    {"\xE4\xB8\x80", true, true},
+    {"\xEA\xB0\x80", true, true},
+    {"\xED\x9E\xA3", true, true},
+    {"\xCE\xB1", true, true},
+    {"\xE3\x81\x82", true, true},
   };
   uint64_t seed = 0xa1a1;
   const auto next = [&] {
@@ -671,6 +731,10 @@ TEST(split_by_non_alpha_tokenizer_test, whitespace_oracle_all_sizes) {
         }
         SCOPED_TRACE(testing::Message()
                      << "pieces=" << pieces << " iter=" << iter);
+        ASSERT_EQ(runs, NonSpaceRuns<false>(v));
+        if (HasWideKernels()) {
+          ASSERT_EQ(runs, NonSpaceRuns<true>(v));
+        }
         const auto tokens = Pull(*a, v);
         ASSERT_EQ(runs.size(), tokens.size());
         for (size_t i = 0; i < runs.size(); ++i) {

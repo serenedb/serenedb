@@ -32,6 +32,58 @@
 
 namespace irs::analysis::words {
 
+template<TokenLayout Layout, Case C, bool KeepNonAscii>
+class CaseRuns {
+ public:
+  CaseRuns(const char* base, size_t size, TokenSink& sink) noexcept
+    : _base{base}, _limit{base + size}, _sink{sink} {}
+
+  IRS_FORCE_INLINE void Fold(size_t offset, classify::Block b) noexcept {
+    _ring.Fold(offset, b);
+  }
+
+  IRS_FORCE_INLINE void FoldAt(const byte_type* bytes, size_t size,
+                               size_t at) noexcept {
+    _ring.FoldAt(bytes, size, at);
+  }
+
+  IRS_FORCE_INLINE void operator()(size_t begin, size_t end) {
+    const Offs offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)};
+    const uint32_t n = offs.end - offs.start;
+    if constexpr (KeepNonAscii) {
+      if (!classify::IsAsciiValue(_base + offs.start, n)) {
+        _sink.EmitCaseConvertedUtf8<Layout, C == Case::Lower>(
+          std::string_view{_base + offs.start, n}, offs);
+        return;
+      }
+    }
+    if (n > duckdb::string_t::INLINE_LENGTH) [[unlikely]] {
+      if (n < casing::kCaseLane) {
+        _sink.EmitSliceCaseConverted<Layout, C == Case::Lower>(_base, _limit,
+                                                               offs);
+        return;
+      }
+      _sink.Emit<Layout>(
+        n,
+        [&](byte_type* out) IRS_FORCE_INLINE {
+          casing::CaseConvertAsciiWide<C == Case::Lower>(
+            reinterpret_cast<char*>(out), _base + offs.start, n);
+          return n;
+        },
+        offs);
+      return;
+    }
+    const char* const view = _ring.Bytes(begin);
+    _sink.Emit<Layout>(view, n, view + kTermViewSlack, offs);
+  }
+
+ private:
+  const char* _base;
+  const char* _limit;
+  TokenSink& _sink;
+  casing::AsciiFoldRing<C == Case::Lower> _ring;
+};
+
 template<TokenLayout Layout, Case C, bool KeepNonAscii, typename Classify>
 void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
                    Classify&& classify_block) {
@@ -53,7 +105,7 @@ void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
     return;
   }
   constexpr size_t kBlock = classify::kClassifyBlock;
-  casing::AsciiFoldRing<C == Case::Lower> ring;
+  CaseRuns<Layout, C, KeepNonAscii> runs{base, size, sink};
   classify::ForEachRun(
     bytes, size,
     [&](const byte_type* block) IRS_FORCE_INLINE {
@@ -65,43 +117,15 @@ void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
       const size_t offset =
         size < kBlock ? 0 : static_cast<size_t>(block - bytes);
       if (offset % kBlock == 0) {
-        ring.Fold(offset, b);
+        runs.Fold(offset, b);
         return mask;
       }
       for (size_t at = offset & ~(kBlock - 1); at < size; at += kBlock) {
-        ring.FoldAt(bytes, size, at);
+        runs.FoldAt(bytes, size, at);
       }
       return mask;
     },
-    [&](size_t begin, size_t end) IRS_FORCE_INLINE {
-      const Offs offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)};
-      const uint32_t n = offs.end - offs.start;
-      if constexpr (KeepNonAscii) {
-        if (!classify::IsAsciiValue(base + offs.start, n)) {
-          sink.EmitCaseConvertedUtf8<Layout, C == Case::Lower>(
-            std::string_view{base + offs.start, n}, offs);
-          return;
-        }
-      }
-      if (n > duckdb::string_t::INLINE_LENGTH) [[unlikely]] {
-        if (n < casing::kCaseLane) {
-          sink.EmitSliceCaseConverted<Layout, C == Case::Lower>(base, limit,
-                                                                offs);
-          return;
-        }
-        sink.Emit<Layout>(
-          n,
-          [&](byte_type* out) IRS_FORCE_INLINE {
-            casing::CaseConvertAsciiWide<C == Case::Lower>(
-              reinterpret_cast<char*>(out), base + offs.start, n);
-            return n;
-          },
-          offs);
-        return;
-      }
-      const char* const view = ring.Bytes(begin);
-      sink.Emit<Layout>(view, n, view + kTermViewSlack, offs);
-    });
+    [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
 }
 
 template<TokenLayout Layout, Case C, bool KeepNonAscii>
@@ -114,13 +138,26 @@ void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
 
 template<TokenLayout Layout, Case C, bool KnownAscii>
 void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink) {
-  const auto* const bytes = reinterpret_cast<const byte_type*>(raw.GetData());
+  const char* const base = raw.GetData();
+  const auto* const bytes = reinterpret_cast<const byte_type*>(base);
   const size_t size = raw.GetSize();
-  SplitRunsFill<Layout, C, !KnownAscii>(
-    raw, sink,
-    [bytes, size](classify::Block b, const byte_type* block) IRS_FORCE_INLINE {
-      return ClassifyNonSpace<KnownAscii>(b, block, bytes, size);
-    });
+  if constexpr (C == Case::None) {
+    const char* const limit = base + size;
+    ForEachNonSpaceRunBest<KnownAscii>(
+      bytes, size, [](size_t, classify::Block) IRS_FORCE_INLINE {},
+      [&](size_t begin, size_t end) IRS_FORCE_INLINE {
+        sink.EmitSlice<Layout>(
+          base, limit,
+          Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
+      });
+  } else {
+    CaseRuns<Layout, C, !KnownAscii> runs{base, size, sink};
+    ForEachNonSpaceRunBest<KnownAscii>(
+      bytes, size,
+      [&](size_t offset, classify::Block b)
+        IRS_FORCE_INLINE { runs.Fold(offset, b); },
+      [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
+  }
 }
 
 template<TokenLayout Layout, Case C, bool Letters, bool KnownAscii>
@@ -146,7 +183,8 @@ void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
     if constexpr (KnownAscii) {
       SplitByNonLetter(raw, emit);
     } else {
-      SplitByNonAlnum<Letters>(raw, emit);
+      ForEachAlnumRun<Letters>(reinterpret_cast<const byte_type*>(base),
+                               raw.GetSize(), emit);
     }
   }
 }

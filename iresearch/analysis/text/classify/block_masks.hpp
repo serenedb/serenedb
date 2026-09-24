@@ -40,7 +40,21 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
+#if defined(__x86_64__)
+#define IRS_TARGET_AVX512 \
+  __attribute__((target("avx512f,avx512bw,avx512vl,bmi,bmi2")))
+#endif
+
 namespace irs::analysis::classify {
+
+#if defined(__x86_64__)
+inline bool HasAvx512Bw() noexcept {
+  static const bool kHas =
+    __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
+    __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("bmi2");
+  return kHas;
+}
+#endif
 
 inline constexpr size_t kClassifyBlock = 32;
 

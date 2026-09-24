@@ -978,7 +978,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     // write segment meta
     {
       auto writer = codec()->get_segment_meta_writer();
-      writer->write(dir(), filename, meta);
+      writer->Write(dir(), filename, meta);
     }
 
     // read segment meta
@@ -1044,7 +1044,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     {
       auto writer = codec()->get_segment_meta_writer();
-      writer->write(dir(), filename, meta);
+      writer->Write(dir(), filename, meta);
     }
 
     {
@@ -1094,11 +1094,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       meta.docs_mask = std::make_shared<irs::DocumentMask>(mask);
       meta.live_docs_count =
         meta.docs_count - static_cast<irs::doc_id_t>(mask.Count());
-      if (patch == nullptr) {
-        writer->write(dir(), filename, meta);
-      } else {
-        writer->WritePatch(dir(), filename, meta, *patch, parent);
-      }
+      writer->Write(dir(), filename, meta, patch, parent);
     };
 
     flush(nullptr, 0);
@@ -1131,9 +1127,12 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
                                       irs::SegmentMetaWriterImpl::kFormatExt);
       auto in = dir().open(file, irs::IOAdvice::NORMAL);
       EXPECT_NE(nullptr, in);
-      bool has_files = false;
-      return irs::ReadLink(*in, irs::ReadMaskSize(*in, file), file, files,
-                           has_files);
+      duckdb::BinaryDeserializer meta_in{*in};
+      meta_in.Begin();
+      EXPECT_NE(0, irs::ReadMaskSize(meta_in));
+      auto parents = irs::ReadParents(meta_in);
+      irs::ReadFiles(meta_in, files);
+      return parents;
     };
 
     {
@@ -1202,7 +1201,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     // write segment meta
     {
       auto writer = codec()->get_segment_meta_writer();
-      ASSERT_THROW(writer->write(dir(), filename, meta), irs::IndexError);
+      ASSERT_THROW(writer->Write(dir(), filename, meta), irs::IndexError);
     }
 
     // read segment meta
@@ -1237,7 +1236,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     // write segment meta
     {
       auto writer = codec()->get_segment_meta_writer();
-      ASSERT_THROW(writer->write(dir(), filename, meta), irs::IndexError);
+      ASSERT_THROW(writer->Write(dir(), filename, meta), irs::IndexError);
     }
 
     // read segment meta
@@ -1337,7 +1336,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       auto writer = codec()->get_segment_meta_writer();
 
       SegmentMetaCorruptingDirectory currupting_dir(dir(), meta);
-      ASSERT_THROW(writer->write(currupting_dir, filename, meta),
+      ASSERT_THROW(writer->Write(currupting_dir, filename, meta),
                    irs::IndexError);
     }
 
@@ -1385,8 +1384,6 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
                                      "from_the_future", 123);
     meta_out.End();
-
-    out->WriteU64(0);
   }
 
   irs::SegmentMeta read_meta;
@@ -1446,12 +1443,10 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
                    std::string_view mask,
                    std::initializer_list<uint64_t> parents, bool files) {
     auto out = create(name, version);
-    if (!mask.empty()) {
-      out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
-                     mask.size());
-    }
     duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
     meta_out.Begin();
+    meta_out.WritePropertyWithDefault<uint64_t>(Writer::kFieldMaskSize,
+                                                "mask_size", mask.size(), 0);
     if (parents.size() != 0) {
       meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
                          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
@@ -1468,33 +1463,27 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
                                      100);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
     meta_out.End();
-    out->WriteU64(mask.size());
+    if (!mask.empty()) {
+      out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
+                     mask.size());
+    }
   };
 
   constexpr irs::byte_type kPad[8]{};
 
-  // shorter than the trailer
-  {
-    auto out = create("too_short", 1);
-    out->WriteData(kPad, 4);
-  }
-  rejected("too_short", 1, "Truncated");
-
-  // the mask runs past the end of the file
+  // the mask would start inside the metadata
   {
     auto out = create("mask_past_end", 1);
+    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
+    meta_out.Begin();
+    meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size", 1000);
+    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                     100);
+    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    meta_out.End();
     out->WriteData(kPad, sizeof kPad);
-    out->WriteU64(1000);
   }
-  rejected("mask_past_end", 1, "leaves no metadata");
-
-  // the mask fills the file, leaving no metadata behind it
-  {
-    auto out = create("mask_fills_file", 1);
-    out->WriteData(kPad, sizeof kPad);
-    out->WriteU64(sizeof kPad);
-  }
-  rejected("mask_fills_file", 1, "leaves no metadata");
+  rejected("mask_past_end", 1, "overlaps the metadata");
 
   // the mask is not a bitmap at all
   write("not_a_bitmap", 1, "garbage!", {}, true);
@@ -1540,10 +1529,10 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
     compressed.add(doc);
     std::string blob(compressed.getSizeInBytes(), 0);
     compressed.write(blob.data());
-    out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
-                   blob.size());
     duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
     meta_out.Begin();
+    meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
+                                     blob.size());
     if (parents.size() != 0) {
       meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
                          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
@@ -1560,7 +1549,8 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
                                      100);
     meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
     meta_out.End();
-    out->WriteU64(blob.size());
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
+                   blob.size());
   };
 
   write(1, 1, {}, true);

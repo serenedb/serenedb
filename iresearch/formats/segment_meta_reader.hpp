@@ -37,34 +37,27 @@ struct SegmentMetaReaderImpl : public SegmentMetaReader {
             std::string_view filename) final;
 };
 
-inline uint64_t ReadMaskSize(IndexInput& in, std::string_view file) {
-  const auto length = in.Length();
-
-  if (length <= sizeof(uint64_t)) [[unlikely]] {
-    throw IndexError{absl::StrCat("Truncated segment meta of ", length,
-                                  " byte(s), path: ", file)};
-  }
-
-  uint64_t mask_size = 0;
-  in.ReadData(length - sizeof(mask_size),
-              reinterpret_cast<byte_type*>(&mask_size), sizeof(mask_size));
-  mask_size = absl::little_endian::ToHost(mask_size);
-
-  if (mask_size >= length - sizeof(uint64_t)) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "Corrupted segment meta, path: ", file, ", mask size(", mask_size,
-      ") leaves no metadata in a file of ", length, " byte(s)")};
-  }
-
-  return mask_size;
+inline uint64_t ReadMaskSize(duckdb::BinaryDeserializer& meta_in) {
+  return meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
+    SegmentMetaWriterImpl::kFieldMaskSize, "mask_size", 0);
 }
 
-inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
-  if (const auto* data = in.ReadVolatile(0, mask_size)) {
+inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size,
+                                     std::string_view file) {
+  const auto length = in.Length();
+
+  if (mask_size > length - in.Position()) [[unlikely]] {
+    throw IndexError{absl::StrCat(
+      "Corrupted segment meta, path: ", file, ", mask size(", mask_size,
+      ") overlaps the metadata in a file of ", length, " byte(s)")};
+  }
+
+  const auto offset = length - mask_size;
+  if (const auto* data = in.ReadVolatile(offset, mask_size)) {
     return DocumentMask::Read(reinterpret_cast<const char*>(data), mask_size);
   }
   bstring blob(mask_size, 0);
-  in.ReadData(0, blob.data(), mask_size);
+  in.ReadData(offset, blob.data(), mask_size);
   return DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
                             blob.size());
 }
@@ -91,14 +84,12 @@ inline std::vector<uint64_t> ReadParents(duckdb::BinaryDeserializer& meta_in) {
   return parents;
 }
 
-inline std::vector<uint64_t> ReadLink(IndexInput& in, uint64_t mask_size,
-                                      std::string_view file,
-                                      std::vector<std::string>& files,
-                                      bool& has_files) {
-  in.Seek(mask_size);
+inline uint64_t ReadLink(IndexInput& in, std::string_view file,
+                         std::vector<std::string>& files, bool& has_files) {
   duckdb::BinaryDeserializer meta_in{in};
   meta_in.Begin();
-  auto parents = ReadParents(meta_in);
+  const auto mask_size = ReadMaskSize(meta_in);
+  ReadParents(meta_in);
 
   if (ReadFiles(meta_in, files)) {
     if (has_files) [[unlikely]] {
@@ -109,7 +100,7 @@ inline std::vector<uint64_t> ReadLink(IndexInput& in, uint64_t mask_size,
     has_files = true;
   }
 
-  return parents;
+  return mask_size;
 }
 
 inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
@@ -133,12 +124,9 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
   }
 
-  const auto mask_size = ReadMaskSize(*in, filename);
-
-  in->Seek(mask_size);
-
   duckdb::BinaryDeserializer meta_in{*in};
   meta_in.Begin();
+  const auto mask_size = ReadMaskSize(meta_in);
   const auto parents = ReadParents(meta_in);
   std::vector<std::string> files;
   bool has_files = ReadFiles(meta_in, files);
@@ -158,7 +146,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   uint32_t docs_mask_chain = 0;
 
   if (mask_size != 0) {
-    auto builder = ReadDocumentMask(*in, mask_size);
+    auto builder = ReadDocumentMask(*in, mask_size, filename);
     docs_mask_size = mask_size;
     docs_mask_chain = 1;
 
@@ -181,15 +169,14 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
         throw IoError{absl::StrCat("Failed to open file, path: ", file)};
       }
 
-      const auto link_size = ReadMaskSize(*mask_in, file);
+      const auto link_size = ReadLink(*mask_in, file, files, has_files);
 
       if (link_size == 0) [[unlikely]] {
         throw IndexError{absl::StrCat("Corrupted document mask chain of '",
                                       name, "', maskless link: ", file)};
       }
 
-      ReadLink(*mask_in, link_size, file, files, has_files);
-      builder.Merge(ReadDocumentMask(*mask_in, link_size));
+      builder.Merge(ReadDocumentMask(*mask_in, link_size, file));
 
       docs_mask_size += link_size;
       ++docs_mask_chain;

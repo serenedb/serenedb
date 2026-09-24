@@ -111,7 +111,7 @@ TEST(index_meta_tests, invisible_count_round_trip) {
     }());
     segment.meta.live_docs_count =
       segment.meta.docs_count - irs::RemovalCount(segment.meta);
-    codec->get_segment_meta_writer()->write(dir, segment.filename,
+    codec->get_segment_meta_writer()->Write(dir, segment.filename,
                                             segment.meta);
     return segment;
   };

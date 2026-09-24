@@ -445,14 +445,14 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,
                        bool increment_version) {
   auto writer = PrepareFlush(segment, increment_version);
-  writer->write(dir, segment.filename, segment.meta);
+  writer->Write(dir, segment.filename, segment.meta);
 }
 
 void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
                             const DocumentMask& patch) {
   const auto parent = segment.meta.version;
   auto writer = PrepareFlush(segment, true);
-  writer->WritePatch(dir, segment.filename, segment.meta, patch, parent);
+  writer->Write(dir, segment.filename, segment.meta, &patch, parent);
 }
 
 }  // namespace irs::index_utils

@@ -248,12 +248,9 @@ struct TermReader : public AttributeProvider {
 struct SegmentMetaWriter : memory::Managed {
   using ptr = memory::managed_ptr<SegmentMetaWriter>;
 
-  virtual void write(Directory& dir, std::string& filename,
-                     SegmentMeta& meta) = 0;
-
-  virtual void WritePatch(Directory& dir, std::string& filename,
-                          SegmentMeta& meta, const DocumentMask& patch,
-                          uint64_t parent) = 0;
+  virtual void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
+                     const DocumentMask* patch = nullptr,
+                     uint64_t parent = 0) = 0;
 };
 
 struct SegmentMetaReader : memory::Managed {

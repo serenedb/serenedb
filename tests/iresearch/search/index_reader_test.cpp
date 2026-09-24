@@ -437,7 +437,7 @@ TEST(segment_reader_test, segment_reader_has) {
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
@@ -455,7 +455,7 @@ TEST(segment_reader_test, segment_reader_has) {
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
@@ -482,7 +482,7 @@ TEST(segment_reader_test, segment_reader_has) {
       docs_mask.Trim();
       return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
@@ -509,7 +509,7 @@ TEST(segment_reader_test, segment_reader_has) {
       docs_mask.Trim();
       return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
     reader->read(dir, meta, filename);

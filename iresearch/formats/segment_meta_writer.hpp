@@ -38,23 +38,14 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
 
   static constexpr size_t kMinChainBytes = 4096;
 
-  static constexpr duckdb::field_id_t kFieldParents = 0;
-  static constexpr duckdb::field_id_t kFieldFiles = 1;
-  static constexpr duckdb::field_id_t kFieldDocsCount = 2;
-  static constexpr duckdb::field_id_t kFieldByteSize = 3;
+  static constexpr duckdb::field_id_t kFieldMaskSize = 0;
+  static constexpr duckdb::field_id_t kFieldParents = 1;
+  static constexpr duckdb::field_id_t kFieldFiles = 2;
+  static constexpr duckdb::field_id_t kFieldDocsCount = 3;
+  static constexpr duckdb::field_id_t kFieldByteSize = 4;
 
-  void write(Directory& dir, std::string& filename, SegmentMeta& meta) final {
-    Write(dir, filename, meta, nullptr, 0);
-  }
-
-  void WritePatch(Directory& dir, std::string& filename, SegmentMeta& meta,
-                  const DocumentMask& patch, uint64_t parent) final {
-    Write(dir, filename, meta, &patch, parent);
-  }
-
- private:
-  static void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
-                    const DocumentMask* patch, uint64_t parent);
+  void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
+             const DocumentMask* patch = nullptr, uint64_t parent = 0) final;
 };
 
 template<>
@@ -64,17 +55,16 @@ inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
                        SegmentMetaWriterImpl::kFormatExt);
 }
 
-inline uint64_t WriteDocumentMask(IndexOutput& out,
-                                  const roaring::Roaring& compressed) {
-  const auto size = compressed.getSizeInBytes();
+inline void WriteDocumentMask(IndexOutput& out,
+                              const roaring::Roaring& compressed,
+                              uint64_t size) {
   if (auto* buf = out.Reserve(size); buf != nullptr) {
     compressed.write(reinterpret_cast<char*>(buf));
-    return size;
+    return;
   }
   bstring blob(size, 0);
   compressed.write(reinterpret_cast<char*>(blob.data()));
   out.WriteData(blob.data(), size);
-  return size;
 }
 
 inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
@@ -101,9 +91,12 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
                       meta.docs_mask_size > kMinChainBytes;
 
   roaring::Roaring compressed;
-  if (has_mask && !append) {
+  if (append) {
+    compressed = patch->Compress();
+  } else if (has_mask) {
     compressed = docs_mask->Compress();
   }
+  const uint64_t mask_size = has_mask ? compressed.getSizeInBytes() : 0;
 
   const size_t ancestors =
     meta.docs_mask_chain != 0 ? meta.docs_mask_chain - 1 : 0;
@@ -148,15 +141,10 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     throw IoError{absl::StrCat("failed to create file, path: ", meta_file)};
   }
 
-  uint64_t mask_size = 0;
-  if (append) {
-    mask_size = WriteDocumentMask(*out, patch->Compress());
-  } else if (has_mask) {
-    mask_size = WriteDocumentMask(*out, compressed);
-  }
-
   duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
   meta_out.Begin();
+  meta_out.WritePropertyWithDefault<uint64_t>(kFieldMaskSize, "mask_size",
+                                              mask_size, 0);
   if (!parents.empty()) {
     meta_out.WriteList(kFieldParents, "parents", parents.size(),
                        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
@@ -175,7 +163,9 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
                                    size_without_mask);
   meta_out.End();
 
-  out->WriteU64(mask_size);
+  if (has_mask) {
+    WriteDocumentMask(*out, compressed, mask_size);
+  }
 
   meta.files = std::move(files);
   meta.docs_mask_size = chain_bytes + mask_size;

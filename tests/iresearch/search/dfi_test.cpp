@@ -123,7 +123,7 @@ void DFIIndexTest::BuildFixture() {
 
   auto opts = irs::tests::DefaultWriterOptions();
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));

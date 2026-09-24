@@ -5024,6 +5024,101 @@ TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
   EXPECT_EQ(flat, optimized_should(make(irs::ScoreMergeType::Max), false));
 }
 
+namespace {
+
+std::vector<irs::doc_id_t> CollectDocs(const irs::Filter& filter,
+                                       const irs::IndexReader& index,
+                                       const irs::Scorer* scorer) {
+  PreparedFilter prepared{filter, index, scorer};
+  irs::ColumnArgsFetcher fetcher;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0, n = prepared.size(); i != n; ++i) {
+    auto it = scorer != nullptr ? prepared.ExecuteScored(i, fetcher)
+                                : prepared.Execute(i);
+    EXPECT_NE(nullptr, it);
+    if (it == nullptr) {
+      continue;
+    }
+    while (!irs::doc_limits::eof(it->Next())) {
+      docs.push_back(it->Value());
+    }
+  }
+  return docs;
+}
+
+}  // namespace
+
+TEST_P(BooleanFilterTestCase, absent_required_term_discards_later_children) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  tests::sort::Boost sort;
+
+  irs::BooleanFilter alone;
+  AddTerm(alone, irs::Occur::Should, kFieldName, "A");
+  AddTerm(alone, irs::Occur::Should, kFieldName, "B");
+  AsDisjunction(alone);
+  ASSERT_FALSE(CollectDocs(alone, rdr, &sort).empty());
+
+  irs::BooleanFilter root;
+  AddTerm(root, irs::Occur::Must, kFieldName, "!absent!");
+  auto& sub = AddBool(root, irs::Occur::Must);
+  AddTerm(sub, irs::Occur::Should, kFieldName, "A");
+  AddTerm(sub, irs::Occur::Should, kFieldName, "B");
+  AsDisjunction(sub);
+
+  EXPECT_TRUE(CollectDocs(root, rdr, &sort).empty());
+  EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
+}
+
+TEST_P(BooleanFilterTestCase, min_should_match_shortfall_discards_children) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  tests::sort::Boost sort;
+
+  irs::BooleanFilter root;
+  AddTerm(root, irs::Occur::Should, kFieldName, "!absent!");
+  AddTerm(root, irs::Occur::Should, kFieldName, "A");
+  auto& sub = AddBool(root, irs::Occur::Should);
+  AddTerm(sub, irs::Occur::Should, kFieldName, "B");
+  AddTerm(sub, irs::Occur::Should, kFieldName, "C");
+  AsDisjunction(sub);
+  root.SetMinShouldMatch(3);
+
+  EXPECT_TRUE(CollectDocs(root, rdr, &sort).empty());
+  EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
+}
+
+TEST_P(BooleanFilterTestCase, excluded_only_child_is_discarded) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  tests::sort::Boost sort;
+
+  irs::BooleanFilter alone;
+  AddTerm(alone, irs::Occur::Must, kFieldName, "A");
+  AddTerm(alone, irs::Occur::Must, kFieldSame, "xyz");
+  ASSERT_FALSE(CollectDocs(alone, rdr, &sort).empty());
+
+  irs::BooleanFilter root;
+  auto& sub = AddBool(root, irs::Occur::MustNot);
+  AddTerm(sub, irs::Occur::Must, kFieldName, "A");
+  AddTerm(sub, irs::Occur::Must, kFieldSame, "xyz");
+
+  EXPECT_TRUE(CollectDocs(root, rdr, &sort).empty());
+  EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,

@@ -23,7 +23,9 @@
 
 #include "file_names.hpp"
 
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/strip.h>
 
 #include "iresearch/utils/shared.hpp"
 
@@ -42,6 +44,23 @@ void FileName(std::string& result, std::string_view name,
 std::string FileName(std::string_view name, uint64_t gen,
                      std::string_view ext) {
   return absl::StrCat(name, ".", gen, ".", ext);
+}
+
+bool ParseFileName(std::string_view file, std::string_view ext,
+                   std::string_view& name, uint64_t& gen) noexcept {
+  if (!absl::ConsumeSuffix(&file, ext) || !absl::ConsumeSuffix(&file, ".")) {
+    return false;
+  }
+
+  const auto dot = file.rfind('.');
+
+  if (dot == std::string_view::npos || dot == 0 ||
+      !absl::SimpleAtoi(file.substr(dot + 1), &gen)) {
+    return false;
+  }
+
+  name = file.substr(0, dot);
+  return true;
 }
 
 }  // namespace irs

@@ -34,6 +34,7 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -233,7 +234,6 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t worker_count{0};
 
   std::vector<uint32_t> segment_order;
-  std::vector<std::vector<irs::doc_id_t>> dead_rows;
   std::unique_ptr<SegmentWork[]> segments;
   uint32_t live_segments = 0;
   std::atomic_uint32_t next_segment{0};
@@ -344,8 +344,8 @@ struct ColScanLocalState : public ScanLocalState {
   uint64_t doc_cursor = 0;
   uint64_t doc_end = 0;
   FullScanner* scanner = nullptr;
-  std::span<const irs::doc_id_t> dead;
-  size_t dead_at = 0;
+  irs::fill::DocsMask mask{nullptr, irs::doc_limits::eof()};
+  bool has_mask = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;
   duckdb::SelectionVector live_sel;
@@ -420,7 +420,6 @@ ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept;
 
 void RunCountScan(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output);
-void BuildDeadRows(ScanGlobalState& g);
 
 void RunColScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, ColScanLocalState& l,

@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,23 +22,26 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/binary_serializer.hpp>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 
 struct IndexMetaWriterImpl final : public IndexMetaWriter {
-  static constexpr std::string_view kFormatName = "iresearch_10_index_meta";
   static constexpr std::string_view kFormatPrefix = "segments_";
   static constexpr std::string_view kFormatPrefixTmp = "pending_segments_";
 
-  static constexpr int32_t kFormatVersion = 0;
+  static constexpr duckdb::field_id_t kFieldSegCounter = 0;
+  static constexpr duckdb::field_id_t kFieldSegments = 1;
+  static constexpr duckdb::field_id_t kFieldPayload = 2;
 
-  enum {
-    kHasPayload = 1,
-  };
+  static constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
+  static constexpr duckdb::field_id_t kSegmentFieldCodec = 1;
+  static constexpr duckdb::field_id_t kSegmentFieldInvisibleCount = 2;
 
   static std::string FileName(uint64_t gen) {
     return FileName(kFormatPrefix, gen);
@@ -48,7 +50,7 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
   bool prepare(Directory& dir, IndexMeta& meta, std::string& pending_filename,
-               std::string& filename) final;
+               std::string& filename, MetaPayloadWriter payload) final;
   bool commit() final;
   void rollback() noexcept final;
 
@@ -68,7 +70,8 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
 
 inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
                                          std::string& pending_filename,
-                                         std::string& filename) {
+                                         std::string& filename,
+                                         MetaPayloadWriter payload) {
   if (index_gen_limits::valid(_pending_gen)) {
     // prepare() was already called with no corresponding call to commit()
     return false;
@@ -86,26 +89,32 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
   }
 
   {
-    format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
-    out->WriteV64(meta.gen);
-    out->WriteU64(meta.seg_counter);
-    SDB_ASSERT(meta.segments.size() <= std::numeric_limits<uint32_t>::max());
-    out->WriteV32(static_cast<uint32_t>(meta.segments.size()));
+    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
+    meta_out.Begin();
+    meta_out.WriteProperty<uint64_t>(kFieldSegCounter, "seg_counter",
+                                     meta.seg_counter);
+    meta_out.WriteList(kFieldSegments, "segments", meta.segments.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         const auto& segment = meta.segments[i];
+                         list.WriteObject([&](duckdb::Serializer& obj) {
+                           obj.WriteProperty<std::string>(kSegmentFieldFilename,
+                                                          "filename",
+                                                          segment.filename);
+                           obj.WriteProperty<std::string>(
+                             kSegmentFieldCodec, "codec",
+                             std::string{segment.meta.codec->type()().name()});
+                           obj.WritePropertyWithDefault<uint32_t>(
+                             kSegmentFieldInvisibleCount, "invisible_count",
+                             InvisibleCount(segment.meta), 0);
+                         });
+                       });
 
-    for (const auto& segment : meta.segments) {
-      WriteStr(*out, segment.filename);
-      WriteStr(*out, segment.meta.codec->type()().name());
+    if (payload) {
+      meta_out.WriteObject(kFieldPayload, "payload",
+                           [&](duckdb::Serializer& obj) { payload(obj); });
     }
 
-    const auto payload = GetPayload(meta);
-    const uint8_t flags = IsNull(payload) ? 0 : kHasPayload;
-    out->WriteByte(flags);
-
-    if (flags == kHasPayload) {
-      WriteStr(*out, payload);
-    }
-
-    format_utils::WriteFooter(*out);
+    meta_out.End();
   }  // Important to close output here
 
   // Only noexcept operations below

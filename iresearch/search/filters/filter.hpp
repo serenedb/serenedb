@@ -85,6 +85,7 @@ enum class QueryKind : uint32_t {
   Terms,
   Boolean,
   Phrase,
+  DocsMask,
 };
 
 class QueryBuilder : public memory::Managed {

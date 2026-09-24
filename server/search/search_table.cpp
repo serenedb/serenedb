@@ -21,11 +21,12 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -102,6 +103,8 @@ SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
 }
 
 namespace {
+
+constexpr duckdb::field_id_t kFieldTick = 0;
 
 // Each PRIMARY KEY column is term-indexed under its own column id so PK
 // predicates push down. That term field is the column id itself -- distinct
@@ -435,24 +438,20 @@ void SearchTable::OpenWriter() {
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_provider = [this](uint64_t tick,
-                                                irs::bstring& out) {
+  writer_options.meta_payload_writer = [this](uint64_t tick,
+                                              duckdb::Serializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
-    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
-    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
-               sizeof(tick_be));
-    return true;
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
+  };
+  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
+    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
   };
 
-  _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+  _writer =
+    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
 
   if (path_exists) {
-    // Restore the durable commit tick from the last commit's meta payload.
     auto reader = _writer->GetSnapshot();
-    auto payload = irs::GetPayload(reader.Meta().index_meta);
-    if (payload.size() >= sizeof(uint64_t)) {
-      _last_committed_tick = absl::big_endian::Load64(payload.data());
-    }
 
     // Floor the id allocator (gCurrentTick / NextId) from this store's own
     // field ids: it is in-memory and re-derived at boot only from LIVE catalog

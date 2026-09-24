@@ -75,7 +75,7 @@ class MaskedPostings : public irs::TermPostings {
   irs::doc_id_t Next() final {
     for (;;) {
       _doc = _postings->Next();
-      if (irs::doc_limits::eof(_doc) || !_mask.contains(_doc)) {
+      if (irs::doc_limits::eof(_doc) || !_mask.Contains(_doc)) {
         return _doc;
       }
     }
@@ -95,7 +95,7 @@ class MaskedPostings : public irs::TermPostings {
 irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
                                     irs::TermPostings::ptr postings) {
   const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->empty()) {
+  if (mask == nullptr || mask->Empty()) {
     return postings;
   }
   return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
@@ -212,7 +212,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     options.reader_options.db = &TestDb();
     _codec = irs::formats::Get("1_5simd");
     _data_writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, std::move(options));
   }
 
   void TearDown() final { _data_writer.reset(); }
@@ -946,7 +946,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
-      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, std::move(options));
     constexpr std::string_view kPk = {"pk1", 3};
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};

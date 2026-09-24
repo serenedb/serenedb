@@ -45,14 +45,12 @@ struct SegmentInfo {
   uint32_t live_docs_count = 0;  // Total number of live documents in a segment
   uint64_t byte_size = 0;        // Size of a segment in bytes
   uint64_t version = 0;
-  doc_id_t uncommitted_begin = doc_limits::eof();
+  doc_id_t visible_end = doc_limits::eof();
 };
 
-inline doc_id_t UncommittedCount(const SegmentInfo& meta) noexcept {
+inline doc_id_t InvisibleCount(const SegmentInfo& meta) noexcept {
   const auto end = doc_limits::min() + meta.docs_count;
-  return meta.uncommitted_begin != doc_limits::eof()
-           ? end - meta.uncommitted_begin
-           : 0;
+  return meta.visible_end != doc_limits::eof() ? end - meta.visible_end : 0;
 }
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
@@ -77,15 +75,15 @@ struct SegmentMeta : SegmentInfo {
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
   return (meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->Count()) : 0) +
-         UncommittedCount(meta);
+         InvisibleCount(meta);
 }
 
 inline bool HasRemovals(const SegmentInfo& meta) noexcept {
   return meta.live_docs_count != meta.docs_count;
 }
 
-inline bool HasUncommitted(const SegmentInfo& meta) noexcept {
-  return meta.uncommitted_begin != doc_limits::eof();
+inline bool HasInvisible(const SegmentInfo& meta) noexcept {
+  return meta.visible_end != doc_limits::eof();
 }
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentMeta>);

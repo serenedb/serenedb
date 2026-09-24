@@ -108,7 +108,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
     }
     const auto& sub = (*g.reader)[l.unit.seg];
     const auto docs = std::min<uint64_t>(
-      sub.docs_count(), sub.Meta().uncommitted_begin - irs::doc_limits::min());
+      sub.docs_count(), sub.Meta().visible_end - irs::doc_limits::min());
     if (l.unit.whole) {
       l.doc_cursor = 0;
       l.doc_end = docs;
@@ -119,7 +119,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
     }
     const auto* mask = sub.docs_mask();
     l.has_mask = mask != nullptr && !mask->Empty();
-    l.mask = irs::fill::DocsMask{mask, sub.Meta().uncommitted_begin};
+    l.mask = irs::fill::DocsMask{mask, sub.Meta().visible_end};
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

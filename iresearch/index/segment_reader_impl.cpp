@@ -191,7 +191,7 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   const auto end =
-    std::min(doc_limits::min() + _info.docs_count, _info.uncommitted_begin);
+    std::min(doc_limits::min() + _info.docs_count, _info.visible_end);
   if (!_docs_mask) {
     return memory::make_managed<SegmentAllDocs>(end - doc_limits::min());
   }

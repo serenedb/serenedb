@@ -1029,7 +1029,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.live_docs_count = 397;
     meta.byte_size = 666;
     meta.version = 100;
-    meta.uncommitted_begin = 400;
+    meta.visible_end = 400;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
       irs::DocumentMask docs_mask;
       docs_mask.Add(42);
@@ -1057,7 +1057,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
 
       ASSERT_EQ(2, irs::RemovalCount(read_meta));
-      ASSERT_EQ(irs::doc_limits::eof(), read_meta.uncommitted_begin);
+      ASSERT_EQ(irs::doc_limits::eof(), read_meta.visible_end);
     }
   }
 

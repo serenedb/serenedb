@@ -34,31 +34,31 @@ namespace irs::probe {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
+  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
     : _words{mask != nullptr ? mask->Words() : nullptr},
       _count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0},
-      _uncommitted{uncommitted} {}
+      _visible_end{visible_end} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
-    : DocsMask{segment.docs_mask(), segment.Meta().uncommitted_begin} {}
+    : DocsMask{segment.docs_mask(), segment.Meta().visible_end} {}
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) const noexcept {
-    if (target >= _uncommitted) [[unlikely]] {
+    if (target >= _visible_end) [[unlikely]] {
       return target;
     }
     const auto offset = target - kMin;
     const auto word = offset / kBits;
     if (word >= _count) [[unlikely]] {
-      return _uncommitted;
+      return _visible_end;
     }
     const auto rest = _words[word] & (~uint64_t{0} << (offset % kBits));
     const auto found = static_cast<doc_id_t>(
       kMin + word * kBits + static_cast<doc_id_t>(std::countr_zero(rest)));
     if (const auto end = static_cast<doc_id_t>(kMin + (word + 1) * kBits);
-        end <= _uncommitted) [[likely]] {
+        end <= _visible_end) [[likely]] {
       return found;
     }
-    return std::min(found, _uncommitted);
+    return std::min(found, _visible_end);
   }
 
  private:
@@ -67,7 +67,7 @@ class DocsMask {
 
   const uint64_t* _words;
   uint32_t _count;
-  doc_id_t _uncommitted;
+  doc_id_t _visible_end;
 };
 
 }  // namespace irs::probe

@@ -150,7 +150,7 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const DocumentMask* docs_mask() const = 0;
 
   DocumentMask::Iterator MaskedDocs() const noexcept {
-    return DocumentMask::Iterator{docs_mask(), Meta().uncommitted_begin};
+    return DocumentMask::Iterator{docs_mask(), Meta().visible_end};
   }
 
   virtual lead::Node::ptr docs_iterator() const = 0;

@@ -474,9 +474,6 @@ class IndexWriter : private util::Noncopyable {
                        Transaction* removals = nullptr,
                        uint64_t removals_tick = writer_limits::kMinTick);
 
-  bool Import(const IndexReader& reader, Format::ptr codec = nullptr,
-              const MergeWriter::FlushProgress& progress = {});
-
   static IndexWriter::ptr Make(Directory& dir, Format::ptr codec, OpenMode mode,
                                IndexWriterOptions opts = {});
 
@@ -520,8 +517,8 @@ class IndexWriter : private util::Noncopyable {
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
 
-  struct ImportContext {
-    ImportContext(
+  struct IncomingSegment {
+    IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
       Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -535,7 +532,7 @@ class IndexWriter : private util::Noncopyable {
                        .candidates = std::move(compaction_candidates),
                        .merger = std::move(merger)} {}
 
-    ImportContext(
+    IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
       Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -547,27 +544,26 @@ class IndexWriter : private util::Noncopyable {
         compaction_ctx{.compaction_reader = std::move(compaction_reader),
                        .candidates = std::move(compaction_candidates)} {}
 
-    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-                  std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
+    IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                    std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)} {}
 
-    ImportContext(ImportContext&&) = default;
+    IncomingSegment(IncomingSegment&&) = default;
 
-    ImportContext& operator=(const ImportContext&) = delete;
-    ImportContext& operator=(ImportContext&&) = delete;
+    IncomingSegment& operator=(const IncomingSegment&) = delete;
+    IncomingSegment& operator=(IncomingSegment&&) = delete;
 
     uint64_t tick;
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    bool synced = false;
   };
 
-  static_assert(std::is_nothrow_move_constructible_v<ImportContext>);
+  static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
 
  public:
   struct FlushedSegment : public IndexSegment {
@@ -693,7 +689,7 @@ class IndexWriter : private util::Noncopyable {
     std::vector<std::shared_ptr<SegmentContext>> segments;
     CachedReaders cached;
 
-    std::vector<ImportContext> imports;
+    std::vector<IncomingSegment> incoming;
 
     void ClearPending() noexcept {
       while (pending_freelist.pop() != nullptr) {
@@ -708,7 +704,7 @@ class IndexWriter : private util::Noncopyable {
 
     CompactingSegments segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
-    // pinned reader in `imports`. A deque so an append never invalidates the
+    // pinned reader in `incoming`. A deque so an append never invalidates the
     // views already handed to segment_mask.
     std::deque<std::string> masked_names;
 
@@ -728,17 +724,17 @@ class IndexWriter : private util::Noncopyable {
     void Reset() noexcept;
   };
 
-  void Cleanup(FlushContext& curr) noexcept;
+  void Cleanup(FlushContext& curr, FlushContext* next = nullptr) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     uint64_t tick{writer_limits::kMinTick};
 
-    void StartReset(IndexWriter& writer) noexcept {
+    void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
         std::lock_guard lock{writer._compacting.lock};
-        writer.Cleanup(*curr);
+        writer.Cleanup(*curr, keep_next ? nullptr : curr->next);
       }
     }
   };

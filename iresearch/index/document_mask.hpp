@@ -51,25 +51,25 @@ class DocumentMask final {
     Iterator() = default;
 
     explicit Iterator(const DocumentMask* mask,
-                      doc_id_t uncommitted = doc_limits::eof()) noexcept
+                      doc_id_t visible_end = doc_limits::eof()) noexcept
       : _bits{mask != nullptr ? &mask->_bits : nullptr},
-        _uncommitted{uncommitted} {}
+        _visible_end{visible_end} {}
 
     bool Empty() const noexcept {
-      return doc_limits::eof(_uncommitted) &&
+      return doc_limits::eof(_visible_end) &&
              (_bits == nullptr || roaring::api::bitset_empty(_bits));
     }
 
     bool Contains(doc_id_t doc) const noexcept {
-      return doc >= _uncommitted ||
+      return doc >= _visible_end ||
              (_bits != nullptr && roaring::api::bitset_get(_bits, doc - kBase));
     }
 
     doc_id_t Next() noexcept {
-      if (_value >= _uncommitted) {
+      if (_value >= _visible_end) {
         return _value;
       }
-      return _value = std::min(Find(_value - kBase + 1), _uncommitted);
+      return _value = std::min(Find(_value - kBase + 1), _visible_end);
     }
 
     doc_id_t Seek(doc_id_t target) noexcept {
@@ -80,10 +80,10 @@ class DocumentMask final {
       if (target <= _value) {
         return _value;
       }
-      if (target >= _uncommitted) {
+      if (target >= _visible_end) {
         return _value = target;
       }
-      return _value = std::min(Find(target - kBase), _uncommitted);
+      return _value = std::min(Find(target - kBase), _visible_end);
     }
 
    private:
@@ -95,7 +95,7 @@ class DocumentMask final {
 
     const roaring::api::bitset_t* _bits = nullptr;
     doc_id_t _value = doc_limits::invalid();
-    doc_id_t _uncommitted = doc_limits::eof();
+    doc_id_t _visible_end = doc_limits::eof();
 #ifdef SDB_DEV
     doc_id_t _prev = doc_limits::invalid();
 #endif
@@ -135,7 +135,7 @@ class DocumentMask final {
     SDB_ASSERT(doc_limits::valid(doc));
     SDB_ASSERT(!doc_limits::eof(doc));
     const bool added = !Contains(doc);
-    Grow(doc - kBase);
+    Grow(WordsFor(doc));
     roaring::api::bitset_set(&_bits, doc - kBase);
     return added;
   }
@@ -145,7 +145,7 @@ class DocumentMask final {
   void Merge(const DocumentMask& other);
 
   void Clear() noexcept { roaring::api::bitset_clear(&_bits); }
-  void Trim() noexcept { roaring::api::bitset_trim(&_bits); }
+  void Trim() noexcept;
 
  protected:
   friend class fill::DocsMask;
@@ -159,7 +159,11 @@ class DocumentMask final {
  private:
   static constexpr doc_id_t kBase = doc_limits::min();
 
-  void Grow(size_t at);
+  static constexpr size_t WordsFor(doc_id_t doc) noexcept {
+    return (doc - kBase) / 64 + 1;
+  }
+
+  void Grow(size_t words);
 
   void Assign(const roaring::api::bitset_t& other);
 

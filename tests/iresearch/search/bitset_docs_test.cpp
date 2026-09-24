@@ -802,8 +802,8 @@ irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
 }
 
 irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
-                               irs::doc_id_t uncommitted) {
-  return irs::probe::DocsMask{mask, uncommitted};
+                               irs::doc_id_t visible_end) {
+  return irs::probe::DocsMask{mask, visible_end};
 }
 
 }  // namespace
@@ -841,7 +841,7 @@ TEST(docs_mask_test, probe_without_removals_excludes_nothing) {
   ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(10000)));
 }
 
-TEST(docs_mask_test, probe_treats_the_uncommitted_tail_as_deleted) {
+TEST(docs_mask_test, probe_treats_the_invisible_tail_as_deleted) {
   const auto removals = MakeMask({3});
   auto probe = ProbeOver(&removals, 5000);
 
@@ -884,7 +884,7 @@ TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
   ASSERT_TRUE(irs::doc_limits::eof(next));
 }
 
-TEST(docs_mask_test, fill_covers_the_uncommitted_tail) {
+TEST(docs_mask_test, fill_covers_the_invisible_tail) {
   irs::fill::DocsMask fill{nullptr, 70};
 
   uint64_t words[2]{};
@@ -958,6 +958,59 @@ TEST(docs_mask_test, clear_empties_a_reusable_mask) {
   ASSERT_TRUE(mask.Contains(7));
 }
 
+TEST(docs_mask_test, add_grows_capacity_by_powers_of_two) {
+  irs::DocumentMask mask;
+  size_t capacity = 0;
+  size_t reallocations = 0;
+  for (irs::doc_id_t doc = irs::doc_limits::min(); doc < 64 * 1000; doc += 7) {
+    mask.Add(doc);
+    const auto words = mask.ByteCapacity() / sizeof(uint64_t);
+    ASSERT_TRUE(std::has_single_bit(words)) << words;
+    if (words != capacity) {
+      capacity = words;
+      ++reallocations;
+    }
+  }
+  ASSERT_EQ(1024, capacity);
+  ASSERT_EQ(static_cast<size_t>(std::bit_width(capacity)), reallocations);
+
+  irs::DocumentMask range;
+  range.AddRange(irs::doc_limits::min(), 64 * 5 + 1);
+  ASSERT_EQ(8 * sizeof(uint64_t), range.ByteCapacity());
+}
+
+TEST(docs_mask_test, merge_grows_capacity_by_powers_of_two) {
+  const auto trimmed = MakeMask({1, 64 * 2 + 1});
+  ASSERT_EQ(3 * sizeof(uint64_t), trimmed.ByteCapacity());
+  const auto wide = MakeMask({64 * 9 + 1});
+
+  irs::DocumentMask copy{trimmed};
+  ASSERT_EQ(3 * sizeof(uint64_t), copy.ByteCapacity());
+  copy.Merge(wide);
+  ASSERT_EQ(16 * sizeof(uint64_t), copy.ByteCapacity());
+  ASSERT_EQ(3, copy.Count());
+  ASSERT_TRUE(copy.Contains(1));
+  ASSERT_TRUE(copy.Contains(64 * 2 + 1));
+  ASSERT_TRUE(copy.Contains(64 * 9 + 1));
+
+  auto merged = MakeMask({1});
+  merged.Merge(wide);
+  ASSERT_EQ(16 * sizeof(uint64_t), merged.ByteCapacity());
+  ASSERT_EQ(2, merged.Count());
+}
+
+TEST(docs_mask_test, trim_releases_an_all_zero_mask) {
+  auto mask = MakeMask({1, 4999});
+  mask.Truncate(irs::doc_limits::min());
+
+  mask.Trim();
+
+  ASSERT_TRUE(mask.Empty());
+  ASSERT_EQ(0, mask.ByteCapacity());
+  ASSERT_TRUE(mask.Add(7));
+  ASSERT_TRUE(mask.Contains(7));
+}
+
 TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
   std::vector<irs::doc_id_t> docs;
   for (irs::doc_id_t doc = 1; doc < 20000; ++doc) {
@@ -1022,7 +1075,7 @@ TEST(docs_mask_test, lead_seek_skips_a_dead_run) {
   ASSERT_TRUE(irs::doc_limits::eof(lead.Next()));
 }
 
-TEST(docs_mask_test, lead_stops_at_the_uncommitted_tail) {
+TEST(docs_mask_test, lead_stops_at_the_invisible_tail) {
   const auto removals = MakeMask({3});
   irs::lead::DocsMask lead{&removals, 70, 200};
 

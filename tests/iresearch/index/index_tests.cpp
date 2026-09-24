@@ -254,6 +254,9 @@ struct SyncRecorder : tests::DirectoryMock {
   explicit SyncRecorder(irs::Directory& impl) : DirectoryMock(impl) {}
 
   bool sync(std::span<const std::string_view> files) noexcept final {
+    if (std::exchange(fail_next_sync, false)) {
+      return false;
+    }
     for (const auto file : files) {
       synced.emplace_back(file);
     }
@@ -261,6 +264,7 @@ struct SyncRecorder : tests::DirectoryMock {
   }
 
   std::vector<std::string> synced;
+  bool fail_next_sync = false;
 };
 
 }  // namespace
@@ -456,35 +460,13 @@ class IndexTestCase : public tests::IndexTestBase {
     const tests::Document* doc1 = gen.next();
     const tests::Document* doc2 = gen.next();
     const tests::Document* doc3 = gen.next();
-    const tests::Document* doc4 = gen.next();
-    const tests::Document* doc5 = gen.next();
-    const tests::Document* doc6 = gen.next();
 
-    // test import/insert/deletes/existing all empty after clear
     {
-      irs::MemoryDirectory data_dir;
       auto writer =
         open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
       writer->RefreshCommit();
       AssertSnapshotEquality(*writer);  // create initial empty segment
-
-      // populate 'import' dir
-      {
-        auto data_writer =
-          irs::IndexWriter::Make(data_dir, codec(), irs::kOmCreate,
-                                 irs::tests::DefaultWriterOptions());
-        ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-        ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-        ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
-        data_writer->RefreshCommit();
-
-        auto reader = irs::DirectoryReader(data_dir, nullptr,
-                                           irs::tests::DefaultReaderOptions());
-        ASSERT_EQ(1, reader.size());
-        ASSERT_EQ(3, reader.docs_count());
-        ASSERT_EQ(3, reader.live_docs_count());
-      }
 
       {
         auto reader = irs::DirectoryReader(dir(), codec(),
@@ -496,8 +478,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
       // add sealed segment
       {
-        ASSERT_TRUE(InsertWithName(*writer, *doc4));
-        ASSERT_TRUE(InsertWithName(*writer, *doc5));
+        ASSERT_TRUE(InsertWithName(*writer, *doc1));
+        ASSERT_TRUE(InsertWithName(*writer, *doc2));
         writer->RefreshCommit();
         AssertSnapshotEquality(*writer);
       }
@@ -510,16 +492,12 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(2, reader.live_docs_count());
       }
 
-      // add insert/remove/import
+      // add insert/remove
       {
-        auto query_doc4 = MakeByTerm(kNameFieldId, "D");
-        auto reader = irs::DirectoryReader(data_dir, nullptr,
-                                           irs::tests::DefaultReaderOptions());
+        auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
-        ASSERT_TRUE(InsertWithName(*writer, *doc6));
-        tests::Remove(*writer, std::move(query_doc4));
-        ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-          data_dir, nullptr, irs::tests::DefaultReaderOptions())));
+        ASSERT_TRUE(InsertWithName(*writer, *doc3));
+        tests::Remove(*writer, std::move(query_doc1));
       }
 
       size_t file_count = 0;
@@ -5107,404 +5085,6 @@ TEST_P(IndexTestCase, doc_update) {
   }
 }
 
-TEST_P(IndexTestCase, import_reader) {
-  tests::JsonDocGenerator gen(
-    resource("simple_sequential.json"),
-    [](tests::Document& doc, const std::string& name,
-       const tests::JsonDocGenerator::JsonValue& data) {
-      if (data.is_string()) {
-        auto field = std::make_shared<tests::StringField>(name, data.str);
-        field->id = FieldIdFor(name);
-        doc.insert(std::move(field));
-      }
-    });
-
-  const tests::Document* doc1 = gen.next();
-  const tests::Document* doc2 = gen.next();
-  const tests::Document* doc3 = gen.next();
-  const tests::Document* doc4 = gen.next();
-
-  // add a reader with 1 segment no docs
-  {
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);  // ensure the writer has an initial
-                                      // completed state
-
-    // check meta counter
-    {
-      irs::IndexMeta meta;
-      std::string filename;
-      auto meta_reader = codec()->get_index_meta_reader();
-      ASSERT_NE(nullptr, meta_reader);
-      ASSERT_TRUE(meta_reader->last_segments_file(dir(), filename));
-      meta_reader->read(dir(), meta, filename);
-      ASSERT_EQ(0, meta.seg_counter);
-    }
-
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(0, reader.size());
-    ASSERT_EQ(0, reader.docs_count());
-
-    // insert a document and check the meta counter again
-    {
-      ASSERT_TRUE(InsertWithName(*writer, *doc1));
-      writer->RefreshCommit();
-      AssertSnapshotEquality(*writer);
-
-      irs::IndexMeta meta;
-      std::string filename;
-      auto meta_reader = codec()->get_index_meta_reader();
-      ASSERT_NE(nullptr, meta_reader);
-      ASSERT_TRUE(meta_reader->last_segments_file(dir(), filename));
-      meta_reader->read(dir(), meta, filename);
-      ASSERT_EQ(1, meta.seg_counter);
-    }
-  }
-
-  // add a reader with 1 segment no live-docs
-  {
-    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);  // ensure the writer has an initial
-                                      // completed state
-
-    // check meta counter
-    {
-      irs::IndexMeta meta;
-      std::string filename;
-      auto meta_reader = codec()->get_index_meta_reader();
-      ASSERT_NE(nullptr, meta_reader);
-      ASSERT_TRUE(meta_reader->last_segments_file(dir(), filename));
-      meta_reader->read(dir(), meta, filename);
-      ASSERT_EQ(1, meta.seg_counter);
-    }
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    data_writer->RefreshCommit();
-    tests::Remove(*data_writer, std::move(query_doc1));
-    data_writer->RefreshCommit();
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);  // ensure the writer has an initial
-                                      // completed state
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(0, reader.size());
-    ASSERT_EQ(0, reader.docs_count());
-
-    // insert a document and check the meta counter again
-    {
-      ASSERT_TRUE(InsertWithName(*writer, *doc1));
-      writer->RefreshCommit();
-      AssertSnapshotEquality(*writer);
-
-      irs::IndexMeta meta;
-      std::string filename;
-      auto meta_reader = codec()->get_index_meta_reader();
-      ASSERT_NE(nullptr, meta_reader);
-      ASSERT_TRUE(meta_reader->last_segments_file(dir(), filename));
-      meta_reader->read(dir(), meta, filename);
-      ASSERT_EQ(2, meta.seg_counter);
-    }
-  }
-
-  // add a reader with 1 full segment
-  {
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    ASSERT_EQ(2, segment.docs_count());
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc1
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // add a reader with 1 sparse segment
-  {
-    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    tests::Remove(*data_writer, std::move(query_doc1));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    ASSERT_EQ(1, segment.docs_count());
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // add a reader with 2 full segments
-  {
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    ASSERT_EQ(4, segment.docs_count());
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc1
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc3
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc4
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // add a reader with 2 sparse segments
-  {
-    auto query_doc2_doc3 = MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}});
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    tests::Remove(*data_writer, std::move(query_doc2_doc3));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    ASSERT_EQ(2, segment.docs_count());
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc1
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc4
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // add a reader with 2 mixed segments
-  {
-    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    tests::Remove(*data_writer, std::move(query_doc4));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    ASSERT_EQ(3, segment.docs_count());
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc1
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc3
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // new: add + add + delete, old: import
-  {
-    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-    irs::MemoryDirectory data_dir;
-    auto data_writer = irs::IndexWriter::Make(
-      data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->RefreshCommit();
-    ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    tests::Remove(*writer,
-                  std::move(query_doc2));  // should not match any documents
-    ASSERT_TRUE(writer->Import(irs::DirectoryReader(
-      data_dir, codec(), irs::tests::DefaultReaderOptions())));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(2, reader.size());
-
-    {
-      auto& segment = reader[0];  // assume 0 is id of imported segment
-      ASSERT_EQ(2, segment.docs_count());
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc1
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc2
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    {
-      auto& segment = reader[1];  // assume 1 is id of original segment
-      ASSERT_EQ(1, segment.docs_count());
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc3
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-  }
-}
-
 TEST_P(IndexTestCase, refresh_reader) {
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
@@ -5929,137 +5509,6 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   }
 
   ASSERT_TRUE(expected_name.empty());
-}
-
-TEST_P(IndexTestCase, import_concurrent) {
-  struct Store {
-    Store(const irs::Format::ptr& codec)
-      : dir(std::make_unique<irs::MemoryDirectory>()) {
-      writer = irs::IndexWriter::Make(*dir, codec, irs::kOmCreate,
-                                      irs::tests::DefaultWriterOptions());
-      writer->RefreshCommit();
-      reader =
-        irs::DirectoryReader(*dir, nullptr, irs::tests::DefaultReaderOptions());
-    }
-
-    Store(Store&& rhs) noexcept
-      : dir(std::move(rhs.dir)),
-        writer(std::move(rhs.writer)),
-        reader(rhs.reader) {}
-
-    Store(const Store&) = delete;
-    Store& operator=(const Store&) = delete;
-
-    std::unique_ptr<irs::MemoryDirectory> dir;
-    irs::IndexWriter::ptr writer;
-    irs::DirectoryReader reader;
-  };
-
-  std::vector<Store> stores;
-  stores.reserve(4);
-  for (size_t i = 0; i < stores.capacity(); ++i) {
-    stores.emplace_back(codec());
-  }
-  std::vector<std::thread> workers;
-
-  std::set<std::string> names;
-  tests::JsonDocGenerator gen(
-    resource("simple_sequential.json"),
-    [&names](tests::Document& doc, const std::string& name,
-             const tests::JsonDocGenerator::JsonValue& data) {
-      if (data.is_string()) {
-        {
-          auto f = std::make_shared<tests::StringField>(name, data.str);
-          f->id = tests::FieldIdFor(name);
-          doc.insert(std::move(f));
-        }
-
-        if (name == "name") {
-          names.emplace(data.str.data, data.str.size);
-        }
-      }
-    });
-
-  const auto count = 10;
-  for (auto& store : stores) {
-    for (auto i = 0; i < count; ++i) {
-      auto* doc = gen.next();
-
-      if (!doc) {
-        break;
-      }
-
-      ASSERT_TRUE(InsertWithName(*store.writer, *doc));
-    }
-    store.writer->RefreshCommit();
-    store.reader = irs::DirectoryReader(*store.dir, nullptr,
-                                        irs::tests::DefaultReaderOptions());
-    tests::AssertSnapshotEquality(store.writer->GetSnapshot(), store.reader);
-  }
-
-  std::mutex mutex;
-  std::condition_variable ready_cv;
-  bool ready = false;
-
-  auto wait_for_all = [&mutex, &ready, &ready_cv] {
-    // wait for all threads to be registered
-    std::unique_lock<std::remove_reference<decltype(mutex)>::type> lock(mutex);
-    while (!ready) {
-      ready_cv.wait(lock);
-    }
-  };
-
-  irs::MemoryDirectory dir;
-  irs::IndexWriter::ptr writer = irs::IndexWriter::Make(
-    dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-  for (auto& store : stores) {
-    workers.emplace_back([&wait_for_all, &writer, &store] {
-      wait_for_all();
-      writer->Import(store.reader);
-    });
-  }
-
-  // all threads are registered... go, go, go...
-  {
-    std::lock_guard lock{mutex};
-    ready = true;
-    ready_cv.notify_all();
-  }
-
-  // wait for workers to finish
-  for (auto& worker : workers) {
-    worker.join();
-  }
-
-  writer->RefreshCommit();  // commit changes
-
-  auto reader =
-    irs::DirectoryReader(dir, nullptr, irs::tests::DefaultReaderOptions());
-  tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
-  ASSERT_EQ(workers.size(), reader.size());
-  ASSERT_EQ(names.size(), reader.docs_count());
-  ASSERT_EQ(names.size(), reader.live_docs_count());
-
-  size_t removed = 0;
-  for (auto& segment : reader) {
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    while (!irs::doc_limits::eof(docs_itr->Next())) {
-      ASSERT_EQ(1, names.erase(irs::tests::ReadStoredStr<std::string>(
-                     values, docs_itr->Value())));
-      ++removed;
-    }
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-  ASSERT_EQ(removed, reader.docs_count());
-  ASSERT_TRUE(names.empty());
 }
 
 static void CompactRange(irs::Compaction& candidates,
@@ -12275,8 +11724,8 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
 
   // The suffix is a bound on the segment, so it costs no mask file at all.
   ASSERT_EQ(nullptr, segment.docs_mask());
-  ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().uncommitted_begin);
-  ASSERT_EQ(1, irs::UncommittedCount(segment.Meta()));
+  ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().visible_end);
+  ASSERT_EQ(1, irs::InvisibleCount(segment.Meta()));
 
   auto it_mask = segment.MaskedDocs();
   ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
@@ -12336,7 +11785,7 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
                                        irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader[0].live_docs_count());
-    ASSERT_EQ(1, irs::UncommittedCount(reader[0].Meta()));
+    ASSERT_EQ(1, irs::InvisibleCount(reader[0].Meta()));
     partial_meta = reader.Meta().index_meta.segments[0].filename;
   }
 
@@ -12350,7 +11799,7 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
                                      irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasUncommitted(reader[0].Meta()));
+  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
   ASSERT_EQ(partial_meta, reader.Meta().index_meta.segments[0].filename);
   AssertSnapshotEquality(*writer);
 }
@@ -12416,13 +11865,69 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].docs_count());
   ASSERT_EQ(2, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasUncommitted(reader[0].Meta()));
+  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
   const auto& rewritten = reader.Meta().index_meta.segments[0].filename;
   ASSERT_NE(partial_meta, rewritten);
   ASSERT_EQ(2, recorder.synced.size());
   ASSERT_EQ(rewritten, recorder.synced[0]);
   ASSERT_TRUE(recorder.synced[1].starts_with("pending_segments_"));
   AssertSnapshotEquality(*writer);
+}
+
+TEST_P(IndexTestCase11, partial_commit_retried_after_failed_sync_syncs_data) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  SyncRecorder recorder{directory};
+  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc0));
+    ASSERT_TRUE(insert(trx, *doc1));
+    trx.Commit(kVisibleTick);
+  }
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    trx.Commit(kPendingTick);
+  }
+
+  recorder.fail_next_sync = true;
+  ASSERT_THROW(writer->RefreshCommit({.tick = kVisibleTick}), irs::IoError);
+
+  recorder.synced.clear();
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader[0].live_docs_count());
+  const auto& segment = reader.Meta().index_meta.segments[0];
+  ASSERT_FALSE(segment.meta.files.empty());
+  for (const auto& file : segment.meta.files) {
+    EXPECT_NE(recorder.synced.end(), std::ranges::find(recorder.synced, file))
+      << file << " was never synced";
+  }
+  EXPECT_NE(recorder.synced.end(),
+            std::ranges::find(recorder.synced, segment.filename));
 }
 
 TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
@@ -12479,8 +11984,82 @@ TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(3, reader.live_docs_count());
-  ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().uncommitted_begin);
+  ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
   ASSERT_EQ(2, reader[0].live_docs_count());
+}
+
+TEST_P(IndexTestCase11, partial_commit_tail_compacts_after_reopen) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+  auto* doc3 = gen.next();
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto writer =
+      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc0));
+      ASSERT_TRUE(insert(trx, *doc1));
+      trx.Commit(kVisibleTick);
+    }
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc2));
+      trx.Commit(kPendingTick);
+    }
+    ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+  }
+
+  auto writer = open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc3));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader[0].docs_count());
+  ASSERT_EQ(3, reader[0].live_docs_count());
+  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
+  ASSERT_EQ(nullptr, reader[0].docs_mask());
+
+  auto* field = reader[0].field(kNameFieldId);
+  ASSERT_NE(nullptr, field);
+  for (auto term : {"A"sv, "B"sv, "D"sv}) {
+    EXPECT_EQ(
+      1, PostingMetaOf(*field, irs::ViewCast<irs::byte_type>(term)).docs_count)
+      << term;
+  }
+  EXPECT_EQ(
+    0, PostingMetaOf(*field, irs::ViewCast<irs::byte_type>("C"sv)).docs_count);
+  auto* same = reader[0].field(kSameFieldId);
+  ASSERT_NE(nullptr, same);
+  EXPECT_EQ(
+    3, PostingMetaOf(*same, irs::ViewCast<irs::byte_type>("xyz"sv)).docs_count);
+  AssertSnapshotEquality(*writer);
 }
 
 TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
@@ -12742,7 +12321,7 @@ TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
     auto reader = irs::DirectoryReader(directory, nullptr,
                                        irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
-    ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().uncommitted_begin);
+    ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
   }
 
   size_t seen = 0;

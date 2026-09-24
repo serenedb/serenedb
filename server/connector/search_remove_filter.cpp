@@ -30,8 +30,8 @@ namespace sdb::connector {
 namespace {
 
 bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc,
-            irs::doc_id_t uncommitted_begin = irs::doc_limits::eof()) noexcept {
-  return doc >= uncommitted_begin ||
+            irs::doc_id_t visible_end = irs::doc_limits::eof()) noexcept {
+  return doc >= visible_end ||
          (segment_mask != nullptr && segment_mask->Contains(doc));
 }
 
@@ -95,7 +95,7 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
-  _uncommitted_begin = segment.Meta().uncommitted_begin;
+  _visible_end = segment.Meta().visible_end;
   _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
@@ -139,7 +139,7 @@ irs::doc_id_t SearchRemoveFilter::Next() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (Masked(_segment_mask, found_doc, _uncommitted_begin) ||
+      if (Masked(_segment_mask, found_doc, _visible_end) ||
           Masked(_pending_mask, found_doc)) {
         return true;  // skip deleted, including by this batch's earlier queries
       }
@@ -194,7 +194,7 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
-  _uncommitted_begin = segment.Meta().uncommitted_begin;
+  _visible_end = segment.Meta().visible_end;
   _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
@@ -215,7 +215,7 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
         if (irs::doc_limits::eof(doc)) {
           break;
         }
-        if (Masked(_segment_mask, doc, _uncommitted_begin) ||
+        if (Masked(_segment_mask, doc, _visible_end) ||
             Masked(_pending_mask, doc)) {
           continue;
         }

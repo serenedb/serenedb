@@ -36,15 +36,15 @@ namespace irs::fill {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t uncommitted) noexcept
+  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
     : _it{mask, doc_limits::eof()},
       _words{mask != nullptr ? mask->Words() : nullptr},
       _word_count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount())
                                   : 0},
-      _uncommitted{uncommitted} {}
+      _visible_end{visible_end} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
-    : DocsMask{segment.docs_mask(), segment.Meta().uncommitted_begin} {}
+    : DocsMask{segment.docs_mask(), segment.Meta().visible_end} {}
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
     const auto base = static_cast<int64_t>(min - doc_limits::min());
@@ -59,13 +59,13 @@ class DocsMask {
         detail::WordAt(_words, _word_count, base + int64_t{full} * kBits) &
         (~uint64_t{0} >> (kBits - rest));
     }
-    if (_uncommitted < max) {
-      for (auto doc = std::max(min, _uncommitted); doc < max; ++doc) {
+    if (_visible_end < max) {
+      for (auto doc = std::max(min, _visible_end); doc < max; ++doc) {
         Set(words, doc - min);
       }
       return max;
     }
-    return std::min(_it.Seek(max), _uncommitted);
+    return std::min(_it.Seek(max), _visible_end);
   }
 
   uint32_t FillLive(doc_id_t min, uint32_t count, uint32_t* IRS_RESTRICT out) {
@@ -96,7 +96,7 @@ class DocsMask {
   DocumentMask::Iterator _it;
   const uint64_t* _words;
   uint32_t _word_count;
-  doc_id_t _uncommitted;
+  doc_id_t _visible_end;
 };
 
 }  // namespace irs::fill

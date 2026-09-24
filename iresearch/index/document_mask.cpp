@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/utils/math_utils.hpp"
 
 namespace irs {
 
@@ -99,10 +100,7 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
                                     compressed.minimum(), ", ", max, "]")};
     }
 
-    const size_t words = (max - kBase) / 64 + 1;
-    if (!roaring::api::bitset_grow(&mask._bits, words)) [[unlikely]] {
-      throw IllegalState{"Failed to grow the document mask"};
-    }
+    mask.Grow(WordsFor(max));
 
     for (const auto doc : compressed) {
       if (doc < kBase || doc > max) [[unlikely]] {
@@ -127,17 +125,37 @@ roaring::Roaring DocumentMask::Compress() const {
 }
 
 void DocumentMask::Merge(const DocumentMask& other) {
+  Grow(other._bits.arraysize);
   if (!roaring::api::bitset_inplace_union(&_bits, &other._bits)) [[unlikely]] {
     throw IllegalState{"Failed to grow the document mask while merging"};
   }
 }
 
-void DocumentMask::Grow(size_t at) {
-  const size_t words = at / 64 + 1;
-  if (words > _bits.arraysize && !roaring::api::bitset_grow(&_bits, words))
-    [[unlikely]] {
-    throw IllegalState{"Failed to grow the document mask"};
+void DocumentMask::Trim() noexcept {
+  if (Empty()) {
+    roaring_free(_bits.array);
+    _bits = {};
+    return;
   }
+  roaring::api::bitset_trim(&_bits);
+}
+
+void DocumentMask::Grow(size_t words) {
+  if (words <= _bits.arraysize) {
+    return;
+  }
+  if (words > _bits.capacity) {
+    const auto capacity = math::RoundupPower2(words);
+    auto* array = static_cast<uint64_t*>(
+      roaring_realloc(_bits.array, capacity * sizeof(uint64_t)));
+    if (array == nullptr) [[unlikely]] {
+      throw IllegalState{"Failed to grow the document mask"};
+    }
+    _bits.array = array;
+    _bits.capacity = capacity;
+  }
+  std::fill(_bits.array + _bits.arraysize, _bits.array + words, uint64_t{0});
+  _bits.arraysize = words;
 }
 
 void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
@@ -146,7 +164,7 @@ void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
   if (first == last) {
     return;
   }
-  Grow(last - 1 - kBase);
+  Grow(WordsFor(last - 1));
   for (auto doc = first; doc != last; ++doc) {
     roaring::api::bitset_set(&_bits, doc - kBase);
   }

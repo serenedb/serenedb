@@ -1271,11 +1271,11 @@ size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
 
 void BmScanTailAsBound(benchmark::State& state) {
   const irs::DocumentMask mask;
-  constexpr auto kUncommitted = kBegin + kTailVisible;
+  constexpr auto kVisibleEnd = kBegin + kTailVisible;
 
   for (auto _ : state) {
     size_t live = 0;
-    for (auto doc = kBegin; doc < kUncommitted; ++doc) {
+    for (auto doc = kBegin; doc < kVisibleEnd; ++doc) {
       live += static_cast<size_t>(!mask.Contains(doc));
     }
     benchmark::DoNotOptimize(live);

@@ -173,7 +173,7 @@ void StageDeletes(irs::IndexWriter::Transaction& trx,
   }
   remover.FinishImpl();
   // Deliberately not RegisterFlush. Registering would also bind the removals to
-  // whatever context is current here rather than the one the imports go to.
+  // whatever context is current here, not the one the incoming segments go to.
 }
 
 struct Slice {

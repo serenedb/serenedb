@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -481,6 +482,73 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
     walked += actual.size();
   }
   ASSERT_GT(walked, 0);
+}
+
+TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  auto by_name = [](std::string_view name) {
+    auto filter = std::make_unique<irs::ByTerm>();
+    *filter->mutable_field_id() = kNameFieldId;
+    filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    return filter;
+  };
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    trx.Remove(irs::Filter::ptr{by_name(name)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  const std::vector<std::vector<std::string_view>> excluded{
+    {"B"}, {"B", "E"}, {"A", "B"}};
+  for (const auto& names : excluded) {
+    irs::BooleanFilter filter;
+    filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    for (const auto name : names) {
+      filter.Add(by_name(name), irs::Occur::MustNot);
+    }
+    size_t counted = 0;
+    for (auto& segment : reader) {
+      ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+      const irs::PrepareContext ctx;
+      auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx),
+                                     segment, ctx.memory, nullptr, false);
+      ASSERT_NE(nullptr, query);
+
+      size_t expected = 0;
+      auto lead = query->PlanLead({});
+      ASSERT_NE(nullptr, lead);
+      while (!irs::doc_limits::eof(lead->Next())) {
+        ++expected;
+      }
+
+      auto count = query->PlanCount({});
+      ASSERT_NE(nullptr, count);
+      const auto actual =
+        count->Run(irs::doc_limits::min(), irs::doc_limits::eof());
+      ASSERT_EQ(expected, actual);
+      counted += actual;
+    }
+    const auto live_excluded =
+      static_cast<size_t>(absl::c_count_if(names, [&](auto name) {
+        return !absl::c_linear_search(kRemoved, name);
+      }));
+    ASSERT_EQ(reader.live_docs_count() - live_excluded, counted);
+  }
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {

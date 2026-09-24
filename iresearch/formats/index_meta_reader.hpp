@@ -87,12 +87,12 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   const auto cnt = meta_in.ReadProperty<uint64_t>(
     IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
   std::vector<IndexSegment> segments;
-  std::vector<uint32_t> uncommitted;
+  std::vector<uint32_t> invisible;
   meta_in.ReadList(
     IndexMetaWriterImpl::kFieldSegments, "segments",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
       auto& segment = segments.emplace_back();
-      auto& uncommitted_count = uncommitted.emplace_back();
+      auto& invisible_count = invisible.emplace_back();
       list.ReadObject([&](duckdb::Deserializer& obj) {
         segment.filename = obj.ReadProperty<std::string>(
           IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
@@ -105,9 +105,9 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
                                         "' of segment '", segment.filename,
                                         "', path: ", filename)};
         }
-        uncommitted_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
-          IndexMetaWriterImpl::kSegmentFieldUncommittedCount,
-          "uncommitted_count", 0);
+        invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+          IndexMetaWriterImpl::kSegmentFieldInvisibleCount, "invisible_count",
+          0);
       });
     });
   if (payload && meta_in.CanDeserializeProperty(
@@ -121,16 +121,16 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
 
     reader->read(dir, segment.meta, segment.filename);
 
-    if (const auto count = uncommitted[i++]; count != 0) {
+    if (const auto count = invisible[i++]; count != 0) {
       auto& info = segment.meta;
       if (count > info.live_docs_count) [[unlikely]] {
-        throw IndexError{absl::StrCat(
-          "Segment '", segment.filename, "' has uncommitted_count(", count,
-          ") above live_docs_count(", info.live_docs_count,
-          "), path: ", filename)};
+        throw IndexError{
+          absl::StrCat("Segment '", segment.filename, "' has invisible_count(",
+                       count, ") above live_docs_count(", info.live_docs_count,
+                       "), path: ", filename)};
       }
       info.live_docs_count -= count;
-      info.uncommitted_begin =
+      info.visible_end =
         static_cast<doc_id_t>(doc_limits::min() + info.docs_count - count);
     }
   }

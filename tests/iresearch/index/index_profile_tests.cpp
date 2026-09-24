@@ -38,7 +38,6 @@
 
 namespace {
 
-inline constexpr irs::field_id kSameId = 1;
 inline constexpr irs::field_id kUpdatedId = 2;
 
 template<typename ParticleT>
@@ -79,8 +78,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
   void SetOnTick(bool value) noexcept { _on_tick = value; }
 
-  void ProfileBulkIndex(size_t num_insert_threads, size_t num_import_threads,
-                        size_t num_update_threads, size_t batch_size,
+  void ProfileBulkIndex(size_t num_insert_threads, size_t num_update_threads,
+                        size_t batch_size,
                         irs::IndexWriter::ptr writer = nullptr,
                         std::atomic<size_t>* commit_count = nullptr) {
     struct CsvDocTemplateT : public tests::CsvDocGenerator::DocTemplate {
@@ -111,11 +110,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     irs::timer_utils::InitStats(true);
 
-    std::atomic<bool> import_again(true);
-    irs::MemoryDirectory import_dir;
-    std::atomic<size_t> import_docs_count(0);
-    size_t import_interval = 10000;
-    irs::DirectoryReader import_reader;
     std::atomic<size_t> parsed_docs_count(0);
     std::atomic<size_t> update_docs_count(0);
     size_t update_skip = 1000;
@@ -124,9 +118,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::atomic<size_t> local_writer_commit_count(0);
     std::atomic<size_t>& writer_commit_count =
       commit_count ? *commit_count : local_writer_commit_count;
-    std::atomic<size_t> writer_import_count(0);
     auto thread_count = (std::max)((size_t)1, num_insert_threads);
-    auto total_threads = thread_count + num_import_threads + num_update_threads;
+    auto total_threads = thread_count + num_update_threads;
     irs::async_utils::ThreadPool<> thread_pool(total_threads);
     std::mutex mutex;
     // notification only for the first update task, so at least one
@@ -141,49 +134,14 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       writer = open_writer(irs::kOmCreate, std::move(options));
     }
 
-    // initialize reader data source for import threads
-    if (num_import_threads != 0) {
-      auto import_writer =
-        irs::IndexWriter::Make(import_dir, codec(), irs::kOmCreate,
-                               irs::tests::DefaultWriterOptions());
-
-      {
-        REGISTER_TIMER_NAMED_DETAILED("init - setup");
-        tests::JsonDocGenerator import_gen{resource("simple_sequential.json"),
-                                           &tests::GenericJsonFieldFactory};
-
-        for (const tests::Document* doc; (doc = import_gen.next());) {
-          REGISTER_TIMER_NAMED_DETAILED("init - insert");
-          auto ctx = import_writer->GetBatch();
-          {
-            auto d = ctx.Insert();
-            EXPECT_TRUE(
-              tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
-            StoreNamed(d, doc->indexed, "same", kSameId);
-          }
-          TransactionTick(ctx);
-        }
-      }
-
-      {
-        std::unique_lock commit_lock{_commit_mutex};
-        REGISTER_TIMER_NAMED_DETAILED("init - commit");
-        import_writer->RefreshCommit({.tick = CommitTick()});
-      }
-
-      REGISTER_TIMER_NAMED_DETAILED("init - open");
-      import_reader = irs::DirectoryReader(import_dir, codec(),
-                                           irs::tests::DefaultReaderOptions());
-    }
-
     {
       std::lock_guard lock(mutex);
 
       // register insertion jobs
       for (size_t i = 0; i < thread_count; ++i) {
         thread_pool.run([&mutex, &writer, thread_count, i, writer_batch_size,
-                         &parsed_docs_count, &writer_commit_count,
-                         &import_again, &inserts, this] {
+                         &parsed_docs_count, &writer_commit_count, &inserts,
+                         this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
@@ -256,35 +214,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           }
 
           ++writer_commit_count;
-          import_again.store(false);  // stop any import threads, on completion
-          // of any insert thread
           inserts.count_down();
-        });
-      }
-
-      // register import jobs
-      for (size_t i = 0; i < num_import_threads; ++i) {
-        thread_pool.run([&mutex, &writer, import_reader, &import_docs_count,
-                         &import_again, &import_interval,
-                         &writer_import_count]() -> void {
-          {
-            // wait for all threads to be registered
-            std::lock_guard lock(mutex);
-          }
-
-          // ensure there will be at least 1 commit if scheduled
-          do {
-            import_docs_count += import_reader.docs_count();
-
-            {
-              REGISTER_TIMER_NAMED_DETAILED("import");
-              writer->Import(import_reader);
-            }
-
-            ++writer_import_count;
-            std::this_thread::sleep_for(
-              std::chrono::milliseconds(import_interval));
-          } while (import_again.load());
         });
       }
 
@@ -436,18 +366,12 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     // not all commits might produce a new segment,
     ASSERT_LE(1, reader.size());
     // some might merge with concurrent commits
-    ASSERT_TRUE(writer_commit_count * thread_count + writer_import_count >=
+    ASSERT_TRUE(writer_commit_count * thread_count >=
                 reader.size());  // worst case each thread is concurrently
                                  // populating its own segment for every commit
 
     size_t indexed_docs_count = 0;
-    size_t imported_docs_count = 0;
     size_t updated_docs_count = 0;
-    auto imported_visitor = [&imported_docs_count](
-                              irs::doc_id_t, const irs::bytes_view&) -> bool {
-      ++imported_docs_count;
-      return true;
-    };
     auto updated_visitor = [&updated_docs_count](
                              irs::doc_id_t, const irs::bytes_view&) -> bool {
       ++updated_docs_count;
@@ -457,25 +381,15 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     for (size_t i = 0, count = reader.size(); i < count; ++i) {
       indexed_docs_count += reader[i].live_docs_count();
 
-      const auto* column = reader[i].Column(kSameId);
-      if (column) {
-        irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
-                                    imported_visitor);
-      }
-
-      column = reader[i].Column(kUpdatedId);
+      const auto* column = reader[i].Column(kUpdatedId);
       if (column) {
         irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
                                     updated_visitor);
       }
     }
 
-    EXPECT_EQ(parsed_docs_count + imported_docs_count, indexed_docs_count)
-      << parsed_docs_count << " " << imported_docs_count;
-    EXPECT_EQ(imported_docs_count, import_docs_count);
+    EXPECT_EQ(parsed_docs_count, indexed_docs_count);
     EXPECT_EQ(updated_docs_count, update_docs_count);
-    // at least some imports took place if import enabled
-    EXPECT_TRUE(imported_docs_count != 0 || num_import_threads == 0);
     // at least some updates took place if update enabled
     EXPECT_TRUE(updated_docs_count != 0 || num_update_threads == 0);
   }
@@ -496,7 +410,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
-      ProfileBulkIndex(num_threads, 0, 0, batch_size);
+      ProfileBulkIndex(num_threads, 0, batch_size);
     }
 
     thread_pool.stop();
@@ -534,7 +448,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
-      ProfileBulkIndex(insert_threads, 0, 0, 0, writer, &writer_commit_count);
+      ProfileBulkIndex(insert_threads, 0, 0, writer, &writer_commit_count);
     }
 
     thread_pool.stop();
@@ -563,7 +477,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
-      ProfileBulkIndex(num_threads, 0, 0, batch_size, writer);
+      ProfileBulkIndex(num_threads, 0, batch_size, writer);
     }
 
     thread_pool.stop();
@@ -603,11 +517,11 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 };
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_full_mt) {
-  ProfileBulkIndex(0, 0, 0, 0);
+  ProfileBulkIndex(0, 0, 0);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_batched_mt) {
-  ProfileBulkIndex(0, 0, 0, 10000);
+  ProfileBulkIndex(0, 0, 10000);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt) {
@@ -628,47 +542,29 @@ TEST_P(IndexProfileTestCase,
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_full_mt) {
-  ProfileBulkIndex(16, 0, 0, 0);
+  ProfileBulkIndex(16, 0, 0);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_batched_mt) {
-  ProfileBulkIndex(16, 0, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_import_full_mt) {
-  ProfileBulkIndex(12, 4, 0, 0);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_import_batched_mt) {
-  ProfileBulkIndex(12, 4, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_update_full_mt) {
-  ProfileBulkIndex(9, 7, 5, 0);  // 5 does not divide evenly into 9 or 7
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_update_batched_mt) {
-  ProfileBulkIndex(9, 7, 5, 10000);  // 5 does not divide evenly into 9 or 7
+  ProfileBulkIndex(16, 0, 10000);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_update_full_mt) {
-  ProfileBulkIndex(16, 0, 5, 0);  // 5 does not divide evenly into 16
+  ProfileBulkIndex(16, 5, 0);  // 5 does not divide evenly into 16
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_update_batched_mt) {
-  ProfileBulkIndex(16, 0, 5, 10000);  // 5 does not divide evenly into 16
+  ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_full_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(0, 0, 0, 0);
+  ProfileBulkIndex(0, 0, 0);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_batched_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(0, 0, 0, 10000);
+  ProfileBulkIndex(0, 0, 10000);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_tick) {
@@ -693,48 +589,24 @@ TEST_P(IndexProfileTestCase,
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_full_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(16, 0, 0, 0);
+  ProfileBulkIndex(16, 0, 0);
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_batched_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(16, 0, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_full_mt_tick) {
-  SetOnTick(true);
-  ProfileBulkIndex(12, 4, 0, 0);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_batched_mt_tick) {
-  SetOnTick(true);
-  ProfileBulkIndex(12, 4, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_update_full_mt_tick) {
-  SetOnTick(true);
-  ProfileBulkIndex(9, 7, 5, 0);  // 5 does not divide evenly into 9 or 7
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_import_update_batched_mt_tick) {
-  SetOnTick(true);
-  ProfileBulkIndex(9, 7, 5, 10000);  // 5 does not divide evenly into 9 or 7
+  ProfileBulkIndex(16, 0, 10000);
 }
 
 TEST_P(IndexProfileTestCase,
        profile_bulk_index_multithread_update_full_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(16, 0, 5, 0);  // 5 does not divide evenly into 16
+  ProfileBulkIndex(16, 5, 0);  // 5 does not divide evenly into 16
 }
 
 TEST_P(IndexProfileTestCase,
        profile_bulk_index_multithread_update_batched_mt_tick) {
   SetOnTick(true);
-  ProfileBulkIndex(16, 0, 5, 10000);  // 5 does not divide evenly into 16
+  ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

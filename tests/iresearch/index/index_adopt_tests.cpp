@@ -541,7 +541,7 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
 }
 
 // The meta file needs its own ref: the segment reader pins meta.files only, and
-// unlike Import adoption does not create the file.
+// adoption does not create the file.
 TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   std::vector<std::string> adopt;
   std::vector<std::string> data_files;
@@ -722,9 +722,9 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
 // The other half of the rule above: a removal a refresh has already consumed
 // is not pending any more, so nothing carries it to a later adoption by tick,
 // and the rebuilt segment would publish carrying the deleted row. Handing it to
-// ReplaceSegments queues it in the same critical section as the imports, so the
-// generation that adopts them already masks it -- there is no published state
-// where the row is back.
+// ReplaceSegments queues it in the same critical section as the incoming
+// segments, so the generation that adopts them already masks it -- there is no
+// published state where the row is back.
 TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   Restart(/*cleanup_on_open=*/false);
 
@@ -1191,6 +1191,75 @@ TEST_F(IndexAdoptTest,
     }
   }
   EXPECT_EQ(1, rewritten);
+}
+
+TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
+  constexpr size_t kDocs = 5000;
+  {
+    auto trx = _writer->GetBatch(true);
+    for (size_t i = 0; i != kDocs; ++i) {
+      ASSERT_TRUE(
+        InsertDoc(trx, i % 2 == 0 ? "even" : (i % 4 == 1 ? "one" : "three")));
+    }
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, "other"));
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+
+  static const auto kFullMerge = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+
+  bool removed = false;
+  const irs::MergeWriter::FlushProgress progress = [&] {
+    if (!removed) {
+      removed = true;
+      auto del = _writer->GetBatch();
+      del.Remove(ByName("even"));
+      EXPECT_TRUE(del.Commit(20));
+      EXPECT_TRUE(_writer->RefreshCommit());
+    }
+    return true;
+  };
+  ASSERT_EQ(irs::CompactionError::Ok,
+            _writer->Compact(kFullMerge, nullptr, nullptr, progress).error);
+  ASSERT_TRUE(removed) << "the progress callback never ran";
+
+  {
+    auto del = _writer->GetBatch();
+    del.Remove(ByName("one"));
+    ASSERT_TRUE(del.Commit(30));
+  }
+
+  _dir->TakeSynced();
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  EXPECT_EQ(kDocs / 4 + 1, snapshot.live_docs_count());
+
+  const auto& compacted = snapshot.Meta().index_meta.segments.front();
+  ASSERT_NE(nullptr, compacted.meta.docs_mask);
+  EXPECT_EQ(1, compacted.meta.docs_mask_chain);
+  for (const auto& file : compacted.meta.files) {
+    EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
+  }
+
+  auto synced = _dir->TakeSynced();
+  ASSERT_FALSE(synced.empty());
+  EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
+  synced.pop_back();
+  std::vector<std::string> expected{compacted.meta.files.begin(),
+                                    compacted.meta.files.end()};
+  expected.emplace_back(compacted.filename);
+  std::ranges::sort(expected);
+  std::ranges::sort(synced);
+  EXPECT_EQ(expected, synced);
 }
 
 TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {

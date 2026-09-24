@@ -33,15 +33,15 @@ namespace irs::lead {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t uncommitted,
+  DocsMask(const DocumentMask* mask, doc_id_t visible_end,
            doc_id_t docs_count) noexcept
     : _words{mask != nullptr ? mask->Words() : nullptr},
       _count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0},
-      _end{std::min(static_cast<doc_id_t>(kMin + docs_count), uncommitted)},
+      _end{std::min(static_cast<doc_id_t>(kMin + docs_count), visible_end)},
       _rest{Live(0)} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
-    : DocsMask{segment.docs_mask(), segment.Meta().uncommitted_begin,
+    : DocsMask{segment.docs_mask(), segment.Meta().visible_end,
                static_cast<doc_id_t>(segment.docs_count())} {}
 
   doc_id_t Next() noexcept {

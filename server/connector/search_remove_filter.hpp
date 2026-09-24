@@ -77,7 +77,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   irs::doc_id_t _doc = irs::doc_limits::invalid();
   const irs::field_id _pk_field_id;
   mutable const irs::DocumentMask* _segment_mask{};
-  mutable irs::doc_id_t _uncommitted_begin{irs::doc_limits::eof()};
+  mutable irs::doc_id_t _visible_end{irs::doc_limits::eof()};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
@@ -149,7 +149,7 @@ class SearchRemovePrefixFilter final : public irs::Filter,
 
   const irs::field_id _pk_field_id;
   mutable const irs::DocumentMask* _segment_mask{};
-  mutable irs::doc_id_t _uncommitted_begin{irs::doc_limits::eof()};
+  mutable irs::doc_id_t _visible_end{irs::doc_limits::eof()};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::TermReader* _pk_field{};
   // Per-ENTRY dictionary iterator: the whole-file arm seeks once then

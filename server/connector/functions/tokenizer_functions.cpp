@@ -400,9 +400,6 @@ duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
                            DefaultValue(info));
   }
   fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  if (TakesLambda(group)) {
-    fn.SetBindLambdaCallback(BindTokenLambda);
-  }
   return fn;
 }
 
@@ -436,12 +433,12 @@ void RegisterTokenizerFunctions(duckdb::ExtensionLoader& loader) {
     if (group.input == pg::TemplateInput::Json) {
       set.AddFunction(MakeFunction(group, duckdb::LogicalType::JSON()));
     } else {
-      set.AddFunction(MakeFunction(group, duckdb::LogicalType::VARCHAR));
-      set.AddFunction(MakeFunction(
-        group, duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)));
       if (TakesLambda(group)) {
         set.AddFunction(MakeLambdaFunction());
       }
+      set.AddFunction(MakeFunction(group, duckdb::LogicalType::VARCHAR));
+      set.AddFunction(MakeFunction(
+        group, duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)));
     }
     loader.RegisterFunction(std::move(set));
   }

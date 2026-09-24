@@ -389,7 +389,7 @@ TEST(wordnet_synonyms_tests, make_state_owning_storage) {
   {
     const auto terms = tests::AnalyzeTerms(stream, "missing");
     ASSERT_TRUE(terms.has_value());
-    ASSERT_TRUE(terms->empty());
+    ASSERT_EQ((std::vector<std::string>{"missing"}), *terms);
   }
 }
 
@@ -429,7 +429,7 @@ TEST(wordnet_synonyms_tests, factory_make_missing_field) {
 
   const auto terms = tests::AnalyzeTerms(*analyzer, "anything");
   ASSERT_TRUE(terms.has_value());
-  ASSERT_TRUE(terms->empty());
+  ASSERT_EQ((std::vector<std::string>{"anything"}), *terms);
 }
 
 TEST(wordnet_synonyms_tokenizer_tests, native_fills_match_pull) {

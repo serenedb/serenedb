@@ -152,8 +152,10 @@ void ParseWebsearchQuery(std::string_view text,
                        const FilterContext& c) {
     auto ac = c;
     ac.negated = c.negated ^ tok.negated;
-    if (tok.kind == WsTokKind::Phrase || word_phrases) {
+    if (tok.kind == WsTokKind::Phrase) {
       BuildFtsPhrase(into, ac, column_info, tok.text);
+    } else if (word_phrases) {
+      BuildFtsWord(into, ac, column_info, tok.text);
     } else {
       BuildFtsTokens(into, ac, column_info, tok.text, /*require_all=*/true);
     }

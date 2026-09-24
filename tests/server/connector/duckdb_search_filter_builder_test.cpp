@@ -5244,6 +5244,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchPhrase) {
     columns, true, SegmentationAnalyzerProvider);
 }
 
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchHyphenatedWord) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  auto and_group = AddConjunction(expected);
+  AddPhraseFilter(and_group, 1, {"wi", "fi"});
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"router"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('wi-fi router')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchOrChain) {
   // `quick OR fox` -> single group of OR'd atoms.
   std::vector<ColumnSpec> columns{

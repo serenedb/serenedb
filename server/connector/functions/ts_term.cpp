@@ -170,6 +170,19 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
     min_match, ctx.boost);
 }
+
+void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info, std::string_view text) {
+  irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
+  AnalyzeText(ctx.tokenizer, text, tokens);
+  const auto pos = tokens.pos();
+  if (!pos.empty() && pos.front() != pos.back()) {
+    BuildFtsPhrase(parent, ctx, column_info, text);
+  } else {
+    BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/true);
+  }
+}
+
 void FromTerm(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {

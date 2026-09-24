@@ -313,7 +313,7 @@ streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching fr
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
-threads	<slt:ignore>	The number of total threads used by the system.
+threads	<slt:ignore>	The number of total threads used by the system; a session or transaction value caps the threads its queries use.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
@@ -327,7 +327,7 @@ variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIAN
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled)
 warnings_as_errors	off	Escalate all warnings to errors.
-worker_threads	<slt:ignore>	The number of total threads used by the system.
+worker_threads	<slt:ignore>	The number of total threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of memory limit divided by thread count.
 zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096
@@ -654,7 +654,7 @@ streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching fr
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
-threads	<slt:ignore>	The number of total threads used by the system.
+threads	<slt:ignore>	The number of total threads used by the system; a session or transaction value caps the threads its queries use.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
@@ -668,7 +668,7 @@ variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIAN
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled)
 warnings_as_errors	off	Escalate all warnings to errors.
-worker_threads	<slt:ignore>	The number of total threads used by the system.
+worker_threads	<slt:ignore>	The number of total threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of memory limit divided by thread count.
 zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096

@@ -248,7 +248,7 @@ void RebuildGroup(duckdb::ClientContext& context,
   const auto slice_count = std::max<size_t>(
     1, std::min<size_t>(
          group.size(),
-         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads()));
+         duckdb::TaskScheduler::QueryThreads(context)));
   auto assignment = BalanceSlices(group, slice_count);
 
   // Built here, never on a worker: the sink factory reads the catalog and

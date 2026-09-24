@@ -16,7 +16,7 @@ Update the `memory_limit` configuration value:
 
 <SqlLogicTest id="sql/statements/set/index/example_001" />
 
-Configure the system to use `1` thread:
+Run the queries of the current session on `1` thread:
 
 <SqlLogicTest id="sql/statements/set/index/example_002" />
 
@@ -42,7 +42,7 @@ Set the default sort order globally:
 
 <SqlLogicTest id="sql/statements/set/index/example_007" />
 
-Set the default threads globally:
+Size the thread pool of the whole instance to `4` threads:
 
 <SqlLogicTest id="sql/statements/set/index/example_008" />
 
@@ -51,6 +51,14 @@ Set the default threads globally:
 <SqlLogicTest id="sql/statements/set/index/example_009" />
 
 <SqlLogicTest id="sql/statements/set/index/example_010" />
+
+### Threads
+
+What `threads` changes depends on the scope it is set in. `SET GLOBAL threads` sizes the pool of worker threads the whole instance runs queries on. A session value (`SET threads`, `SET SESSION threads`) or a transaction value (`SET LOCAL threads`) leaves the pool alone and caps how many of its threads each query of that session or transaction runs on; a cap larger than the pool has no effect until the pool grows. `SHOW threads` returns the cap when one is set and the pool size otherwise. `RESET threads` drops the session's cap, `RESET GLOBAL threads` sizes the pool back to its default.
+
+Run the queries of one transaction on at most `2` threads:
+
+<SqlLogicTest id="sql/statements/set/index/example_011" />
 
 ## Syntax
 
@@ -70,7 +78,7 @@ Configuration options can have different scopes:
 
 -   `GLOBAL`: Configuration value is used (or reset) across the entire SereneDB instance.
 -   `SESSION`: Configuration value is used (or reset) only for the current session attached to a SereneDB instance.
--   `LOCAL`: Not yet implemented.
+-   `LOCAL`: Configuration value is used only until the current transaction ends. `SET LOCAL` outside a transaction block is an error.
 
 When not specified, the default scope for the configuration option is used. For most options this is `GLOBAL`.
 

@@ -268,7 +268,7 @@ duckdb::PhysicalOperator& ExecutedPlan(duckdb::PhysicalOperator& root) {
 
 bool PlanRunsParallel(duckdb::ClientContext& context,
                       duckdb::PhysicalOperator& root) {
-  if (duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads() <= 1) {
+  if (duckdb::TaskScheduler::QueryThreads(context) <= 1) {
     return false;
   }
   for (auto& source : root.GetSources()) {

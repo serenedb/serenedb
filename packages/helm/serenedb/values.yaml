@@ -89,6 +89,9 @@ podSecurityContext:
   fsGroup: 0
 
 containerSecurityContext:
+  # uid of the image's serenedb user. runAsNonRoot cannot be verified against a
+  # user declared by name, so the pod never starts without an explicit uid.
+  runAsUser: 999
   runAsNonRoot: true
   allowPrivilegeEscalation: false
   capabilities:

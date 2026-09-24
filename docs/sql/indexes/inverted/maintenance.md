@@ -75,6 +75,29 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 - **Row-group size** — `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** — for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Top-K** — set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> … LIMIT k`.
+- **Write memory** — [`segment_memory_max`](#write-memory) bounds what a write holds in memory, and sets the segment size it produces.
+
+## Write memory {#write-memory}
+
+Memory held while writing to a search table is bounded by `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = …)` clause and defaulting to 256 MB. Estimate the peak for one writing transaction as:
+
+| Write | Peak memory |
+| :--- | :--- |
+| Serial `INSERT` / `UPDATE` | ≈ 1.5 × `segment_memory_max` |
+| Parallel `INSERT` | ≈ `segment_memory_max` × threads |
+
+Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
+
+```sql
+CREATE TABLE docs (id BIGINT, body TEXT)
+  WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB
+```
+
+<DocCallout type="tip">
+
+`DELETE` sits outside this bound, but costs little: only a rowid per removed row is held until the transaction commits, so even a million-row `DELETE` is a handful of megabytes.
+
+</DocCallout>
 
 ## Session settings {#session-settings}
 

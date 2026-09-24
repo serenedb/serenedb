@@ -299,7 +299,7 @@ search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
-segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
+segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
@@ -640,7 +640,7 @@ search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
-segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
+segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.

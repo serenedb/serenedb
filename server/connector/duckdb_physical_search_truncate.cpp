@@ -46,12 +46,8 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
   search_txn.RegisterWriter(_data);
-  if (!_clears_shard) {
-    search_txn
-      .EnsureSerialSearchTransaction(_data,
-                                     [&] { return _data->GetTransaction(); })
-      .Remove(std::make_shared<irs::All>());
-  }
+  // Buffered like a removal: the wipe reaches iresearch when the write buffer
+  // is replayed, after the rows that precede it.
   search_txn.AddSearchTruncate(_data, _clears_shard);
   return duckdb::SourceResultType::FINISHED;
 }

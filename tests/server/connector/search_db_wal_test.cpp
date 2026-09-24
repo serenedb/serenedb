@@ -66,6 +66,23 @@ std::unique_ptr<duckdb::ColumnDataCollection> MakeIntCdc(
   return cdc;
 }
 
+// One collection holding several Sink chunks, plus the band list naming each
+// chunk's rowid base -- the shape the write buffer hands to the record.
+std::unique_ptr<duckdb::ColumnDataCollection> MakeBandedIntCdc(
+  duckdb::Allocator& alloc,
+  std::initializer_list<std::pair<uint64_t, std::vector<int32_t>>> runs,
+  std::vector<SearchDbWal::InlinePk>& bands) {
+  auto cdc = std::make_unique<duckdb::ColumnDataCollection>(alloc, IntType());
+  bands.clear();
+  for (const auto& [base, vals] : runs) {
+    duckdb::DataChunk chunk;
+    FillIntChunk(chunk, alloc, vals);
+    cdc->Append(chunk);
+    bands.push_back({base, vals.size()});
+  }
+  return cdc;
+}
+
 std::string Hex16(uint64_t v) { return absl::StrFormat("%016x", v); }
 
 // Accumulates everything Recover() replays.
@@ -73,8 +90,8 @@ struct Collected {
   // (tick, table_id, values, pk_base) per replayed chunk, in order.
   std::vector<std::tuple<uint64_t, uint64_t, std::vector<int32_t>, uint64_t>>
     chunks;
-  // (tick, table_id, pks) per replayed DELETE op, in order.
-  std::vector<std::tuple<uint64_t, uint64_t, std::vector<std::string>>> deletes;
+  // (tick, table_id, rowids) per replayed DELETE op, in order.
+  std::vector<std::tuple<uint64_t, uint64_t, std::vector<int64_t>>> deletes;
   // (tick, table_id) per replayed TRUNCATE op, in order.
   std::vector<std::tuple<uint64_t, uint64_t>> truncates;
   // (tick, table_id, ref) per adopted SEGMENT, in order. The tick is the
@@ -94,20 +111,16 @@ SearchDbWal::ReplayCallback MakeCollector(Collected& out) {
 }
 
 SearchDbWal::DeleteReplayCallback MakeDeleteCollector(Collected& out) {
-  return [&out](uint64_t tick, ObjectId table_id,
-                std::span<const std::string_view> pks) {
-    std::vector<std::string> v;
-    v.reserve(pks.size());
-    for (auto pk : pks) {
-      v.emplace_back(pk);
-    }
-    out.deletes.emplace_back(tick, table_id.id(), std::move(v));
-  };
+  return
+    [&out](uint64_t tick, ObjectId table_id, std::span<const int64_t> rows) {
+      out.deletes.emplace_back(tick, table_id.id(),
+                               std::vector<int64_t>{rows.begin(), rows.end()});
+    };
 }
 
 // No-op delete sink for the insert-only tests.
 SearchDbWal::DeleteReplayCallback NoDeletes() {
-  return [](uint64_t, ObjectId, std::span<const std::string_view>) {};
+  return [](uint64_t, ObjectId, std::span<const int64_t>) {};
 }
 
 SearchDbWal::TruncateReplayCallback MakeTruncateCollector(Collected& out) {
@@ -171,47 +184,69 @@ class SearchDbWalTest : public ::testing::Test {
     return _dir / (Hex16(first_tick) + ".swal");
   }
 
-  // One section with a single INLINE op over `cdc` for `table_id` and optional
-  // (base, count) segments. The op list is owned by `_op_pools` so the
-  // section's `ops` span stays valid across AppendCommit.
+  // A section is one collection plus the entries that order everything else
+  // against it. Entries are positional -- the record stores them in issue
+  // order -- so these helpers build the sequence a test wants directly.
+  SearchDbWal::Entry RowsEntry(uint32_t first_band = 0,
+                               uint32_t last_band = 0) {
+    return SearchDbWal::Entry{.kind = SearchDbWal::Entry::Kind::kRows,
+                              .first_band = first_band,
+                              .last_band = last_band};
+  }
+  SearchDbWal::Entry DeleteEntry(std::span<const int64_t> rows) {
+    return SearchDbWal::Entry{.kind = SearchDbWal::Entry::Kind::kDelete,
+                              .delete_rows = rows};
+  }
+  SearchDbWal::Entry TruncateEntry() {
+    return SearchDbWal::Entry{.kind = SearchDbWal::Entry::Kind::kTruncate};
+  }
+  SearchDbWal::Entry SegmentsEntry(
+    std::span<const SearchDbWal::SegmentRef> segments) {
+    return SearchDbWal::Entry{.kind = SearchDbWal::Entry::Kind::kSegments,
+                              .segments = segments};
+  }
+
+  // The entry list is owned by `_entry_pools` so the section's span stays valid
+  // across AppendCommit.
+  SearchDbWal::ShardSection MakeSection(
+    uint64_t table_id, const duckdb::ColumnDataCollection* cdc,
+    std::span<const SearchDbWal::InlinePk> bands,
+    std::initializer_list<SearchDbWal::Entry> entries) {
+    auto& owned = _entry_pools.emplace_back(entries);
+    return SearchDbWal::ShardSection{
+      .table_id = ObjectId{table_id},
+      .inline_data = cdc,
+      .inline_pks = bands,
+      .entries = std::span<const SearchDbWal::Entry>{owned}};
+  }
+
+  // One section whose whole collection replays as a single run of rows.
   SearchDbWal::ShardSection InlineSection(
     uint64_t table_id, const duckdb::ColumnDataCollection& cdc,
-    std::span<const SearchDbWal::InlinePk> pks = {}) {
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(SearchDbWal::Op{.inline_data = &cdc, .inline_pks = pks});
-    return SearchDbWal::ShardSection{ObjectId{table_id},
-                                     std::span<const SearchDbWal::Op>{ops}};
+    std::span<const SearchDbWal::InlinePk> bands = {}) {
+    return MakeSection(table_id, &cdc, bands,
+                       {RowsEntry(0, static_cast<uint32_t>(bands.size()))});
   }
-  // One section with a single DELETE op over encoded PK byte strings `pks`.
+  // One section with a single DELETE entry over the rowids to remove.
   SearchDbWal::ShardSection DeleteSection(uint64_t table_id,
-                                          const std::vector<std::string>& pks) {
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(
-      SearchDbWal::Op{.delete_pks = std::span<const std::string>{pks}});
-    return SearchDbWal::ShardSection{ObjectId{table_id},
-                                     std::span<const SearchDbWal::Op>{ops}};
+                                          std::span<const int64_t> rows) {
+    return MakeSection(table_id, nullptr, {}, {DeleteEntry(rows)});
   }
-  // One section with a single SEGMENT op over already-flushed segments.
+  // One section with a single SEGMENTS entry over already-flushed segments.
   SearchDbWal::ShardSection SegmentSection(
     uint64_t table_id, std::span<const SearchDbWal::SegmentRef> segments) {
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(SearchDbWal::Op{.segments = segments});
-    return SearchDbWal::ShardSection{ObjectId{table_id},
-                                     std::span<const SearchDbWal::Op>{ops}};
+    return MakeSection(table_id, nullptr, {}, {SegmentsEntry(segments)});
   }
-  // One section with a single (bodyless) TRUNCATE op.
+  // One section with a single (bodyless) TRUNCATE entry.
   SearchDbWal::ShardSection TruncateSection(uint64_t table_id) {
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(SearchDbWal::Op{.truncate = true});
-    return SearchDbWal::ShardSection{ObjectId{table_id},
-                                     std::span<const SearchDbWal::Op>{ops}};
+    return MakeSection(table_id, nullptr, {}, {TruncateEntry()});
   }
 
   std::unique_ptr<duckdb::FileSystem> _fs;
   std::filesystem::path _dir;
-  // Backing op lists for sections built by the helpers above. A deque so
+  // Backing entry lists for sections built by the helpers above. A deque so
   // references handed out stay stable as more sections are built in one test.
-  std::deque<std::vector<SearchDbWal::Op>> _op_pools;
+  std::deque<std::vector<SearchDbWal::Entry>> _entry_pools;
 };
 
 TEST_F(SearchDbWalTest, InlineRoundTrip) {
@@ -236,7 +271,7 @@ TEST_F(SearchDbWalTest, InlineRoundTrip) {
 // A DELETE op round-trips its encoded PK byte strings (variable-width, incl.
 // embedded NULs) through the central record.
 TEST_F(SearchDbWalTest, DeleteRoundTrip) {
-  const std::vector<std::string> pks{"pk-a", std::string("p\0k", 3), "ccc"};
+  const std::vector<int64_t> pks{-1, 0, 1 << 20};
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = DeleteSection(/*table=*/5, pks);
@@ -259,17 +294,11 @@ TEST_F(SearchDbWalTest, DeleteRoundTrip) {
 // SearchTableTransaction concern -- here we only check the WAL round-trips
 // both.
 TEST_F(SearchDbWalTest, InsertAndDeleteInOneSection) {
-  const std::vector<std::string> pks{"old1", "old2"};
+  const std::vector<int64_t> pks{11, 12};
   {
     SearchDbWal wal(Fs(), _dir);
     auto cdc = MakeIntCdc(Alloc(), {10, 20});
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(
-      SearchDbWal::Op{.inline_data = cdc.get()});  // INSERT (inline)
-    ops.push_back(
-      SearchDbWal::Op{.delete_pks = std::span<const std::string>{pks}});
-    SearchDbWal::ShardSection sec{ObjectId{5},
-                                  std::span<const SearchDbWal::Op>{ops}};
+    auto sec = MakeSection(5, cdc.get(), {}, {RowsEntry(), DeleteEntry(pks)});
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -615,21 +644,13 @@ TEST_F(SearchDbWalTest, InlinePkBaseAlignedToAppendsNotChunks) {
 // (no fold to a chunk file, no merge). Recovery walks the manifest in order,
 // replaying each op's rows with its own generated-PK base.
 TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
-  auto a = MakeIntCdc(Alloc(), {10, 11});
-  auto b = MakeIntCdc(Alloc(), {20});
-  std::vector<SearchDbWal::InlinePk> segA{{1000, 2}};
-  std::vector<SearchDbWal::InlinePk> segB{{2000, 1}};
+  std::vector<SearchDbWal::InlinePk> bands;
+  auto ab = MakeBandedIntCdc(Alloc(), {{1000, {10, 11}}, {2000, {20}}}, bands);
   {
     SearchDbWal wal(Fs(), _dir);
-    std::vector<SearchDbWal::Op> ops{
-      SearchDbWal::Op{
-        .inline_data = a.get(),
-        .inline_pks = std::span<const SearchDbWal::InlinePk>{segA}},
-      SearchDbWal::Op{
-        .inline_data = b.get(),
-        .inline_pks = std::span<const SearchDbWal::InlinePk>{segB}}};
-    SearchDbWal::ShardSection sec{ObjectId{5},
-                                  std::span<const SearchDbWal::Op>{ops}};
+    auto sec =
+      MakeSection(5, ab.get(), std::span<const SearchDbWal::InlinePk>{bands},
+                  {RowsEntry(0, 1), RowsEntry(1, 2)});
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -652,14 +673,10 @@ TEST_F(SearchDbWalTest, MixedInlineAndSegmentOps) {
     SearchDbWal wal(Fs(), _dir);
     auto inl = MakeIntCdc(Alloc(), {10, 11});
     std::vector<SearchDbWal::InlinePk> inline_pks{{1000, 2}};
-    std::vector<SearchDbWal::Op> ops{
-      SearchDbWal::Op{
-        .inline_data = inl.get(),
-        .inline_pks = std::span<const SearchDbWal::InlinePk>{inline_pks}},
-      SearchDbWal::Op{.segments =
-                        std::span<const SearchDbWal::SegmentRef>{&ref, 1}}};
-    SearchDbWal::ShardSection sec{ObjectId{5},
-                                  std::span<const SearchDbWal::Op>{ops}};
+    auto sec = MakeSection(
+      5, inl.get(), std::span<const SearchDbWal::InlinePk>{inline_pks},
+      {RowsEntry(0, 1),
+       SegmentsEntry(std::span<const SearchDbWal::SegmentRef>{&ref, 1})});
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -687,19 +704,15 @@ TEST_F(SearchDbWalTest, MixedInlineAndSegmentOps) {
 // hence the combined ordered log here.) An end-to-end same-txn check waits on
 // read-your-own-writes; until then this pins the WAL ordering contract.
 TEST_F(SearchDbWalTest, InterleavedInsertDeleteReplayInManifestOrder) {
-  auto a = MakeIntCdc(Alloc(), {10});
-  auto b = MakeIntCdc(Alloc(), {20});
-  const std::vector<std::string> del1{"d1"};
-  const std::vector<std::string> del2{"d2"};
+  std::vector<SearchDbWal::InlinePk> bands;
+  auto ab = MakeBandedIntCdc(Alloc(), {{1, {10}}, {2, {20}}}, bands);
+  const std::vector<int64_t> del1{101};
+  const std::vector<int64_t> del2{102};
   {
     SearchDbWal wal(Fs(), _dir);
-    std::vector<SearchDbWal::Op> ops{
-      SearchDbWal::Op{.inline_data = a.get()},  // INSERT 10
-      SearchDbWal::Op{.delete_pks = std::span<const std::string>{del1}},
-      SearchDbWal::Op{.inline_data = b.get()},  // INSERT 20
-      SearchDbWal::Op{.delete_pks = std::span<const std::string>{del2}}};
-    SearchDbWal::ShardSection sec{ObjectId{5},
-                                  std::span<const SearchDbWal::Op>{ops}};
+    auto sec = MakeSection(
+      5, ab.get(), std::span<const SearchDbWal::InlinePk>{bands},
+      {RowsEntry(0, 1), DeleteEntry(del1), RowsEntry(1, 2), DeleteEntry(del2)});
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
 
@@ -710,16 +723,15 @@ TEST_F(SearchDbWalTest, InterleavedInsertDeleteReplayInManifestOrder) {
     order.push_back(
       absl::StrFormat("I%d", chunk.GetValue(0, 0).GetValue<int32_t>()));
   };
-  auto delete_cb = [&order](uint64_t, ObjectId,
-                            std::span<const std::string_view> pks) {
-    order.push_back(absl::StrFormat("D%s", pks.front()));
+  auto delete_cb = [&order](uint64_t, ObjectId, std::span<const int64_t> rows) {
+    order.push_back(absl::StrFormat("D%d", rows.front()));
   };
   SearchDbWal wal2(Fs(), _dir);
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), insert_cb, delete_cb,
                          NoTruncates(), NoAdopts()),
             1u);
 
-  EXPECT_EQ(order, (std::vector<std::string>{"I10", "Dd1", "I20", "Dd2"}));
+  EXPECT_EQ(order, (std::vector<std::string>{"I10", "D101", "I20", "D102"}));
 }
 
 // A TRUNCATE op round-trips as a bodyless marker: replay fires only the
@@ -841,16 +853,13 @@ TEST_F(SearchDbWalTest, SegmentSkippedWhenShardDropped) {
 // writer in IndexAdoptTest.AdoptTickDecidesRemovalMasking.
 TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
   auto ref = MakeSegmentRef("_7");
-  std::vector<std::string> pks{"pk-a"};
+  std::vector<int64_t> pks{7};
   {
     SearchDbWal wal(Fs(), _dir);
-    auto& ops = _op_pools.emplace_back();
-    ops.push_back(SearchDbWal::Op{
-      .segments = std::span<const SearchDbWal::SegmentRef>{&ref, 1}});
-    ops.push_back(
-      SearchDbWal::Op{.delete_pks = std::span<const std::string>{pks}});
-    SearchDbWal::ShardSection sec{ObjectId{5},
-                                  std::span<const SearchDbWal::Op>{ops}};
+    auto sec = MakeSection(
+      5, nullptr, {},
+      {SegmentsEntry(std::span<const SearchDbWal::SegmentRef>{&ref, 1}),
+       DeleteEntry(pks)});
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/2), 2u);
   }
   Collected got;
@@ -861,7 +870,7 @@ TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
   ASSERT_EQ(got.segments.size(), 1u);
   ASSERT_EQ(got.deletes.size(), 1u);
   EXPECT_EQ(std::get<2>(got.segments[0]).meta_file, "_7.0.sm");
-  EXPECT_EQ(std::get<2>(got.deletes[0]), std::vector<std::string>{"pk-a"});
+  EXPECT_EQ(std::get<2>(got.deletes[0]), (std::vector<int64_t>{7}));
 }
 
 // GC owns WAL-side files only: a segment op points at the index's own segments,

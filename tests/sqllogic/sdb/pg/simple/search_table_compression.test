@@ -1,0 +1,291 @@
+statement ok
+CREATE TABLE search_declared (a INTEGER PRIMARY KEY, v_uncompressed TEXT USING COMPRESSION uncompressed, v_zstd TEXT USING COMPRESSION zstd, v_dict_fsst TEXT USING COMPRESSION dict_fsst, v_rle INTEGER USING COMPRESSION rle, v_bitpacking INTEGER USING COMPRESSION bitpacking, v_alp DOUBLE USING COMPRESSION alp, v_alprd DOUBLE USING COMPRESSION alprd, v_roaring BOOLEAN USING COMPRESSION roaring)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_declared SELECT a, repeat('u' || a, 20), repeat('z' || a, 20), 'v' || (a % 7), a // 100, a, a / 10.0, a * 0.1234567891, a % 3 = 0 FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_declared;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_declared') WHERE column_name LIKE 'v\_%' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+v_alp	ALP
+v_alprd	ALPRD
+v_bitpacking	BitPacking
+v_dict_fsst	DICT_FSST
+v_rle	RLE
+v_roaring	Roaring
+v_uncompressed	Uncompressed
+v_zstd	ZSTD
+
+query
+SELECT count(*) FROM search_declared WHERE v_uncompressed IS DISTINCT FROM repeat('u' || a, 20) OR v_zstd IS DISTINCT FROM repeat('z' || a, 20) OR v_dict_fsst IS DISTINCT FROM 'v' || (a % 7) OR v_rle IS DISTINCT FROM a // 100 OR v_bitpacking IS DISTINCT FROM a OR v_alp IS DISTINCT FROM a / 10.0 OR v_alprd IS DISTINCT FROM a * 0.1234567891 OR v_roaring IS DISTINCT FROM a % 3 = 0;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'uncompressed';
+
+statement ok
+CREATE TABLE search_forced_uncompressed (a INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_uncompressed SELECT a, repeat('u' || a, 20) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_uncompressed;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_uncompressed') WHERE column_name = 'v';
+----
+compression
+Uncompressed
+
+query
+SELECT count(*) FROM search_forced_uncompressed WHERE v IS DISTINCT FROM repeat('u' || a, 20);
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'zstd';
+
+statement ok
+CREATE TABLE search_forced_zstd (a INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_zstd SELECT a, repeat('z' || a, 20) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_zstd;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_zstd') WHERE column_name = 'v';
+----
+compression
+ZSTD
+
+query
+SELECT count(*) FROM search_forced_zstd WHERE v IS DISTINCT FROM repeat('z' || a, 20);
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'dict_fsst';
+
+statement ok
+CREATE TABLE search_forced_dict_fsst (a INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_dict_fsst SELECT a, 'v' || (a % 7) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_dict_fsst;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_dict_fsst') WHERE column_name = 'v';
+----
+compression
+DICT_FSST
+
+query
+SELECT count(*) FROM search_forced_dict_fsst WHERE v IS DISTINCT FROM 'v' || (a % 7);
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'rle';
+
+statement ok
+CREATE TABLE search_forced_rle (a INTEGER PRIMARY KEY, v INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_rle SELECT a, a // 100 FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_rle;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_rle') WHERE column_name = 'v';
+----
+compression
+RLE
+
+query
+SELECT count(*) FROM search_forced_rle WHERE v IS DISTINCT FROM a // 100;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE search_forced_bitpacking (a INTEGER PRIMARY KEY, v INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_bitpacking SELECT a, a FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_bitpacking;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_bitpacking') WHERE column_name = 'v';
+----
+compression
+BitPacking
+
+query
+SELECT count(*) FROM search_forced_bitpacking WHERE v IS DISTINCT FROM a;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'alp';
+
+statement ok
+CREATE TABLE search_forced_alp (a INTEGER PRIMARY KEY, v DOUBLE)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_alp SELECT a, a / 10.0 FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_alp;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_alp') WHERE column_name = 'v';
+----
+compression
+ALP
+
+query
+SELECT count(*) FROM search_forced_alp WHERE v IS DISTINCT FROM a / 10.0;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'alprd';
+
+statement ok
+CREATE TABLE search_forced_alprd (a INTEGER PRIMARY KEY, v DOUBLE)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_alprd SELECT a, a * 0.1234567891 FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_alprd;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_alprd') WHERE column_name = 'v';
+----
+compression
+ALPRD
+
+query
+SELECT count(*) FROM search_forced_alprd WHERE v IS DISTINCT FROM a * 0.1234567891;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'roaring';
+
+statement ok
+CREATE TABLE search_forced_roaring (a INTEGER PRIMARY KEY, v BOOLEAN)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_roaring SELECT a, a % 3 = 0 FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_roaring;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_roaring') WHERE column_name = 'v';
+----
+compression
+Roaring
+
+query
+SELECT count(*) FROM search_forced_roaring WHERE v IS DISTINCT FROM a % 3 = 0;
+----
+count
+0
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('search_forced_zstd') WHERE column_name = 'a';
+----
+compression
+BitPacking
+
+statement error
+CREATE TABLE search_roaring_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION roaring) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'Roaring'
+
+
+statement ok
+DROP TABLE search_declared;
+
+statement ok
+DROP TABLE search_forced_uncompressed;
+
+statement ok
+DROP TABLE search_forced_zstd;
+
+statement ok
+DROP TABLE search_forced_dict_fsst;
+
+statement ok
+DROP TABLE search_forced_rle;
+
+statement ok
+DROP TABLE search_forced_bitpacking;
+
+statement ok
+DROP TABLE search_forced_alp;
+
+statement ok
+DROP TABLE search_forced_alprd;
+
+statement ok
+DROP TABLE search_forced_roaring;

@@ -238,11 +238,20 @@ std::vector<std::string> ParseKeyColumns(
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   irs::field_id id) const {
+  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  if (const auto it = declared_compression.find(id);
+      it != declared_compression.end()) {
+    declared = it->second;
+  }
   if (const auto* entry = FindEntry(id)) {
-    return entry->column_options;
+    auto options = entry->column_options;
+    if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
+      options.compression = declared;
+    }
+    return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    return {};
+    return {.compression = declared};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its

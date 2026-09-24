@@ -21,8 +21,10 @@
 #include "catalog/entry/search_table.h"
 
 #include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -39,7 +41,10 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -180,52 +185,115 @@ SearchTableEntry::SearchTableEntry(
       _pk_sequence.GetIdentifierName();
   }
   if (!_storage) {
-    _storage = search::SearchTable::Create(catalog.GetOid(), schema.oid, oid,
-                                           base.oid == 0, _options);
+    _storage = search::SearchTable::Create(
+      catalog.GetOid(), schema.oid, oid, base.oid == 0, _options,
+      search::SearchTable::DeclaredCompression(GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
+
+namespace {
+
+void AppendIResearchBlockRows(
+  const irs::ColumnReader& node, duckdb::idx_t column_id,
+  std::vector<duckdb::idx_t>& path, std::string_view type_name, size_t segment,
+  uint64_t row_base, const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
+  const auto blocks = node.DataBlocks();
+  std::string path_str = "[";
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (i > 0) {
+      path_str += ", ";
+    }
+    const auto vc = path[i] >= duckdb::VIRTUAL_COLUMN_START
+                      ? virtual_columns.find(path[i])
+                      : virtual_columns.end();
+    if (vc != virtual_columns.end()) {
+      absl::StrAppend(&path_str, vc->second.name.GetIdentifierName());
+    } else {
+      absl::StrAppend(&path_str, path[i]);
+    }
+  }
+  path_str += "]";
+  for (size_t block = 0; block < blocks.size(); ++block) {
+    const auto& meta = blocks[block];
+    auto& info = out.emplace_back();
+    info.row_group_index = segment;
+    info.column_id = column_id;
+    info.column_path = path_str;
+    info.segment_idx = segment;
+    info.segment_type = std::string{type_name};
+    info.segment_start = row_base + node.DataBlockFirstRow(block);
+    info.segment_count = meta.tuple_count;
+    info.compression_type =
+      meta.codec ? duckdb::CompressionTypeToString(meta.codec->type)
+                 : std::string{"Uncompressed"};
+    info.segment_stats = meta.statistics.ToStruct();
+    info.has_updates = false;
+    info.persistent = true;
+    info.block_id = INVALID_BLOCK;
+    info.block_offset = meta.file_offset;
+  }
+}
+
+void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
+                         std::vector<duckdb::idx_t>& path, size_t segment,
+                         uint64_t row_base,
+                         const duckdb::virtual_column_map_t& virtual_columns,
+                         duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
+  AppendIResearchBlockRows(node, column_id, path, node.Type().ToString(),
+                           segment, row_base, virtual_columns, out);
+  if (const auto* validity = node.Validity()) {
+    path.push_back(0);
+    AppendIResearchBlockRows(*validity, column_id, path, "VALIDITY", segment,
+                             row_base, virtual_columns, out);
+    path.pop_back();
+  }
+  if (node.Type().id() == duckdb::LogicalTypeId::STRUCT) {
+    for (size_t i = 0; i < node.StructFieldCount(); ++i) {
+      path.push_back(i + 1);
+      WalkIResearchColumn(node.StructField(i), column_id, path, segment,
+                          row_base, virtual_columns, out);
+      path.pop_back();
+    }
+  } else if (const auto* child = node.Child()) {
+    path.push_back(1);
+    WalkIResearchColumn(*child, column_id, path, segment, row_base,
+                        virtual_columns, out);
+    path.pop_back();
+  }
+}
+
+}  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
   const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
   duckdb::column_t generated_pk) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
-  const auto locate = [&](irs::field_id id, duckdb::ColumnSegmentInfo& info) {
+  const auto locate = [&](irs::field_id id) -> std::optional<duckdb::idx_t> {
     if (id == connector::kGeneratedPKId) {
-      info.column_id = generated_pk;
-      info.column_path = generated_pk >= duckdb::VIRTUAL_COLUMN_START
-                           ? "[rowid]"
-                           : "[" + std::to_string(generated_pk) + "]";
-      return true;
+      return generated_pk;
     }
     for (const auto& column : table.GetColumns().Physical()) {
       if (column.Oid() == id) {
-        info.column_id = column.Physical().index;
-        info.column_path = "[" + std::to_string(info.column_id) + "]";
-        return true;
+        return column.Physical().index;
       }
     }
-    return false;
+    return std::nullopt;
   };
-  duckdb::idx_t start = 0;
-  for (duckdb::idx_t segment = 0; segment < reader.size(); ++segment) {
+  const auto virtual_columns = table.GetVirtualColumns();
+  uint64_t start = 0;
+  for (size_t segment = 0; segment < reader.size(); ++segment) {
     const auto& sub = reader[segment];
     if (const auto* columns = sub.GetColReader()) {
       for (const auto& column : columns->Columns()) {
-        duckdb::ColumnSegmentInfo info;
-        if (!locate(column->Id(), info)) {
+        const auto column_id = locate(column->Id());
+        if (!column_id) {
           continue;
         }
-        info.row_group_index = segment;
-        info.segment_idx = 0;
-        info.segment_type = column->Type().ToString();
-        info.segment_start = start;
-        info.segment_count = column->RowCount();
-        info.has_updates = false;
-        info.persistent = true;
-        info.block_id = INVALID_BLOCK;
-        info.block_offset = 0;
-        result.push_back(std::move(info));
+        std::vector<duckdb::idx_t> path{*column_id};
+        WalkIResearchColumn(*column, *column_id, path, segment, start,
+                            virtual_columns, result);
       }
     }
     start += sub.docs_count();

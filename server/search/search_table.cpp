@@ -86,15 +86,28 @@ std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
   return path;
 }
 
+catalog::CompressionByColumn SearchTable::DeclaredCompression(
+  const duckdb::ColumnList& columns) {
+  catalog::CompressionByColumn compression;
+  for (const auto& column : columns.Logical()) {
+    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
+      compression.emplace(column.Oid(), column.CompressionType());
+    }
+  }
+  return compression;
+}
+
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
-                         const catalog::SearchTableOptions& options)
+                         const catalog::SearchTableOptions& options,
+                         catalog::CompressionByColumn compression)
   : _table_id{table_id},
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
-    _row_group_size{options.row_group_size} {
+    _row_group_size{options.row_group_size},
+    _compression{std::move(compression)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -324,6 +337,7 @@ void SearchTable::RebuildConfig() {
   merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
+  merged->declared_compression = _compression;
   for (const auto& index : _configs) {
     for (const auto& [id, field] : index.config->fields) {
       merged->fields.emplace(id, field);

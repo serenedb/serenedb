@@ -133,6 +133,9 @@ void BindInvertedIndexOptions(
 InvertedIndexSettings ResolveSettings(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
+using CompressionByColumn =
+  irs::containers::FlatHashMap<irs::field_id, duckdb::CompressionType>;
+
 struct InvertedIndexConfig final : irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
@@ -158,6 +161,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   std::vector<InvertedIndexKey> keys;
   InvertedIndexFields fields;
   std::optional<ScorerOptions> top_k_scorer;
+  CompressionByColumn declared_compression;
 };
 
 inline const duckdb::Value* FindOption(

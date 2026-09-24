@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -60,17 +61,22 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
               duckdb::idx_t table_id, bool is_new,
-              const catalog::SearchTableOptions& options);
+              const catalog::SearchTableOptions& options,
+              catalog::CompressionByColumn compression);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
     duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    bool is_new, const catalog::SearchTableOptions& options) {
+    bool is_new, const catalog::SearchTableOptions& options,
+    catalog::CompressionByColumn compression) {
     return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                         options);
+                                         options, std::move(compression));
   }
+
+  static catalog::CompressionByColumn DeclaredCompression(
+    const duckdb::ColumnList& columns);
 
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
   void MergeIndexConfig(
@@ -260,6 +266,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   bool _is_new;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
+  catalog::CompressionByColumn _compression;
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;

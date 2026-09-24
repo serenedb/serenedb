@@ -24,6 +24,7 @@
 #pragma once
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <roaring/roaring.hh>
 #include <span>
 
 #include "iresearch/formats/format_utils.hpp"
@@ -71,14 +72,8 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
                                          SegmentMeta& meta,
                                          const DocumentMask* patch,
                                          uint64_t parent) {
-  if (meta.docs_count < meta.live_docs_count ||
-      meta.docs_count - meta.live_docs_count != RemovalCount(meta))
-    [[unlikely]] {
-    throw IndexError{absl::StrCat("Invalid segment meta '", meta.name,
-                                  "' detected : docs_count=", meta.docs_count,
-                                  ", live_docs_count=", meta.live_docs_count)};
-  }
-
+  SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
+  SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;

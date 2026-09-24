@@ -21,38 +21,39 @@
 #include "iresearch/index/document_mask.hpp"
 
 #include <absl/strings/str_cat.h>
+#include <roaring/bitset_util.h>
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
+#include <roaring/roaring.hh>
 #include <utility>
 
 #include "iresearch/error/error.hpp"
-#include "iresearch/utils/math_utils.hpp"
 
 namespace irs {
 
 DocumentMask::~DocumentMask() { roaring_free(_bits.array); }
 
 DocumentMask::DocumentMask(DocumentMask&& other) noexcept
-  : _bits{std::exchange(other._bits, {})} {}
+  : _bits{std::exchange(other._bits, {})},
+    _count{std::exchange(other._count, 0)} {}
 
 DocumentMask& DocumentMask::operator=(DocumentMask&& other) noexcept {
   if (this != &other) {
     roaring_free(_bits.array);
     _bits = std::exchange(other._bits, {});
+    _count = std::exchange(other._count, 0);
   }
   return *this;
 }
 
-DocumentMask::DocumentMask(const DocumentMask& other) { Assign(other._bits); }
+DocumentMask::DocumentMask(const DocumentMask& other) : _count{other._count} {
+  Assign(other._bits);
+}
 
 DocumentMask& DocumentMask::operator=(const DocumentMask& other) {
-  if (this != &other) {
-    roaring_free(_bits.array);
-    _bits = {};
-    Assign(other._bits);
-  }
-  return *this;
+  return *this = DocumentMask{other};
 }
 
 void DocumentMask::Assign(const roaring::api::bitset_t& other) {
@@ -72,13 +73,9 @@ void DocumentMask::Assign(const roaring::api::bitset_t& other) {
 
 bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
   const auto common = std::min(lhs._bits.arraysize, rhs._bits.arraysize);
-  if (common != 0 && std::memcmp(lhs._bits.array, rhs._bits.array,
-                                 common * sizeof(uint64_t)) != 0) {
-    return false;
-  }
-  const auto& tail = lhs._bits.arraysize > common ? lhs._bits : rhs._bits;
-  return std::all_of(tail.array + common, tail.array + tail.arraysize,
-                     [](uint64_t word) { return word == 0; });
+  return lhs._count == rhs._count &&
+         (common == 0 || std::memcmp(lhs._bits.array, rhs._bits.array,
+                                     common * sizeof(uint64_t)) == 0);
 }
 
 DocumentMask DocumentMask::Read(const char* buf, size_t size) {
@@ -95,29 +92,30 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
   if (!compressed.isEmpty()) {
     const auto max = compressed.maximum();
 
-    if (compressed.minimum() < kBase || doc_limits::eof(max)) [[unlikely]] {
+    if (compressed.minimum() < doc_limits::min() || doc_limits::eof(max))
+      [[unlikely]] {
       throw IndexError{absl::StrCat("Invalid document id in a document mask, [",
                                     compressed.minimum(), ", ", max, "]")};
     }
 
-    mask.Grow(WordsFor(max));
-
-    for (const auto doc : compressed) {
-      if (doc < kBase || doc > max) [[unlikely]] {
-        throw IndexError{
-          absl::StrCat("Invalid document id in a document mask: ", doc)};
-      }
-      roaring::api::bitset_set(&mask._bits, doc - kBase);
+    if (!roaring::api::roaring_bitmap_to_bitset(&compressed.roaring,
+                                                &mask._bits)) [[unlikely]] {
+      throw IllegalState{"Failed to allocate the document mask"};
     }
+    mask._count = compressed.cardinality();
   }
   return mask;
 }
 
 roaring::Roaring DocumentMask::Compress() const {
   roaring::Roaring out;
-  roaring::BulkContext ctx;
-  for (size_t at = 0; roaring::api::bitset_next_set_bit(&_bits, &at); ++at) {
-    out.addBulk(ctx, static_cast<uint32_t>(at + kBase));
+  size_t found[256];
+  uint32_t docs[std::size(found)];
+  for (size_t at = 0, n = 0; (n = roaring::api::bitset_next_set_bits(
+                                &_bits, found, std::size(found), &at)) != 0;
+       ++at) {
+    std::copy_n(found, n, docs);
+    out.addMany(n, docs);
   }
   out.runOptimize();
   out.shrinkToFit();
@@ -125,10 +123,10 @@ roaring::Roaring DocumentMask::Compress() const {
 }
 
 void DocumentMask::Merge(const DocumentMask& other) {
-  Grow(other._bits.arraysize);
   if (!roaring::api::bitset_inplace_union(&_bits, &other._bits)) [[unlikely]] {
     throw IllegalState{"Failed to grow the document mask while merging"};
   }
+  _count = roaring::api::bitset_count(&_bits);
 }
 
 void DocumentMask::Trim() noexcept {
@@ -144,18 +142,9 @@ void DocumentMask::Grow(size_t words) {
   if (words <= _bits.arraysize) {
     return;
   }
-  if (words > _bits.capacity) {
-    const auto capacity = math::RoundupPower2(words);
-    auto* array = static_cast<uint64_t*>(
-      roaring_realloc(_bits.array, capacity * sizeof(uint64_t)));
-    if (array == nullptr) [[unlikely]] {
-      throw IllegalState{"Failed to grow the document mask"};
-    }
-    _bits.array = array;
-    _bits.capacity = capacity;
+  if (!roaring::api::bitset_grow(&_bits, words)) [[unlikely]] {
+    throw IllegalState{"Failed to grow the document mask"};
   }
-  std::fill(_bits.array + _bits.arraysize, _bits.array + words, uint64_t{0});
-  _bits.arraysize = words;
 }
 
 void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
@@ -165,20 +154,19 @@ void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
     return;
   }
   Grow(WordsFor(last - 1));
-  for (auto doc = first; doc != last; ++doc) {
-    roaring::api::bitset_set(&_bits, doc - kBase);
-  }
+  roaring::internal::bitset_set_range(_bits.array, first, last);
+  _count = roaring::api::bitset_count(&_bits);
 }
 
 void DocumentMask::Truncate(doc_id_t first) noexcept {
   SDB_ASSERT(doc_limits::valid(first));
-  const size_t at = first - kBase;
-  const size_t word = at / 64;
+  const size_t word = first / 64;
   if (word >= _bits.arraysize) {
     return;
   }
-  _bits.array[word] &= (uint64_t{1} << (at % 64)) - 1;
+  _bits.array[word] &= (uint64_t{1} << (first % 64)) - 1;
   std::fill(_bits.array + word + 1, _bits.array + _bits.arraysize, 0);
+  _count = roaring::api::bitset_count(&_bits);
 }
 
 }  // namespace irs

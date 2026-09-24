@@ -29,12 +29,6 @@
 namespace sdb::connector {
 namespace {
 
-bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc,
-            irs::doc_id_t visible_end = irs::doc_limits::eof()) noexcept {
-  return doc >= visible_end ||
-         (segment_mask != nullptr && segment_mask->Contains(doc));
-}
-
 // A removal is asked for a document stream and for nothing else -- the index
 // writer drives `PlanLeadDocs` and applies its own accumulating mask to what
 // comes back. So this is the one plan it has; the other nine say that this
@@ -94,9 +88,8 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
-  _segment_mask = segment.docs_mask();
-  _visible_end = segment.Meta().visible_end;
-  _pending_mask = pending;
+  _segment_mask = segment.MaskedDocs();
+  _pending_mask = irs::DocumentMask::Iterator{pending};
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -139,8 +132,8 @@ irs::doc_id_t SearchRemoveFilter::Next() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (Masked(_segment_mask, found_doc, _visible_end) ||
-          Masked(_pending_mask, found_doc)) {
+      if (_segment_mask.Contains(found_doc) ||
+          _pending_mask.Contains(found_doc)) {
         return true;  // skip deleted, including by this batch's earlier queries
       }
       // found alive document with this PK
@@ -193,9 +186,8 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
-  _segment_mask = segment.docs_mask();
-  _visible_end = segment.Meta().visible_end;
-  _pending_mask = pending;
+  _segment_mask = segment.MaskedDocs();
+  _pending_mask = irs::DocumentMask::Iterator{pending};
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _terms.reset();
@@ -215,8 +207,7 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
         if (irs::doc_limits::eof(doc)) {
           break;
         }
-        if (Masked(_segment_mask, doc, _visible_end) ||
-            Masked(_pending_mask, doc)) {
+        if (_segment_mask.Contains(doc) || _pending_mask.Contains(doc)) {
           continue;
         }
         return _doc = doc;

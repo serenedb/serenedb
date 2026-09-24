@@ -110,8 +110,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
   auto it_mask = sub.MaskedDocs();
-  const bool has_mask = !it_mask.Empty();
-  const uint64_t docs = sub.Meta().docs_count;
+  const bool has_mask = sub.docs_mask() != nullptr;
+  const uint64_t docs = irs::VisibleCount(sub.Meta());
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
     const auto take = static_cast<duckdb::idx_t>(

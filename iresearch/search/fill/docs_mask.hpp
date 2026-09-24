@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <roaring/bitset_util.h>
+
 #include <algorithm>
 #include <cstdint>
 
@@ -46,8 +48,12 @@ class DocsMask {
   explicit DocsMask(const SubReader& segment) noexcept
     : DocsMask{segment.docs_mask(), segment.Meta().visible_end} {}
 
+  bool Empty() const noexcept {
+    return doc_limits::eof(_visible_end) && _it.Empty();
+  }
+
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
-    const auto base = static_cast<int64_t>(min - doc_limits::min());
+    const auto base = static_cast<int64_t>(min);
     const auto len = static_cast<uint32_t>(max - min);
     const auto full = len / kBits;
     for (uint32_t w = 0; w != full; ++w) {
@@ -60,9 +66,8 @@ class DocsMask {
         (~uint64_t{0} >> (kBits - rest));
     }
     if (_visible_end < max) {
-      for (auto doc = std::max(min, _visible_end); doc < max; ++doc) {
-        Set(words, doc - min);
-      }
+      roaring::internal::bitset_set_range(
+        words, std::max(min, _visible_end) - min, max - min);
       return max;
     }
     return std::min(_it.Seek(max), _visible_end);
@@ -87,11 +92,6 @@ class DocsMask {
 
  private:
   static constexpr auto kBits = detail::kWindowBits;
-
-  static IRS_FORCE_INLINE void Set(uint64_t* IRS_RESTRICT words,
-                                   doc_id_t offset) noexcept {
-    words[offset / kBits] |= uint64_t{1} << (offset % kBits);
-  }
 
   DocumentMask::Iterator _it;
   const uint64_t* _words;

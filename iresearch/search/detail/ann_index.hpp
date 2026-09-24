@@ -77,9 +77,9 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
                                const SubReader& segment,
                                const PrepareContext& ctx,
                                QueryBuilder::ptr& out) {
+  auto inner_ctx = ctx;
+  inner_ctx.collector = nullptr;
   if (inner) {
-    auto inner_ctx = ctx;
-    inner_ctx.collector = nullptr;
     out = inner->PrepareSegment(segment, inner_ctx);
     if (out == nullptr || QueryBuilder::IsEmpty(*out)) {
       return false;
@@ -87,7 +87,7 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
   } else if (HasRemovals(segment.Meta())) {
     out = MakeAllQuery(segment, {.memory = ctx.memory}, kNoBoost);
   }
-  out = WithDocsMask(std::move(out), segment, ctx.memory, nullptr, false);
+  out = WithDocsMask(std::move(out), segment, inner_ctx);
   return true;
 }
 

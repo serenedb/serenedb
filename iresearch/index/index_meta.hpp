@@ -53,6 +53,10 @@ inline doc_id_t InvisibleCount(const SegmentInfo& meta) noexcept {
   return meta.visible_end != doc_limits::eof() ? end - meta.visible_end : 0;
 }
 
+inline doc_id_t VisibleCount(const SegmentInfo& meta) noexcept {
+  return meta.docs_count - InvisibleCount(meta);
+}
+
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 

@@ -89,8 +89,8 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
                 ScanGlobalState& g, ColScanLocalState& l,
                 duckdb::DataChunk& output) {
   if (!l.live_sel_data) {
-    l.live_sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE + 8);
+    l.live_sel_data = duckdb::make_buffer<duckdb::SelectionData>(
+      STANDARD_VECTOR_SIZE + irs::doc_limits::kDocsSlack);
   }
   for (;;) {
     if (l.has_unit) {
@@ -107,8 +107,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
       break;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
-    const auto docs = std::min<uint64_t>(
-      sub.docs_count(), sub.Meta().visible_end - irs::doc_limits::min());
+    const auto docs = irs::VisibleCount(sub.Meta());
     if (l.unit.whole) {
       l.doc_cursor = 0;
       l.doc_end = docs;
@@ -117,9 +116,8 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         std::min<uint64_t>(docs, uint64_t{l.unit.rg_begin} * g.rg_size);
       l.doc_end = std::min<uint64_t>(docs, uint64_t{l.unit.rg_end} * g.rg_size);
     }
-    const auto* mask = sub.docs_mask();
-    l.has_mask = mask != nullptr && !mask->Empty();
-    l.mask = irs::fill::DocsMask{mask, sub.Meta().visible_end};
+    l.has_mask = sub.docs_mask() != nullptr;
+    l.mask = irs::fill::DocsMask{sub};
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

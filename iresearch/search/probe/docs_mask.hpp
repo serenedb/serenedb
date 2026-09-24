@@ -28,7 +28,6 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {
 
@@ -46,16 +45,15 @@ class DocsMask {
     if (target >= _visible_end) [[unlikely]] {
       return target;
     }
-    const auto offset = target - kMin;
-    const auto word = offset / kBits;
+    const auto word = target / kBits;
     if (word >= _count) [[unlikely]] {
       return _visible_end;
     }
-    const auto rest = _words[word] & (~uint64_t{0} << (offset % kBits));
+    const auto rest = _words[word] & (~uint64_t{0} << (target % kBits));
     const auto found = static_cast<doc_id_t>(
-      kMin + word * kBits + static_cast<doc_id_t>(std::countr_zero(rest)));
-    if (const auto end = static_cast<doc_id_t>(kMin + (word + 1) * kBits);
-        end <= _visible_end) [[likely]] {
+      word * kBits + static_cast<doc_id_t>(std::countr_zero(rest)));
+    if (const auto end = uint64_t{word + 1} * kBits; end <= _visible_end)
+      [[likely]] {
       return found;
     }
     return std::min(found, _visible_end);
@@ -63,7 +61,6 @@ class DocsMask {
 
  private:
   static constexpr auto kBits = detail::kWindowBits;
-  static constexpr doc_id_t kMin = doc_limits::min();
 
   const uint64_t* _words;
   uint32_t _count;

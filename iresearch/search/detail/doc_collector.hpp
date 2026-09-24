@@ -56,10 +56,8 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   std::vector<QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    const PrepareContext ctx{.collector = collector_tree.Get()};
-    queries.emplace_back(WithDocsMask(filter.PrepareSegment(segment, ctx),
-                                      segment, ctx.memory, ctx.collector,
-                                      ctx.needs_terms));
+    queries.emplace_back(
+      PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
   }
   collector_tree.Finish();
 

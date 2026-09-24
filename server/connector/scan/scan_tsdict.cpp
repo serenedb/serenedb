@@ -328,12 +328,12 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
     auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded(); folded != nullptr) {
-      _live = std::make_unique<irs::detail::LazyBitset>(std::move(*folded),
-                                                        _seg->MaskedDocs());
+      _live = std::make_unique<irs::detail::LazyBitset>(
+        std::move(*folded), irs::fill::DocsMask{*_seg});
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
-        _seg->MaskedDocs());
+        irs::fill::DocsMask{*_seg});
     }
   }
   return *_live;

@@ -27,7 +27,12 @@ namespace irs {
 
 QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
                                const SubReader& segment,
-                               IResourceManager& memory,
-                               PrepareCollector* collector, bool needs_terms);
+                               const PrepareContext& ctx);
+
+inline QueryBuilder::ptr PrepareMasked(const Filter& filter,
+                                       const SubReader& segment,
+                                       const PrepareContext& ctx) {
+  return WithDocsMask(filter.PrepareSegment(segment, ctx), segment, ctx);
+}
 
 }  // namespace irs

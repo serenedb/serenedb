@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <random>
+#include <roaring/roaring.hh>
 #include <span>
 #include <string>
 #include <utility>
@@ -1264,7 +1265,7 @@ size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
       ++live;
       continue;
     }
-    next = it_mask.Next();
+    next = it_mask.Seek(doc + 1);
   }
   return live;
 }

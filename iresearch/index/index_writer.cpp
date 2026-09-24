@@ -28,7 +28,6 @@
 
 #include <charconv>
 #include <cstdint>
-#include <optional>
 #include <ranges>
 #include <shared_mutex>
 #include <type_traits>
@@ -78,38 +77,30 @@ struct FlushedSegmentContext {
   bool MakeDocumentMask(uint64_t tick, DocumentMask& document_mask,
                         IndexSegment& index) {
     const auto docs_count = static_cast<size_t>(flushed.meta.docs_count);
-    if (flushed.docs_mask.Count() == docs_count) {
-      return true;
-    }
     const auto end = flushed.docs.size();
     SDB_ASSERT(0 < end);
     SDB_ASSERT(flushed.docs.TickAt(0) <= tick);
     const auto visible = flushed.docs.UpperBound(tick);
     SDB_ASSERT(visible <= end);
     const auto invisible_count = docs_count - visible;
-    if (invisible_count == 0) {
-      document_mask = std::move(flushed.docs_mask);
-      index = std::move(flushed);
-      return false;
-    }
     const auto visible_end = static_cast<doc_id_t>(visible + doc_limits::min());
-
+    if (visible != end) {
+      document_mask = flushed.docs_mask;
+    }
+    auto& mask = visible == end ? flushed.docs_mask : document_mask;
+    mask.Truncate(visible_end);
+    if (mask.Count() + invisible_count == docs_count) {
+      return true;
+    }
     if (visible == end) {
-      flushed.docs_mask.Truncate(visible_end);
-      if (flushed.docs_mask.Count() + invisible_count == docs_count) {
-        return true;
-      }
       document_mask = std::move(flushed.docs_mask);
       index = std::move(flushed);
     } else {
-      document_mask = flushed.docs_mask;
-      document_mask.Truncate(visible_end);
-      if (document_mask.Count() + invisible_count == docs_count) {
-        return true;
-      }
       index = flushed;
     }
-    index.meta.visible_end = visible_end;
+    if (invisible_count != 0) {
+      index.meta.visible_end = visible_end;
+    }
     return false;
   }
 
@@ -136,10 +127,9 @@ bool RemoveFromSegment(DocumentMask& deleted_docs,
   }
 
   const auto visible_end = reader.Meta().visible_end;
-  DocumentMask::Iterator it_mask{reader.docs_mask(), visible_end};
+  auto it_mask = reader.MaskedDocs();
   bool modified = false;
-  for (auto doc_id = plan->Next();
-       !doc_limits::eof(doc_id) && doc_id < visible_end;
+  for (auto doc_id = plan->Next(); doc_id < visible_end;
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (it_mask.Contains(doc_id)) {
@@ -175,10 +165,10 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
     return;  // Skip a query kind that has no plan
   }
 
-  for (auto doc = plan->Next(); !doc_limits::eof(doc); doc = plan->Next()) {
-    if (doc - doc_limits::min() < bound) {
-      document_mask.Add(doc);
-    }
+  for (auto doc = plan->Next();
+       !doc_limits::eof(doc) && doc - doc_limits::min() < bound;
+       doc = plan->Next()) {
+    document_mask.Add(doc);
   }
 }
 
@@ -477,12 +467,12 @@ std::vector<const IndexWriter::QueryContext*> CollectQueries(
   return queries;
 }
 
-struct UpdateExistingResult {
+struct PublishResult {
   std::vector<PublishedSegment> segments;
   bool modified = false;
 };
 
-UpdateExistingResult UpdateExisting(
+PublishResult UpdateExisting(
   const DirectoryReaderImpl& committed_reader,
   const CompactingSegments& segment_mask,
   std::span<const IndexWriter::QueryContext* const> queries, Directory& dir,
@@ -491,7 +481,7 @@ UpdateExistingResult UpdateExisting(
   const size_t committed_reader_size = committed_reader.size();
   size_t current_segment_index = 0;
 
-  UpdateExistingResult result;
+  PublishResult result;
   result.segments.reserve(committed_reader_size);
 
   for (DocumentMask deleted_docs;
@@ -546,10 +536,8 @@ UpdateExistingResult UpdateExisting(
   return result;
 }
 
-struct AddIncomingResult {
-  std::vector<PublishedSegment> segments;
+struct AddIncomingResult : PublishResult {
   CompactingSegments replaced;
-  bool modified = false;
 };
 
 AddIncomingResult AddIncoming(
@@ -739,16 +727,11 @@ std::vector<FlushedSegmentContext> OpenFlushed(
   return segment_ctxs;
 }
 
-struct PublishFlushedResult {
-  std::vector<PublishedSegment> segments;
-  bool modified = false;
-};
-
-PublishFlushedResult PublishFlushed(
-  std::span<FlushedSegmentContext> segment_ctxs,
-  std::span<const IndexSegment> committed, uint64_t tick, Directory& dir,
-  const ProgressReportCallback& progress) {
-  PublishFlushedResult result;
+PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
+                             std::span<const IndexSegment> committed,
+                             uint64_t tick, Directory& dir,
+                             const ProgressReportCallback& progress) {
+  PublishResult result;
   // write docs_mask if !empty(), if all docs are masked then remove segment
   // altogether
   size_t current_segment_ctxs = 0;
@@ -775,8 +758,9 @@ PublishFlushedResult PublishFlushed(
     }
     if (published != nullptr) {
       SDB_ASSERT(published->meta.version == new_segment.meta.version);
-      if (document_mask.Count() + InvisibleCount(published->meta) ==
-          RemovalCount(published->meta)) {
+      SDB_ASSERT(HasInvisible(published->meta));
+      const auto* mask = published->meta.docs_mask.get();
+      if (document_mask.Count() == (mask != nullptr ? mask->Count() : 0)) {
         auto segment = *published;
         segment.meta.visible_end = new_segment.meta.visible_end;
         segment.meta.live_docs_count =
@@ -1538,7 +1522,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
-      options.column_options, options.norm_column_id, options.row_group_size);
+      std::move(options.column_options), std::move(options.norm_column_id),
+      options.row_group_size);
   }
   if (options.cleanup_on_open) {
     // Remove non-index files from directory

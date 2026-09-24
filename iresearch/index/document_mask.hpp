@@ -24,11 +24,15 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <roaring/roaring.hh>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
+
+namespace roaring {
+
+class Roaring;
+}
 
 namespace irs {
 namespace fill {
@@ -48,24 +52,15 @@ class DocumentMask final {
 
     explicit Iterator(const DocumentMask* mask,
                       doc_id_t visible_end = doc_limits::eof()) noexcept
-      : _bits{mask != nullptr ? &mask->_bits : nullptr},
-        _visible_end{visible_end} {}
+      : _mask{mask}, _visible_end{visible_end} {}
 
     bool Empty() const noexcept {
       return doc_limits::eof(_visible_end) &&
-             (_bits == nullptr || roaring::api::bitset_empty(_bits));
+             (_mask == nullptr || _mask->Empty());
     }
 
     bool Contains(doc_id_t doc) const noexcept {
-      return doc >= _visible_end ||
-             (_bits != nullptr && roaring::api::bitset_get(_bits, doc - kBase));
-    }
-
-    doc_id_t Next() noexcept {
-      if (_value >= _visible_end) {
-        return _value;
-      }
-      return _value = std::min(Find(_value - kBase + 1), _visible_end);
+      return doc >= _visible_end || (_mask != nullptr && _mask->Contains(doc));
     }
 
     doc_id_t Seek(doc_id_t target) noexcept {
@@ -79,17 +74,18 @@ class DocumentMask final {
       if (target >= _visible_end) {
         return _value = target;
       }
-      return _value = std::min(Find(target - kBase), _visible_end);
+      return _value = std::min(Find(target), _visible_end);
     }
 
    private:
     doc_id_t Find(size_t at) const noexcept {
-      return _bits != nullptr && roaring::api::bitset_next_set_bit(_bits, &at)
-               ? static_cast<doc_id_t>(at + kBase)
+      return _mask != nullptr &&
+                 roaring::api::bitset_next_set_bit(&_mask->_bits, &at)
+               ? static_cast<doc_id_t>(at)
                : doc_limits::eof();
     }
 
-    const roaring::api::bitset_t* _bits = nullptr;
+    const DocumentMask* _mask = nullptr;
     doc_id_t _value = doc_limits::invalid();
     doc_id_t _visible_end = doc_limits::eof();
 #ifdef SDB_DEV
@@ -112,12 +108,12 @@ class DocumentMask final {
   roaring::Roaring Compress() const;
 
   bool Contains(doc_id_t doc) const noexcept {
-    return roaring::api::bitset_get(&_bits, doc - kBase);
+    return roaring::api::bitset_get(&_bits, doc);
   }
 
-  size_t Count() const noexcept { return roaring::api::bitset_count(&_bits); }
+  size_t Count() const noexcept { return _count; }
 
-  bool Empty() const noexcept { return roaring::api::bitset_empty(&_bits); }
+  bool Empty() const noexcept { return _count == 0; }
 
   size_t ByteSize() const noexcept {
     return roaring::api::bitset_size_in_bytes(&_bits);
@@ -132,7 +128,8 @@ class DocumentMask final {
     SDB_ASSERT(!doc_limits::eof(doc));
     const bool added = !Contains(doc);
     Grow(WordsFor(doc));
-    roaring::api::bitset_set(&_bits, doc - kBase);
+    roaring::api::bitset_set(&_bits, doc);
+    _count += added;
     return added;
   }
 
@@ -140,10 +137,14 @@ class DocumentMask final {
   void Truncate(doc_id_t first) noexcept;
   void Merge(const DocumentMask& other);
 
-  void Clear() noexcept { roaring::api::bitset_clear(&_bits); }
+  void Clear() noexcept {
+    roaring::api::bitset_clear(&_bits);
+    _count = 0;
+  }
+
   void Trim() noexcept;
 
- protected:
+ private:
   friend class fill::DocsMask;
   friend class probe::DocsMask;
 
@@ -151,11 +152,8 @@ class DocumentMask final {
 
   size_t WordCount() const noexcept { return _bits.arraysize; }
 
- private:
-  static constexpr doc_id_t kBase = doc_limits::min();
-
   static constexpr size_t WordsFor(doc_id_t doc) noexcept {
-    return (doc - kBase) / 64 + 1;
+    return doc / 64 + 1;
   }
 
   void Grow(size_t words);
@@ -163,6 +161,7 @@ class DocumentMask final {
   void Assign(const roaring::api::bitset_t& other);
 
   roaring::api::bitset_t _bits{};
+  size_t _count = 0;
 };
 
 }  // namespace irs

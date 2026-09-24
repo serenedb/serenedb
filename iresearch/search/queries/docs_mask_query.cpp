@@ -71,17 +71,17 @@ class MaskQuery : public QueryBuilder {
 
 QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
                                const SubReader& segment,
-                               IResourceManager& memory,
-                               PrepareCollector* collector, bool needs_terms) {
+                               const PrepareContext& ctx) {
   const auto masked = MaskedCount(segment);
-  if (!query || masked == 0 || (query && QueryBuilder::IsEmpty(*query))) {
+  if (!query || masked == 0 || QueryBuilder::IsEmpty(*query)) {
     return query;
   }
 
-  BooleanBuilder builder{
-    segment, memory, 0, kNoBoost, ScoreMergeType::Sum, collector, needs_terms};
+  BooleanBuilder builder{segment,        ctx.memory,          0,
+                         kNoBoost,       ScoreMergeType::Sum, ctx.collector,
+                         ctx.needs_terms};
   builder.Add(std::move(query), Occur::Must);
-  builder.Add(memory::make_tracked<MaskQuery>(memory, segment, masked),
+  builder.Add(memory::make_tracked<MaskQuery>(ctx.memory, segment, masked),
               Occur::MustNot);
   return builder.Finish();
 }

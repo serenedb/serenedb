@@ -455,9 +455,7 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
   size_t walked = 0;
   for (auto& segment : reader) {
     ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-    const irs::PrepareContext ctx;
-    auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx), segment,
-                                   ctx.memory, nullptr, false);
+    auto query = irs::PrepareMasked(filter, segment, {});
     ASSERT_NE(nullptr, query);
     auto lead = query->PlanLead({});
     ASSERT_NE(nullptr, lead);
@@ -520,9 +518,7 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
     size_t counted = 0;
     for (auto& segment : reader) {
       ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-      const irs::PrepareContext ctx;
-      auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx),
-                                     segment, ctx.memory, nullptr, false);
+      auto query = irs::PrepareMasked(filter, segment, {});
       ASSERT_NE(nullptr, query);
 
       size_t expected = 0;
@@ -576,9 +572,7 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
   size_t counted = 0;
   for (auto& segment : reader) {
     ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-    const irs::PrepareContext ctx;
-    auto query = irs::WithDocsMask(filter.PrepareSegment(segment, ctx), segment,
-                                   ctx.memory, nullptr, false);
+    auto query = irs::PrepareMasked(filter, segment, {});
     ASSERT_NE(nullptr, query);
 
     auto count = query->PlanCount({});

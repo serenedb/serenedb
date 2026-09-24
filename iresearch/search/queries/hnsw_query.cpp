@@ -111,13 +111,12 @@ HnswSearchScratch& ThreadScratch() {
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
                                   const SubReader& segment) {
-  const auto* mask = segment.docs_mask();
-  const auto visible_end = segment.Meta().visible_end;
+  const auto it_mask = segment.MaskedDocs();
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    if (doc >= visible_end || (mask != nullptr && mask->Contains(doc))) {
+    if (it_mask.Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});

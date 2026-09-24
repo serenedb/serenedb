@@ -22,7 +22,6 @@
 
 #include "segment_reader_impl.hpp"
 
-#include <algorithm>
 #include <duckdb/common/types.hpp>
 #include <vector>
 
@@ -146,7 +145,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
+  if (absl::c_equal(_refs, meta.files, [](const auto& ref, const auto& file) {
+        return *ref == file;
+      })) {
+    reader->_refs = _refs;
+  } else {
+    reader->_refs = GetRefs(dir, meta);
+  }
   reader->_field_reader = _field_reader;
   reader->_data = _data;
   return reader;
@@ -190,15 +195,13 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
-  const auto end =
-    std::min(doc_limits::min() + _info.docs_count, _info.visible_end);
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(end - doc_limits::min());
+    return memory::make_managed<SegmentAllDocs>(VisibleCount(_info));
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
-  return memory::make_managed<SegmentLiveDocs>(doc_limits::min(), end,
-                                               *_docs_mask);
+  return memory::make_managed<SegmentLiveDocs>(
+    doc_limits::min(), doc_limits::min() + VisibleCount(_info), *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

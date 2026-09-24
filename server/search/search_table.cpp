@@ -104,6 +104,8 @@ SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
 
 namespace {
 
+constexpr duckdb::field_id_t kFieldTick = 0;
+
 // Each PRIMARY KEY column is term-indexed under its own column id so PK
 // predicates push down. That term field is the column id itself -- distinct
 // from the ids user indexes allocate, so it never collides. store_values is
@@ -439,10 +441,10 @@ void SearchTable::OpenWriter() {
   writer_options.meta_payload_writer = [this](uint64_t tick,
                                               duckdb::Serializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
-    out.WriteProperty<uint64_t>(0, "tick", _last_committed_tick);
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
   };
   writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
-    _last_committed_tick = in.ReadProperty<uint64_t>(0, "tick");
+    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
   };
 
   _writer =

@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -75,10 +77,14 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
+  using CompressionByColumn =
+    irs::containers::FlatHashMap<catalog::ColumnId, duckdb::CompressionType>;
+
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
               bool is_new,
               const catalog::persistence::SearchTableOptions& options,
-              std::vector<catalog::ColumnId> pk_columns);
+              std::vector<catalog::ColumnId> pk_columns,
+              CompressionByColumn compression = {});
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -90,7 +96,11 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   static std::shared_ptr<SearchTable> Create(
     ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
     const catalog::persistence::SearchTableOptions& options,
-    std::vector<catalog::ColumnId> pk_columns);
+    std::vector<catalog::ColumnId> pk_columns,
+    CompressionByColumn compression = {});
+
+  static CompressionByColumn DeclaredCompression(
+    const duckdb::ColumnList& columns);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
@@ -413,6 +423,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   bool _is_new;
   std::atomic<bool> _dropped{false};
   std::vector<catalog::ColumnId> _pk_columns;
+  std::shared_ptr<const CompressionByColumn> _compression;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   std::atomic<int64_t> _num_rows{0};

@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstring>
@@ -154,6 +155,20 @@ constexpr size_t CaseConvertUtf8Bound(size_t size) noexcept {
 }
 
 template<bool ToLower>
+inline constexpr auto kTwoByteCase = [] {
+  std::array<uint16_t, 0x800> table{};
+  for (uint32_t cp = 0x80; cp < 0x800; ++cp) {
+    const uint32_t mapped = ToLower ? utf8_utils::CharToLowerSimple(cp)
+                                    : utf8_utils::CharToUpperSimple(cp);
+    if (mapped >= 0x80 && mapped < 0x800) {
+      table[cp] = static_cast<uint16_t>(((0xC0 | (mapped >> 6)) << 8) | 0x80 |
+                                        (mapped & 0x3F));
+    }
+  }
+  return table;
+}();
+
+template<bool ToLower>
 size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
   static_assert(utf8_utils::kSimpleCaseMaxUtf8Growth <= 1);
   auto* out = dst;
@@ -180,6 +195,17 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
       const auto ascii = std::countr_zero(high);
       it += ascii;
       out += ascii;
+    }
+    if (*it >= 0xC2 && *it < 0xE0 && end - it >= 2 && (it[1] & 0xC0) == 0x80) {
+      const uint16_t mapped =
+        kTwoByteCase<ToLower>[((it[0] & 0x1F) << 6) | (it[1] & 0x3F)];
+      if (mapped != 0) {
+        out[0] = static_cast<byte_type>(mapped >> 8);
+        out[1] = static_cast<byte_type>(mapped);
+        it += 2;
+        out += 2;
+        continue;
+      }
     }
     const auto* cp_start = it;
     uint32_t cp = utf8_utils::ToChar32(it, end);

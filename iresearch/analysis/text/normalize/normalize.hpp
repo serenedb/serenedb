@@ -142,10 +142,10 @@ inline constexpr auto kQcLeadSet = [] {
 }();
 
 template<sz_normal_form_t Form>
-IRS_FORCE_INLINE inline uint32_t SuspiciousMask(const char* data, size_t n,
-                                                size_t base) noexcept {
+IRS_FORCE_INLINE inline uint32_t SuspiciousMaskOf(const byte_type* block,
+                                                  const char* data, size_t n,
+                                                  size_t base) noexcept {
   static_assert(kQcLeadSet<Form>.Blockable());
-  const auto* block = reinterpret_cast<const byte_type*>(data) + base;
   uint32_t suspicious = classify::ClassifyNibbleBlock(block, kQcLeadSet<Form>);
   classify::VisitSetBits(
     classify::ClassifyAnyEqBlock(block, FormSpec<Form>::kPairLeads),
@@ -155,6 +155,24 @@ IRS_FORCE_INLINE inline uint32_t SuspiciousMask(const char* data, size_t n,
       }
     });
   return suspicious;
+}
+
+template<sz_normal_form_t Form>
+IRS_FORCE_INLINE inline uint32_t SuspiciousMask(const char* data, size_t n,
+                                                size_t base) noexcept {
+  return SuspiciousMaskOf<Form>(reinterpret_cast<const byte_type*>(data) + base,
+                                data, n, base);
+}
+
+template<sz_normal_form_t Form>
+IRS_FORCE_INLINE inline uint32_t TailSuspiciousMask(const char* data, size_t n,
+                                                    size_t base) noexcept {
+  alignas(classify::kClassifyBlock) byte_type block[classify::kClassifyBlock];
+  const auto padded = classify::LoadPadded(
+    reinterpret_cast<const byte_type*>(data) + base, n - base);
+  std::memcpy(block, &padded, sizeof block);
+  return SuspiciousMaskOf<Form>(block, data, n, base) &
+         classify::LowBits(n - base);
 }
 
 inline size_t ContextStart(const char* data, size_t i) noexcept {
@@ -241,13 +259,15 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
     }
     i = end;
   }
-  for (size_t j = i; j < n; ++j) {
-    if (SuspiciousLead<Form>(data, n, j)) {
-      const size_t start = ContextStart(data, j);
-      return sz::FindDenormalized(data + start, n - start, Form) != nullptr;
-    }
+  if (i == n) {
+    return false;
   }
-  return false;
+  const uint32_t suspicious = TailSuspiciousMask<Form>(data, n, i);
+  if (suspicious == 0) {
+    return false;
+  }
+  const size_t start = ContextStart(data, i + std::countr_zero(suspicious));
+  return sz::FindDenormalized(data + start, n - start, Form) != nullptr;
 }
 
 template<sz_normal_form_t Form>

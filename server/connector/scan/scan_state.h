@@ -101,18 +101,8 @@ struct SegmentWork {
   static constexpr uint8_t kPreparing = 1;
   static constexpr uint8_t kReady = 2;
 
-  static constexpr uint64_t Pack(uint32_t front, uint32_t back) noexcept {
-    return (uint64_t{back} << 32) | front;
-  }
-  static constexpr uint32_t Front(uint64_t packed) noexcept {
-    return static_cast<uint32_t>(packed);
-  }
-  static constexpr uint32_t Back(uint64_t packed) noexcept {
-    return static_cast<uint32_t>(packed >> 32);
-  }
-
   uint32_t rg_count = 0;
-  std::atomic_uint64_t rgs{0};
+  std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
   std::vector<ScanUnit> ordered_units;
   std::vector<duckdb::Value> ordered_keys;
@@ -222,11 +212,10 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   ScanShape shape = ScanShape::Stream;
   SplitMode split = SplitMode::Tail;
-  OrderMode order = OrderMode::SmallestFirst;
+  OrderMode order = OrderMode::LargestFirst;
   uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
-  uint32_t unit_rgs = 1;
   uint64_t rg_size = 0;
   std::atomic_uint32_t worker_count{0};
 
@@ -234,7 +223,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::unique_ptr<SegmentWork[]> segments;
   uint32_t live_segments = 0;
   std::atomic_uint32_t next_segment{0};
-  std::atomic_uint32_t next_steal{0};
   bool ordered = false;
   absl::Mutex ordered_mutex;
   std::vector<ScanOrderKey> ordered_heap;
@@ -307,7 +295,6 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
-  bool owner = false;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;

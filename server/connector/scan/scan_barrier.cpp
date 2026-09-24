@@ -18,9 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <chrono>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <thread>
 
 #include "connector/scan/scan_state.h"
 
@@ -40,6 +42,11 @@ void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
 }
 
 bool ScanBarrier::Park(duckdb::TableFunctionInput& input) {
+  constexpr auto kSpin = std::chrono::microseconds{50};
+  const auto deadline = std::chrono::steady_clock::now() + kSpin;
+  while (!Released() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
   if (Released()) {
     return false;
   }

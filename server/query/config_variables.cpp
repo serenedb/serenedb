@@ -554,11 +554,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_split",
       {
         LogicalTypeId::VARCHAR,
-        "When an inverted-index scan splits a segment into row-group units: "
-        "'tail' claims whole segments while more remain than workers, then "
-        "row groups; 'always' claims row groups from the first unit; 'never' "
-        "claims whole segments only; 'auto' (default) is 'always' under an "
-        "ORDER BY scan order and 'tail' otherwise.",
+        "How an inverted-index scan shares a segment between workers: 'tail' "
+        "gives each worker its own segment and lets an idle worker join the "
+        "segment with the most row groups left only once no segment is "
+        "unclaimed; 'always' puts every worker on the same segment until it "
+        "is claimed; 'never' scans each segment whole on one worker; 'auto' "
+        "(default) is 'always' under an ORDER BY scan order and 'tail' "
+        "otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -578,12 +580,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_order",
       {
         LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its units in: "
-        "'smallest_first' and 'largest_first' order segments by live "
-        "document count; 'order' is best-first by the ORDER BY column's "
-        "row-group statistics when the query has a scan order (and "
-        "'smallest_first' otherwise); 'auto' (default) is 'order' under a "
-        "scan order and 'smallest_first' otherwise.",
+        "The order an inverted-index scan claims its segments in: "
+        "'smallest_first' and 'largest_first' order them by live document "
+        "count; 'order' is best-first by the ORDER BY column's row-group "
+        "statistics when the query has a scan order (and 'largest_first' "
+        "otherwise); 'auto' (default) is 'order' under a scan order and "
+        "'largest_first' otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();

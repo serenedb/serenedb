@@ -81,6 +81,22 @@ jobs:
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('is_fork', (pr.head.repo.full_name !== pr.base.repo.full_name).toString());
 
+      - name: Verify triggering user has write access
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.sender.login,
+            });
+            const allowed = ['write', 'maintain', 'admin'];
+            if (!allowed.includes(perm.permission)) {
+              core.setFailed(`User ${context.payload.sender.login} has permission '${perm.permission}' - write or above required to trigger builds`);
+            } else {
+              core.info(`Authorized: ${context.payload.sender.login} (${perm.permission})`);
+            }
+
       - name: Parse options and trigger build
         if: steps.pr-info.conclusion == 'success'
         env:

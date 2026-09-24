@@ -580,9 +580,13 @@ struct DecodedMetrics {
   ExportMetricsRequest request;
 };
 
-// One decoded logs payload, read by otel_source_logs() at execution.
+// One decoded payload per signal, read by otel_source_*() at execution.
 struct DecodedLogs {
   ExportLogsRequest request;
+};
+
+struct DecodedTraces {
+  ExportTracesRequest request;
 };
 
 }  // namespace sdb::otel

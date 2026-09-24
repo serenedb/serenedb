@@ -42,7 +42,6 @@ Point any OTel SDK or the collector's stock `otlphttp` exporter at it:
 exporters:
   otlphttp:
     endpoint: http://serenedb:4318
-    compression: none
     auth:
       authenticator: basicauth
 
@@ -88,8 +87,9 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 `.json` and a `.pb` of the same payload: a test asserts that each
 row shape arrives twice, once per decoder.
 
-**No request compression yet.** A `Content-Encoding` header answers `400`, so
-set `compression: none` on the exporter.
+Request bodies may be gzip-compressed (`Content-Encoding: gzip`, the
+collector's default); a body may decompress to at most 256 MiB. Any other
+`Content-Encoding` answers `400`.
 
 Errors use `google.rpc.Status`, encoded the same way as the request: `400` for
 an undecodable payload or an unsupported `Content-Encoding`.

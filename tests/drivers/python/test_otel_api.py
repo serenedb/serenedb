@@ -8,6 +8,7 @@ wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 from __future__ import annotations
 
 import base64
+import gzip
 import http.client
 import json
 import os
@@ -129,9 +130,27 @@ def test_unknown_content_type_is_rejected(conn):
     assert "Content-Type" in json.loads(payload)["message"]
 
 
-def test_content_encoding_is_rejected(conn):
+@pytest.mark.parametrize("signal,fixture", SIGNALS)
+def test_gzip_export_accepts_conformance_fixture(conn, signal, fixture):
+    body = gzip.compress((FIXTURES / fixture).read_bytes())
     status, payload = _post(
-        conn, "/v1/logs", b"{}", headers={"Content-Encoding": "gzip"}
+        conn, f"/v1/{signal}", body, headers={"Content-Encoding": "gzip"}
+    )
+    assert status == 200, payload
+    assert json.loads(payload) == {}
+
+
+def test_corrupt_gzip_is_rejected(conn):
+    status, payload = _post(
+        conn, "/v1/logs", b"not gzip", headers={"Content-Encoding": "gzip"}
+    )
+    assert status == 400, payload
+    assert "gzip" in json.loads(payload)["message"]
+
+
+def test_unknown_content_encoding_is_rejected(conn):
+    status, payload = _post(
+        conn, "/v1/logs", b"{}", headers={"Content-Encoding": "br"}
     )
     assert status == 400, payload
     assert "Content-Encoding" in json.loads(payload)["message"]

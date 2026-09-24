@@ -85,9 +85,21 @@ std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {
 std::shared_ptr<SearchTable> SearchTable::Create(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
   const catalog::persistence::SearchTableOptions& options,
-  std::vector<catalog::ColumnId> pk_columns) {
+  std::vector<catalog::ColumnId> pk_columns, CompressionByColumn compression) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                       options, std::move(pk_columns));
+                                       options, std::move(pk_columns),
+                                       std::move(compression));
+}
+
+SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
+  const duckdb::ColumnList& columns) {
+  CompressionByColumn compression;
+  for (const auto& column : columns.Logical()) {
+    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
+      compression.emplace(column.CatalogOid(), column.CompressionType());
+    }
+  }
+  return compression;
 }
 
 namespace {
@@ -145,19 +157,28 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
  public:
   MergedFieldOptions(
     std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
+    std::shared_ptr<const SearchTable::CompressionByColumn> compression,
     uint32_t rows_per_row_group)
-    : _entries{std::move(entries)} {
+    : _entries{std::move(entries)}, _compression{std::move(compression)} {
     row_group_size = rows_per_row_group;
   }
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
+    auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+    if (const auto it = _compression->find(catalog::ColumnId{id});
+        it != _compression->end()) {
+      declared = it->second;
+    }
     const auto it = _entries->find(id);
     if (it == _entries->end()) {
-      return {};  // not a merged-config field -> writer baseline
+      return {.compression = declared};
     }
     const auto& entry = it->second;
     return {
-      .compression = entry.compression,
+      .compression =
+        entry.compression == duckdb::CompressionType::COMPRESSION_AUTO
+          ? declared
+          : entry.compression,
       // An IVF entry keys the merged config by its column id (the value
       // column), not a per-index term field, so this attaches the ANN index to
       // that column.
@@ -180,13 +201,15 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
 
  private:
   std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
+  std::shared_ptr<const SearchTable::CompressionByColumn> _compression;
 };
 
 std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
   std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
+  std::shared_ptr<const SearchTable::CompressionByColumn> compression,
   uint32_t row_group_size) {
-  return std::make_shared<const MergedFieldOptions>(std::move(entries),
-                                                    row_group_size);
+  return std::make_shared<const MergedFieldOptions>(
+    std::move(entries), std::move(compression), row_group_size);
 }
 
 }  // namespace
@@ -194,12 +217,14 @@ std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
 SearchTable::SearchTable(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
   const catalog::persistence::SearchTableOptions& options,
-  std::vector<catalog::ColumnId> pk_columns)
+  std::vector<catalog::ColumnId> pk_columns, CompressionByColumn compression)
   : _table_id{table_id},
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
     _pk_columns{std::move(pk_columns)},
+    _compression{
+      std::make_shared<const CompressionByColumn>(std::move(compression))},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size != 0
                       ? options.row_group_size
@@ -210,7 +235,7 @@ SearchTable::SearchTable(
   _entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
-  _field_options = MakeFieldOptions(_entries, _row_group_size);
+  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
   if (options.topk_scorer) {
     _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
   }
@@ -328,7 +353,7 @@ void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   MergeIndexInto(*merged_entries, *merged_terms, index);
   _entries = std::move(merged_entries);
   _terms_by_column = std::move(merged_terms);
-  _field_options = MakeFieldOptions(_entries, _row_group_size);
+  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
 }
 
 void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
@@ -345,7 +370,7 @@ void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
   std::unique_lock lock(_table_lock);
   _entries = std::move(next_entries);
   _terms_by_column = std::move(next_terms);
-  _field_options = MakeFieldOptions(_entries, _row_group_size);
+  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
 }
 
 SearchTable::~SearchTable() {

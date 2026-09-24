@@ -34,6 +34,7 @@
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <random>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -107,6 +108,7 @@ enum class Shape : uint8_t {
   Tokens,
   Phrases,
   Documents,
+  Normalized,
 };
 
 constexpr std::string_view ShapeName(Shape shape) noexcept {
@@ -117,6 +119,8 @@ constexpr std::string_view ShapeName(Shape shape) noexcept {
       return "phrases";
     case Shape::Documents:
       return "documents";
+    case Shape::Normalized:
+      return "normalized";
   }
   return {};
 }
@@ -126,6 +130,7 @@ struct Corpus {
   Values tokens;
   Values phrases;
   Values documents;
+  Values normalized;
 
   const Values& Get(Shape shape) const noexcept {
     switch (shape) {
@@ -135,6 +140,8 @@ struct Corpus {
         return phrases;
       case Shape::Documents:
         return documents;
+      case Shape::Normalized:
+        return normalized;
     }
     return tokens;
   }
@@ -167,6 +174,10 @@ Corpus MakeCorpus(const Script& script) {
     document += separator;
     if (document.size() >= kDocumentBytes) {
       total += document.size();
+      std::string normalized(normalize::Bound<kForm>(document.size()), '\0');
+      normalized.resize(sz_utf8_norm_serial(document.data(), document.size(),
+                                            kForm, normalized.data()));
+      corpus.normalized.push_back(std::move(normalized));
       corpus.documents.push_back(std::move(document));
       document.clear();
     }
@@ -454,11 +465,15 @@ void BmCandidate(benchmark::State& state, Candidate candidate,
 }
 
 void Register() {
-  constexpr Shape kShapes[2][2] = {{Shape::Tokens, Shape::Documents},
-                                   {Shape::Phrases, Shape::Documents}};
+  constexpr Shape kSegmenterShapes[] = {Shape::Phrases, Shape::Documents};
+  constexpr Shape kKernelShapes[] = {Shape::Tokens, Shape::Documents,
+                                     Shape::Normalized};
   for (const auto& corpus : Corpora()) {
     for (const auto& candidate : Candidates()) {
-      for (const auto shape : kShapes[candidate.segmenter]) {
+      const std::span<const Shape> shapes =
+        candidate.segmenter ? std::span<const Shape>{kSegmenterShapes}
+                            : std::span<const Shape>{kKernelShapes};
+      for (const auto shape : shapes) {
         benchmark::RegisterBenchmark(
           std::string{candidate.kernel} + "/" + std::string{candidate.backend} +
             "/" + std::string{corpus.name} + "_" +

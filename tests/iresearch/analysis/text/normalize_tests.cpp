@@ -196,6 +196,14 @@ void CheckClassifyAndStripSafe() {
         ++failures;
         EXPECT_EQ(normalized, !denormalized) << "line: " << c.line;
       }
+      const std::string padded =
+        std::string(37, '.') + s + std::string(29, '.');
+      if (IsNormalized(padded, Form) !=
+          !irs::analysis::normalize::Denormalized<Form>(padded.data(),
+                                                        padded.size())) {
+        ++failures;
+        EXPECT_TRUE(false) << "padded, line: " << c.line;
+      }
       if (!irs::analysis::normalize::StripSafe<Form>(s.data(), s.size())) {
         continue;
       }

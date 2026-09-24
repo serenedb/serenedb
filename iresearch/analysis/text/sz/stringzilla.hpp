@@ -69,6 +69,17 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
 #endif
 }
 
+inline const char* FindDenormalized(const char* text, size_t length,
+                                    sz_normal_form_t form) noexcept {
+#ifdef __x86_64__
+  return sz_utf8_find_denormalized_haswell(text, length, form);
+#elif defined(__aarch64__)
+  return sz_utf8_find_denormalized_neon(text, length, form);
+#else
+  return sz_utf8_find_denormalized_serial(text, length, form);
+#endif
+}
+
 inline constexpr size_t kFoldGrowth = 3;
 
 inline size_t Fold(const char* in, size_t n, char* out) noexcept {
@@ -95,9 +106,15 @@ inline size_t Dispatch(const char* text, size_t length, size_t* starts,
   return Haswell(text, length, starts, lengths, capacity, consumed);
 }
 
+inline constexpr size_t kSerialSentenceBytes = 48;
+
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
                         size_t* lengths, size_t capacity,
                         size_t* consumed) noexcept {
+  if (!HasAvx512() && length < kSerialSentenceBytes) {
+    return sz_utf8_sentences_serial(text, length, starts, lengths, capacity,
+                                    consumed);
+  }
   return Dispatch<sz_utf8_sentences_haswell, sz_utf8_sentences_icelake>(
     text, length, starts, lengths, capacity, consumed);
 }

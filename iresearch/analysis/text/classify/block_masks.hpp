@@ -116,7 +116,7 @@ struct ByteSet {
 struct NibbleSet {
   static constexpr size_t kMaxRows = 8;
 
-  IRS_FORCE_INLINE void Add(byte_type b) noexcept {
+  IRS_FORCE_INLINE constexpr void Add(byte_type b) noexcept {
     const auto row = static_cast<size_t>(b >> 4);
     if (hi[row] == 0) {
       if (rows == kMaxRows) {
@@ -128,7 +128,7 @@ struct NibbleSet {
     lo[b & 0x0F] |= hi[row];
   }
 
-  bool Blockable() const noexcept { return !overflow; }
+  constexpr bool Blockable() const noexcept { return !overflow; }
 
   alignas(16) std::array<byte_type, 16> lo{};
   alignas(16) std::array<byte_type, 16> hi{};

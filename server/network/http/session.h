@@ -245,8 +245,7 @@ class HttpSession final
     }
   }
 
-  duckdb::unique_ptr<duckdb::PreparedStatement>& PreparedSlot(
-    std::string_view key) override {
+  PreparedEntry& PreparedSlot(std::string_view key) override {
     return _prepared[key];
   }
 
@@ -364,9 +363,7 @@ class HttpSession final
   std::shared_ptr<ConnectionContext> _connection_ctx;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
-  irs::containers::FlatHashMap<std::string,
-                               duckdb::unique_ptr<duckdb::PreparedStatement>>
-    _prepared;
+  irs::containers::FlatHashMap<std::string, PreparedEntry> _prepared;
   std::string _user;
 };
 

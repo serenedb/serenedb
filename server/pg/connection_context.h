@@ -31,13 +31,6 @@
 #include "query/transaction.h"
 #include "server/utils/message_buffer.h"
 
-namespace sdb::otel {
-
-struct DecodedLogs;
-struct DecodedMetrics;
-struct DecodedTraces;
-
-}  // namespace sdb::otel
 namespace sdb::pg {
 
 class CopyInBridge;
@@ -131,21 +124,6 @@ class ConnectionContext final : public query::Transaction {
   auto* GetResponseSink() const { return _response_sink; }
   void SetResponseSink(std::string* sink) { _response_sink = sink; }
 
-  // Set for the span of one OTLP metrics request: five tables, one decode.
-  const otel::DecodedMetrics* GetOtelMetrics() const { return _otel_metrics; }
-  void SetOtelMetrics(const otel::DecodedMetrics* metrics) {
-    _otel_metrics = metrics;
-  }
-
-  // Set for the span of one OTLP logs / traces request; otel_source_*() read
-  // them.
-  const otel::DecodedLogs* GetOtelLogs() const { return _otel_logs; }
-  void SetOtelLogs(const otel::DecodedLogs* logs) { _otel_logs = logs; }
-  const otel::DecodedTraces* GetOtelTraces() const { return _otel_traces; }
-  void SetOtelTraces(const otel::DecodedTraces* traces) {
-    _otel_traces = traces;
-  }
-
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
@@ -195,9 +173,6 @@ class ConnectionContext final : public query::Transaction {
   ObjectId _effective_role_id;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
-  const otel::DecodedMetrics* _otel_metrics = nullptr;
-  const otel::DecodedLogs* _otel_logs = nullptr;
-  const otel::DecodedTraces* _otel_traces = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

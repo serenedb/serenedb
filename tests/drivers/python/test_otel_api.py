@@ -15,7 +15,9 @@ import os
 import pathlib
 import socket
 
+import psycopg
 import pytest
+from spec_loader import conn_kwargs
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
@@ -172,3 +174,32 @@ def test_get_is_not_routed(conn):
     response = conn.getresponse()
     response.read()
     assert response.status == 404
+
+
+def _logs_ddl() -> list[str]:
+    sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+    return [
+        statement
+        for statement in sql.split(";")
+        if "otel_logs (" in statement or "ON otel_logs " in statement
+    ]
+
+
+def test_mistyped_schema_is_rejected(conn):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute("DROP TABLE otel_logs")
+        pg.execute(
+            'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
+            "WITH (storage = 'search')"
+        )
+        try:
+            body = (FIXTURES / "logs/basic.json").read_bytes()
+            status, payload = _post(conn, "/v1/logs", body)
+            assert status == 500, payload
+            message = json.loads(payload)["message"]
+            assert "invalid OpenTelemetry schema" in message, message
+            assert '"timestamp"' in message, message
+        finally:
+            pg.execute("DROP TABLE otel_logs")
+            for statement in _logs_ddl():
+                pg.execute(statement)

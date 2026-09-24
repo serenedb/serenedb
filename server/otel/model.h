@@ -574,19 +574,4 @@ using ExportLogsRequest = ExportRequest<LogRecord>;
 using ExportTracesRequest = ExportRequest<Span>;
 using ExportMetricsRequest = ExportRequest<Metric>;
 
-// One decoded metrics payload, shared by the five otel_parse_metrics_* binds it
-// fans out into.
-struct DecodedMetrics {
-  ExportMetricsRequest request;
-};
-
-// One decoded payload per signal, read by otel_source_*() at execution.
-struct DecodedLogs {
-  ExportLogsRequest request;
-};
-
-struct DecodedTraces {
-  ExportTracesRequest request;
-};
-
 }  // namespace sdb::otel

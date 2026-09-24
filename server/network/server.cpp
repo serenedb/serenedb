@@ -432,7 +432,10 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      otel::EnsureSchema(database);
+      if (const auto error = otel::EnsureSchema(database); !error.empty()) {
+        SDB_FATAL(GENERAL, "endpoint '", spec.url,
+                  "': OpenTelemetry schema: ", error);
+      }
     }
     if (catalog::FindDatabase(nullptr, database) == nullptr) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,

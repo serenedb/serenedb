@@ -63,7 +63,13 @@ the `otel` API creates nothing, and an export against a missing schema answers
 
 To run a schema of your own — extra promoted columns, expression indexes over
 hot attribute paths — apply it before the first start; startup leaves an
-existing schema alone.
+existing schema alone. It must keep every shipped column with its shipped
+type: extra columns are left `NULL`, but a missing or retyped one stops the
+server at startup with a message naming the database and the column. Fix the
+table, or leave that database alone and start with the built-in schema in a
+new one: `db=` on the listener creates it, e.g.
+`--listen='http://0.0.0.0:4318?api=otel&db=otel'`. A table changed that way
+after startup fails each export with `500` and the same message.
 
 ### Encodings
 

@@ -306,11 +306,11 @@ INSERT INTO otel_metrics_histogram ("timestamp", start_timestamp, service_name, 
                                     metric_description, metric_unit, resource_schema_url,
                                     scope_schema_url, scope_name, scope_version,
                                     resource_attributes, scope_attributes, attributes, flags,
-                                    count, sum, bucket_counts, explicit_bounds, bucket_values,
+                                    count, sum, bucket_counts, explicit_bounds,
                                     min, max, aggregation_temporality, exemplars)
 VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'checkout', 'http.server.duration',
         NULL, 'ms', NULL, NULL, NULL, NULL, NULL, NULL, '{}', 0,
-        10, 55.0, ARRAY[1, 2, 7]::BIGINT[], ARRAY[1.0, 5.0]::DOUBLE PRECISION[], NULL,
+        10, 55.0, ARRAY[1, 2, 7]::BIGINT[], ARRAY[1.0, 5.0]::DOUBLE PRECISION[],
         0.5, 9.0, 'Cumulative',
         '[{"timestamp":"2026-09-08T12:00:00Z","value":8.5,"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331","filtered_attributes":{}}]');
 
@@ -373,12 +373,12 @@ http.server.request_count	2026-09-08 12:00:00	42
 http.server.request_count	2026-09-08 12:01:00	3
 
 query
-SELECT count, sum, bucket_counts, explicit_bounds, bucket_values, min, max,
+SELECT count, sum, bucket_counts, explicit_bounds, min, max,
        aggregation_temporality
 FROM otel_metrics_histogram WHERE service_name @@ 'checkout';
 ----
-count	sum	bucket_counts	explicit_bounds	bucket_values	min	max	aggregation_temporality
-10	55	{1,2,7}	{1,5}	NULL	0.5	9	Cumulative
+count	sum	bucket_counts	explicit_bounds	min	max	aggregation_temporality
+10	55	{1,2,7}	{1,5}	0.5	9	Cumulative
 
 query
 SELECT exemplars -> 0 ->> 'trace_id' AS trace_id FROM otel_metrics_histogram;

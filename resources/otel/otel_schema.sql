@@ -136,7 +136,6 @@ CREATE TABLE IF NOT EXISTS otel_metrics_histogram (
     sum                     DOUBLE PRECISION,
     bucket_counts           BIGINT[],
     explicit_bounds         DOUBLE PRECISION[],
-    bucket_values           DOUBLE PRECISION[],
     min                     DOUBLE PRECISION,
     max                     DOUBLE PRECISION,
     aggregation_temporality VARCHAR,

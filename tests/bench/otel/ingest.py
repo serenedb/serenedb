@@ -348,6 +348,31 @@ class CurlGzipPath(CurlPath):
         return float(out[1]) * 1000
 
 
+class CurlProtobufPath(CurlPath):
+    """curl with the same payload as OTLP protobuf (encoded before timing, by
+    the official opentelemetry-proto bindings)."""
+
+    def __init__(self, server, workdir, batch, index):
+        super().__init__(server, workdir, batch, index)
+        sys.path.insert(0, str(ROOT / "scripts" / "otel"))
+        import fixtures
+
+        encoded = self.file + ".pb"
+        pathlib.Path(encoded).write_bytes(
+            fixtures.encode(batch.signal, batch.payload.decode()))
+        self.file = encoded
+
+    def send(self):
+        out = subprocess.run(
+            ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{time_total}",
+             "-u", "postgres:", "-H", "Content-Type: application/x-protobuf",
+             "--data-binary", f"@{self.file}", self.url],
+            capture_output=True, text=True, check=True).stdout.split()
+        if out[0] != "200":
+            sys.exit(f"curl: HTTP {out[0]} on {self.url}")
+        return float(out[1]) * 1000
+
+
 class PsqlCopyPath:
     def __init__(self, server, workdir, batch, index):
         self.port = str(server.client_pg_port)
@@ -369,7 +394,12 @@ class PsqlCopyPath:
         return sum(float(t) for t in times)
 
 
-PATHS = {"curl": CurlPath, "gzip": CurlGzipPath, "psql": PsqlCopyPath}
+PATHS = {
+    "curl": CurlPath,
+    "gzip": CurlGzipPath,
+    "pb": CurlProtobufPath,
+    "psql": PsqlCopyPath,
+}
 
 
 def percentile(values, q):
@@ -472,7 +502,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--bin", default=str(ROOT / "build_bench_no_lto/bin/serened"))
     parser.add_argument("--paths", default="curl,gzip,psql",
-                        help="which clients to run: curl, gzip (curl with a gzip body), psql")
+                        help="which clients to run: curl (JSON), gzip (JSON, gzipped), "
+                             "pb (protobuf), psql")
     parser.add_argument("--signals", default="logs,traces,metrics",
                         help="which signals to send, e.g. logs")
     parser.add_argument("--sizes", default="64k,1m,32m",

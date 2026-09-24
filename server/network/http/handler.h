@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
@@ -35,9 +36,15 @@ namespace duckdb {
 class Connection;
 class MaterializedQueryResult;
 class PreparedStatement;
+struct TableFunctionInfo;
 
 }  // namespace duckdb
 namespace sdb::network {
+
+struct PreparedEntry {
+  duckdb::unique_ptr<duckdb::PreparedStatement> statement;
+  duckdb::shared_ptr<duckdb::TableFunctionInfo> info;
+};
 
 // Session-scoped services a handler may need; implemented by the session and
 // valid for the duration of one Handle call (on the session's duckdb task).
@@ -59,10 +66,10 @@ class RequestContext {
   // RunQuery for a statement prepared on Connection(), with no parameters.
   virtual yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
   RunPrepared(duckdb::PreparedStatement& statement) = 0;
-  // A per-session slot for a statement prepared on Connection(); a handler
-  // prepares into it once and re-executes it on later requests.
-  virtual duckdb::unique_ptr<duckdb::PreparedStatement>& PreparedSlot(
-    std::string_view key) = 0;
+  // A per-session slot for a statement prepared on Connection(), with the
+  // state it reads at execution; a handler prepares into it once and
+  // re-executes it on later requests.
+  virtual PreparedEntry& PreparedSlot(std::string_view key) = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;
 };

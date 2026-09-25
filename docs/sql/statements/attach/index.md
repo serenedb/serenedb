@@ -46,6 +46,12 @@ It is not possible to detach the default database. To do so, first issue the [`U
 
 <SqlLogicTest id="sql/statements/attach/index/example_021" />
 
+A database file stays open after `DETACH` while another transaction still uses it, including a transaction that only listed the catalogs, and closes when the last one ends. Attaching the same file again right away still works:
+
+- Under the same alias, `ATTACH` takes over the open database at once, in either access mode if the file was opened for reading and writing, and read-only if it was opened `READ_ONLY`.
+- Under a different alias, or for reading and writing when the file was opened `READ_ONLY`, `ATTACH` waits until those transactions end and then opens the file anew.
+- If the waiting transaction itself still holds the detached database, for example because it attached the file earlier in the same transaction, `ATTACH` fails with `Unique file handle conflict` instead of waiting on itself.
+
 ## Name Qualification
 
 The fully qualified name of catalog objects contains the _catalog_, the _schema_ and the _name_ of the object. This applies to any attached database, regardless of its type. For example:

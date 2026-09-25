@@ -31,6 +31,7 @@
 #include <iresearch/analysis/text/normalize/normalize.hpp>
 #include <iresearch/analysis/text/sz/stringzilla.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -264,6 +265,56 @@ void CheckQuickCheckEveryCodepoint() {
     }
   }
   EXPECT_EQ(0u, failures);
+}
+
+template<sz_normal_form_t Form>
+void CheckTwoByteStrip() {
+  using namespace irs::analysis::normalize;
+  const auto full = [](std::string_view in) {
+    std::string decomposed(Bound<Form>(in.size()), '\0');
+    decomposed.resize(Decompose<Form>(in, decomposed.data()));
+    std::string stripped;
+    StripNonspacingMarks(decomposed, stripped);
+    std::string composed(Bound<Form>(stripped.size()), '\0');
+    composed.resize(Compose<Form>(stripped, composed.data()));
+    return composed;
+  };
+  std::vector<std::string> pool = {"a", "e", "Z", " ", "1", "-"};
+  for (uint32_t cp = 0x80; cp < 0x800; ++cp) {
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    pool.emplace_back(reinterpret_cast<const char*>(buf), len);
+  }
+  std::mt19937_64 rng{11};
+  size_t failures = 0;
+  std::string out;
+  for (size_t round = 0; round < 100000 && failures <= 20; ++round) {
+    std::string text;
+    const size_t pieces = rng() % 8;
+    for (size_t k = 0; k < pieces; ++k) {
+      text += pool[rng() % pool.size()];
+    }
+    const auto result = StripTwoByte<Form>(text, out);
+    ASSERT_NE(StripResult::Unsupported, result);
+    const std::string_view fast =
+      result == StripResult::Stripped ? std::string_view{out} : text;
+    const auto expected = full(text);
+    if (fast != expected) {
+      ++failures;
+      EXPECT_EQ(expected, fast) << "round " << round;
+    }
+  }
+  EXPECT_EQ(0u, failures);
+  EXPECT_EQ(StripResult::Unsupported, StripTwoByte<Form>("a\xE4\xBB\x8A", out));
+  EXPECT_EQ(StripResult::Unsupported, StripTwoByte<Form>("\xC3", out));
+}
+
+TEST(norm_stringzilla_test, two_byte_strip_nfc_matches_round_trip) {
+  CheckTwoByteStrip<sz_normal_form_nfc_k>();
+}
+
+TEST(norm_stringzilla_test, two_byte_strip_nfkc_matches_round_trip) {
+  CheckTwoByteStrip<sz_normal_form_nfkc_k>();
 }
 
 TEST(norm_stringzilla_test, quick_check_nfc_every_codepoint) {

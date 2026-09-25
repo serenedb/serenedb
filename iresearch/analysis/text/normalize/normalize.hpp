@@ -389,4 +389,13 @@ inline size_t Decompose(std::string_view in, char* out) noexcept {
 
 void StripNonspacingMarks(std::string_view in, std::string& out);
 
+enum class StripResult : uint8_t {
+  Unchanged,
+  Stripped,
+  Unsupported,
+};
+
+template<sz_normal_form_t Form>
+StripResult StripTwoByte(std::string_view in, std::string& out);
+
 }  // namespace irs::analysis::normalize

@@ -51,6 +51,24 @@ void DecomposeInto(std::string_view in, std::string& out) {
                            });
 }
 
+template<sz_normal_form_t Form>
+IRS_NO_INLINE bool StripAccents(std::string_view& bytes, std::string& norm_buf,
+                                std::string& strip_buf) {
+  switch (normalize::StripTwoByte<Form>(bytes, strip_buf)) {
+    case normalize::StripResult::Unchanged:
+      return false;
+    case normalize::StripResult::Stripped:
+      bytes = strip_buf;
+      return false;
+    case normalize::StripResult::Unsupported:
+      break;
+  }
+  DecomposeInto<Form>(bytes, norm_buf);
+  normalize::StripNonspacingMarks(norm_buf, strip_buf);
+  bytes = strip_buf;
+  return true;
+}
+
 const icu::Normalizer2* MakeNormalizer(NormForm form, UErrorCode& err) {
   switch (form) {
     case NormForm::Nfc:
@@ -264,14 +282,19 @@ bool NormalizingTokenizer::FastUnicodeEmit(const duckdb::string_t& raw,
     F == NormForm::Nfkc ? sz_normal_form_nfkc_k : sz_normal_form_nfc_k;
   const char* data = raw.GetData();
   const uint32_t size = raw.GetSize();
+  if (classify::IsAsciiEarlyOut(data, size)) {
+    if constexpr (C == Case::None) {
+      sink.template Emit<Layout>(raw);
+    } else {
+      sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
+    }
+    return true;
+  }
   std::string_view bytes{data, size};
   bool compose = false;
   if constexpr (!Accent) {
     if (!normalize::StripSafe<kForm>(data, size)) {
-      DecomposeInto<kForm>(bytes, _norm_buf);
-      normalize::StripNonspacingMarks(_norm_buf, _strip_buf);
-      bytes = _strip_buf;
-      compose = true;
+      compose = StripAccents<kForm>(bytes, _norm_buf, _strip_buf);
     }
   } else if (normalize::Denormalized<kForm>(data, size)) {
     compose = true;
@@ -283,6 +306,11 @@ bool NormalizingTokenizer::FastUnicodeEmit(const duckdb::string_t& raw,
                                    return normalize::Compose<kForm>(
                                      bytes, reinterpret_cast<char*>(out));
                                  });
+      return true;
+    }
+    if (bytes.data() != data) {
+      sink.template Emit<Layout>(bytes.data(),
+                                 static_cast<uint32_t>(bytes.size()));
       return true;
     }
     sink.template Emit<Layout>(raw);

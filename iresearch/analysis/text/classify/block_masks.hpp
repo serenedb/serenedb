@@ -292,6 +292,27 @@ IRS_FORCE_INLINE inline bool IsAsciiValue(const char* data,
   return simdutf::validate_ascii(data, size);
 }
 
+IRS_FORCE_INLINE inline bool IsAsciiEarlyOut(const char* data,
+                                             size_t size) noexcept {
+  if (size <= 16) {
+    return IsAsciiShort(data, size);
+  }
+  if (size < kClassifyBlock) {
+    return IsAsciiShort(data, 16) && IsAsciiShort(data + size - 16, 16);
+  }
+  const auto* bytes = reinterpret_cast<const byte_type*>(data);
+  const auto non_ascii = [&](size_t at) IRS_FORCE_INLINE {
+    return MoveMask(std::bit_cast<Cmp>(Load(bytes + at)) < 0) != 0;
+  };
+  size_t i = 0;
+  for (; i + kClassifyBlock <= size; i += kClassifyBlock) {
+    if (non_ascii(i)) {
+      return false;
+    }
+  }
+  return i == size || !non_ascii(size - kClassifyBlock);
+}
+
 template<typename Visitor>
 IRS_FORCE_INLINE void VisitSetBits(uint32_t mask, Visitor&& visit) {
   while (mask != 0) {

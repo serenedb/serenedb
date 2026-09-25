@@ -190,6 +190,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
+  duckdb::shared_ptr<duckdb::DynamicFilterData> order_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
   const irs::Scorer* prune_scorer = nullptr;
 

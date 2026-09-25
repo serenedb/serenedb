@@ -140,8 +140,73 @@ const irs::ColumnReader* OrderColumn(const ScanGlobalState& g, uint32_t seg) {
   return col_reader ? col_reader->Column(g.Bind().scan_order->column) : nullptr;
 }
 
+duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
+  const ScanGlobalState& g) {
+  const auto& order = *g.Bind().scan_order;
+  if (order.column_type != duckdb::OrderByColumnType::NUMERIC) {
+    return nullptr;
+  }
+  const bool descending = order.order_type == duckdb::OrderType::DESCENDING;
+  for (const auto& cf : g.col_filters) {
+    if (!cf.is_dynamic || cf.field != order.column) {
+      continue;
+    }
+    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
+                          *cf.filter, "FindOrderDynamicFilter")
+                          .expr;
+    auto dyn = duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr);
+    if (!dyn &&
+        expr.GetExpressionClass() ==
+          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
+        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+      for (const auto& child :
+           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+        if ((dyn = duckdb::ExpressionFilter::GetOptionalDynamicFilterData(
+               *child))) {
+          break;
+        }
+      }
+    }
+    if (!dyn) {
+      continue;
+    }
+    const auto cmp = dyn->comparison_type;
+    const bool monotone =
+      descending ? cmp == duckdb::ExpressionType::COMPARE_GREATERTHAN ||
+                     cmp == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO
+                 : cmp == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+                     cmp == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
+    if (monotone) {
+      return dyn;
+    }
+  }
+  return nullptr;
+}
+
+bool OrderPruned(const ScanGlobalState& g, const ScanOrderKey& best) {
+  const auto& dyn = g.order_dynamic_filter;
+  if (!dyn || best.value.IsNull() ||
+      !dyn->initialized.load(std::memory_order_acquire)) {
+    return false;
+  }
+  duckdb::lock_guard<duckdb::mutex> lock{dyn->lock};
+  return !duckdb::DynamicFilterData::CompareValue(dyn->comparison_type,
+                                                  dyn->constant, best.value);
+}
+
+bool DropPruned(ScanGlobalState& g) {
+  auto& heap = g.ordered_heap;
+  if (!heap.empty() && OrderPruned(g, heap.front())) {
+    std::erase_if(heap,
+                  [](const ScanOrderKey& key) { return !key.value.IsNull(); });
+    absl::c_make_heap(heap, HeapOrder(*g.Bind().scan_order));
+  }
+  return heap.empty();
+}
+
 void BuildOrderedHeap(ScanGlobalState& g) {
   const auto& order = *g.Bind().scan_order;
+  g.order_dynamic_filter = FindOrderDynamicFilter(g);
   g.ordered_heap.reserve(g.segment_order.size());
   for (const auto seg : g.segment_order) {
     duckdb::Value v;
@@ -250,7 +315,7 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
     ScanOrderKey head;
     {
       absl::MutexLock lock{&g.ordered_mutex};
-      if (heap.empty()) {
+      if (DropPruned(g)) {
         return false;
       }
       absl::c_pop_heap(heap, heap_order);

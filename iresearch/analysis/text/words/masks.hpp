@@ -115,4 +115,71 @@ IRS_FORCE_INLINE inline WordSpaceMasks ClassifyWordSpaceBlock(
           classify::MoveMask(c.digit), classify::MoveMask(b == ' ')};
 }
 
+struct WordSegmentMasks {
+  uint32_t word;
+  uint32_t alpha;
+  uint32_t digit;
+  uint32_t wide;
+  uint32_t space;
+  uint32_t single;
+  uint32_t single2;
+};
+
+IRS_FORCE_INLINE inline bool IsWideLetterLead(byte_type lead) noexcept {
+  return (lead >= 0xC3 && lead <= 0xCA) || (lead & 0xFE) == 0xD0 ||
+         lead == 0xD3 || lead == 0xDA;
+}
+
+IRS_FORCE_INLINE inline bool IsWideLetter(byte_type lead,
+                                          byte_type next) noexcept {
+  return IsWideLetterLead(lead) && (next & 0xC0) == 0x80 &&
+         !(lead == 0xC3 && (next == 0x97 || next == 0xB7));
+}
+
+IRS_FORCE_INLINE inline WordSegmentMasks ClassifyWordSegments(
+  classify::Block b, uint32_t live) noexcept {
+  const auto c = detail::WordCmpsOf(b);
+  const uint32_t ascii =
+    ~classify::MoveMask(std::bit_cast<classify::Cmp>(b) < 0);
+  const classify::Cmp lead = (static_cast<classify::Block>(b - uint8_t{0xC3}) <=
+                              uint8_t{0xCA - 0xC3}) |
+                             ((b & uint8_t{0xFE}) == uint8_t{0xD0}) |
+                             (b == uint8_t{0xD3}) | (b == uint8_t{0xDA});
+  const uint32_t cont =
+    classify::MoveMask((b & uint8_t{0xC0}) == uint8_t{0x80});
+  const uint32_t excluded =
+    classify::MoveMask(b == uint8_t{0xC3}) &
+    (classify::MoveMask((b == uint8_t{0x97}) | (b == uint8_t{0xB7})) >> 1);
+  const uint32_t leads = classify::MoveMask(lead) & (cont >> 1) & ~excluded;
+  const uint32_t wide = leads | (leads << 1);
+  const uint32_t alpha = classify::MoveMask(c.alpha) | wide;
+  const uint32_t digit = classify::MoveMask(c.digit);
+  const uint32_t space = classify::MoveMask(b == ' ');
+  const uint32_t mid_letter = classify::MoveMask(b == ':');
+  const uint32_t mid_both = classify::MoveMask((b == '.') | (b == '\''));
+  const uint32_t mid_num = classify::MoveMask((b == ',') | (b == ';'));
+  const uint32_t mids = mid_letter | mid_both | mid_num;
+  const uint32_t bridge =
+    ((mid_letter | mid_both) & (alpha << 1) & (alpha >> 1)) |
+    ((mid_num | mid_both) & (digit << 1) & (digit >> 1));
+  const uint32_t punct2 =
+    classify::MoveMask(b == uint8_t{0xC2}) & (cont >> 1) &
+    ~(classify::MoveMask((b == uint8_t{0x85}) | (b == uint8_t{0xAA}) |
+                         (b == uint8_t{0xAD}) | (b == uint8_t{0xB5}) |
+                         (b == uint8_t{0xB7}) | (b == uint8_t{0xBA})) >>
+      1);
+  const uint32_t ascii_word = classify::MoveMask(c.word);
+  const uint32_t known_next = (ascii | leads | punct2) >> 1;
+  const uint32_t lone_mids = mids & ~bridge & known_next & ~uint32_t{1};
+  const uint32_t others = ascii & ~ascii_word & ~space & ~mids &
+                          ~classify::MoveMask(b == '\r');
+  return {ascii_word | wide | bridge,
+          alpha,
+          digit,
+          wide,
+          space,
+          (others | lone_mids | punct2) & live,
+          punct2};
+}
+
 }  // namespace irs::analysis::words

@@ -434,7 +434,11 @@ void SqlTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
       const ResultRows rows{call.result};
       for (uint32_t v = 0; v < staged; ++v) {
         sink.BeginValue(first_doc + call.rows[v], 0);
-        rows.Emit<Layout>(v, sink);
+        if (rows.Valid(v)) {
+          rows.Emit<Layout>(v, sink);
+        } else {
+          sink.RejectValue();
+        }
         sink.EndValue();
       }
     }

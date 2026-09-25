@@ -154,7 +154,7 @@ class Tokenizer {
     sink.BeginValue(doc, value.GetSize());
     const bool ok = Fill(value, sink, ctx);
     if (!ok) [[unlikely]] {
-      sink.RewindValue();
+      sink.RejectValue();
     }
     sink.EndValue();
     return ok;
@@ -227,7 +227,7 @@ class TypedTokenizer : public Tokenizer {
                        sink.BeginValue(first_doc + i, data[idx].GetSize());
                        if (!impl->template DoFill<layout_tag(), tags()...>(
                              data[idx], sink)) [[unlikely]] {
-                         sink.RewindValue();
+                         sink.RejectValue();
                        }
                        sink.EndValue();
                        return true;

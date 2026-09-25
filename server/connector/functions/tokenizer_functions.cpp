@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -160,6 +159,7 @@ using PooledTokenizer = std::unique_ptr<irs::analysis::Tokenizer, PoolDeleter>;
 
 struct TokenizerFunctionLocalState final : public duckdb::FunctionLocalState {
   PooledTokenizer wrapper;
+  irs::TokenSink writer;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitLocalState(
@@ -180,79 +180,91 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitLocalState(
   return local;
 }
 
-irs::analysis::Tokenizer& LocalTokenizer(duckdb::ExpressionState& state) {
-  return *duckdb::ExecuteFunctionState::GetFunctionState(state)
-            ->Cast<TokenizerFunctionLocalState>()
-            .wrapper;
+TokenizerFunctionLocalState& LocalState(duckdb::ExpressionState& state) {
+  return duckdb::ExecuteFunctionState::GetFunctionState(state)
+    ->Cast<TokenizerFunctionLocalState>();
 }
 
 void TokenizeValues(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                     duckdb::Vector& result) {
-  const auto count = args.size();
-  auto values = args.data[0].Values<duckdb::string_t>();
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
-  ListTokenSink sink{result};
-  sink.Bind(LocalTokenizer(state));
-
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto value = values[i];
-    if (!value.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
-      continue;
-    }
-    const auto row_offset = sink.Offset();
-    sink.Tokenize(value.GetValue());
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
-  }
+  auto& local = LocalState(state);
+  TokenizeRows(*local.wrapper, local.writer, args.data[0], args.size(), result);
 }
 
-template<bool Joined>
 void TokenizeLists(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
-  const auto count = args.size();
-  auto lists = args.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
+  auto& local = LocalState(state);
+  TokenizeListRows(*local.wrapper, local.writer, args.data[0], args.size(),
+                   result);
+}
+
+void TokenizeJoinedLists(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  auto& local = LocalState(state);
+  const auto count = static_cast<uint32_t>(args.size());
+  auto& input = args.data[0];
+  duckdb::UnifiedVectorFormat lists;
+  input.ToUnifiedFormat(lists);
+  const auto* entries =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(lists);
+  duckdb::UnifiedVectorFormat elements;
+  duckdb::ListVector::GetChild(input).ToUnifiedFormat(elements);
+  const auto* members =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(elements);
+
+  duckdb::Vector joined{duckdb::LogicalType::VARCHAR, count};
+  auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(joined);
+  auto& present = duckdb::FlatVector::ValidityMutable(joined);
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto entries =
-    duckdb::FlatVector::Writer<duckdb::list_entry_t>(result, count);
-  ListTokenSink sink{result};
-  sink.Bind(LocalTokenizer(state));
-  std::vector<std::string_view> members;
-  std::string joined;
-
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto list = lists[i];
-    if (!list.IsValid()) {
-      entries.WriteNull({sink.Offset(), 0});
+  ListTokenSink sink{
+    result, duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result),
+    duckdb::FlatVector::ValidityMutable(result), local.writer};
+  sink.ResetRows(count);
+  for (uint32_t r = 0; r < count; ++r) {
+    const auto idx = lists.sel->get_index(r);
+    if (!lists.validity.RowIsValid(idx)) {
+      sink.SetNull(r);
+      present.SetInvalid(r);
       continue;
     }
-    const auto row_offset = sink.Offset();
-    members.clear();
-    for (auto element : list.GetChildValues()) {
-      if (!element.IsValid()) {
+    const auto& entry = entries[idx];
+    size_t size = 0;
+    uint32_t n = 0;
+    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
+      const auto m = elements.sel->get_index(entry.offset + k);
+      if (elements.validity.RowIsValid(m)) {
+        size += members[m].GetSize();
+        ++n;
+      }
+    }
+    if (n == 0) {
+      present.SetInvalid(r);
+      continue;
+    }
+    size += n - 1;
+    slots[r] = duckdb::StringVector::EmptyString(joined, size);
+    auto* out = slots[r].GetDataWriteable();
+    bool first = true;
+    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
+      const auto m = elements.sel->get_index(entry.offset + k);
+      if (!elements.validity.RowIsValid(m)) {
         continue;
       }
-      const auto& term = element.GetValue();
-      if constexpr (Joined) {
-        members.emplace_back(term.GetData(), term.GetSize());
-      } else {
-        sink.Tokenize(term);
+      if (!first) {
+        *out++ = kListSeparator.front();
       }
+      first = false;
+      std::memcpy(out, members[m].GetData(), members[m].GetSize());
+      out += members[m].GetSize();
     }
-    if constexpr (Joined) {
-      if (!members.empty()) {
-        joined = absl::StrJoin(members, kListSeparator);
-        sink.Tokenize(duckdb::string_t{joined.data(),
-                                       static_cast<uint32_t>(joined.size())});
-      }
-    }
-    entries.WriteValue({row_offset, sink.Offset() - row_offset});
+    slots[r].Finalize();
   }
+  duckdb::UnifiedVectorFormat values;
+  joined.ToUnifiedFormat(values);
+  sink.FillRows(*local.wrapper, joined, values, count);
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> Bind(
@@ -320,9 +332,9 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   if (!list_input) {
     fn.SetFunctionCallback(TokenizeValues);
   } else if (wrapper) {
-    fn.SetFunctionCallback(TokenizeLists<true>);
+    fn.SetFunctionCallback(TokenizeJoinedLists);
   } else {
-    fn.SetFunctionCallback(TokenizeLists<false>);
+    fn.SetFunctionCallback(TokenizeLists);
   }
 
   auto bind = duckdb::make_uniq<TokenizerFunctionBindData>();

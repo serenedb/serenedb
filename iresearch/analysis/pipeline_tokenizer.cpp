@@ -476,6 +476,8 @@ void PipelineTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
     BindLinks(sink, ctx.layout, true);
   }
   auto& input = _chain == 0 ? sink : _head->writer;
+  auto* const input_rejects = input.BindRejects(sink.Rejects());
+  Finally unbind = [&]() noexcept { input.BindRejects(input_rejects); };
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
   ctx.traits = ComputeBlockTraits(fmt, count, data, _wanted_traits, ctx.traits);

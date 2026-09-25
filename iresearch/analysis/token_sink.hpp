@@ -183,6 +183,11 @@ class TokenSink final : util::Noncopyable {
     return std::exchange(_consumer, &consumer);
   }
 
+  RejectSink* BindRejects(RejectSink* rejects) noexcept {
+    return std::exchange(_rejects, rejects);
+  }
+  RejectSink* Rejects() const noexcept { return _rejects; }
+
   void BeginValue(doc_id_t doc, uint32_t value_size) noexcept {
     _doc = doc;
     _value_size = value_size;
@@ -216,6 +221,13 @@ class TokenSink final : util::Noncopyable {
   void RewindValue() noexcept {
     SDB_ASSERT(_run_start != kOutsideValue);
     _batch.count = _run_start;
+  }
+
+  void RejectValue() {
+    RewindValue();
+    if (_rejects) {
+      _rejects->OnReject(_doc);
+    }
   }
 
   std::span<const DocRun> Runs() const noexcept { return {_runs, _nruns}; }
@@ -643,6 +655,7 @@ class TokenSink final : util::Noncopyable {
   duckdb::ArenaAllocator _arena;
   TokenConsumer* _consumer = &Noop();
   StoreSink* _store_consumer = nullptr;
+  RejectSink* _rejects = nullptr;
   doc_id_t _doc = 0;
   uint32_t _value_size = 0;
   uint32_t _nruns = 0;

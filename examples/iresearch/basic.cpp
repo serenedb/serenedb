@@ -434,7 +434,8 @@ int main() {
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
-  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
+  auto writer =
+    irs::IndexWriter::Make(dir, format, irs::kOmCreate, std::move(options));
 
   BuildIndex(*writer);
 

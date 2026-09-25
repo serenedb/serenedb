@@ -73,8 +73,8 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
  private:
   irs::doc_id_t _doc = irs::doc_limits::invalid();
   const irs::field_id _pk_field_id;
-  mutable const irs::DocumentMask* _segment_mask{};
-  mutable const irs::DocumentMask* _pending_mask{};
+  mutable irs::DocumentMask::Iterator _segment_mask;
+  mutable irs::DocumentMask::Iterator _pending_mask;
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   // TODO(Dronplane) use persistent duckdb memory pool for proper memory
@@ -144,8 +144,8 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   void NextEntry() const noexcept;
 
   const irs::field_id _pk_field_id;
-  mutable const irs::DocumentMask* _segment_mask{};
-  mutable const irs::DocumentMask* _pending_mask{};
+  mutable irs::DocumentMask::Iterator _segment_mask;
+  mutable irs::DocumentMask::Iterator _pending_mask;
   mutable const irs::TermReader* _pk_field{};
   // Per-ENTRY dictionary iterator: the whole-file arm seeks once then
   // walks, the cursor arm issues seeks only -- one instance never mixes

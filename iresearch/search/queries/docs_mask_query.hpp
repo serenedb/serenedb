@@ -18,22 +18,21 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utility>
+#pragma once
 
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/masked.hpp"
+#include "iresearch/search/filters/filter.hpp"
+#include "iresearch/types.hpp"
 
-namespace irs::top {
+namespace irs {
 
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
-                     const DocumentMask& mask) {
-  auto node = query.PlanLead(ScoredOf(ctx));
-  if (!node) {
-    return {};
-  }
-  return MakeShape<Masked, lead::Erased>(ctx, ctx.fetcher, mask,
-                                         lead::Erased{std::move(node)});
+QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
+                               const SubReader& segment,
+                               const PrepareContext& ctx);
+
+inline QueryBuilder::ptr PrepareMasked(const Filter& filter,
+                                       const SubReader& segment,
+                                       const PrepareContext& ctx) {
+  return WithDocsMask(filter.PrepareSegment(segment, ctx), segment, ctx);
 }
 
-}  // namespace irs::top
+}  // namespace irs

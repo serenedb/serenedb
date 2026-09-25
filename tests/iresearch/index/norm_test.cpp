@@ -197,7 +197,7 @@ TEST_P(NormTestCase, CheckNorms) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -308,7 +308,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (const auto* d : docs) {
     ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
@@ -415,7 +415,7 @@ TEST_P(NormTestCase, CheckNormsCompaction) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -664,7 +664,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));

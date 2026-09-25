@@ -59,6 +59,48 @@ std::vector<duckdb::string_t> KeyTerms(
 using namespace sdb;
 using namespace connector;
 
+irs::doc_id_t SeekPostings(irs::TermPostings& postings, irs::doc_id_t target) {
+  auto doc = postings.Value();
+  while (doc < target) {
+    doc = postings.Next();
+  }
+  return doc;
+}
+
+class MaskedPostings : public irs::TermPostings {
+ public:
+  MaskedPostings(irs::TermPostings::ptr postings, const irs::DocumentMask& mask)
+    : _postings{std::move(postings)}, _mask{mask} {}
+
+  irs::doc_id_t Next() final {
+    for (;;) {
+      _doc = _postings->Next();
+      if (irs::doc_limits::eof(_doc) || !_mask.Contains(_doc)) {
+        return _doc;
+      }
+    }
+  }
+
+  uint32_t GetFreq() const final { return _postings->GetFreq(); }
+
+  irs::PosAttr* Positions() noexcept final { return _postings->Positions(); }
+
+  void Subscribe(AttrRefresh refresh) final { _postings->Subscribe(refresh); }
+
+ private:
+  irs::TermPostings::ptr _postings;
+  const irs::DocumentMask& _mask;
+};
+
+irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
+                                    irs::TermPostings::ptr postings) {
+  const auto* mask = segment.docs_mask();
+  if (mask == nullptr || mask->Empty()) {
+    return postings;
+  }
+  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+}
+
 constexpr irs::field_id kPKFieldId = connector::kGeneratedPKId;
 
 // Process-wide DuckDB instance, owned by irs::DuckDBEngine. tests_main
@@ -167,7 +209,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     options.reader_options.db = &TestDb();
     _codec = irs::formats::Get("1_5simd");
     _data_writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, std::move(options));
   }
 
   void TearDown() final { _data_writer.reset(); }
@@ -901,7 +943,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
-      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, options);
+      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, std::move(options));
     constexpr std::string_view kPk = {"pk1", 3};
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};

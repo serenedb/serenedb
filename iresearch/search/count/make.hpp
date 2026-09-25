@@ -65,6 +65,4 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
 
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx);
-
 }  // namespace irs::count

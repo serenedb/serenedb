@@ -106,11 +106,9 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
-  const auto* mask = sub.docs_mask();
-  if (mask && mask->empty()) {
-    mask = nullptr;
-  }
-  const uint64_t docs = sub.Meta().docs_count;
+  auto it_mask = sub.MaskedDocs();
+  const bool has_mask = sub.docs_mask() != nullptr;
+  const uint64_t docs = irs::VisibleCount(sub.Meta());
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
     const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
@@ -119,12 +117,12 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     const auto produced = scanner.Scan(row, take, chunk);
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetCardinality(produced);
-    if (mask) {
+    if (has_mask) {
       duckdb::idx_t keep = 0;
       for (duckdb::idx_t i = 0; i < produced; ++i) {
         const auto doc =
           static_cast<irs::doc_id_t>(row + i + irs::doc_limits::min());
-        if (!mask->contains(doc)) {
+        if (!it_mask.Contains(doc)) {
           source.live.set_index(keep++, i);
         }
       }
@@ -170,7 +168,7 @@ void StageDeletes(irs::IndexWriter::Transaction& trx,
   }
   remover.FinishImpl();
   // Deliberately not RegisterFlush. Registering would also bind the removals to
-  // whatever context is current here rather than the one the imports go to.
+  // whatever context is current here, not the one the incoming segments go to.
 }
 
 struct Slice {

@@ -21,11 +21,12 @@
 
 #include "search/inverted_index_storage.h"
 
-#include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -74,38 +75,10 @@ duckdb::optional_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
   return nullptr;
 }
 
-// [tick:8][wal_generation:8][wal_offset:8][tail marker:1][tail bytes...];
-// the marker declares what the tail is.
-constexpr size_t kSegmentMetaHeaderSize = 3 * sizeof(uint64_t);
-constexpr irs::byte_type kTailNone = 0;
-constexpr irs::byte_type kTailManifest = 1;
-
-void ReadSegmentMeta(irs::bytes_view payload, Tick& tick, WalCursor& wal_cursor,
-                     std::shared_ptr<const FileManifest>& file_manifest) {
-  if (payload.size() <= kSegmentMetaHeaderSize) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("truncated inverted index segment meta (",
-                            payload.size(), " bytes)"));
-  }
-  tick = absl::big_endian::Load64(payload.data());
-  wal_cursor.generation =
-    absl::big_endian::Load64(payload.data() + sizeof(uint64_t));
-  wal_cursor.offset =
-    absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
-  const auto tail = payload[kSegmentMetaHeaderSize];
-  if (tail == kTailNone) {
-    return;
-  }
-  if (tail == kTailManifest) {
-    file_manifest =
-      FileManifest::Parse(payload.substr(kSegmentMetaHeaderSize + 1));
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INTERNAL_ERROR),
-    ERR_MSG("inverted index segment meta carries unknown tail format ", tail,
-            " -- written by a newer server version?"));
-}
+constexpr duckdb::field_id_t kFieldTick = 0;
+constexpr duckdb::field_id_t kFieldWalGeneration = 1;
+constexpr duckdb::field_id_t kFieldWalOffset = 2;
+constexpr duckdb::field_id_t kFieldManifest = 3;
 
 }  // namespace
 
@@ -231,15 +204,13 @@ InvertedIndexStorage::InvertedIndexStorage(
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_provider = [this](uint64_t tick,
-                                                irs::bstring& out) {
+  writer_options.meta_payload_writer = [this](uint64_t tick,
+                                              duckdb::Serializer& out) {
     if (_phase == Phase::Creating) {
       tick = TickDomain::Instance().Current();
     }
     _last_durable_tick = std::max(_last_durable_tick, tick);
-    uint64_t tick_be = absl::big_endian::FromHost(_last_durable_tick);
-    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
-               sizeof(tick_be));
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_durable_tick);
 
     // Durable WAL cursor, stamped consistently with the durable tick we just
     // persisted above. `tick` here is the exact tick this flush made durable
@@ -258,27 +229,40 @@ InvertedIndexStorage::InvertedIndexStorage(
         _pending_wal_cursor = cursor;
       }
     }
-    uint64_t gen_be =
-      absl::big_endian::FromHost(_pending_wal_cursor.generation);
-    out.append(reinterpret_cast<const irs::byte_type*>(&gen_be),
-               sizeof(gen_be));
-    uint64_t offset_be = absl::big_endian::FromHost(_pending_wal_cursor.offset);
-    out.append(reinterpret_cast<const irs::byte_type*>(&offset_be),
-               sizeof(offset_be));
-    if (auto manifest = GetFileManifest()) {
-      out += kTailManifest;
-      manifest->Serialize(out);
-    } else {
-      out += kTailNone;
+    out.WriteProperty<uint64_t>(kFieldWalGeneration, "wal_generation",
+                                _pending_wal_cursor.generation);
+    out.WriteProperty<uint64_t>(kFieldWalOffset, "wal_offset",
+                                _pending_wal_cursor.offset);
+    const auto manifest = GetFileManifest();
+    out.OnOptionalPropertyBegin(kFieldManifest, "manifest",
+                                manifest != nullptr);
+    if (manifest) {
+      manifest->Write(out);
     }
-    return true;
+    out.OnOptionalPropertyEnd(manifest != nullptr);
+  };
+
+  std::shared_ptr<const FileManifest> file_manifest;
+  writer_options.meta_payload_reader = [&](duckdb::Deserializer& in) {
+    _recovery_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
+    _recovery_wal_cursor.generation =
+      in.ReadProperty<uint64_t>(kFieldWalGeneration, "wal_generation");
+    _recovery_wal_cursor.offset =
+      in.ReadProperty<uint64_t>(kFieldWalOffset, "wal_offset");
+    const bool has_manifest =
+      in.OnOptionalPropertyBegin(kFieldManifest, "manifest");
+    if (has_manifest) {
+      file_manifest = FileManifest::Read(in);
+    }
+    in.OnOptionalPropertyEnd(has_manifest);
   };
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
   }
 
-  _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+  _writer =
+    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
 
   if (!reopen) {
     _writer->RefreshCommit();
@@ -287,15 +271,9 @@ InvertedIndexStorage::InvertedIndexStorage(
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
 
-  std::shared_ptr<const FileManifest> file_manifest;
   if (reopen) {
-    auto payload = irs::GetPayload(reader.Meta().index_meta);
-    if (!payload.empty()) {
-      ReadSegmentMeta(payload, _recovery_tick, _recovery_wal_cursor,
-                      file_manifest);
-      _last_durable_tick = _recovery_tick;
-      SetFileManifest(file_manifest);
-    }
+    _last_durable_tick = _recovery_tick;
+    SetFileManifest(file_manifest);
   }
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(file_manifest)));

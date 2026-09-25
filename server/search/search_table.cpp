@@ -20,12 +20,13 @@
 
 #include "search/search_table.h"
 
-#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -96,6 +97,12 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
   }
   return compression;
 }
+
+namespace {
+
+constexpr duckdb::field_id_t kFieldTick = 0;
+
+}  // namespace
 
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
@@ -172,16 +179,17 @@ void SearchTable::OpenWriter() {
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_provider = [this](uint64_t tick,
-                                                irs::bstring& out) {
+  writer_options.meta_payload_writer = [this](uint64_t tick,
+                                              duckdb::Serializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
-    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
-    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
-               sizeof(tick_be));
-    return true;
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
+  };
+  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
+    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
   };
 
-  _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+  _writer =
+    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -198,14 +206,6 @@ void SearchTable::OpenWriter() {
       for (const auto& column : columns->Columns()) {
         claim(column->Id());
       }
-    }
-  }
-
-  if (reopen) {
-    auto reader = _writer->GetSnapshot();
-    auto payload = irs::GetPayload(reader.Meta().index_meta);
-    if (payload.size() >= sizeof(uint64_t)) {
-      _last_committed_tick = absl::big_endian::Load64(payload.data());
     }
   }
 

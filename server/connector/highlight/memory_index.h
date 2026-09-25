@@ -44,8 +44,8 @@ class MemoryIndex {
     opts.lock_repository = false;
     opts.db = _db;
     opts.reader_options.db = _db;
-    auto writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::OpenMode::kOmCreate, opts);
+    auto writer = irs::IndexWriter::Make(_dir, _codec, irs::OpenMode::kOmCreate,
+                                         std::move(opts));
     {
       irs::IndexWriter::Transaction trx{*writer};
       {

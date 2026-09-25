@@ -175,3 +175,43 @@ db error: ERROR: to_tsquery parse error: unknown field 'a'<slt:ignore>
 
 statement ok
 DROP TABLE tsf;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsf_synonyms AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE tsf_cars (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR);
+
+statement ok
+INSERT INTO tsf_cars VALUES (1, 'one', 'a red car here'), (2, 'two', 'red paint on a car'), (3, 'three', 'the red automobile');
+
+statement ok
+CREATE INDEX tsf_cars_idx ON tsf_cars USING inverted (id, title tsf_text, body tsf_synonyms);
+
+statement ok
+VACUUM (REFRESH_TABLE) tsf_cars;
+
+query
+SELECT id FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:auto') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT c.id, abs(c.s - r.s) < 1e-6 AS same
+FROM (SELECT id, BM25(tsf_cars_idx.tableoid) AS s FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:car')) c
+JOIN (SELECT id, BM25(tsf_cars_idx.tableoid) AS s FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:red')) r
+ON c.id = r.id
+ORDER BY c.id;
+----
+id	same
+1	t
+2	t
+3	t
+
+statement ok
+DROP TABLE tsf_cars;

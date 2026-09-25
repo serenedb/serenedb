@@ -51,7 +51,9 @@ target_directory/t_1.csv
 target_directory/t_n.csv
 ```
 
-The `schema.sql` file contains the schema statements that are found in the database. It contains any `CREATE SCHEMA`, `CREATE TABLE`, `CREATE VIEW` and `CREATE SEQUENCE` commands that are necessary to re-construct the database.
+The `schema.sql` file contains the schema statements that are found in the database. It contains any `CREATE SCHEMA`, `CREATE TABLE`, `CREATE VIEW`, `CREATE SEQUENCE`, [`CREATE TEXT SEARCH DICTIONARY`](../create_text_search_dictionary/index.md) and [`CREATE INDEX`](../create_index/index.md) commands that are necessary to re-construct the database. The system catalogs (`pg_catalog` and `information_schema`) are not exported.
+
+Schemas are written as `CREATE SCHEMA IF NOT EXISTS`, so the export loads into a new database that already has its `public` schema. Each text search dictionary is written with its analyzer expression and its feature flags. The expression is stored as the dictionary was compiled: named arguments in place of positional ones, SQL stages as lambdas, and a dictionary used as a stage written out in full. A dictionary copied from another one therefore loads even when the source was dropped. Inverted indexes keep their column list, their per-column options such as `emb hnsw (m = 16, metric = 'cosine')` and their `WITH` options. The index content itself is not exported. `schema.sql` creates each index before `load.sql` copies the rows in, so the rows are indexed as they load and become searchable after the next [refresh](../../indexes/inverted/maintenance.md), like any other insert.
 
 The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema.
 

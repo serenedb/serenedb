@@ -421,7 +421,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       ClaimRowGroups(g, l, l.current_seg)) {
     return true;
   }
-  for (;;) {
+  while (g.next_segment.load(std::memory_order_relaxed) < g.live_segments) {
     const auto i = g.next_segment.fetch_add(1, std::memory_order_relaxed);
     if (i >= g.live_segments) {
       break;

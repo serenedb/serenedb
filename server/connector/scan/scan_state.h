@@ -92,7 +92,7 @@ struct ScanOrderKey {
   duckdb::Value value;
 };
 
-struct SegmentWork {
+struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
@@ -222,11 +222,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
   uint32_t live_segments = 0;
-  std::atomic_uint32_t next_segment{0};
   bool ordered = false;
-  absl::Mutex ordered_mutex;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
+  ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
   std::vector<ScanOrderKey> ordered_heap;
-  std::atomic_uint32_t done_segments{0};
 
   bool Ordered() const noexcept { return ordered; }
 

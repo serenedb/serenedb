@@ -1,0 +1,177 @@
+statement ok
+CREATE TABLE tdx (a INTEGER);
+
+
+statement ok
+CREATE ROLE tdx_reader;
+
+
+statement ok
+INSERT INTO tdx VALUES (0);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx VALUES (1);
+
+
+statement ok
+CREATE INDEX tdx_art ON tdx (a);
+
+
+statement ok
+INSERT INTO tdx VALUES (2);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT a FROM tdx ORDER BY a;
+----
+a
+0
+1
+2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx VALUES (3);
+
+
+statement ok
+GRANT SELECT ON tdx TO tdx_reader;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx VALUES (4);
+
+
+statement ok
+ALTER TABLE tdx OWNER TO tdx_reader;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx VALUES (5);
+
+
+statement ok
+CREATE INDEX tdx_inv ON tdx USING inverted (a);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT a FROM tdx ORDER BY a;
+----
+a
+0
+1
+2
+3
+4
+5
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tdx;
+
+
+query
+SELECT count(*) AS n FROM tdx_inv;
+----
+n
+6
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx VALUES (6);
+
+
+statement ok
+CREATE INDEX tdx_art2 ON tdx (a);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a FROM tdx ORDER BY a;
+----
+a
+0
+1
+2
+3
+4
+5
+
+
+statement ok
+CREATE TABLE tdx_fresh (a INTEGER);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO tdx_fresh VALUES (1);
+
+
+statement ok
+CREATE INDEX tdx_fresh_art ON tdx_fresh (a);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT a FROM tdx_fresh;
+----
+a
+1
+
+
+statement ok
+DROP TABLE tdx_fresh;
+
+
+statement ok
+DROP TABLE tdx;
+
+
+statement ok
+DROP ROLE tdx_reader;

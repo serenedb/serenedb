@@ -243,7 +243,181 @@ class FieldInverter : util::Noncopyable {
     });
   }
 
+  bool HasDictionary(std::string_view id, uint32_t size) const noexcept {
+    return !id.empty() && id == _dict_id && size == _dict_size;
+  }
+
+  void BeginDictionary(std::string_view id, uint32_t size) {
+    SDB_ASSERT(!_state.value_open);
+    VisitLog([&](auto& log) {
+      _dict_base = log.EntryCount();
+      log.AddEntries(size);
+    });
+    _dict_id = id;
+    _dict_size = size;
+    _fill_entry = kNoEntry;
+  }
+
+  bool AppendEntries(TokenBatch& batch, DocRuns runs) {
+    return VisitLog([&](auto& log) {
+      const auto* ids = ResolveTerms(batch.terms, batch.count);
+      uint32_t tok = 0;
+      for (const auto& run : runs) {
+        const auto e =
+          _dict_base + static_cast<uint32_t>(run.doc - doc_limits::min());
+        SDB_ASSERT(e < _dict_base + _dict_size);
+        if (e != _fill_entry) {
+          SDB_ASSERT(_fill_entry == kNoEntry || e > _fill_entry);
+          _fill_entry = e;
+          _fill_last_start = 0;
+          log.OpenEntry(e);
+        }
+        if (run.ntokens != 0 && !AppendEntryRun(log, e, batch, tok, run.ntokens,
+                                                ids + tok)) [[unlikely]] {
+          return false;
+        }
+        tok += run.ntokens;
+      }
+      SDB_ASSERT(tok == batch.count);
+      return true;
+    });
+  }
+
+  bool InvertKeywordDictionary(std::string_view id,
+                               const duckdb::UnifiedVectorFormat& values,
+                               uint32_t size) {
+    BeginDictionary(id, size);
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(values);
+    return VisitLog([&]<typename Log>(Log& log) {
+      duckdb::string_t terms[TokenBatch::kCapacity];
+      uint32_t entries[TokenBatch::kCapacity];
+      uint32_t n = 0;
+      const auto flush = [&] {
+        const auto* ids = ResolveTerms(terms, n);
+        for (uint32_t k = 0; k < n; ++k) {
+          const auto e = entries[k];
+          log.OpenEntry(e);
+          if constexpr (Log::kLayout == TokenLayout::Terms) {
+            log.AppendEntry(e, ids + k, 1);
+          } else if constexpr (Log::kLayout == TokenLayout::TermsPos) {
+            log.AppendEntry(e, ids + k, 1, nullptr, 0);
+          } else {
+            const uint32_t start = 0;
+            const uint32_t end = terms[k].GetSize();
+            log.AppendEntry(e, ids + k, 1, nullptr, 0, &start, &end);
+          }
+          log.EntryAt(e).len = 1;
+        }
+        n = 0;
+      };
+      analysis::ForEachValidRow(values, size, [&](uint32_t i, uint32_t idx) {
+        terms[n] = data[idx];
+        entries[n] = _dict_base + i;
+        if (++n == TokenBatch::kCapacity) {
+          flush();
+        }
+        return true;
+      });
+      if (n != 0) {
+        flush();
+      }
+      return true;
+    });
+  }
+
+  bool InvertDictionaryRows(const duckdb::UnifiedVectorFormat& fmt,
+                            uint32_t count, doc_id_t first_doc) {
+    SDB_ASSERT(!_state.value_open);
+    return VisitLog([&](auto& log) {
+      return analysis::ForEachValidRow(
+        fmt, count, [&](uint32_t i, uint32_t idx) IRS_FORCE_INLINE {
+          SDB_ASSERT(idx < _dict_size);
+          return PushRef(log, first_doc + i, _dict_base + idx);
+        });
+    });
+  }
+
  private:
+  static constexpr uint32_t kNoEntry = std::numeric_limits<uint32_t>::max();
+
+  template<typename Log>
+  bool AppendEntryRun(Log& log, uint32_t e, const TokenBatch& batch,
+                      uint32_t base, uint32_t n, const uint32_t* ids) {
+    auto& entry = log.EntryAt(e);
+    if constexpr (Log::kLayout == TokenLayout::Terms) {
+      log.AppendEntry(e, ids, n);
+      entry.len += n;
+      return true;
+    } else {
+      const uint32_t last_pos = entry.count == 0 ? 0 : log.EntryLastPos(entry);
+      const uint32_t* pos = nullptr;
+      uint32_t len = n;
+      if (_dense_pos) {
+        if (last_pos + n < last_pos || last_pos + n >= pos_limits::eof())
+          [[unlikely]] {
+          SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+          return false;
+        }
+      } else {
+        pos = batch.pos + base;
+        bool monotonic = pos[0] >= pos_limits::min() && pos[0] >= last_pos;
+        len = pos[0] != last_pos;
+        for (uint32_t i = 1; i < n; ++i) {
+          monotonic &= pos[i] >= pos[i - 1];
+          len += pos[i] != pos[i - 1];
+        }
+        if (!monotonic || pos[n - 1] >= pos_limits::eof()) [[unlikely]] {
+          SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+          return false;
+        }
+      }
+      if constexpr (Log::kLayout == TokenLayout::TermsPos) {
+        log.AppendEntry(e, ids, n, pos, last_pos);
+      } else {
+        const auto* start = batch.offs_start + base;
+        const auto* end = batch.offs_end + base;
+        bool valid = start[0] >= _fill_last_start && end[0] >= start[0];
+        for (uint32_t i = 1; i < n; ++i) {
+          valid &= start[i] >= start[i - 1];
+          valid &= end[i] >= start[i];
+        }
+        if (!valid) [[unlikely]] {
+          SDB_ERROR(IRESEARCH, "invalid offset in field '", _meta.id, "'");
+          return false;
+        }
+        _fill_last_start = start[n - 1];
+        log.AppendEntry(e, ids, n, pos, last_pos, start, end);
+      }
+      entry.len += len;
+      return true;
+    }
+  }
+
+  template<typename Log>
+  IRS_FORCE_INLINE bool PushRef(Log& log, doc_id_t id, uint32_t e) {
+    SDB_ASSERT(id < doc_limits::eof());
+    Reset<Log::kLayout>(id);
+    const auto& entry = log.Entries()[e];
+    if (entry.count == 0) {
+      return true;
+    }
+    if (!CheckDocBudget(id, entry.len)) [[unlikely]] {
+      return false;
+    }
+    log.PushRef(id, e);
+    if constexpr (Log::kLayout == TokenLayout::Terms) {
+      _state.stats.len += entry.len;
+    } else {
+      _state.AdvancePos(log.EntryLastPos(entry), entry.len);
+      if constexpr (Log::kLayout == TokenLayout::TermsPosOffs) {
+        const auto last = entry.begin + entry.count - 1;
+        AdvanceOffs(log.EntryOffsStart()[last], log.EntryOffsEnd()[last]);
+      }
+    }
+    return true;
+  }
+
   friend class FieldsInverter;
 
   void ReserveTerms(size_t expected_terms, bool unique) {
@@ -644,6 +818,11 @@ class FieldInverter : util::Noncopyable {
   NormColumnWriter* _norm_writer = nullptr;
   uint32_t _norm_row_group_size = 0;
   FieldMeta _meta;
+  std::string _dict_id;
+  uint32_t _dict_base = 0;
+  uint32_t _dict_size = 0;
+  uint32_t _fill_entry = kNoEntry;
+  uint32_t _fill_last_start = 0;
   bool _one_to_one = false;
   bool _unique_terms = false;
   bool _dense_pos = true;

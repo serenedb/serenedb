@@ -1881,6 +1881,221 @@ TEST(InverterBlockTextTest, MatchesPerValueTokens) {
   EXPECT_EQ(DumpField(*per_value, mem), DumpField(*block, mem));
 }
 
+struct DictionaryCase {
+  std::vector<std::optional<std::string>> entries;
+  std::vector<std::vector<uint32_t>> chunks;
+};
+
+DictionaryCase MakeDictionaryCase() {
+  std::string long_value;
+  for (size_t i = 0; i < 1500; ++i) {
+    long_value += "t" + std::to_string(i % 97) + " ";
+  }
+  long_value.pop_back();
+  return {
+    .entries = {"quick brown fox", "syn syn brown", "", std::nullopt,
+                std::move(long_value), "fox", "lazy syn dog",
+                "orphan words only"},
+    .chunks = {{0, 1, 3, 5, 0, 4, 2, 6, 6, 1}, {5, 4, 0, 3, 3, 6}},
+  };
+}
+
+duckdb::Vector MakeEntries(const DictionaryCase& c) {
+  duckdb::Vector values{duckdb::LogicalType::VARCHAR, c.entries.size()};
+  auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(values);
+  for (size_t e = 0; e < c.entries.size(); ++e) {
+    if (!c.entries[e]) {
+      duckdb::FlatVector::ValidityMutable(values).SetInvalid(e);
+      continue;
+    }
+    slots[e] = duckdb::string_t{c.entries[e]->data(),
+                                static_cast<uint32_t>(c.entries[e]->size())};
+  }
+  return values;
+}
+
+void FillFlatRows(analysis::Tokenizer& analyzer, FieldInverter& field,
+                  const DictionaryCase& c, const std::vector<uint32_t>& rows,
+                  doc_id_t first_doc) {
+  field.Configure(analyzer.Traits());
+  std::vector<duckdb::string_t> values(rows.size());
+  duckdb::UnifiedVectorFormat fmt;
+  fmt.sel = duckdb::FlatVector::IncrementalSelectionVector();
+  fmt.physical_type = duckdb::PhysicalType::VARCHAR;
+  fmt.validity = duckdb::ValidityMask{rows.size()};
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& entry = c.entries[rows[i]];
+    if (!entry) {
+      fmt.validity.SetInvalid(i);
+      continue;
+    }
+    values[i] =
+      duckdb::string_t{entry->data(), static_cast<uint32_t>(entry->size())};
+  }
+  fmt.data = reinterpret_cast<duckdb::const_data_ptr_t>(values.data());
+  const auto layout = field.Layout();
+  const auto invert = [&](TokenBatch& batch, DocRuns runs) {
+    ASSERT_TRUE(field.InvertBlock(batch, runs));
+  };
+  ::tests::FnTokenSink sink{layout, invert};
+  analyzer.Fill(fmt, static_cast<uint32_t>(rows.size()), first_doc, sink.writer,
+                {layout});
+  sink.writer.Finish();
+}
+
+void FillDictionaryEntries(analysis::Tokenizer& analyzer, FieldInverter& field,
+                           std::string_view id,
+                           const duckdb::UnifiedVectorFormat& values,
+                           uint32_t size) {
+  field.Configure(analyzer.Traits());
+  field.BeginDictionary(id, size);
+  const auto layout = field.Layout();
+  const auto append = [&](TokenBatch& batch, DocRuns runs) {
+    ASSERT_TRUE(field.AppendEntries(batch, runs));
+  };
+  ::tests::FnTokenSink sink{layout, append};
+  analyzer.Fill(values, size, doc_limits::min(), sink.writer, {layout});
+  sink.writer.Finish();
+}
+
+duckdb::UnifiedVectorFormat RowsFormat(duckdb::Vector& entries,
+                                       const std::vector<uint32_t>& rows,
+                                       duckdb::SelectionVector& sel,
+                                       duckdb::Vector& sliced) {
+  sel.Initialize(rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    sel.set_index(i, rows[i]);
+  }
+  sliced.Slice(entries, sel, rows.size());
+  duckdb::UnifiedVectorFormat fmt;
+  sliced.ToUnifiedFormat(fmt);
+  return fmt;
+}
+
+template<typename MakeAnalyzer>
+void AssertDictionaryMatchesFlat(MakeAnalyzer make, IndexFeatures features) {
+  const auto c = MakeDictionaryCase();
+  auto entries = MakeEntries(c);
+  const auto size = static_cast<uint32_t>(c.entries.size());
+
+  auto mem = DefaultMemory();
+  FieldsInverter inv{mem};
+  auto* flat = inv.Emplace(1, features);
+  auto* dict = inv.Emplace(2, features);
+  auto flat_analyzer = make();
+  auto dict_analyzer = make();
+
+  doc_id_t first_doc = doc_limits::min();
+  for (const auto& rows : c.chunks) {
+    FillFlatRows(*flat_analyzer, *flat, c, rows, first_doc);
+
+    if (!dict->HasDictionary("entries", size)) {
+      duckdb::UnifiedVectorFormat values;
+      entries.ToUnifiedFormat(values);
+      FillDictionaryEntries(*dict_analyzer, *dict, "entries", values, size);
+    }
+    duckdb::SelectionVector sel;
+    duckdb::Vector sliced{duckdb::LogicalType::VARCHAR};
+    const auto fmt = RowsFormat(entries, rows, sel, sliced);
+    ASSERT_TRUE(dict->InvertDictionaryRows(
+      fmt, static_cast<uint32_t>(rows.size()), first_doc));
+    first_doc += static_cast<doc_id_t>(rows.size());
+  }
+
+  EXPECT_EQ(size, dict->Log().Entries().size());
+  ASSERT_EQ(flat->Log().Size(), dict->Log().Size());
+  AssertSameScatter(*flat, *dict, mem);
+  EXPECT_EQ(DumpField(*flat, mem), DumpField(*dict, mem));
+}
+
+analysis::Tokenizer::ptr MakeSpaceDelimited() {
+  analysis::TokenizerConfig cfg;
+  cfg.config = analysis::DelimitedTokenizer::Options{.delimiter = " "};
+  return analysis::CreateTokenizer(std::move(cfg), ::tests::Cache());
+}
+
+TEST(InverterDictionaryTest, DensePositionsMatchFlat) {
+  for (const auto features :
+       {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
+        IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
+    AssertDictionaryMatchesFlat(MakeSpaceDelimited, features);
+  }
+}
+
+TEST(InverterDictionaryTest, ExplicitPositionsMatchFlat) {
+  for (const auto features :
+       {IndexFeatures::Freq | IndexFeatures::Pos,
+        IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
+    AssertDictionaryMatchesFlat(
+      [] { return std::make_unique<WhitespaceSyn>(); }, features);
+  }
+}
+
+TEST(InverterDictionaryTest, KeywordMatchesFlat) {
+  const auto c = MakeDictionaryCase();
+  auto entries = MakeEntries(c);
+  const auto size = static_cast<uint32_t>(c.entries.size());
+
+  for (const auto features :
+       {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
+        IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
+    auto mem = DefaultMemory();
+    FieldsInverter inv{mem};
+    auto* flat = inv.Emplace(1, features);
+    auto* dict = inv.Emplace(2, features);
+
+    doc_id_t first_doc = doc_limits::min();
+    for (const auto& rows : c.chunks) {
+      duckdb::SelectionVector sel;
+      duckdb::Vector sliced{duckdb::LogicalType::VARCHAR};
+      const auto fmt = RowsFormat(entries, rows, sel, sliced);
+      const auto n = static_cast<uint32_t>(rows.size());
+      ASSERT_TRUE(flat->InvertKeywordBlock(fmt, n, first_doc));
+      if (!dict->HasDictionary("entries", size)) {
+        duckdb::UnifiedVectorFormat values;
+        entries.ToUnifiedFormat(values);
+        ASSERT_TRUE(dict->InvertKeywordDictionary("entries", values, size));
+      }
+      ASSERT_TRUE(dict->InvertDictionaryRows(fmt, n, first_doc));
+      first_doc += n;
+    }
+
+    ASSERT_EQ(flat->Log().Size(), dict->Log().Size());
+    AssertSameScatter(*flat, *dict, mem);
+    EXPECT_EQ(DumpField(*flat, mem), DumpField(*dict, mem));
+  }
+}
+
+TEST(InverterDictionaryTest, ConstantMatchesFlat) {
+  const std::string text = "quick brown fox syn";
+  constexpr uint32_t kRows = 5;
+  for (const auto features :
+       {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
+        IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
+    auto mem = DefaultMemory();
+    FieldsInverter inv{mem};
+    auto* flat = inv.Emplace(1, features);
+    auto* dict = inv.Emplace(2, features);
+    auto flat_analyzer = MakeSpaceDelimited();
+    auto dict_analyzer = MakeSpaceDelimited();
+
+    const DictionaryCase c{.entries = {text}, .chunks = {}};
+    FillFlatRows(*flat_analyzer, *flat, c, std::vector<uint32_t>(kRows, 0),
+                 doc_limits::min());
+
+    duckdb::Vector constant{duckdb::Value{text}, duckdb::count_t(kRows)};
+    duckdb::UnifiedVectorFormat fmt;
+    constant.ToUnifiedFormat(fmt);
+    ASSERT_FALSE(dict->HasDictionary({}, 1));
+    FillDictionaryEntries(*dict_analyzer, *dict, {}, fmt, 1);
+    ASSERT_FALSE(dict->HasDictionary({}, 1));
+    ASSERT_TRUE(dict->InvertDictionaryRows(fmt, kRows, doc_limits::min()));
+
+    ASSERT_EQ(flat->Log().Size(), dict->Log().Size());
+    AssertSameScatter(*flat, *dict, mem);
+  }
+}
+
 template<typename T>
 void NumericBlockMatchesPerValue(const std::vector<T>& vals) {
   const auto features = IndexFeatures::None;

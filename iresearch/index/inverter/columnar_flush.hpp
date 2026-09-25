@@ -117,7 +117,7 @@ class ScatteredField : util::Noncopyable {
     return _s->term_starts.empty() ? rank : _s->term_starts[rank];
   }
 
-  void BuildHistogram(const LogColumn& term_ids, size_t vocab);
+  void BuildHistogram(const PostingLogBase& log, size_t vocab);
   void RankLiveTerms(std::span<const duckdb::string_t> entries);
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);

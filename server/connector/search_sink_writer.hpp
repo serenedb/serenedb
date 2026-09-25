@@ -171,11 +171,27 @@ class SearchSinkInsertBaseImpl {
   template<typename Func>
   void InvertTokens(const Field& field, irs::StoreSink* store, Func&& func);
 
+  struct DictionaryValues {
+    const duckdb::Vector* values;
+    std::string_view id;
+    uint32_t size;
+  };
+
+  static std::optional<DictionaryValues> DictionaryOf(
+    const duckdb::Vector& vec);
+
+  template<typename Func>
+  void InvertEntryTokens(const Field& field, Func&& func);
+
+  void InvertDictionary(const Field& field, const DictionaryValues& dict,
+                        const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
+                        irs::doc_id_t first_doc);
+
   void WriteKeywordColumn(const Field& field, const Field& null_field,
                           const duckdb::Vector& vec, duckdb::idx_t count);
 
   void WriteAnalyzedColumn(const Field& field, const Field& null_field,
-                           duckdb::idx_t count);
+                           const duckdb::Vector& vec, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId Kind>
   void WriteNumericColumn(const Field& field, const Field& null_field,

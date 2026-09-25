@@ -66,10 +66,22 @@ enum class TableEngine : uint8_t {
 
 inline constexpr std::string_view kStorageOption = "storage";
 
+inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
+  kRefreshIntervalSetting,
+  kCompactionIntervalSetting,
+  kCleanupIntervalStepSetting,
+  kCompactionMaxSegmentsSetting,
+  kCompactionMaxSegmentsBytesSetting,
+  kCompactionFloorSegmentBytesSetting,
+});
+
 inline constexpr auto kSearchTableSettings = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
+  kCompactionMaxSegmentsSetting,
+  kCompactionMaxSegmentsBytesSetting,
+  kCompactionFloorSegmentBytesSetting,
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
 });
@@ -78,6 +90,9 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
+  kCompactionMaxSegmentsSetting,
+  kCompactionMaxSegmentsBytesSetting,
+  kCompactionFloorSegmentBytesSetting,
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
   kOptimizeTopKSetting,
@@ -123,6 +138,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 

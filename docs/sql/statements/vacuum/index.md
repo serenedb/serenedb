@@ -49,6 +49,10 @@ Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELE
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_008" />
 
+Inverted indexes and search tables also compact in the background by default (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `COMPACT_*` merges on demand, including when background compaction is disabled. A search table is merged into a single segment. Set `sdb_compact_target_segments` to `N` to stop at `N` segments instead: the segments are split into `N` disjoint groups and each group is merged into one segment, so no single merge holds the whole table.
+
+<SqlLogicTest id="sql/statements/vacuum/index/example_011" />
+
 ### Recomputing statistics — `RECOMPUTE_STATS_*`
 
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:

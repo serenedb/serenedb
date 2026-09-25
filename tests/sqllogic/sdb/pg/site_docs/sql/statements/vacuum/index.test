@@ -110,3 +110,20 @@ statement error
 VACUUM (REFRESH_TABLE, ANALYZE) my_table;
 ----
 db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
+
+# DOCS_TEST: example_011
+statement ok
+DROP TABLE IF EXISTS docs_store;
+
+statement ok
+CREATE TABLE docs_store (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+statement ok
+SET sdb_compact_target_segments = 4;
+
+statement ok
+VACUUM (COMPACT_TABLE) docs_store;
+
+statement ok
+RESET sdb_compact_target_segments;

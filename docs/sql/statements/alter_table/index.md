@@ -220,6 +220,14 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 `FOREIGN KEY` constraints cannot be added with `ADD CONSTRAINT`.
 
+## `SET` / `RESET` storage options
+
+For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_036" />
+
+`SET` and `RESET` of storage options are supported only for search tables.
+
 ## Limitations
 
 `ALTER COLUMN` fails if values of conflicting types have occurred in the table at any point, even if they have been deleted:

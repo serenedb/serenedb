@@ -66,13 +66,13 @@ ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when ac
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
-cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
+cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-compaction_floor_segment_bytes	2097152	Inverted-index segments below this size count as equal-sized for compaction candidate selection. Per-index WITH (compaction_floor_segment_bytes = ...) overrides. Default 2097152 (2MB).
-compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
-compaction_max_segments	10	Maximum inverted-index segments merged by one background compaction. Per-index WITH (compaction_max_segments = ...) overrides. Default 10.
-compaction_max_segments_bytes	5368709120	Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB).
+compaction_floor_segment_bytes	2097152	Segments of an inverted index or search table below this size count as equal-sized for compaction candidate selection. WITH (compaction_floor_segment_bytes = ...) overrides it per index or table. Default 2097152 (2MB).
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes and search tables. WITH (compaction_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
+compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
+compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
@@ -260,7 +260,7 @@ profiling_output	(empty)	The file to which profile output should be saved, or em
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
-refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
@@ -284,6 +284,7 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_compact_target_segments	1	How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or 1 (default) merges every segment into one; a larger N splits the segments into N disjoint groups, merges each group into one segment and stops there, so no single merge holds the whole table. A table with N segments or fewer is left as it is. Default 1.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).
 sdb_hnsw_ef_search	64	Search-time beam width (ef) for HNSW vector indexes. Higher values improve recall at the cost of latency. The beam is also the result ceiling: a value below the query's LIMIT returns fewer rows than asked for. Default 64.
 sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expanded per node while descending to the probed clusters. Decouples the descent width from sdb_ivf_search_nprobe: lower values cut centroid work on deep (multi-level) trees at some recall cost. The width applies per node and so compounds over the tree's levels; it is raised when smaller than the width whose compounded value reaches sdb_ivf_search_nprobe, so the descent can always supply the requested number of clusters. Default 16.
@@ -407,13 +408,13 @@ ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when ac
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
-cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
+cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-compaction_floor_segment_bytes	2097152	Inverted-index segments below this size count as equal-sized for compaction candidate selection. Per-index WITH (compaction_floor_segment_bytes = ...) overrides. Default 2097152 (2MB).
-compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
-compaction_max_segments	10	Maximum inverted-index segments merged by one background compaction. Per-index WITH (compaction_max_segments = ...) overrides. Default 10.
-compaction_max_segments_bytes	5368709120	Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB).
+compaction_floor_segment_bytes	2097152	Segments of an inverted index or search table below this size count as equal-sized for compaction candidate selection. WITH (compaction_floor_segment_bytes = ...) overrides it per index or table. Default 2097152 (2MB).
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes and search tables. WITH (compaction_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
+compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
+compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
@@ -601,7 +602,7 @@ profiling_output	(empty)	The file to which profile output should be saved, or em
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
-refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
@@ -625,6 +626,7 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_compact_target_segments	1	How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or 1 (default) merges every segment into one; a larger N splits the segments into N disjoint groups, merges each group into one segment and stops there, so no single merge holds the whole table. A table with N segments or fewer is left as it is. Default 1.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).
 sdb_hnsw_ef_search	64	Search-time beam width (ef) for HNSW vector indexes. Higher values improve recall at the cost of latency. The beam is also the result ceiling: a value below the query's LIMIT returns fewer rows than asked for. Default 64.
 sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expanded per node while descending to the probed clusters. Decouples the descent width from sdb_ivf_search_nprobe: lower values cut centroid work on deep (multi-level) trees at some recall cost. The width applies per node and so compounds over the tree's levels; it is raised when smaller than the width whose compounded value reaches sdb_ivf_search_nprobe, so the descent can always supply the requested number of clusters. Default 16.

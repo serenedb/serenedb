@@ -443,3 +443,19 @@ CREATE TABLE items (id INTEGER);
 statement ok
 ALTER TABLE items
 ADD CONSTRAINT positive_id CHECK (id > 0);
+
+# DOCS_TEST: example_036
+
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE events SET (compaction_interval = 0);
+
+statement ok
+ALTER TABLE events RESET (compaction_interval);

@@ -294,6 +294,10 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   auto& g = data.global_state->Cast<ScanGlobalState>();
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
+  if (base.parked_on) {
+    base.parked_on->Resume();
+    base.parked_on = nullptr;
+  }
   if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
       base.scan_chunk.Initialize(context, g.projected_types);
@@ -322,17 +326,16 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                     data.local_state->Cast<StreamLocalState>(), out);
       break;
   }
+  base.produced_rows += out.size();
   if (reorder) {
     output.ReferenceColumns(out, g.output_projection_ids);
   }
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
-  auto& g = input.global_state->Cast<ScanGlobalState>();
-  input.operator_metrics.rows_scanned =
-    g.produced_rows.load(std::memory_order_relaxed);
-  input.operator_metrics.row_groups_scanned =
-    g.metrics.rg_units.load(std::memory_order_relaxed);
+  const auto& l = input.local_state->Cast<ScanLocalState>();
+  input.operator_metrics.rows_scanned = l.produced_rows;
+  input.operator_metrics.row_groups_scanned = l.rg_units;
 }
 
 double IResearchScanProgress(duckdb::ClientContext&,

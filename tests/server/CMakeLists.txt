@@ -5,6 +5,7 @@ add_executable(
     tests_main.cpp
     assertions_tests.cpp
     duckdb_roundtrip_test.cpp
+    duckdb_threads_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     meta_transaction_snapshot_test.cpp

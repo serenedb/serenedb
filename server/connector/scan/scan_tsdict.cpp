@@ -59,7 +59,7 @@ struct TsDictLocalState final : public ScanLocalState {
 
   void StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                     ScanGlobalState& g);
-  duckdb::idx_t EmitChunk(ScanGlobalState& g, duckdb::DataChunk& output,
+  duckdb::idx_t EmitChunk(duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
@@ -331,7 +331,7 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
         std::move(*folded), irs::fill::DocsMask{*_seg});
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
+        std::move(node), irs::VisibleCount(_seg->Meta()),
         irs::fill::DocsMask{*_seg});
     }
   }
@@ -349,8 +349,7 @@ uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
   uint32_t total = 0;
   irs::SlackBuf<irs::doc_id_t, kPlanBatch, irs::doc_limits::kDocsSlack> docs;
   const auto stop = std::min<irs::doc_id_t>(
-    _range.end,
-    irs::doc_limits::min() + static_cast<irs::doc_id_t>(_seg->docs_count()));
+    _range.end, irs::doc_limits::min() + irs::VisibleCount(_seg->Meta()));
   for (auto at = _range.begin; at < stop;) {
     const auto upto = static_cast<irs::doc_id_t>(
       std::min<uint64_t>(uint64_t{at} + kPlanBatch, stop));
@@ -723,13 +722,11 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
   return 1;
 }
 
-duckdb::idx_t TsDictLocalState::EmitChunk(ScanGlobalState& g,
-                                          duckdb::DataChunk& output,
+duckdb::idx_t TsDictLocalState::EmitChunk(duckdb::DataChunk& output,
                                           duckdb::idx_t output_start) {
   const auto capacity = STANDARD_VECTOR_SIZE - output_start;
   do {
     if (const auto n = EmitField(output, output_start, capacity); n != 0) {
-      g.produced_rows.fetch_add(n, std::memory_order_relaxed);
       return n;
     }
   } while (NextField());
@@ -778,7 +775,7 @@ void RunTsDictScan(duckdb::ClientContext&, ScanGlobalState& g,
     duckdb::idx_t collected = 0;
     bool exhausted = false;
     while (collected < STANDARD_VECTOR_SIZE) {
-      const auto added = l.EmitChunk(g, output, collected);
+      const auto added = l.EmitChunk(output, collected);
       SDB_ASSERT(collected + added <= STANDARD_VECTOR_SIZE);
       collected += added;
       if (added != 0) {
@@ -786,11 +783,7 @@ void RunTsDictScan(duckdb::ClientContext&, ScanGlobalState& g,
       }
       if (l.has_unit) {
         const bool split = !l.unit.whole;
-        const bool segment_done = FinishUnit(g, l);
-        if (segment_done) {
-          FinishSegments(g, 1);
-        }
-        if (segment_done && split) {
+        if (FinishUnit(g, l) && split) {
           l.BeginEmit(g);
           continue;
         }

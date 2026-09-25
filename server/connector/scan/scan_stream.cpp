@@ -34,23 +34,17 @@
 namespace sdb::connector {
 namespace {
 
-uint64_t FirstRow(const ScanGlobalState& g, const ScanUnit& unit) noexcept {
-  return unit.whole ? 0 : uint64_t{unit.rg_begin} * g.rg_size;
-}
-
 bool Resumes(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
-  return l.root_seg == l.unit.seg && FirstRow(g, l.unit) >= l.stop_row;
+  return l.root_seg == l.unit.seg && g.RowsOf(l.unit).begin >= l.stop_row;
 }
 
 void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   const bool resume = Resumes(g, l);
-  const auto seg_rows = static_cast<uint64_t>(seg.docs_count());
-  l.next_row = FirstRow(g, l.unit);
-  l.stop_row = l.unit.whole ? seg_rows
-                            : std::min<uint64_t>(
-                                uint64_t{l.unit.rg_end} * g.rg_size, seg_rows);
+  const auto rows = g.RowsOf(l.unit);
+  l.next_row = rows.begin;
+  l.stop_row = rows.end;
   l.unit_done = false;
   l.started = true;
   if (resume) {
@@ -66,9 +60,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                               &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
-  const auto span = l.unit.whole || (!g.Ordered() && l.unit.rg_begin == 0)
-                      ? irs::doc_id_t{0}
-                      : static_cast<irs::doc_id_t>(g.rg_size);
+  const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();
   if (l.scored) {
     SDB_ENSURE(g.scorer_obj != nullptr,
@@ -192,9 +184,7 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         }
         continue;
       }
-      if (FinishUnit(g, l)) {
-        FinishSegments(g, 1);
-      }
+      FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       if (const auto added = EmitChunk(ctx, g, l, output, true); added != 0) {

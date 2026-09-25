@@ -1,0 +1,191 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY it_en AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE it (id INT PRIMARY KEY, body TEXT, g INT)
+
+
+statement ok
+CREATE INDEX it_idx ON it USING inverted (id, body it_en) INCLUDE (g)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO it
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 1000
+FROM generate_series(1, 130000) s(i)
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh_after_tick';
+
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) it;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT stage FROM sdb_progress WHERE command = 'VACUUM';
+----
+stage
+1
+
+
+statement ok
+INSERT INTO it
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 1000
+FROM generate_series(130001, 255000) s(i)
+
+
+statement ok
+SET sdb_faults = '-pause_index_refresh_after_tick';
+
+
+wait
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments, sum(count) AS docs
+FROM pragma_storage_info('it_idx') WHERE column_name = 'id';
+----
+segments	docs
+1	255000
+
+
+statement ok
+SET threads = 4
+
+
+query
+SELECT count(*) FROM it_idx WHERE body @@ 'dog';
+----
+count
+43333
+
+
+query
+SELECT count(*), max(id), sum(g) FROM it_idx WHERE body @@ 'fox';
+----
+count	max	sum
+130000	130000	64935000
+
+
+query
+SELECT id FROM it_idx WHERE body @@ 'dog' ORDER BY id DESC LIMIT 3;
+----
+id
+129999
+129996
+129993
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM it_idx ORDER BY term;
+----
+term	docs
+dog	43333
+fox	130000
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT count(*), max(id) FROM it_idx WHERE body @@ 'dog';
+----
+count	max
+43333	129999
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/invisible_tail_count.json'
+
+
+query
+SELECT count(*) FROM it_idx WHERE body @@ 'dog';
+----
+count
+43333
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/invisible_tail_stream.json'
+
+
+query
+SELECT max(id) FROM it_idx WHERE body @@ 'dog';
+----
+max
+129999
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/invisible_tail_count.json');
+----
+row_groups_scanned
+2
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/invisible_tail_stream.json');
+----
+row_groups_scanned
+2
+
+
+statement ok
+VACUUM (REFRESH_TABLE) it;
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments, sum(count) AS docs
+FROM pragma_storage_info('it_idx') WHERE column_name = 'id';
+----
+segments	docs
+1	255000
+
+
+query
+SELECT count(*), max(id) FROM it_idx WHERE body @@ 'dog';
+----
+count	max
+85000	255000
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM it_idx ORDER BY term;
+----
+term	docs
+dog	85000
+fox	255000
+
+
+statement ok
+RESET threads

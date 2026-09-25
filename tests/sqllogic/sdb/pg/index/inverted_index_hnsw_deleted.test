@@ -1,0 +1,52 @@
+statement ok
+CREATE TABLE hnsw_d (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+
+statement ok
+CREATE INDEX hnsw_d_idx ON hnsw_d
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO hnsw_d SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(100) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_d;
+
+
+statement ok
+INSERT INTO hnsw_d SELECT 1000 + i, [50 + i::FLOAT / 10, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(10) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_d;
+
+
+statement ok
+DELETE FROM hnsw_d WHERE pk BETWEEN 40 AND 60;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_d;
+
+
+statement ok
+SET sdb_hnsw_ef_search = 4;
+
+
+query
+SELECT pk FROM hnsw_d_idx
+  ORDER BY emb <-> [50, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+1000
+1001
+1002
+
+
+statement ok
+RESET sdb_hnsw_ef_search;

@@ -595,6 +595,65 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
   ASSERT_EQ(reader.live_docs_count(), counted);
 }
 
+TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
+  constexpr size_t kDocs = 4096;
+  constexpr size_t kSingle = 3001;
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    auto field = std::make_shared<tests::StringField>("name");
+    field->id = kNameFieldId;
+    tests::Document doc;
+    doc.insert(field);
+    for (size_t i = 0; i != kDocs; ++i) {
+      field->value(i == kSingle ? "b" : i % 10 == 0 || i % 10 == 3 ? "c" : "a");
+      ASSERT_TRUE(Insert(*writer, doc));
+    }
+    writer->RefreshCommit();
+  }
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+
+  irs::BooleanFilter filter;
+  for (const std::string_view term : {"b", "c"}) {
+    filter.Add(
+      irs::TermClause{
+        .field = kNameFieldId,
+        .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}},
+      irs::Occur::Should);
+  }
+  filter.SetMinShouldMatch(1);
+  auto query = irs::PrepareMasked(filter, segment, {});
+  ASSERT_NE(nullptr, query);
+
+  const auto mid =
+    static_cast<irs::doc_id_t>(irs::doc_limits::min() + kDocs / 2);
+  uint64_t expected_front = 0;
+  uint64_t expected_back = 0;
+  auto lead = query->PlanLead({});
+  ASSERT_NE(nullptr, lead);
+  for (auto doc = lead->Next(); !irs::doc_limits::eof(doc);
+       doc = lead->Next()) {
+    ++(doc < mid ? expected_front : expected_back);
+  }
+  ASSERT_NE(0, expected_back);
+
+  for (const bool partial : {false, true}) {
+    auto front = query->PlanCount({.partial = partial});
+    ASSERT_NE(nullptr, front);
+    auto back = query->PlanCount({.partial = partial});
+    ASSERT_NE(nullptr, back);
+    const auto front_count =
+      front->Run(irs::doc_limits::min(), mid) + front->Finish();
+    const auto back_count =
+      back->Run(mid, irs::doc_limits::eof()) + back->Finish();
+    EXPECT_EQ(expected_front, front_count);
+    EXPECT_EQ(expected_back, back_count);
+  }
+}
+
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
   // Create index with documents
   {

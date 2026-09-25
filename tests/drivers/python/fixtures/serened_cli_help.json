@@ -114,7 +114,7 @@
           "flag": "--cpu_threads",
           "type": "",
           "defaultValue": "0",
-          "description": "Executor pool size at process start. 0 = let server auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "description": "Executor pool size at process start. 0 = let server auto-detect from cpu_count. `SET GLOBAL threads = N` resizes the pool at runtime.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

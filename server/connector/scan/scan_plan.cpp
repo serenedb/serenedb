@@ -40,6 +40,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -250,8 +251,15 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
           entry.Filter());
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
-      cf.not_null = MakeNotNullReplacement(entry.Filter(),
-                                           bind_data.columns.types[bind_index]);
+      if (proj_idx < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj_idx];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          DecodeExtractPath(column_index, bind_data.columns.types[bind_index],
+                            cf.extract_path);
+          cf.type = column_index.GetScanType();
+        }
+      }
+      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
     }
   }
 }
@@ -441,6 +449,20 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
   }
+  if (bind_data.IsHnswScored()) {
+    if (state.has_lookup_filter ||
+        absl::c_any_of(state.col_filters,
+                       [](const auto& cf) { return !cf.is_score; })) {
+      irs::HnswRefuseFiltered();
+    }
+    if (!bind_data.score.top_k &&
+        bind_data.score.vector->radius == std::numeric_limits<float>::max()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("an hnsw vector index answers ORDER BY <distance> LIMIT k and "
+                "distance ranges, not a distance for every row"));
+    }
+  }
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -560,10 +582,8 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   return ScanShape::Stream;
 }
 
-void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                                   duckdb::Vector* scores,
-                                   duckdb::DataChunk& output) {
-  g.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output) {
   if (g.tableoid_output_idx != duckdb::DConstants::INVALID_INDEX) {
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
@@ -682,7 +702,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-  AccountAndWriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }
 
@@ -701,7 +721,6 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   SDB_ASSERT(f.pk_column);
   const auto rows =
     f.index_source->Materialize(ctx, *f.pk_column, collected, output);
-  g.metrics.rows_looked_up.fetch_add(collected, std::memory_order_relaxed);
   return rows;
 }
 

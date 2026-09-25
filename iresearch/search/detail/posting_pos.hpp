@@ -292,7 +292,7 @@ class PostingPos {
       return false;
     }
     In().Seek(last.doc_ptr);
-    _pos.template Prepare<InputType>(last);
+    _pos.Prepare(last);
     ReadLeaf(last.doc);
     return true;
   }

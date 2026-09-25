@@ -101,69 +101,49 @@ class PositionImpl final : public PosAttr {
 
   void reset() final {
     Clear();
-    if (_cookie.pos_file_pointer != std::numeric_limits<uint64_t>::max()) {
-      _buf_pos = doc_limits::kBlockSize;
-      _pend_pos = _cookie.pend_pos;
-      _pos_in->Seek(_cookie.pos_file_pointer);
-      if constexpr (IteratorTraits::Offset()) {
-        _pay_in->Seek(_cookie.pay_file_pointer);
-      }
+    if (_cookie.pos_group != std::numeric_limits<uint64_t>::max()) {
+      Land(_cookie.pos_group, PayGroupOf(_cookie), _cookie.pend_pos);
     }
   }
 
   // prepares iterator to work
   template<typename InputType>
   void Prepare(const DocState& state) {
-    SDB_ASSERT(!_pos_in);
-    _pos_in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
+    SDB_ASSERT(!_pos.in);
+    _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
 
-    if (!_pos_in) {
+    if (!_pos.in) {
       // implementation returned wrong pointer
       SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
 
       throw IoError("failed to reopen positions input");
     }
 
-    _pos_view = IteratorTraits::View(*_pos_in);
-    _cookie.pos_file_pointer = state.term_state->pos_start;
-    _cookie.pend_pos = state.term_state->pos_offset;
-    irs::utils::downCast<InputType>(*_pos_in).Seek(state.term_state->pos_start);
-    LimitPosReadahead(irs::utils::downCast<InputType>(*_pos_in),
+    _pos.view = IteratorTraits::View(*_pos.in);
+    LimitPosReadahead(irs::utils::downCast<InputType>(*_pos.in),
                       *state.term_state);
     _enc_buf = state.enc_buf;
-    _pend_pos = _cookie.pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
-      SDB_ASSERT(!_pay_in);
-      _pay_in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
+      SDB_ASSERT(!_pay.in);
+      _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
 
-      if (!_pay_in) {
+      if (!_pay.in) {
         // implementation returned wrong pointer
         SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
 
         throw IoError("failed to reopen payload input");
       }
 
-      _pay_view = IteratorTraits::View(*_pay_in);
-      _cookie.pay_file_pointer = state.term_state->pay_start;
-      irs::utils::downCast<InputType>(*_pay_in).Seek(
-        state.term_state->pay_start);
+      _pay.view = IteratorTraits::View(*_pay.in);
     }
+    Land(state.term_state->pos_start, state.term_state->pay_start,
+         state.term_state->pos_offset);
   }
 
   // notifies iterator that doc iterator has skipped to a new block
-  template<typename InputType>
-  void Prepare(const SkipState& state) {
-    irs::utils::downCast<InputType>(*_pos_in).Seek(state.pos_ptr);
-    _pend_pos = state.pos_offset;
-    _buf_pos = doc_limits::kBlockSize;
-    _cookie.pos_file_pointer = state.pos_ptr;
-    _cookie.pend_pos = _pend_pos;
-
-    if constexpr (IteratorTraits::Offset()) {
-      _cookie.pay_file_pointer = state.pay_ptr;
-      irs::utils::downCast<InputType>(*_pay_in).Seek(state.pay_ptr);
-    }
+  void Prepare(const SkipState& state) noexcept {
+    Land(state.pos_ptr, state.pay_ptr, state.pos_offset);
   }
 
   // notify the positions that the document stream has moved forward
@@ -181,15 +161,107 @@ class PositionImpl final : public PosAttr {
   uint32_t DocFreq() const noexcept { return _freq; }
 
  private:
+  struct Stream {
+    void Load() {
+      if (view != nullptr) {
+        header = view->ReadStable(group, PosGroup::kHeaderBytes);
+      } else {
+        in->Seek(group);
+        in->ReadData(copy, PosGroup::kHeaderBytes);
+        header = copy;
+      }
+    }
+
+    void Hop() {
+      group = PosGroup::Next(group, header);
+      Load();
+    }
+
+    void Step() {
+      group = PosGroup::Next(group, header);
+      if (view != nullptr) {
+        SDB_ASSERT(view->Position() == group);
+        header = view->ReadStable(PosGroup::kHeaderBytes);
+      } else {
+        SDB_ASSERT(in->Position() == group);
+        in->ReadData(copy, PosGroup::kHeaderBytes);
+        header = copy;
+      }
+    }
+
+    void SeekBlock(uint32_t block) {
+      const auto at =
+        group + PosGroup::kHeaderBytes + PosGroup::Start(header, block);
+      if (view != nullptr) {
+        view->Seek(at);
+      } else {
+        in->Seek(at);
+      }
+    }
+
+    IndexInput::ptr in;
+    BytesViewInput* view = nullptr;
+    uint64_t group = 0;
+    const byte_type* header = nullptr;
+    byte_type copy[PosGroup::kHeaderBytes];
+  };
+
+  struct Cookie {
+    uint64_t pend_pos = 0;
+    uint64_t pos_group = std::numeric_limits<uint64_t>::max();
+    [[no_unique_address]] utils::Need<IteratorTraits::Offset(), uint64_t>
+      pay_group;
+  };
+
+  static uint64_t PayGroupOf(const Cookie& cookie) noexcept {
+    if constexpr (IteratorTraits::Offset()) {
+      return cookie.pay_group;
+    } else {
+      return 0;
+    }
+  }
+
+  void Land(uint64_t pos_group, uint64_t pay_group, uint64_t pend) noexcept {
+    _pos.group = pos_group;
+    _pos.header = nullptr;
+    _cookie.pos_group = pos_group;
+    if constexpr (IteratorTraits::Offset()) {
+      _pay.group = pay_group;
+      _cookie.pay_group = pay_group;
+    }
+    _next = 0;
+    _buf_pos = doc_limits::kBlockSize;
+    _pend_pos = pend;
+    _cookie.pend_pos = pend;
+  }
+
+  void Enter(uint64_t block) {
+    if (_pos.header == nullptr) {
+      _pos.Load();
+      if constexpr (IteratorTraits::Offset()) {
+        _pay.Load();
+      }
+    }
+    for (; block >= PosGroup::kBlocks; block -= PosGroup::kBlocks) {
+      _pos.Hop();
+      if constexpr (IteratorTraits::Offset()) {
+        _pay.Hop();
+      }
+    }
+    _next = static_cast<uint32_t>(block);
+    _pos.SeekBlock(_next);
+    if constexpr (IteratorTraits::Offset()) {
+      _pay.SeekBlock(_next);
+    }
+  }
+
   void Skip(uint64_t count) {
     SDB_ASSERT(count != 0);
-    auto left = doc_limits::kBlockSize - _buf_pos;
+    const uint64_t left = doc_limits::kBlockSize - _buf_pos;
     if (count > left) {
       count -= left;
-      while (count >= doc_limits::kBlockSize) {
-        SkipBlock();
-        count -= doc_limits::kBlockSize;
-      }
+      Enter(_next + count / doc_limits::kBlockSize);
+      count %= doc_limits::kBlockSize;
       if (count == 0) {
         _buf_pos = doc_limits::kBlockSize;
       } else {
@@ -216,7 +288,7 @@ class PositionImpl final : public PosAttr {
   }
 
   template<typename Input>
-  IRS_FORCE_INLINE void ReadBlock(Input& pos, Input* pay) {
+  IRS_FORCE_INLINE void Decode(Input& pos, Input* pay) {
     IteratorTraits::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
       IteratorTraits::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
@@ -225,35 +297,27 @@ class PositionImpl final : public PosAttr {
   }
 
   void ReadBlock() {
-    if (_pos_view != nullptr && (!IteratorTraits::Offset() || PayView()))
+    if (_pos.header == nullptr) [[unlikely]] {
+      Enter(_next);
+    } else if (_next == PosGroup::kBlocks) [[unlikely]] {
+      _pos.Step();
+      if constexpr (IteratorTraits::Offset()) {
+        _pay.Step();
+      }
+      _next = 0;
+    }
+    if (_pos.view != nullptr && (!IteratorTraits::Offset() || PayView()))
       [[likely]] {
-      ReadBlock<BytesViewInput>(*_pos_view, PayView());
+      Decode<BytesViewInput>(*_pos.view, PayView());
     } else {
-      ReadBlock<IndexInput>(*_pos_in, PayIn());
+      Decode<IndexInput>(*_pos.in, PayIn());
     }
-  }
-
-  template<typename Input>
-  IRS_FORCE_INLINE static void SkipBlock(Input& pos, Input* pay) {
-    IteratorTraits::SkipBlock(pos);
-    if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::SkipBlock(*pay);
-      IteratorTraits::SkipBlock(*pay);
-    }
-  }
-
-  void SkipBlock() {
-    if (_pos_view != nullptr && (!IteratorTraits::Offset() || PayView()))
-      [[likely]] {
-      SkipBlock<BytesViewInput>(*_pos_view, PayView());
-    } else {
-      SkipBlock<IndexInput>(*_pos_in, PayIn());
-    }
+    ++_next;
   }
 
   IRS_FORCE_INLINE BytesViewInput* PayView() const noexcept {
     if constexpr (IteratorTraits::Offset()) {
-      return _pay_view;
+      return _pay.view;
     } else {
       return nullptr;
     }
@@ -261,18 +325,11 @@ class PositionImpl final : public PosAttr {
 
   IRS_FORCE_INLINE IndexInput* PayIn() const noexcept {
     if constexpr (IteratorTraits::Offset()) {
-      return _pay_in.get();
+      return _pay.in.get();
     } else {
       return nullptr;
     }
   }
-
-  struct Cookie {
-    uint64_t pend_pos = 0;
-    uint64_t pos_file_pointer = std::numeric_limits<uint64_t>::max();
-    [[no_unique_address]] utils::Need<IteratorTraits::Offset(), uint64_t>
-      pay_file_pointer;
-  };
 
   template<typename T>
   using ForOffset = utils::Need<IteratorTraits::Offset(), T>;
@@ -283,14 +340,13 @@ class PositionImpl final : public PosAttr {
   [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
     _offs_lengths;
   uint32_t _freq = 0;      // length of the posting list for a document
+  uint32_t _next = 0;
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are
   uint64_t _buf_pos = doc_limits::kBlockSize;  // position in pos_deltas_
   Cookie _cookie;
-  IndexInput::ptr _pos_in;
-  BytesViewInput* _pos_view = nullptr;
-  [[no_unique_address]] ForOffset<IndexInput::ptr> _pay_in;
-  [[no_unique_address]] ForOffset<BytesViewInput*> _pay_view{};
+  Stream _pos;
+  [[no_unique_address]] ForOffset<Stream> _pay;
   [[no_unique_address]] ForOffset<OffsAttr> _offs;
 };
 

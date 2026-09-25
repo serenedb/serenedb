@@ -70,8 +70,12 @@ struct FormatTraits128 {
 
   IRS_FORCE_INLINE static void WriteBlock(BufferedOutput& out,
                                           const uint32_t* in, uint32_t* buf) {
-    auto* const bytes = reinterpret_cast<byte_type*>(buf);
-    out.WriteData(bytes, Codec::EncodeValuesBlock(in, bytes));
+    out.WriteData(reinterpret_cast<byte_type*>(buf), EncodeBlock(in, buf));
+  }
+
+  IRS_FORCE_INLINE static uint32_t EncodeBlock(const uint32_t* in,
+                                               uint32_t* buf) {
+    return Codec::EncodeValuesBlock(in, reinterpret_cast<byte_type*>(buf));
   }
 
   IRS_FORCE_INLINE static void WriteTail(uint32_t len, BufferedOutput& out,

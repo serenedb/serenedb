@@ -41,8 +41,6 @@ struct PostingMeta {
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
-  // Slot of the term's first position inside the block at `pos_start`, so it
-  // is bounded by the position block size.
   uint32_t pos_offset = 0;
   // A delta whose base `docs_count` decides, and the only field of this record
   // that means two things. A single-document term has no `.doc` data, so it

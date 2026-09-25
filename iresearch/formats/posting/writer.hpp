@@ -103,6 +103,50 @@ struct PayBuffer {
   uint32_t last{};  // last start offset
 };
 
+class BlockGroup {
+ public:
+  bool Empty() const noexcept { return _blocks == 0; }
+
+  uint32_t Blocks() const noexcept { return _blocks; }
+
+  void Reset() noexcept {
+    _data.clear();
+    _blocks = 0;
+  }
+
+  void Append(const uint32_t* data, uint32_t size) {
+    const auto* bytes = reinterpret_cast<const byte_type*>(data);
+    _data.insert(_data.end(), bytes, bytes + size);
+  }
+
+  void Close(IndexOutput& out) {
+    SDB_ASSERT(_blocks < PosGroup::kBlocks);
+    SDB_ASSERT(_data.size() <= std::numeric_limits<uint16_t>::max());
+    _ends[_blocks] = static_cast<uint16_t>(_data.size());
+    if (++_blocks == PosGroup::kBlocks) {
+      Flush(out);
+    }
+  }
+
+  void Flush(IndexOutput& out) {
+    SDB_ASSERT(_blocks != 0);
+    byte_type header[PosGroup::kHeaderBytes];
+    for (uint32_t i = 0; i != PosGroup::kBlocks; ++i) {
+      absl::little_endian::Store16(header + i * sizeof(uint16_t),
+                                   _ends[std::min(i, _blocks - 1)]);
+    }
+    out.WriteData(header, sizeof(header));
+    out.WriteData(_data.data(), _data.size());
+    _data.clear();
+    _blocks = 0;
+  }
+
+ private:
+  std::vector<byte_type> _data;
+  uint16_t _ends[PosGroup::kBlocks]{};
+  uint32_t _blocks = 0;
+};
+
 inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer,
                                                      size_t max_levels) {
   ScoreBoundWriter::ptr writer = nullptr;
@@ -217,6 +261,21 @@ class PostingsWriterBase : public PostingsWriter {
   void EndTerm(PostingMeta& meta);
   void PrepareWriters(const FieldProperties& meta);
 
+  uint32_t PosIndex() const noexcept {
+    const auto index = _pos_group.Blocks() * pos_limits::kBlockSize + _pos.size;
+    SDB_ASSERT(index < PosGroup::kPositions);
+    return index;
+  }
+
+  void FlushGroups() {
+    if (!_pos_group.Empty()) {
+      _pos_group.Flush(*_pos_out);
+    }
+    if (!_pay_group.Empty()) {
+      _pay_group.Flush(*_pay_out);
+    }
+  }
+
   template<typename Func>
   void ApplyToWriter(Func&& func) {
     if (_valid_writer) {
@@ -233,6 +292,8 @@ class PostingsWriterBase : public PostingsWriter {
   DocBuffer _doc;             // Document stream
   PosBuffer _pos;             // Proximity stream
   PayBuffer _pay;             // Payloads and offsets stream
+  BlockGroup _pos_group;
+  BlockGroup _pay_group;
   Attributes _attrs;          // Set of attributes
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
@@ -285,8 +346,7 @@ inline void PostingsWriterBase::WriteSkip(size_t level,
       out.WriteV64(pay_ptr - _pay.skip_ptr[level]);
       _pay.skip_ptr[level] = pay_ptr;
     }
-    SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(_pos.size);
+    out.WriteU16(static_cast<uint16_t>(PosIndex()));
   }
 }
 
@@ -303,6 +363,7 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
   if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
     // Prepare proximity stream
     _pos.Reset();
+    _pos_group.Reset();
     format_utils::PrepareOutput(name, _pos_out, state, kPosExt, kPosFormatName);
   }
 
@@ -314,6 +375,7 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
     IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
   if (has_offs) {
     _pay.Reset();
+    _pay_group.Reset();
   }
   if (has_offs || has_vec) {
     format_utils::PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName);
@@ -343,12 +405,14 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
 
   out.WriteV64(meta.doc_start - _last_state.doc_start);
   if (_features.HasPosition()) {
-    out.WriteV64(meta.pos_start - _last_state.pos_start);
+    const uint64_t pos_delta = meta.pos_start - _last_state.pos_start;
+    out.WriteV64(pos_delta);
     if (_features.HasOffset()) {
       out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
-    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(meta.pos_offset);
+    SDB_ASSERT(pos_delta != 0 || _last_state.pos_offset <= meta.pos_offset);
+    out.WriteV32(pos_delta == 0 ? meta.pos_offset - _last_state.pos_offset
+                                : meta.pos_offset);
   } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
     SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
@@ -371,8 +435,7 @@ inline void PostingsWriterBase::BeginTerm(PostingMeta& meta) {
       SDB_ASSERT(_pay_out);
       meta.pay_start = _pay_out->Position();
     }
-    SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
-    meta.pos_offset = static_cast<uint8_t>(_pos.size);
+    meta.pos_offset = PosIndex();
   }
 }
 
@@ -454,6 +517,8 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   void FlushTailDoc() final;
   void FlushTailPos();
   void FlushTailPay();
+  void WritePosBlock();
+  void WritePayBlock();
   template<bool HasOffs>
   void PushPosition(uint32_t pos, uint32_t offs_start = 0,
                     uint32_t offs_end = 0);
@@ -488,9 +553,7 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
 
   auto* pos_tail = _pos.buf + _pos.size;
   std::fill_n(pos_tail, tail_size, pos_tail[-1]);
-  FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
-
-  _pos.size = 0;
+  WritePosBlock();
 }
 
 template<typename FormatTraits>
@@ -502,12 +565,27 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPay() {
 
   auto* offs_start_tail = _pay.offs_start_buf + _pay.size;
   std::fill_n(offs_start_tail, tail_size, offs_start_tail[-1]);
-  FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
-
   auto* offs_len_tail = _pay.offs_len_buf + _pay.size;
   std::fill_n(offs_len_tail, tail_size, offs_len_tail[-1]);
-  FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
+  WritePayBlock();
+}
 
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::WritePosBlock() {
+  SDB_ASSERT(_pos_out);
+  _pos_group.Append(_enc_buf, FormatTraits::EncodeBlock(_pos.buf, _enc_buf));
+  _pos_group.Close(*_pos_out);
+  _pos.size = 0;
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::WritePayBlock() {
+  SDB_ASSERT(_pay_out);
+  _pay_group.Append(_enc_buf,
+                    FormatTraits::EncodeBlock(_pay.offs_start_buf, _enc_buf));
+  _pay_group.Append(_enc_buf,
+                    FormatTraits::EncodeBlock(_pay.offs_len_buf, _enc_buf));
+  _pay_group.Close(*_pay_out);
   _pay.size = 0;
 }
 
@@ -524,13 +602,20 @@ void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
   // And if we had positions and offsets and now we will write only positions
   // we need to flush positions and offsets.
   if (_features.HasOffset()) {
-    if (_pos.size != _pay.size) [[unlikely]] {
+    if (_pos.size != _pay.size || _pos_group.Blocks() != _pay_group.Blocks())
+      [[unlikely]] {
       SDB_ASSERT(_pay.size == 0);
-      FlushTailPos();
+      if (_pos.size != 0) {
+        FlushTailPos();
+      }
+      FlushGroups();
     }
-  } else if (_pay.size != 0) [[unlikely]] {
-    FlushTailPos();
-    FlushTailPay();
+  } else if (_pay.size != 0 || !_pay_group.Empty()) [[unlikely]] {
+    if (_pay.size != 0) {
+      FlushTailPos();
+      FlushTailPay();
+    }
+    FlushGroups();
   }
 }
 
@@ -551,16 +636,10 @@ void PostingsWriterImpl<FormatTraits>::PushPosition(uint32_t pos,
   SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
 
   if (_pos.Full()) [[unlikely]] {
-    SDB_ASSERT(_pos_out);
-    FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
-    _pos.size = 0;
-
+    WritePosBlock();
     if constexpr (HasOffs) {
-      SDB_ASSERT(_pay_out);
       SDB_ASSERT(_pay.size != 0);
-      FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
-      FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
-      _pay.size = 0;
+      WritePayBlock();
     }
   }
 }
@@ -611,16 +690,10 @@ void PostingsWriterImpl<FormatTraits>::PushPositions(const uint32_t* pos,
     SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
 
     if (_pos.Full()) [[unlikely]] {
-      SDB_ASSERT(_pos_out);
-      FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
-      _pos.size = 0;
-
+      WritePosBlock();
       if constexpr (HasOffs) {
-        SDB_ASSERT(_pay_out);
         SDB_ASSERT(_pay.size != 0);
-        FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
-        FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
-        _pay.size = 0;
+        WritePayBlock();
       }
     }
     k += take;
@@ -646,6 +719,9 @@ void PostingsWriterImpl<FormatTraits>::End() {
     if (_pos.size != 0) {
       FlushTailPos();
     }
+    if (!_pos_group.Empty()) {
+      _pos_group.Flush(*_pos_out);
+    }
     format_utils::WriteFooter(*_pos_out);
     _pos_out.reset();  // ensure stream is closed
   } else {
@@ -657,6 +733,9 @@ void PostingsWriterImpl<FormatTraits>::End() {
   if (_pay_out) {
     if (_pay.size != 0) {
       FlushTailPay();
+    }
+    if (!_pay_group.Empty()) {
+      _pay_group.Flush(*_pay_out);
     }
     format_utils::WriteFooter(*_pay_out);
     _pay_out.reset();  // ensure stream is closed

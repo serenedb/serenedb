@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include <bit>
 #include <cstdint>
 #include <functional>
@@ -42,12 +44,31 @@ struct SkipState {
   uint64_t doc_ptr = 0;
   // last document in a previous block
   doc_id_t doc = doc_limits::invalid();
-  // positions to skip before new document block
   uint32_t pos_offset = 0;
-  // pointer to the positions of the first document in a document block
   uint64_t pos_ptr = 0;
-  // pointer to the payloads of the first document in a document block
   uint64_t pay_ptr = 0;
+};
+
+struct PosGroup {
+  static constexpr uint32_t kBlocks = 16;
+  static constexpr uint32_t kHeaderBytes = kBlocks * sizeof(uint16_t);
+  static constexpr uint32_t kPositions = kBlocks * pos_limits::kBlockSize;
+
+  IRS_FORCE_INLINE static uint32_t End(const byte_type* header,
+                                       uint32_t block) noexcept {
+    SDB_ASSERT(block < kBlocks);
+    return absl::little_endian::Load16(header + block * sizeof(uint16_t));
+  }
+
+  IRS_FORCE_INLINE static uint32_t Start(const byte_type* header,
+                                         uint32_t block) noexcept {
+    return block == 0 ? 0 : End(header, block - 1);
+  }
+
+  IRS_FORCE_INLINE static uint64_t Next(uint64_t group,
+                                        const byte_type* header) noexcept {
+    return group + kHeaderBytes + End(header, kBlocks - 1);
+  }
 };
 
 template<typename IteratorTraits>
@@ -99,7 +120,7 @@ IRS_FORCE_INLINE void ReadDocState(SkipState& state, Input& in,
     if (layout.offs) {
       in.SkipV64();
     }
-    std::ignore = in.ReadByte();
+    in.Skip(sizeof(uint16_t));
   }
 }
 
@@ -119,7 +140,7 @@ IRS_FORCE_INLINE void ReadPosState(SkipState& state, Input& in, bool has_pay) {
       in.SkipV64();
     }
   }
-  state.pos_offset = in.ReadByte();
+  state.pos_offset = static_cast<uint16_t>(in.ReadI16());
 }
 
 template<typename IteratorTraits>

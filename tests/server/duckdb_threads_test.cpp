@@ -188,12 +188,11 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db.instance);
   auto producer = scheduler.CreateProducer();
   std::atomic<bool> done{false};
-  scheduler.ScheduleTask(*producer,
-                         duckdb::make_shared_ptr<FunctionTask>([&] {
-                           scheduler.SetThreads(3, 0);
-                           scheduler.RelaunchThreads();
-                           done = true;
-                         }));
+  scheduler.ScheduleTask(*producer, duckdb::make_shared_ptr<FunctionTask>([&] {
+    scheduler.SetThreads(3, 0);
+    scheduler.RelaunchThreads();
+    done = true;
+  }));
   while (!done) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -224,20 +223,19 @@ TEST(DuckDBThreads, RelaunchWhileAnotherWorkerRelaunchesDoesNotDeadlock) {
   std::atomic<bool> relaunching{false};
   std::atomic<int> done{0};
   scheduler.ScheduleTask(*producer, duckdb::make_shared_ptr<FunctionTask>([&] {
-                           while (!relaunching) {
-                             std::this_thread::yield();
-                           }
-                           std::this_thread::sleep_for(
-                             std::chrono::milliseconds(50));
-                           scheduler.RelaunchThreads();
-                           ++done;
-                         }));
+    while (!relaunching) {
+      std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    scheduler.RelaunchThreads();
+    ++done;
+  }));
   scheduler.ScheduleTask(*producer, duckdb::make_shared_ptr<FunctionTask>([&] {
-                           scheduler.SetThreads(3, 0);
-                           relaunching = true;
-                           scheduler.RelaunchThreads();
-                           ++done;
-                         }));
+    scheduler.SetThreads(3, 0);
+    relaunching = true;
+    scheduler.RelaunchThreads();
+    ++done;
+  }));
   const auto deadline =
     std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (done < 2 && std::chrono::steady_clock::now() < deadline) {

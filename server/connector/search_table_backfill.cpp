@@ -246,9 +246,8 @@ void RebuildGroup(duckdb::ClientContext& context,
                   pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
   const auto slice_count = std::max<size_t>(
-    1, std::min<size_t>(
-         group.size(),
-         duckdb::TaskScheduler::QueryThreads(context)));
+    1, std::min<size_t>(group.size(),
+                        duckdb::TaskScheduler::QueryThreads(context)));
   auto assignment = BalanceSlices(group, slice_count);
 
   // Built here, never on a worker: the sink factory reads the catalog and

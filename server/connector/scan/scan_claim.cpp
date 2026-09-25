@@ -462,9 +462,8 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       const auto seg = g.segment_order[i];
       auto& work = g.Segment(seg);
       if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-        if (g.next_segment.compare_exchange_weak(i, i + 1,
-                                                 std::memory_order_relaxed,
-                                                 std::memory_order_relaxed)) {
+        if (g.next_segment.compare_exchange_weak(
+              i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
           TakeUnit(l, {.seg = seg,
                        .rg_begin = 0,
                        .rg_end = work.rg_count,
@@ -476,9 +475,8 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       if (ClaimRowGroups(g, l, seg)) {
         return true;
       }
-      g.next_segment.compare_exchange_strong(i, i + 1,
-                                             std::memory_order_relaxed,
-                                             std::memory_order_relaxed);
+      g.next_segment.compare_exchange_strong(
+        i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed);
     }
     Exhaust(l);
     return false;

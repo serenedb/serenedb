@@ -291,6 +291,21 @@ void BmNonSpaceRuns512(benchmark::State& state, const Values& values) {
 }
 #endif
 
+#if defined(__x86_64__)
+void BmAlnumRuns512(benchmark::State& state, const Values& values) {
+  size_t runs = 0;
+  auto on_run = [&](size_t begin, size_t end) { runs += begin + end; };
+  for (auto _ : state) {
+    for (const auto& v : values) {
+      words::ForEachAlnumRunWide<false>(
+        reinterpret_cast<const irs::byte_type*>(v.data()), v.size(), on_run);
+    }
+  }
+  benchmark::DoNotOptimize(runs);
+  SetBytes(state, values);
+}
+#endif
+
 duckdb::string_t View(const std::string& v) noexcept {
   return {v.data(), static_cast<uint32_t>(v.size())};
 }
@@ -452,6 +467,7 @@ std::vector<Candidate> Candidates() {
     {"alnum", "icelake", BmSegments<sz_utf8_delimiters_icelake>, Isa::Icelake,
      true},
     {"alnum", "ours", BmAlnumRuns, Isa::Any, true},
+    {"alnum", "ours512", BmAlnumRuns512, Isa::Icelake, true},
     {"words", "serial", BmSegments<sz_utf8_wordbreaks_serial>, Isa::Any, true},
     {"words", "haswell", BmSegments<sz_utf8_wordbreaks_haswell>, Isa::Any,
      true},

@@ -183,8 +183,8 @@ void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
     if constexpr (KnownAscii) {
       SplitByNonLetter(raw, emit);
     } else {
-      ForEachAlnumRun<Letters>(reinterpret_cast<const byte_type*>(base),
-                               raw.GetSize(), emit);
+      ForEachAlnumRunBest<Letters>(reinterpret_cast<const byte_type*>(base),
+                                   raw.GetSize(), emit);
     }
   }
 }

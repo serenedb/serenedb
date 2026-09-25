@@ -118,6 +118,21 @@ Runs NonSpaceRuns(std::string_view v) {
   return out;
 }
 
+template<bool Wide, bool Letters>
+Runs AlnumRuns(std::string_view v) {
+  Runs out;
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachAlnumRunWide<Letters>(data, v.size(), on_run);
+#endif
+  } else {
+    irs::analysis::words::ForEachAlnumRun<Letters>(data, v.size(), on_run);
+  }
+  return out;
+}
+
 bool HasWideKernels() {
 #if defined(__x86_64__)
   return irs::analysis::classify::HasAvx512Bw();
@@ -610,6 +625,13 @@ TEST(split_by_non_alpha_tokenizer_test, unicode_oracle_all_sizes) {
           }
           SCOPED_TRACE(testing::Message()
                        << "pieces=" << pieces << " iter=" << iter);
+          const bool letters = chars == Chars::Letters;
+          ASSERT_EQ(runs, (letters ? AlnumRuns<false, true>(v)
+                                   : AlnumRuns<false, false>(v)));
+          if (HasWideKernels()) {
+            ASSERT_EQ(runs, (letters ? AlnumRuns<true, true>(v)
+                                     : AlnumRuns<true, false>(v)));
+          }
           const auto tokens = Pull(*a, v);
           ASSERT_EQ(runs.size(), tokens.size());
           for (size_t i = 0; i < runs.size(); ++i) {

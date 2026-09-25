@@ -440,7 +440,7 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
   RunSteps runs{on_run};
   uint64_t carry = 0;
   const auto word_of = [&](const byte_type* p, classify::Block v0,
-                           classify::Block v1, uint32_t two_valid,
+                           auto&& load_next, uint32_t two_valid,
                            uint32_t three_valid) IRS_FORCE_INLINE {
     const auto cmps = detail::WordCmpsOf(v0);
     const uint32_t ascii = Letters
@@ -455,7 +455,7 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
     }
     const uint32_t cont =
       classify::MoveMask((v0 & uint8_t{0xC0}) == uint8_t{0x80});
-    const auto sure = detail::SureWordLeadsOf(v0, v1);
+    const auto sure = detail::SureWordLeadsOf(v0, load_next());
     const uint64_t two = sure.two & two_valid;
     const uint64_t three = sure.three & three_valid;
     uint64_t word =
@@ -474,11 +474,13 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
   size_t base = 0;
   for (; base + 2 * kBlock + kAhead <= size; base += 2 * kBlock) {
     const auto* p = data + base;
-    const uint32_t lo = word_of(p, classify::Load(p), classify::Load(p + 1),
-                                ~uint32_t{0}, ~uint32_t{0});
-    const uint32_t hi =
-      word_of(p + kBlock, classify::Load(p + kBlock),
-              classify::Load(p + kBlock + 1), ~uint32_t{0}, ~uint32_t{0});
+    const uint32_t lo = word_of(
+      p, classify::Load(p), [&] { return classify::Load(p + 1); },
+      ~uint32_t{0}, ~uint32_t{0});
+    const uint32_t hi = word_of(
+      p + kBlock, classify::Load(p + kBlock),
+      [&] { return classify::Load(p + kBlock + 1); }, ~uint32_t{0},
+      ~uint32_t{0});
     runs.Step(uint64_t{lo} | (uint64_t{hi} << kBlock), base);
   }
   for (; base < size; base += kBlock) {
@@ -487,12 +489,154 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
     const auto valid = [](size_t n) IRS_FORCE_INLINE {
       return n >= kBlock ? ~uint32_t{0} : classify::LowBits(n);
     };
-    const uint32_t mask =
-      word_of(p, detail::LoadUpTo(p, left), detail::LoadUpTo(p + 1, left - 1),
-              valid(left - 1), left >= 2 ? valid(left - 2) : 0);
+    const uint32_t mask = word_of(
+      p, detail::LoadUpTo(p, left),
+      [&] { return detail::LoadUpTo(p + 1, left - 1); }, valid(left - 1),
+      left >= 2 ? valid(left - 2) : 0);
     runs.Step(mask & valid(left), base);
   }
   runs.Finish(size);
+}
+
+#if defined(__x86_64__)
+namespace detail {
+
+using Block64 = uint8_t __attribute__((vector_size(64)));
+using Cmp64 = int8_t __attribute__((vector_size(64)));
+using Bits64 = bool __attribute__((ext_vector_type(64)));
+
+IRS_TARGET_AVX512 IRS_FORCE_INLINE inline uint64_t MoveMask64(
+  Cmp64 cmp) noexcept {
+  return __builtin_bit_cast(uint64_t, __builtin_convertvector(cmp, Bits64));
+}
+
+IRS_TARGET_AVX512 IRS_FORCE_INLINE inline Block64 Block64UpTo(
+  const byte_type* data, size_t size) noexcept {
+  return __builtin_bit_cast(Block64, Load64UpTo(data, size));
+}
+
+struct SureWordLeads64 {
+  uint64_t two;
+  uint64_t three;
+};
+
+IRS_TARGET_AVX512 IRS_FORCE_INLINE inline SureWordLeads64 SureWordLeadsOf64(
+  Block64 v0, Block64 v1) noexcept {
+  const Block64 low1 = v1 & uint8_t{0x3F};
+  const Cmp64 two =
+    (v0 - uint8_t{0xC4} <= uint8_t{0x05}) |
+    (v0 - uint8_t{0xD0} <= uint8_t{0x01}) | (v0 == uint8_t{0xD3}) |
+    ((v0 == uint8_t{0xC3}) & ((low1 & uint8_t{0x1F}) != uint8_t{0x17}));
+  const Cmp64 three =
+    (v0 - uint8_t{0xE5} <= uint8_t{0x04}) |
+    (v0 - uint8_t{0xEB} <= uint8_t{0x01}) |
+    ((v0 == uint8_t{0xE4}) & (low1 != uint8_t{0x37})) |
+    ((v0 == uint8_t{0xEA}) & (low1 >= uint8_t{0x30})) |
+    ((v0 == uint8_t{0xED}) & (low1 <= uint8_t{0x1D}));
+  return {MoveMask64(two), MoveMask64(three)};
+}
+
+}  // namespace detail
+
+template<bool Letters, typename OnRun>
+IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachAlnumRun512(
+  const byte_type* data, size_t size, OnRun&& on_run) {
+  constexpr size_t kBlock = 64;
+  constexpr size_t kAhead = 3;
+  const auto& table = detail::WordCodePointTable();
+  RunSteps runs{on_run};
+  uint64_t carry = 0;
+  const auto word_of = [&](const byte_type* p, detail::Block64 v0,
+                           auto&& load_next, uint64_t two_valid,
+                           uint64_t three_valid)
+                         IRS_TARGET_AVX512 IRS_FORCE_INLINE {
+    const detail::Cmp64 digit = (v0 >= uint8_t{'0'}) & (v0 <= uint8_t{'9'});
+    const detail::Block64 folded = v0 | uint8_t{0x20};
+    const detail::Cmp64 alpha =
+      (folded >= uint8_t{'a'}) & (folded <= uint8_t{'z'});
+    const uint64_t ascii =
+      Letters ? detail::MoveMask64(alpha) : detail::MoveMask64(alpha | digit);
+    const uint64_t high =
+      detail::MoveMask64(__builtin_bit_cast(detail::Cmp64, v0) < 0);
+    if (high == 0) {
+      const auto bits = ascii | carry;
+      carry = 0;
+      return bits;
+    }
+    const uint64_t cont =
+      detail::MoveMask64((v0 & uint8_t{0xC0}) == uint8_t{0x80});
+    const auto sure = detail::SureWordLeadsOf64(v0, load_next());
+    const uint64_t two = sure.two & two_valid;
+    const uint64_t three = sure.three & three_valid;
+    uint64_t word = carry | two | (two << 1) | three | (three << 1) |
+                    (three << 2);
+    uint64_t spill = (two >> 63) | (three >> 63) | (three >> 62);
+    uint64_t rest = high & ~cont & ~(two | three);
+    while (rest != 0) {
+      const auto at = static_cast<uint32_t>(std::countr_zero(rest));
+      rest &= rest - 1;
+      const uint32_t len =
+        detail::WordLength<Letters>(table, p + at, data + size);
+      const uint64_t bits = (uint64_t{1} << len) - 1;
+      word |= bits << at;
+      if (at + len > kBlock) {
+        spill |= bits >> (kBlock - at);
+      }
+    }
+    carry = spill;
+    return ascii | word;
+  };
+  const auto load = [](const byte_type* at) IRS_TARGET_AVX512 {
+    detail::Block64 v;
+    std::memcpy(&v, at, sizeof v);
+    return v;
+  };
+  size_t base = 0;
+  for (; base + 2 * kBlock + kAhead <= size; base += 2 * kBlock) {
+    const auto* p = data + base;
+    const uint64_t lo =
+      word_of(p, load(p), [&] IRS_TARGET_AVX512 { return load(p + 1); },
+              ~uint64_t{0}, ~uint64_t{0});
+    const uint64_t hi = word_of(
+      p + kBlock, load(p + kBlock),
+      [&] IRS_TARGET_AVX512 { return load(p + kBlock + 1); }, ~uint64_t{0},
+      ~uint64_t{0});
+    runs.Step(lo, base);
+    runs.Step(hi, base + kBlock);
+  }
+  for (; base < size; base += kBlock) {
+    const size_t left = size - base;
+    const auto* p = data + base;
+    const auto valid = [](size_t n) IRS_TARGET_AVX512 {
+      return n >= kBlock ? ~uint64_t{0}
+                         : _bzhi_u64(~uint64_t{0}, static_cast<uint32_t>(n));
+    };
+    const uint64_t mask = word_of(
+      p, detail::Block64UpTo(p, left),
+      [&] IRS_TARGET_AVX512 { return detail::Block64UpTo(p + 1, left - 1); },
+      valid(left - 1), left >= 2 ? valid(left - 2) : 0);
+    runs.Step(mask & valid(left), base);
+  }
+  runs.Finish(size);
+}
+
+template<bool Letters, typename OnRun>
+IRS_TARGET_AVX512 IRS_NO_INLINE IRS_ALIGN_HOT void ForEachAlnumRunWide(
+  const byte_type* data, size_t size, OnRun& on_run) {
+  ForEachAlnumRun512<Letters>(data, size, on_run);
+}
+#endif
+
+template<bool Letters, typename OnRun>
+IRS_FORCE_INLINE void ForEachAlnumRunBest(const byte_type* data, size_t size,
+                                          OnRun&& on_run) {
+#if defined(__x86_64__)
+  if (classify::HasAvx512Bw()) {
+    ForEachAlnumRunWide<Letters>(data, size, on_run);
+    return;
+  }
+#endif
+  ForEachAlnumRun<Letters>(data, size, on_run);
 }
 
 }  // namespace irs::analysis::words

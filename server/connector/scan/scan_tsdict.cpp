@@ -331,7 +331,7 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
         std::move(*folded), irs::fill::DocsMask{*_seg});
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(node), static_cast<irs::doc_id_t>(_seg->docs_count()),
+        std::move(node), irs::VisibleCount(_seg->Meta()),
         irs::fill::DocsMask{*_seg});
     }
   }
@@ -349,8 +349,7 @@ uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
   uint32_t total = 0;
   irs::SlackBuf<irs::doc_id_t, kPlanBatch, irs::doc_limits::kDocsSlack> docs;
   const auto stop = std::min<irs::doc_id_t>(
-    _range.end,
-    irs::doc_limits::min() + static_cast<irs::doc_id_t>(_seg->docs_count()));
+    _range.end, irs::doc_limits::min() + irs::VisibleCount(_seg->Meta()));
   for (auto at = _range.begin; at < stop;) {
     const auto upto = static_cast<irs::doc_id_t>(
       std::min<uint64_t>(uint64_t{at} + kPlanBatch, stop));

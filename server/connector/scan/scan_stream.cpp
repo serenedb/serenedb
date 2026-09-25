@@ -46,7 +46,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   const bool resume = Resumes(g, l);
-  const auto seg_rows = static_cast<uint64_t>(seg.docs_count());
+  const uint64_t seg_rows = irs::VisibleCount(seg.Meta());
   l.next_row = FirstRow(g, l.unit);
   l.stop_row = l.unit.whole ? seg_rows
                             : std::min<uint64_t>(

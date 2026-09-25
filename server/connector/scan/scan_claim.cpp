@@ -39,15 +39,14 @@
 namespace sdb::connector {
 
 irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
-  if (unit.whole) {
-    return {};
-  }
-  const auto docs = (*reader)[unit.seg].docs_count();
+  const auto& meta = (*reader)[unit.seg].Meta();
+  const uint64_t visible = irs::VisibleCount(meta);
   const auto begin =
-    std::min<uint64_t>(docs, uint64_t{unit.rg_begin} * rg_size);
-  const auto end = uint64_t{unit.rg_end} * rg_size;
+    unit.whole ? 0 : std::min(visible, uint64_t{unit.rg_begin} * rg_size);
+  const auto end =
+    unit.whole ? visible : std::min(visible, uint64_t{unit.rg_end} * rg_size);
   return {.begin = irs::doc_limits::min() + static_cast<irs::doc_id_t>(begin),
-          .end = end >= docs
+          .end = end == meta.docs_count
                    ? irs::doc_limits::eof()
                    : irs::doc_limits::min() + static_cast<irs::doc_id_t>(end)};
 }
@@ -230,7 +229,7 @@ void BuildSegmentOrderedUnits(ScanGlobalState& g, SegmentWork& work,
     return;
   }
   const auto* column = OrderColumn(g, seg);
-  const auto docs = (*g.reader)[seg].docs_count();
+  const uint64_t docs = irs::VisibleCount((*g.reader)[seg].Meta());
   std::vector<ScanOrderKey> keys;
   keys.reserve(work.rg_count);
   for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
@@ -386,7 +385,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
   for (const auto seg : g.segment_order) {
     auto& work = g.Segment(seg);
-    const auto docs = (*g.reader)[seg].docs_count();
+    const uint64_t docs = irs::VisibleCount((*g.reader)[seg].Meta());
     work.rg_count = static_cast<uint32_t>(
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
     work.next_rg.store(0, std::memory_order_relaxed);

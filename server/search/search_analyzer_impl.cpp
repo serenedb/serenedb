@@ -54,6 +54,20 @@ bool Features::Add(std::string_view feature_name) {
   return true;
 }
 
+std::vector<std::string_view> Features::Names() const {
+  std::vector<std::string_view> names;
+  for (const auto& [feature, name] :
+       {std::pair{irs::IndexFeatures::Freq, irs::Type<irs::FreqAttr>::name()},
+        std::pair{irs::IndexFeatures::Pos, irs::Type<irs::PosAttr>::name()},
+        std::pair{irs::IndexFeatures::Offs, irs::Type<irs::OffsAttr>::name()},
+        std::pair{irs::IndexFeatures::Norm, irs::Type<irs::Norm>::name()}}) {
+    if (HasFeatures(feature)) {
+      names.push_back(name);
+    }
+  }
+  return names;
+}
+
 void Features::Validate(std::string_view type) const {
   if (HasFeatures(irs::IndexFeatures::Offs) &&
       !HasFeatures(irs::IndexFeatures::Pos)) {

@@ -206,9 +206,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
-  std::string ToSQL() const final {
-    return duckdb::IndexCatalogEntry::GetInfo()->ToString();
-  }
+  std::string ToSQL() const final;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -251,6 +249,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
  private:
   persistence::InvertedIndexData ToPersisted() const;
+
+  bool ViewBacked() const noexcept { return !info && !_search_table; }
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<search::SearchTable> _search_table;

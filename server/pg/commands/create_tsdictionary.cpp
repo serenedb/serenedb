@@ -769,7 +769,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
   auto& client_ctx = conn_ctx.GetClientContext();
 
   CheckWithClause(with);
-  auto cfg = CompileTSDictionarySpec(client_ctx, spec);
+  const auto [cfg, definition] = CompileTSDictionarySpec(client_ctx, spec);
   auto features = ParseFeatures(with, TypeNameOf(cfg));
 
   auto test_analyzer = irs::analysis::CreateTokenizer(
@@ -798,7 +798,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
   duckdb::CreateTokenizerInfo tokenizer;
   tokenizer.SetQualifiedName(std::move(name));
   tokenizer.features = std::to_underlying(features.GetIndexFeatures());
-  tokenizer.config = catalog::PackTokenizerConfig(cfg);
+  tokenizer.config = catalog::PackTokenizerConfig(definition, cfg);
   tokenizer.on_conflict = if_not_exists
                             ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                             : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;

@@ -28,13 +28,15 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog {
 
-std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config);
+std::string PackTokenizerConfig(std::string_view definition,
+                                const irs::analysis::TokenizerConfig& config);
 
 class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
  public:
@@ -91,6 +93,8 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
     return _tokenizer->Config();
   }
 
+  const std::string& Definition() const noexcept { return _definition; }
+
   search::Features GetFeatures() const noexcept {
     return _tokenizer->GetFeatures();
   }
@@ -106,6 +110,7 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
  private:
   TokenizerRef _tokenizer;
+  std::string _definition;
 };
 
 }  // namespace sdb::catalog

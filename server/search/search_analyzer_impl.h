@@ -29,7 +29,9 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace sdb::search {
 
@@ -42,6 +44,8 @@ class Features final {
   // Adds feature by name. Properly resolves field/index features
   // Return true if feature found, false otherwise
   bool Add(std::string_view name);
+
+  std::vector<std::string_view> Names() const;
 
   constexpr irs::IndexFeatures GetIndexFeatures() const noexcept {
     return _index_features;

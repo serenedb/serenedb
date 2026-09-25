@@ -82,25 +82,24 @@ struct FlushedSegmentContext {
     SDB_ASSERT(flushed.docs.TickAt(0) <= tick);
     const auto visible = flushed.docs.UpperBound(tick);
     SDB_ASSERT(visible <= end);
-    const auto invisible_count = docs_count - visible;
     const auto visible_end = static_cast<doc_id_t>(visible + doc_limits::min());
-    if (visible != end) {
-      document_mask = flushed.docs_mask;
-    }
-    auto& mask = visible == end ? flushed.docs_mask : document_mask;
-    mask.Truncate(visible_end);
-    if (mask.Count() + invisible_count == docs_count) {
-      return true;
-    }
     if (visible == end) {
+      flushed.docs_mask.AddRange(
+        visible_end, static_cast<doc_id_t>(docs_count + doc_limits::min()));
+      if (flushed.docs_mask.Count() == docs_count) {
+        return true;
+      }
       document_mask = std::move(flushed.docs_mask);
       index = std::move(flushed);
-    } else {
-      index = flushed;
+      return false;
     }
-    if (invisible_count != 0) {
-      index.meta.visible_end = visible_end;
+    document_mask = flushed.docs_mask;
+    document_mask.Truncate(visible_end);
+    if (document_mask.Count() == visible) {
+      return true;
     }
+    index = flushed;
+    index.meta.visible_end = visible_end;
     return false;
   }
 
@@ -746,32 +745,11 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
       continue;
     }
     SDB_ASSERT(segment_ctx.flushed.meta.version == new_segment.meta.version);
-    const IndexSegment* published = nullptr;
-    if (segment_ctx.flushed.was_flush) {
-      const auto it =
-        absl::c_find_if(committed, [&](const IndexSegment& segment) {
-          return segment.meta.name == new_segment.meta.name;
-        });
-      if (it != committed.end()) {
-        published = &*it;
-      }
-    }
-    if (published != nullptr) {
-      SDB_ASSERT(published->meta.version == new_segment.meta.version);
-      SDB_ASSERT(HasInvisible(published->meta));
-      const auto* mask = published->meta.docs_mask.get();
-      if (document_mask.Count() == (mask != nullptr ? mask->Count() : 0)) {
-        auto segment = *published;
-        segment.meta.visible_end = new_segment.meta.visible_end;
-        segment.meta.live_docs_count =
-          segment.meta.docs_count - RemovalCount(segment.meta);
-        auto reader = segment_ctx.reader->UpdateMeta(dir, segment.meta);
-        result.segments.emplace_back(
-          std::move(segment), SegmentReader{std::move(reader)}, Sync::None);
-        result.modified = true;
-        continue;
-      }
-    }
+    const bool published =
+      segment_ctx.flushed.was_flush &&
+      absl::c_any_of(committed, [&](const IndexSegment& segment) {
+        return segment.meta.name == new_segment.meta.name;
+      });
     const bool need_flush = segment_ctx.flushed.was_flush ||
                             !document_mask.Empty() ||
                             HasInvisible(new_segment.meta);
@@ -794,8 +772,7 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     }
     result.segments.emplace_back(
       std::move(new_segment), SegmentReader{std::move(segment_ctx.reader)},
-      SyncOf(published != nullptr || segment_ctx.flushed.meta_on_disk,
-             need_flush));
+      SyncOf(published || segment_ctx.flushed.meta_on_disk, need_flush));
     result.modified = true;
   }
   return result;

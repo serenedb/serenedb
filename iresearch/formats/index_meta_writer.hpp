@@ -41,7 +41,6 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
 
   static constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
   static constexpr duckdb::field_id_t kSegmentFieldCodec = 1;
-  static constexpr duckdb::field_id_t kSegmentFieldInvisibleCount = 2;
 
   static std::string FileName(uint64_t gen) {
     return FileName(kFormatPrefix, gen);
@@ -103,9 +102,6 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
                            obj.WriteProperty<std::string>(
                              kSegmentFieldCodec, "codec",
                              std::string{segment.meta.codec->type()().name()});
-                           obj.WritePropertyWithDefault<uint32_t>(
-                             kSegmentFieldInvisibleCount, "invisible_count",
-                             InvisibleCount(segment.meta), 0);
                          });
                        });
 

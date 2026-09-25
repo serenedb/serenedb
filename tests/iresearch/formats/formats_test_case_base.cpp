@@ -1053,11 +1053,15 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       auto reader = codec()->get_segment_meta_reader();
       reader->read(dir(), read_meta, filename);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
-      ASSERT_EQ(451, read_meta.live_docs_count);
-      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
-
-      ASSERT_EQ(2, irs::RemovalCount(read_meta));
+      ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
       ASSERT_EQ(irs::doc_limits::eof(), read_meta.visible_end);
+
+      auto expected = *meta.docs_mask;
+      expected.AddRange(meta.visible_end,
+                        irs::doc_limits::min() + meta.docs_count);
+      ASSERT_NE(nullptr, read_meta.docs_mask);
+      ASSERT_EQ(expected, *read_meta.docs_mask);
+      ASSERT_EQ(56, irs::RemovalCount(read_meta));
     }
   }
 

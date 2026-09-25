@@ -11714,34 +11714,39 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
 
   ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
 
+  auto snapshot = writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  ASSERT_EQ(nullptr, snapshot[0].docs_mask());
+  ASSERT_EQ(irs::doc_limits::min() + 2, snapshot[0].Meta().visible_end);
+  ASSERT_EQ(1, irs::InvisibleCount(snapshot[0].Meta()));
+
   auto reader = irs::DirectoryReader(directory, nullptr,
                                      irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
+  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
+  ASSERT_NE(nullptr, reader[0].docs_mask());
+  ASSERT_EQ(1, reader[0].docs_mask()->Count());
 
-  auto& segment = reader[0];
-  ASSERT_EQ(3, segment.Meta().docs_count);
-  ASSERT_EQ(2, segment.live_docs_count());
+  for (const auto* segment : {&snapshot[0], &reader[0]}) {
+    ASSERT_EQ(3, segment->Meta().docs_count);
+    ASSERT_EQ(2, segment->live_docs_count());
 
-  // The suffix is a bound on the segment, so it costs no mask file at all.
-  ASSERT_EQ(nullptr, segment.docs_mask());
-  ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().visible_end);
-  ASSERT_EQ(1, irs::InvisibleCount(segment.Meta()));
+    auto it_mask = segment->MaskedDocs();
+    ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
+    ASSERT_LT(irs::doc_limits::min() + 1,
+              it_mask.Seek(irs::doc_limits::min() + 1));
+    ASSERT_EQ(irs::doc_limits::min() + 2,
+              it_mask.Seek(irs::doc_limits::min() + 2));
 
-  auto it_mask = segment.MaskedDocs();
-  ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
-  ASSERT_LT(irs::doc_limits::min() + 1,
-            it_mask.Seek(irs::doc_limits::min() + 1));
-  ASSERT_EQ(irs::doc_limits::min() + 2,
-            it_mask.Seek(irs::doc_limits::min() + 2));
-
-  auto docs = segment.docs_iterator();
-  ASSERT_NE(nullptr, docs);
-  ASSERT_EQ(irs::doc_limits::min(), docs->Next());
-  ASSERT_EQ(irs::doc_limits::min() + 1, docs->Next());
-  ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
+    auto docs = segment->docs_iterator();
+    ASSERT_NE(nullptr, docs);
+    ASSERT_EQ(irs::doc_limits::min(), docs->Next());
+    ASSERT_EQ(irs::doc_limits::min() + 1, docs->Next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
+  }
 }
 
-TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
+TEST_P(IndexTestCase11, partial_commit_completion_rewrites_mask) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
@@ -11785,22 +11790,24 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
                                        irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader[0].live_docs_count());
-    ASSERT_EQ(1, irs::InvisibleCount(reader[0].Meta()));
+    ASSERT_NE(nullptr, reader[0].docs_mask());
+    ASSERT_EQ(1, reader[0].docs_mask()->Count());
     partial_meta = reader.Meta().index_meta.segments[0].filename;
   }
 
   recorder.synced.clear();
   ASSERT_TRUE(writer->RefreshCommit());
 
-  ASSERT_EQ(1, recorder.synced.size());
-  ASSERT_TRUE(recorder.synced.front().starts_with("pending_segments_"));
-
   auto reader = irs::DirectoryReader(directory, nullptr,
                                      irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
-  ASSERT_EQ(partial_meta, reader.Meta().index_meta.segments[0].filename);
+  ASSERT_EQ(nullptr, reader[0].docs_mask());
+  const auto& rewritten = reader.Meta().index_meta.segments[0].filename;
+  ASSERT_NE(partial_meta, rewritten);
+  ASSERT_EQ(2, recorder.synced.size());
+  ASSERT_EQ(rewritten, recorder.synced[0]);
+  ASSERT_TRUE(recorder.synced[1].starts_with("pending_segments_"));
   AssertSnapshotEquality(*writer);
 }
 
@@ -11984,7 +11991,9 @@ TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(3, reader.live_docs_count());
-  ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
+  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
+  ASSERT_NE(nullptr, reader[0].docs_mask());
+  ASSERT_TRUE(reader[0].docs_mask()->Contains(irs::doc_limits::min() + 2));
   ASSERT_EQ(2, reader[0].live_docs_count());
 }
 
@@ -12285,7 +12294,6 @@ TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
-  auto& directory = dir();
   auto* doc0 = gen.next();
   auto* doc1 = gen.next();
   auto* doc2 = gen.next();
@@ -12318,10 +12326,9 @@ TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
   ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
 
   {
-    auto reader = irs::DirectoryReader(directory, nullptr,
-                                       irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
+    auto snapshot = writer->GetSnapshot();
+    ASSERT_EQ(1, snapshot.size());
+    ASSERT_EQ(irs::doc_limits::min() + 2, snapshot[0].Meta().visible_end);
   }
 
   size_t seen = 0;

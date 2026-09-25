@@ -79,7 +79,8 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
   const auto& docs_mask = meta.docs_mask;
-  const bool has_mask = docs_mask && !docs_mask->Empty();
+  const bool has_mask =
+    (docs_mask && !docs_mask->Empty()) || HasInvisible(meta);
 
   const bool append = has_mask && patch != nullptr &&
                       meta.docs_mask_chain != 0 &&
@@ -89,7 +90,14 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
   if (append) {
     compressed = patch->Compress();
   } else if (has_mask) {
-    compressed = docs_mask->Compress();
+    if (docs_mask) {
+      compressed = docs_mask->Compress();
+    }
+    if (HasInvisible(meta)) {
+      compressed.addRange(meta.visible_end,
+                          doc_limits::min() + meta.docs_count);
+      compressed.runOptimize();
+    }
   }
   const uint64_t mask_size = has_mask ? compressed.getSizeInBytes() : 0;
 

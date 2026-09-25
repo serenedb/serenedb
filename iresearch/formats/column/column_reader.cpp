@@ -641,6 +641,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
   const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
   NullCheckKind null_check, duckdb::Vector& result) const {
+  NewOutputVector(s);
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
   SDB_ASSERT(span <= STANDARD_VECTOR_SIZE, "GatherFilter decodes one vector");

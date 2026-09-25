@@ -345,6 +345,9 @@ void InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
   std::ignore = RefreshUnsafe(/*wait=*/true, progress, code);
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
+  }
 }
 
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(

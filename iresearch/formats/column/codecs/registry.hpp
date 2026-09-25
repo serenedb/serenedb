@@ -20,26 +20,22 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <optional>
 
-namespace sdb::catalog::persistence {
+#include "iresearch/formats/column/codecs/string_choice.hpp"
 
-struct SearchTableOptions {
-  uint32_t refresh_interval_ms{1000};
-  uint32_t compaction_interval_ms{1000};
-  uint32_t cleanup_interval_step{1};
-  uint32_t row_group_size{122880};
-  uint64_t segment_memory_max{268435456};
-  uint32_t compaction_max_segments{10};
-  uint64_t compaction_max_segments_bytes{5368709120};
-  uint64_t compaction_floor_segment_bytes{2097152};
-  std::string optimize_top_k;
-  uint8_t compression_level{0};
-  uint32_t segment_target{262144};
-  uint8_t compression_objective{0};
+namespace irs::codecs {
 
-  bool operator==(const SearchTableOptions& rhs) const = default;
+struct ColCodecs {
+  static const duckdb::CompressionFunction* Get(duckdb::CompressionType type,
+                                                duckdb::PhysicalType physical);
+
+  static std::optional<StringChoice> Choice(duckdb::CompressionType type);
+
+  static duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
 };
 
-}  // namespace sdb::catalog::persistence
+}  // namespace irs::codecs

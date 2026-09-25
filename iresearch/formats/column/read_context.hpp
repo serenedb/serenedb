@@ -23,6 +23,7 @@
 #include <atomic>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <string>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
@@ -66,8 +67,22 @@ class ReadContext final : public BlockManager,
   void Read(duckdb::idx_t position, duckdb::data_ptr_t target,
             duckdb::idx_t size) final;
 
+  struct CacheSlot {
+    std::string key;
+    std::atomic<bool>* touched = nullptr;
+  };
+
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
-                                                           uint64_t size);
+                                                           uint64_t size,
+                                                           CacheSlot slot);
+  duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
+                                                           uint64_t size) {
+    return RegisterColBlock(offset, size, CacheSlot{});
+  }
+  const CacheSlot& CacheSlotOf(duckdb::block_id_t block) const noexcept {
+    const auto id = static_cast<size_t>(block);
+    return id < _cache_slots.size() ? _cache_slots[id] : _no_slot;
+  }
 
   duckdb::unique_ptr<duckdb::Block> CreateBlock(
     duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
@@ -95,6 +110,8 @@ class ReadContext final : public BlockManager,
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  std::vector<CacheSlot> _cache_slots;
+  CacheSlot _no_slot;
   bool _random_access = false;
   std::atomic<size_t> _live_handles{0};
 };

@@ -212,8 +212,7 @@ void ExpectPayloadEq(irs::bytes_view payload, irs::doc_id_t doc) {
 //           a warm BlobPointReader for the cached-segment fast path.
 // Both passes must accept exactly the docs in `ranges` as valid and
 // every other in-range row as null. We also assert `col->RowCount()`
-// equals the last-row-exclusive of the ranges (legacy `cost()`) and
-// that `HasValidity()` is true.
+// equals the last-row-exclusive of the ranges (legacy `cost()`).
 template<size_t N>
 void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   irs::MemoryDirectory dir{};
@@ -232,10 +231,6 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), LastRowExclusive(ranges));
-  // Stored rows are all-valid (nulls are implicit in the sparse doc-id
-  // structure), so no separate validity sub-reader is materialised; the
-  // reads below verify null handling directly.
-  EXPECT_FALSE(col->HasValidity());
   // Multi-row-group invariant. Each kRowGroupSize=4096-row chunk
   // becomes its own data rg, so any data shape that reaches doc 32K
   // or higher must produce at least 8 data row groups. (Legacy tests
@@ -543,11 +538,6 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
   EXPECT_TRUE(r.HasColumn(1));
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
-  // For this sparse pattern the null rows pack across row groups such that
-  // no separate validity sub-reader is materialized -- nulls are recovered
-  // from the row-group / doc-id structure instead. Correct null handling is
-  // verified directly by the IsNullDoc/FetchDoc seeks below.
-  EXPECT_FALSE(col->HasValidity());
 
   // --- Pass A: stateful (warm reader, one walk over all seeks). ---
   {

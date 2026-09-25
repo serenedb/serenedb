@@ -430,6 +430,10 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     return duckdb::ErrorData{
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
   }
+  for (const auto& column : info.Base().columns.Logical()) {
+    CheckColumnCompression(
+      column, search ? TableEngine::Search : TableEngine::Transactional);
+  }
   return {};
 }
 
@@ -618,6 +622,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_TABLE && transaction.context &&
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
+        duckdb::AlterTableType::ADD_COLUMN) {
+    const auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+      *transaction.context, info.GetQualifiedName(),
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                           dynamic_cast<const SearchTableEntry*>(table.get())
+                             ? TableEngine::Search
+                             : TableEngine::Transactional);
+  }
   const auto type = info.GetCatalogType();
   if (const auto new_name = info.GetNewName();
       new_name && type == duckdb::CatalogType::SCHEMA_ENTRY &&

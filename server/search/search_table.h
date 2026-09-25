@@ -289,6 +289,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
+  irs::ColCodecParams _codec_params;
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;

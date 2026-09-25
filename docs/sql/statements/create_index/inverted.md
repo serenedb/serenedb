@@ -38,7 +38,7 @@ The same flags can be set on the dictionary itself, in which case every column u
 
 ## `INCLUDE` columns
 
-Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
+Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring`, `dict_fsst`, `fsst`, `dict_lz4`, `dict_zstd`, `lz4`, `dict_zxc` or `zxc`, optionally with a level (`'dict_zstd(compression_level = 9)'`), for example `INCLUDE (payload included (compression = 'alp'))`. The codecs and the columnstore they write to are described in [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md). `included (hyperloglog = true)` keeps a HyperLogLog sketch of the column's distinct values per segment, which the optimizer reads as the column's `approx_unique` for cardinality estimates; on a search table the sketch is kept on the table's own column, so queries on the table and on the index both see it.
 
 ## Index options
 

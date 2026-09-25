@@ -96,10 +96,10 @@ void VariantColumnReader::SeekVariantRg(ScanState& s, size_t rg,
   auto& vstate = VariantState(s).rgs[rg];
   if (!vstate.unshredded) {
     vstate.unshredded =
-      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(*s.ctx));
+      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(s.ctx));
     if (rg_meta.shredded) {
       vstate.shredded =
-        std::make_unique<ScanState>(rg_meta.shredded->InitScan(*s.ctx));
+        std::make_unique<ScanState>(rg_meta.shredded->InitScan(s.ctx));
     }
     vstate.local_pos = 0;
   }
@@ -179,7 +179,7 @@ VariantColumnReader::ShreddedLeafScan(
     vstate.leaf_reader = FindShreddedLeaf(*_variant_rgs[rg].shredded, path);
     SDB_ASSERT(vstate.leaf_reader);
     vstate.leaf =
-      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(*s.ctx));
+      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(s.ctx));
   }
   return {vstate.leaf_reader, vstate.leaf.get()};
 }

@@ -34,13 +34,13 @@ FullScanner::FullScanner(
   const irs::ColReader& reader,
   std::span<const irs::ColumnstoreProjection> projections,
   std::span<const irs::ColFilterSpec> filters, duckdb::ClientContext* context,
-  irs::ColFilterStateCache& states)
-  : _ctx{reader} {
+  irs::ColFilterStateCache& states, bool share_payloads)
+  : _ctx{std::make_shared<irs::ReadContext>(reader)} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 
   // `.col` filters (the score is computed, not stored -- never a bulk filter).
-  _filters.Bind(reader, _ctx, filters, *context, states);
+  _filters.Bind(reader, *_ctx, filters, *context, states);
 
   _bound.reserve(projections.size());
   for (const auto& projection : projections) {
@@ -63,7 +63,7 @@ FullScanner::FullScanner(
     b.output_slot = projection.output_slot;
     if (projection.IsExtract()) {
       b.extract = std::make_unique<irs::ExtractBinding>();
-      b.extract->Bind(*column_reader, _ctx, projection.extract_path,
+      b.extract->Bind(*column_reader, *_ctx, projection.extract_path,
                       projection.extract_scan_type, context);
       continue;
     }
@@ -71,7 +71,8 @@ FullScanner::FullScanner(
     b.is_list_like = type_id == duckdb::LogicalTypeId::LIST ||
                      type_id == duckdb::LogicalTypeId::MAP;
     b.state = std::make_unique<irs::ColumnReader::ScanState>(
-      column_reader->InitScan(_ctx));
+      share_payloads ? column_reader->InitScan(_ctx)
+                     : column_reader->InitScan(*_ctx));
   }
 
   _filters.FinishBind();

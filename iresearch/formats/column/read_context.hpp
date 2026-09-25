@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <vector>
@@ -95,7 +96,7 @@ class ReadContext final : public BlockManager,
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
-  size_t _live_handles = 0;
+  std::atomic<size_t> _live_handles{0};
 };
 
 }  // namespace irs

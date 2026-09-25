@@ -122,20 +122,20 @@ bool WildcardTokenizer::DoFill(duckdb::string_t raw, TokenSink& out) {
 
 bool WildcardTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
                                    TokenSink& sink, FillCtx ctx) {
-  return DispatchFill(
-    *this, ctx.layout, ctx.traits,
-    [&](auto layout_tag, auto ascii_tag) IRS_FORCE_INLINE {
-      _terms.clear();
-      bool ascii = true;
-      for (const auto& term : tokens) {
-        AppendEncodedTerm(_terms, term);
-        if constexpr (!ascii_tag()) {
-          ascii = ascii && classify::IsAsciiValue(term.GetData(), term.GetSize());
-        }
-      }
-      EmitEncoded<layout_tag()>(sink, ascii);
-      return true;
-    });
+  return DispatchFill(*this, ctx.layout, ctx.traits,
+                      [&](auto layout_tag, auto ascii_tag) IRS_FORCE_INLINE {
+                        _terms.clear();
+                        bool ascii = true;
+                        for (const auto& term : tokens) {
+                          AppendEncodedTerm(_terms, term);
+                          if constexpr (!ascii_tag()) {
+                            ascii = ascii && classify::IsAsciiValue(
+                                               term.GetData(), term.GetSize());
+                          }
+                        }
+                        EmitEncoded<layout_tag()>(sink, ascii);
+                        return true;
+                      });
 }
 
 template<TokenLayout Layout>

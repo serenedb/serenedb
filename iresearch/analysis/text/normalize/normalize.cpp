@@ -91,8 +91,7 @@ StripResult StripTwoByte(std::string_view in, std::string& out) {
   const size_t n = in.size();
   const auto entry = [&](size_t i) -> std::optional<uint32_t> {
     const uint8_t lead = p[i];
-    if (lead < 0xC2 || lead > 0xDF || i + 1 == n ||
-        (p[i + 1] & 0xC0) != 0x80) {
+    if (lead < 0xC2 || lead > 0xDF || i + 1 == n || (p[i + 1] & 0xC0) != 0x80) {
       return std::nullopt;
     }
     return table.entries[((lead & 0x1Fu) << 6) | (p[i + 1] & 0x3Fu)];

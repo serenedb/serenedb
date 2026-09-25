@@ -189,9 +189,8 @@ IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
   const Block next = __builtin_shufflevector(
     b, zero, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
     20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32);
-  const auto bytes = [](Cmp c) IRS_FORCE_INLINE {
-    return std::bit_cast<Block>(c);
-  };
+  const auto bytes = [](Cmp c)
+                       IRS_FORCE_INLINE { return std::bit_cast<Block>(c); };
   const Cmp ascii = std::bit_cast<Cmp>(b) >= int8_t{0};
   const Cmp cont = (b & uint8_t{0xC0}) == uint8_t{0x80};
   const Cmp next_cont = (next & uint8_t{0xC0}) == uint8_t{0x80};
@@ -206,9 +205,8 @@ IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
   Block delta{};
   if constexpr (ToLower) {
     delta += bytes((b - uint8_t{'A'}) <= uint8_t{25}) & uint8_t{0x20};
-    delta +=
-      bytes(after_c3 & (b <= uint8_t{0x9E}) & (b != uint8_t{0x97})) &
-      uint8_t{0x20};
+    delta += bytes(after_c3 & (b <= uint8_t{0x9E}) & (b != uint8_t{0x97})) &
+             uint8_t{0x20};
     delta += bytes(after_d0 & (hi == uint8_t{0x80})) & uint8_t{0x10};
     delta += bytes(after_d0 & (hi == uint8_t{0x90})) & uint8_t{0x20};
     delta += bytes(after_d0 & (hi == uint8_t{0xA0})) & uint8_t{0xE0};
@@ -235,7 +233,8 @@ IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
   const uint32_t lead =
     classify::MoveMask(((b == uint8_t{0xC3}) | d0 | d1) & next_cont);
   const uint32_t valid =
-    (classify::MoveMask(ascii | ((after_c3 | after_d0 | after_d1) & ~irregular)) |
+    (classify::MoveMask(ascii |
+                        ((after_c3 | after_d0 | after_d1) & ~irregular)) |
      lead) &
     live;
   auto prefix = static_cast<uint32_t>(std::countr_one(valid));

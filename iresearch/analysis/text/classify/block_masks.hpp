@@ -228,8 +228,8 @@ IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
     _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block));
   const auto classes = _mm256_and_si256(
     _mm256_shuffle_epi8(lo, _mm256_and_si256(bytes, nibble)),
-    _mm256_shuffle_epi8(
-      hi, _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibble)));
+    _mm256_shuffle_epi8(hi,
+                        _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibble)));
   const auto miss = [&](byte_type mask) IRS_FORCE_INLINE {
     return static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(
       _mm256_and_si256(classes, _mm256_set1_epi8(static_cast<char>(mask))),
@@ -246,10 +246,9 @@ IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
   for (size_t half = 0; half < kClassifyBlock; half += sizeof(__m128i)) {
     const auto bytes =
       _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + half));
-    const auto classes =
-      _mm_and_si128(_mm_shuffle_epi8(lo, _mm_and_si128(bytes, nibble)),
-                    _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(bytes, 4),
-                                                       nibble)));
+    const auto classes = _mm_and_si128(
+      _mm_shuffle_epi8(lo, _mm_and_si128(bytes, nibble)),
+      _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(bytes, 4), nibble)));
     const auto hit = [&](byte_type mask) IRS_FORCE_INLINE {
       return (~static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(
                 _mm_and_si128(classes, _mm_set1_epi8(static_cast<char>(mask))),

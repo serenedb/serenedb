@@ -208,12 +208,11 @@ IRS_FORCE_INLINE inline size_t SkipAscii(const char* data, size_t n,
   const auto* bytes = reinterpret_cast<const byte_type*>(data);
   constexpr size_t kBlock = classify::kClassifyBlock;
   while (i + 4 * kBlock <= n &&
-         classify::MoveMask(std::bit_cast<classify::Cmp>(
-                              (classify::Load(bytes + i) |
-                               classify::Load(bytes + i + kBlock)) |
-                              (classify::Load(bytes + i + 2 * kBlock) |
-                               classify::Load(bytes + i + 3 * kBlock))) < 0) ==
-           0) {
+         classify::MoveMask(
+           std::bit_cast<classify::Cmp>(
+             (classify::Load(bytes + i) | classify::Load(bytes + i + kBlock)) |
+             (classify::Load(bytes + i + 2 * kBlock) |
+              classify::Load(bytes + i + 3 * kBlock))) < 0) == 0) {
     i += 4 * kBlock;
   }
   while (i + 2 * kBlock <= n &&
@@ -302,8 +301,7 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
     const size_t first = i + offset;
     const uint32_t continuation = classify::MoveMask(
       (classify::Load(bytes + i) & uint8_t{0xC0}) == uint8_t{0x80});
-    const uint32_t after =
-      static_cast<uint32_t>(~uint64_t{0} << (offset + 1));
+    const uint32_t after = static_cast<uint32_t>(~uint64_t{0} << (offset + 1));
     const uint32_t safe = ~continuation & ~suspicious & after;
     const size_t end =
       safe != 0 ? i + std::countr_zero(safe)
@@ -340,8 +338,8 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
   }
   uint32_t suspicious = SuspiciousMaskOf<Form>(block, data, n, base) & live;
   const uint32_t starters =
-    ~classify::MoveMask((tail & uint8_t{0xC0}) == uint8_t{0x80}) &
-    ~suspicious & live;
+    ~classify::MoveMask((tail & uint8_t{0xC0}) == uint8_t{0x80}) & ~suspicious &
+    live;
   while (suspicious != 0) {
     const auto offset = static_cast<uint32_t>(std::countr_zero(suspicious));
     const uint32_t safe =

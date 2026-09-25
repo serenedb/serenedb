@@ -93,9 +93,8 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
   }
   const auto* position = begin;
   sz_u8_t ccc = 0;
-  if (sz_utf8_norm_verify_block_(&position, end, end,
-                                 sz_utf8_norm_form_flag_(form),
-                                 &ccc) == nullptr) {
+  if (sz_utf8_norm_verify_block_(
+        &position, end, end, sz_utf8_norm_form_flag_(form), &ccc) == nullptr) {
     return false;
   }
   sz_utf8_norm_out_t out{.dst = nullptr,

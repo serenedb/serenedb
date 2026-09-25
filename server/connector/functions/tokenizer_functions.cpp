@@ -197,8 +197,7 @@ void TokenizeLists(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    result);
 }
 
-void TokenizeTokenLists(duckdb::DataChunk& args,
-                        duckdb::ExpressionState& state,
+void TokenizeTokenLists(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   auto& local = LocalState(state);
   const auto count = static_cast<uint32_t>(args.size());

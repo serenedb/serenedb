@@ -303,12 +303,9 @@ inline constexpr uint8_t kSegAlpha = 2;
 inline constexpr uint8_t kSegDigit = 4;
 
 template<typename Flush>
-IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const byte_type* b,
-                                                     size_t n, Tier tier,
-                                                     size_t& i,
-                                                     size_t& seg_start,
-                                                     uint8_t& cur,
-                                                     Flush&& flush) {
+IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(
+  const byte_type* b, size_t n, Tier tier, size_t& i, size_t& seg_start,
+  uint8_t& cur, Flush&& flush) {
   const bool full = n - i >= classify::kClassifyBlock;
   const auto m = ClassifyWordSegments(
     full ? classify::Load(b + i) : classify::LoadPadded(b + i, n - i),
@@ -354,9 +351,8 @@ IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const byte_type* b,
     case Tier::Space:
       return WbState::WSeg;
     default:
-      return last >= 0x80
-               ? WbState::Other
-               : BaseState(static_cast<WbProp>(kWbAsciiProp[last]));
+      return last >= 0x80 ? WbState::Other
+                          : BaseState(static_cast<WbProp>(kWbAsciiProp[last]));
   }
 }
 

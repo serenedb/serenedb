@@ -451,16 +451,16 @@ std::vector<Span> SzSegments(std::string_view text) {
 
 TEST(words_unicode_test, mixed_scripts_match_stringzilla) {
   std::vector<std::string> pool = {
-    "a",  "Z",  "q",  "0", "7", "_",  " ",  " ",    "  ",   ",", ".",
-    ":",  ";",  "'",  "-", "!", "\n", "\t", "\r\n", "\"",
+    "a", "Z", "q", "0", "7", "_", " ",  " ",  "  ",   ",",
+    ".", ":", ";", "'", "-", "!", "\n", "\t", "\r\n", "\"",
   };
   for (const uint32_t cp :
-       {0xC0u,   0xE9u,   0xFFu,   0xD7u,   0xF7u,   0xB7u,   0xA0u,
-        0x101u,  0x17Fu,  0x1C4u,  0x250u,  0x2B0u,  0x2C6u,  0x2E5u,
-        0x301u,  0x345u,  0x370u,  0x37Eu,  0x387u,  0x3B1u,  0x3F6u,
-        0x400u,  0x436u,  0x44Fu,  0x482u,  0x483u,  0x4C0u,  0x4FFu,
-        0x531u,  0x55Fu,  0x5D0u,  0x5F4u,  0x5BFu,  0x627u,  0x661u,
-        0x6A9u,  0x6DDu,  0x200Du, 0x2019u, 0x30ABu, 0x4ECAu, 0xFF1Au,
+       {0xC0u,    0xE9u,    0xFFu,   0xD7u,   0xF7u,   0xB7u,   0xA0u,
+        0x101u,   0x17Fu,   0x1C4u,  0x250u,  0x2B0u,  0x2C6u,  0x2E5u,
+        0x301u,   0x345u,   0x370u,  0x37Eu,  0x387u,  0x3B1u,  0x3F6u,
+        0x400u,   0x436u,   0x44Fu,  0x482u,  0x483u,  0x4C0u,  0x4FFu,
+        0x531u,   0x55Fu,   0x5D0u,  0x5F4u,  0x5BFu,  0x627u,  0x661u,
+        0x6A9u,   0x6DDu,   0x200Du, 0x2019u, 0x30ABu, 0x4ECAu, 0xFF1Au,
         0x1F355u, 0x1F1E6u, 0x1F3FDu}) {
     pool.push_back(Cp(cp));
   }
@@ -484,11 +484,10 @@ TEST(words_unicode_test, mixed_scripts_match_stringzilla) {
                                    seg.end - seg.begin};
       const bool ascii = std::ranges::all_of(
         bytes, [](char c) { return static_cast<uint8_t>(c) < 0x80; });
-      const bool ascii_alpha = std::ranges::any_of(bytes, [](char c) {
-        return (c | 0x20) >= 'a' && (c | 0x20) <= 'z';
-      });
-      const bool digit = std::ranges::any_of(
-        bytes, [](char c) { return c >= '0' && c <= '9'; });
+      const bool ascii_alpha = std::ranges::any_of(
+        bytes, [](char c) { return (c | 0x20) >= 'a' && (c | 0x20) <= 'z'; });
+      const bool digit =
+        std::ranges::any_of(bytes, [](char c) { return c >= '0' && c <= '9'; });
       if (seg.ascii_only != ascii || (seg.has_alpha && !ascii_alpha && ascii) ||
           (seg.has_digit && !digit)) {
         ++failures;

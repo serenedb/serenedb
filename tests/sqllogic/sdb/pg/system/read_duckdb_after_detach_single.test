@@ -1,0 +1,49 @@
+# read_duckdb over a single file whose database was just detached while
+# another connection still holds that database. The file is opened while
+# binding, so only this connection is affected, but the read must still return
+# the rows.
+
+control substitution on
+
+statement ok
+DETACH IF EXISTS rds;
+
+statement ok
+ATTACH '${__TEST_DIR__}/rds.db' AS rds;
+
+statement ok
+CREATE OR REPLACE TABLE rds.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO rds.main.docs VALUES (1), (2);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection default
+statement ok
+DETACH rds;
+
+
+connection default
+query
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rds.db', table_name='docs');
+----
+n
+2
+
+
+connection holder
+statement ok
+COMMIT;

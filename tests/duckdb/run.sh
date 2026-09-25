@@ -4,12 +4,11 @@
 # tree and each vendored extension's, run through DuckDB's `unittest` binary
 # against the same build that statically links those extensions.
 #
-# Every suite runs in ONE unittest process: the binary registers DuckDB core's
-# test tree plus each statically linked extension's (via LOAD_TESTS/TEST_DIR in
-# .github/config/extensions/<ext>.cmake), so selecting suites is purely a matter
-# of which name filters we pass. Filters are also what makes `.test_slow` run at
-# all -- those files are registered with Catch2's hidden `[.]` tag, which the
-# default (unfiltered) test set excludes.
+# The binary registers DuckDB core's test tree plus each statically linked
+# extension's (via LOAD_TESTS/TEST_DIR in .github/config/extensions/<ext>.cmake),
+# so selecting suites is purely a matter of which name filters we pass. Filters
+# are also what makes `.test_slow` run at all -- those files are registered with
+# Catch2's hidden `[.]` tag, which the default (unfiltered) test set excludes.
 #
 # Each suite has a checked-in test-config (config/<suite>.json) listing the tests
 # we skip and why. Those are SereneDB divergences from upstream DuckDB, not
@@ -39,6 +38,7 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 : "${BUILD_DIR:=build}"
 : "${REPORTS_DIR:=$WORKSPACE/out/test-results}"
+: "${DUCKDB_JOBS:=$(nproc 2>/dev/null || echo 4)}"
 
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(
@@ -86,6 +86,14 @@ while [ $# -gt 0 ]; do
 		SUITES="${1#*=}"
 		SUITES="${SUITES//,/ }"
 		require_suites "$SUITES"
+		shift
+		;;
+	--jobs)
+		DUCKDB_JOBS="$2"
+		shift 2
+		;;
+	--jobs=*)
+		DUCKDB_JOBS="${1#*=}"
 		shift
 		;;
 	--list)
@@ -205,10 +213,15 @@ done
 log="$REPORTS_DIR/duckdb.log"
 args=(--test-dir "${SUITE_DIR[core]}")
 filters=()
+serial_filters=()
 for suite in $SUITES; do
 	config="$SCRIPT_DIR/config/$suite.json"
 	[[ -f "$config" ]] && args+=(--test-config "$config")
-	filters+=("$(suite_filter "$suite")")
+	if [[ "$suite" == "postgres_scanner" ]]; then
+		serial_filters+=("$(suite_filter "$suite")")
+	else
+		filters+=("$(suite_filter "$suite")")
+	fi
 done
 
 # One spec, comma-separated: this binary hands the leftover argv to Catch2 as a
@@ -218,12 +231,18 @@ spec="$(
 	IFS=,
 	echo "${filters[*]}"
 )"
+serial_spec="$(
+	IFS=,
+	echo "${serial_filters[*]}"
+)"
 
 echo
 echo "===== [duckdb] BEGIN ====="
 echo "  suites:   ${SUITES// /, }"
 echo "  test-dir: ${SUITE_DIR[core]}"
 echo "  filter:   $spec"
+echo "  serial:   $serial_spec"
+echo "  jobs:     $DUCKDB_JOBS"
 echo "  log:      $log"
 
 # The scratch dir is duckdb_unittest_tempdir/<pid>/ under each vendored repo,
@@ -251,8 +270,19 @@ fi
 # worth reading and counts every skipped test as a failure. Nothing in CI
 # parses the XML, so the log is the artifact. Streamed through tee so the
 # per-test progress shows up while the suites run, not 6000 lines at the end.
-"$UNITTEST" "${args[@]}" "$spec" 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
+rc=0
+summaries=()
+run_unittest() {
+	local start
+	start=$(wc -l <"$log")
+	"$UNITTEST" "${args[@]}" "$@" 2>&1 | tee -a "$log"
+	local unittest_rc=${PIPESTATUS[0]}
+	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^test cases:|^All tests (passed|were skipped)' | tail -1)")
+	[[ $rc -eq 0 ]] && rc=$unittest_rc
+}
+: >"$log"
+[[ -n "$spec" ]] && run_unittest --jobs "$DUCKDB_JOBS" "$spec"
+[[ -n "$serial_spec" ]] && run_unittest "$serial_spec"
 
 # A spec that matches nothing exits 0, which would turn a typo'd filter (or an
 # extension whose tests stopped being registered) into a silent pass.
@@ -268,9 +298,10 @@ echo "===== [duckdb] SUMMARY ====="
 # Catch prints one of three shapes: "test cases: N | ..." when anything failed
 # or was skipped, "All tests passed (...)" when fully clean, and "All tests
 # were skipped (...)" when every test was gated behind a require-env.
-printf '  %-10s %s\n' "$([[ $rc -eq 0 ]] && echo PASS || echo FAIL)" \
-	"$(grep -m1 -E '^test cases:|^All tests (passed|were skipped)' "$log" ||
-		echo 'no summary -- run did not reach the end')"
+for summary in "${summaries[@]}"; do
+	printf '  %-10s %s\n' "$([[ $rc -eq 0 ]] && echo PASS || echo FAIL)" \
+		"${summary:-no summary -- run did not reach the end}"
+done
 # Failures carry the test path, so attribute them back to the suite that owns it.
 if [[ $rc -ne 0 ]]; then
 	for suite in $SUITES; do

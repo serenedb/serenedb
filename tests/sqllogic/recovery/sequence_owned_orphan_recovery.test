@@ -54,10 +54,10 @@ nextval
 100
 
 
-# crash_on_drop aborts once the drop's records are durable, before the
+# crash_after_commit aborts once the drop's records are durable, before the
 # artifact half runs.
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 statement error connection closed
@@ -120,14 +120,14 @@ count
 2
 
 
-# Standalone sequence kept its counter: it resumes past the burnt log-ahead
-# (32 values of INCREMENT 5 beyond the last one handed out), not at 100 or 1.
+# Standalone sequence kept its counter: after a crash a sequence resumes at the
+# last persisted value plus one increment, so there is no gap -- not 100 or 1.
 connection after_orphan_seq_1
 query
 SELECT nextval('clickclack.kostya_iceberg_review_id');
 ----
 nextval
-265
+105
 
 
 # Re-create the dropped table under the same name. If the orphan owned
@@ -166,7 +166,7 @@ INSERT INTO clickclack.icebergs_only
 
 connection after_orphan_seq_1
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 connection after_orphan_seq_1

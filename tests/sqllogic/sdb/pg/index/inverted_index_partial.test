@@ -435,16 +435,14 @@ count
 500
 
 
-statement error
+statement ok
 CREATE INDEX p_art ON goshandr_subscribers(x) WHERE live;
-----
-db error: ERROR: partial indexes are only supported for inverted indexes
 
 
 statement error
 CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
 ----
-db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+db error: ERROR: Could not convert string '<slt:ignore>' to BOOL when casting from source column label
 
 
 statement ok

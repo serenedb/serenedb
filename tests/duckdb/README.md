@@ -23,14 +23,24 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
 tests/duckdb/run.sh                    # every suite
 tests/duckdb/run.sh --suite core       # just duckdb core
 tests/duckdb/run.sh --suite avro,inet  # a subset
+tests/duckdb/run.sh --jobs 8           # 8 test files at a time (default: nproc)
 tests/duckdb/run.sh --list             # suite names
 ```
 
-Every selected suite runs in one `unittest` process -- the binary registers core's
-test tree plus each statically linked extension's (`LOAD_TESTS`/`TEST_DIR` in
-`.github/config/extensions/<ext>.cmake`), so a suite is selected purely by name
-filter. Those filters are also what makes `.test_slow` run: those files carry
-Catch2's hidden `[.]` tag, which an unfiltered run skips.
+The binary registers core's test tree plus each statically linked extension's
+(`LOAD_TESTS`/`TEST_DIR` in `.github/config/extensions/<ext>.cmake`), so a suite
+is selected purely by name filter. Those filters are also what makes `.test_slow`
+run: those files carry Catch2's hidden `[.]` tag, which an unfiltered run skips.
+
+Test files run in parallel the way `tests/sqllogic/run.sh --jobs` runs them:
+`--jobs` (or `DUCKDB_JOBS`) is handed to `unittest`, which lists the matching
+tests and keeps that many copies of itself running, one test file each,
+`.test_slow` files first. Every copy has its own scratch dir
+(`duckdb_unittest_tempdir/<pid>/`), `HOME` and spill directory (an in-memory
+database spills under the scratch dir; a database file keeps its `<db>.tmp`).
+The `postgres_scanner` suite is the exception: its files share the fixture's
+`postgresscanner` database and reuse table names, so it runs as a second,
+sequential `unittest` call.
 
 The log lands in `out/test-results/duckdb.log` (override with `REPORTS_DIR`). In CI
 the run comes from `048-ci-in-docker-run-duckdb-tests.bash` via

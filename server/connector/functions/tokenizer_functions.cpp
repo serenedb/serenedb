@@ -41,7 +41,6 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/list_token_sink.hpp"
 #include "pg/commands/create_tsdictionary.h"
@@ -128,8 +127,18 @@ struct TokenizerFunctionBindData final : public duckdb::FunctionData {
   }
 };
 
+struct PoolDeleter {
+  duckdb::shared_ptr<irs::analysis::TokenizerPool> pool;
+
+  void operator()(irs::analysis::Tokenizer* analyzer) const {
+    pool->Release(irs::analysis::Tokenizer::ptr{analyzer});
+  }
+};
+
+using PooledTokenizer = std::unique_ptr<irs::analysis::Tokenizer, PoolDeleter>;
+
 struct TokenizerFunctionLocalState final : public duckdb::FunctionLocalState {
-  catalog::Tokenizer::TokenizerWrapper wrapper;
+  PooledTokenizer wrapper;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitLocalState(
@@ -143,8 +152,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitLocalState(
       irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
   }
   auto local = duckdb::make_uniq<TokenizerFunctionLocalState>();
-  local->wrapper = catalog::Tokenizer::TokenizerWrapper{
-    analyzer.release(), catalog::Tokenizer::Deleter{data.pool}};
+  local->wrapper = PooledTokenizer{analyzer.release(), PoolDeleter{data.pool}};
   if (state.HasContext()) {
     local->wrapper->Bind(state.GetContext());
   }
@@ -262,10 +270,6 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
     Put(options, flat[i].name, std::move(value));
   }
   absl::StrAppend(&key, ")");
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  const auto db_id = conn_ctx ? conn_ctx->GetDatabaseId() : ObjectId{};
-  const std::string schema =
-    conn_ctx ? std::string{conn_ctx->GetCurrentSchema()} : std::string{};
   const auto operation = absl::StrCat(name, "()");
 
   pg::TokenizerConfigs children;
@@ -276,14 +280,12 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
     if (list_input) {
       Put(nested, kDelimiter.name, duckdb::Value{std::string{kListSeparator}});
     }
-    children.emplace_back(
-      std::make_unique<irs::analysis::TokenizerConfig>(pg::BuildStage(
-        context, db_id, schema, base.name, std::move(nested), {}, operation)));
+    children.emplace_back(std::make_unique<irs::analysis::TokenizerConfig>(
+      pg::BuildStage(context, base.name, std::move(nested), {}, operation)));
   }
 
-  auto config =
-    pg::BuildStage(context, db_id, schema, group.name, std::move(options),
-                   std::move(children), operation);
+  auto config = pg::BuildStage(context, group.name, std::move(options),
+                               std::move(children), operation);
 
   auto& db = duckdb::DatabaseInstance::GetDatabase(context);
   auto probe = irs::analysis::CreateTokenizer(irs::analysis::Clone(config),

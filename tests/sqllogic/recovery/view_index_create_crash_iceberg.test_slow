@@ -54,7 +54,7 @@ id
 
 connection after_first
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection after_first
 statement error connection closed

@@ -1,0 +1,43 @@
+control substitution on
+
+# ALTER TABLE ... RENAME TO on a table of a postgres server renames the remote
+# table. The remote schema is a literal unique to this file (a derived name
+# would start with "pg_", which postgres reserves).
+
+statement ok
+DROP SERVER IF EXISTS rnt_${__DATABASE__};
+
+statement ok
+CREATE SERVER rnt_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', dbname 'postgres', user '${PGUSER}');
+
+statement ok
+CREATE SCHEMA rnt_${__DATABASE__}.rntpg_ved;
+
+statement ok
+CREATE TABLE rnt_${__DATABASE__}.rntpg_ved.pudge (id INTEGER, val TEXT);
+
+statement ok
+INSERT INTO rnt_${__DATABASE__}.rntpg_ved.pudge VALUES (1, 'clickclack'), (2, 'deadinside');
+
+statement ok
+ALTER TABLE rnt_${__DATABASE__}.rntpg_ved.pudge RENAME TO pudge_mid;
+
+query
+SELECT id, val FROM rnt_${__DATABASE__}.rntpg_ved.pudge_mid ORDER BY id;
+----
+id	val
+1	clickclack
+2	deadinside
+
+statement error
+SELECT id FROM rnt_${__DATABASE__}.rntpg_ved.pudge;
+
+statement ok
+DROP TABLE rnt_${__DATABASE__}.rntpg_ved.pudge_mid;
+
+statement ok
+DROP SCHEMA rnt_${__DATABASE__}.rntpg_ved;
+
+statement ok
+DROP SERVER rnt_${__DATABASE__};

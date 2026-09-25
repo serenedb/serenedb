@@ -38,6 +38,6 @@ struct SqlSizing {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData();
+MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData();
 
 }  // namespace sdb::pg

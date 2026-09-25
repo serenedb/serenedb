@@ -8,6 +8,12 @@ control substitution on
 #
 # Every endpoint kind that can be renamed and be depended upon is here, each
 # with a control that is never renamed.
+#
+# On the duckdb catalog a view or function keeps the name of what it reads in
+# its stored SQL and resolves it again at every bind, so renaming a table, view
+# or function that something depends on is refused (only index dependents
+# follow a rename). PostgreSQL references by oid and allows it. The refusals
+# are pinned here; the edges are checked under the original names.
 
 statement ok
 CREATE SCHEMA dre;
@@ -26,8 +32,12 @@ CREATE TABLE dre.ct(a INTEGER);
 statement ok
 CREATE VIEW dre.cv AS SELECT a FROM dre.ct;
 
-statement ok
+statement error
 ALTER TABLE dre.t RENAME TO t2;
+----
+db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.
+
+
 
 
 # view <- view
@@ -37,8 +47,12 @@ CREATE VIEW dre.vbase AS SELECT 1 AS x;
 statement ok
 CREATE VIEW dre.vtop AS SELECT x FROM dre.vbase;
 
-statement ok
+statement error
 ALTER VIEW dre.vbase RENAME TO vbase2;
+----
+db error: ERROR: Cannot alter entry "vbase" because there are entries that depend on it.
+
+
 
 
 # function <- view
@@ -48,8 +62,12 @@ CREATE FUNCTION dre.f(i INTEGER) RETURNS INTEGER AS 'SELECT i + 1' LANGUAGE SQL;
 statement ok
 CREATE VIEW dre.fv AS SELECT dre.f(1) AS y;
 
-statement ok
+statement error
 ALTER FUNCTION dre.f RENAME TO f2;
+----
+db error: ERROR: Cannot alter entry "f" because there are entries that depend on it.
+
+
 
 
 # sequence <- column DEFAULT, under a table that is then renamed
@@ -79,26 +97,26 @@ ALTER TABLE dre.it RENAME TO it2;
 
 # The edges hold before the restart -- they always did.
 statement error
-DROP TABLE dre.t2;
+DROP TABLE dre.t;
 ----
-db error: ERROR: Cannot drop entry "t2" because there are entries that depend on it.
-view "v" depends on table "t2".
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
 Use DROP...CASCADE to drop all dependents.
 
 
 statement error
-DROP VIEW dre.vbase2;
+DROP VIEW dre.vbase;
 ----
-db error: ERROR: Cannot drop entry "vbase2" because there are entries that depend on it.
-view "vtop" depends on view "vbase2".
+db error: ERROR: Cannot drop entry "vbase" because there are entries that depend on it.
+view "vtop" depends on view "vbase".
 Use DROP...CASCADE to drop all dependents.
 
 
 statement error
-DROP FUNCTION dre.f2;
+DROP FUNCTION dre.f;
 ----
-db error: ERROR: Cannot drop entry "f2" because there are entries that depend on it.
-view "fv" depends on macro function "f2".
+db error: ERROR: Cannot drop entry "f" because there are entries that depend on it.
+view "fv" depends on macro function "f".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -119,10 +137,10 @@ count
 
 connection after_crash
 statement error
-DROP TABLE dre.t2;
+DROP TABLE dre.t;
 ----
-db error: ERROR: Cannot drop entry "t2" because there are entries that depend on it.
-view "v" depends on table "t2".
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -138,19 +156,19 @@ Use DROP...CASCADE to drop all dependents.
 
 connection after_crash
 statement error
-DROP VIEW dre.vbase2;
+DROP VIEW dre.vbase;
 ----
-db error: ERROR: Cannot drop entry "vbase2" because there are entries that depend on it.
-view "vtop" depends on view "vbase2".
+db error: ERROR: Cannot drop entry "vbase" because there are entries that depend on it.
+view "vtop" depends on view "vbase".
 Use DROP...CASCADE to drop all dependents.
 
 
 connection after_crash
 statement error
-DROP FUNCTION dre.f2;
+DROP FUNCTION dre.f;
 ----
-db error: ERROR: Cannot drop entry "f2" because there are entries that depend on it.
-view "fv" depends on macro function "f2".
+db error: ERROR: Cannot drop entry "f" because there are entries that depend on it.
+view "fv" depends on macro function "f".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -187,7 +205,7 @@ count
 # CASCADE removes the dependent rather than leaving it dangling.
 connection after_crash
 statement ok
-DROP TABLE dre.t2 CASCADE;
+DROP TABLE dre.t CASCADE;
 
 connection after_crash
 query ok
@@ -198,7 +216,7 @@ count
 
 connection after_crash
 statement ok
-DROP VIEW dre.vbase2 CASCADE;
+DROP VIEW dre.vbase CASCADE;
 
 connection after_crash
 query ok
@@ -209,7 +227,7 @@ count
 
 connection after_crash
 statement ok
-DROP FUNCTION dre.f2 CASCADE;
+DROP FUNCTION dre.f CASCADE;
 
 connection after_crash
 query ok
@@ -233,7 +251,7 @@ CREATE SEQUENCE dre.gs;
 
 connection after_crash
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash
 statement error connection closed
@@ -279,16 +297,21 @@ statement ok
 CREATE VIEW dre.pv AS SELECT a FROM dre.pt;
 
 connection after_gap
-statement ok
+statement error
 ALTER TABLE dre.pt RENAME TO pt2;
+----
+db error: ERROR: Cannot alter entry "pt" because there are entries that depend on it.
 
-connection after_gap
-statement ok
-SET sdb_faults = 'compact_inside_ddl';
+
 
 connection after_gap
 statement ok
 CREATE TABLE dre.compact_trigger(x INTEGER);
+
+connection after_gap
+statement ok
+CHECKPOINT;
+
 
 connection after_gap
 statement ok
@@ -301,10 +324,10 @@ SELECT 1;
 
 connection after_compact
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-DROP TABLE dre.pt2;
+DROP TABLE dre.pt;
 ----
-db error: ERROR: Cannot drop entry "pt2" because there are entries that depend on it.
-view "pv" depends on table "pt2".
+db error: ERROR: Cannot drop entry "pt" because there are entries that depend on it.
+view "pv" depends on table "pt".
 Use DROP...CASCADE to drop all dependents.
 
 

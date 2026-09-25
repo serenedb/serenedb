@@ -85,6 +85,6 @@ struct PgAttribute {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData();
 
 }  // namespace sdb::pg

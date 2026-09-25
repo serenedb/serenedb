@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -27,28 +28,34 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <memory>
 
-#include "catalog/inverted_index.h"
-#include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/tokenizer.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  catalog::ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer);
+  ColumnId column_id,
+  const duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>&
+    dict_tokenizer);
 
 struct OffsetsBindData final : duckdb::FunctionData {
-  std::shared_ptr<const catalog::Index> inverted_index;
-  catalog::ColumnId column_id{};
+  std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  catalog::IndexTokenizers tokenizers;
+  ColumnId column_id{};
 
-  catalog::TokenizerRef dict_tokenizer;
+  duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict_tokenizer;
 
   size_t limit = 0;
   std::shared_ptr<irs::Filter> stored_filter;
 
-  bool IsStandalone() const noexcept { return dict_tokenizer != nullptr; }
+  bool IsStandalone() const noexcept { return dict_tokenizer; }
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<OffsetsBindData>(*this);
+  }
   bool Equals(const duckdb::FunctionData& other) const final;
 };
 

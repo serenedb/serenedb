@@ -74,7 +74,7 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/util/helper.hpp>
 
-#include "catalog/ddl/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"

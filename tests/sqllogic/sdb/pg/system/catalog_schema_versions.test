@@ -1,0 +1,623 @@
+# A schema is a versioned CatalogEntry like a table: GRANT, REVOKE, OWNER TO and
+# COMMENT ON chain a new version in the schemas CatalogSet on the writer's own
+# transaction. Other transactions keep reading the committed version until the
+# writer commits, a second writer is refused while the first is pending, and a
+# rollback leaves no trace. The schema's tables live in sets shared by every
+# version, so they stay reachable through all of it, and the oid is kept.
+
+
+statement ok
+CREATE ROLE csv_r1
+
+
+statement ok
+CREATE ROLE csv_r2
+
+
+statement ok
+CREATE ROLE csv_r3
+
+
+statement ok
+CREATE ROLE csv_owner
+
+
+statement ok
+CREATE SCHEMA csv_s
+
+
+statement ok
+CREATE TABLE csv_s.t(a INTEGER)
+
+
+statement ok
+INSERT INTO csv_s.t VALUES (1), (2)
+
+
+statement ok
+CREATE TABLE csv_oid AS SELECT oid FROM pg_namespace WHERE nspname = 'csv_s'
+
+
+# ---------------------------------------------------------------------------
+# A pending GRANT is visible to its own transaction only. The schema and its
+# tables stay usable for everybody else meanwhile, including CREATE TABLE into it.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r1
+
+
+connection s1
+query
+SELECT has_schema_privilege('csv_r1', 'csv_s', 'USAGE') AS own_view
+----
+own_view
+t
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r1', 'csv_s', 'USAGE') AS other_view
+----
+other_view
+f
+
+
+connection s2
+query
+SELECT count(*) AS n FROM csv_s.t
+----
+n
+2
+
+
+connection s2
+statement ok
+CREATE TABLE csv_s.t2(b INTEGER)
+
+
+connection s2
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'csv_s' ORDER BY 1
+----
+table_name
+t
+t2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r1', 'csv_s', 'USAGE') AS other_view
+----
+other_view
+t
+
+
+connection s1
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'csv_s' ORDER BY 1
+----
+table_name
+t
+t2
+
+
+# ---------------------------------------------------------------------------
+# Three alters in one transaction, then ROLLBACK: nobody ever saw them, and the
+# restored version takes the next alter.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT CREATE ON SCHEMA csv_s TO csv_r1
+
+
+connection s1
+statement ok
+ALTER SCHEMA csv_s OWNER TO csv_owner
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r2
+
+
+connection s1
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('csv_r1', 'csv_s', 'CREATE') AS r1_create,
+       has_schema_privilege('csv_r2', 'csv_s', 'USAGE') AS r2_usage
+FROM pg_namespace WHERE nspname = 'csv_s'
+----
+owner	r1_create	r2_usage
+csv_owner	t	t
+
+
+connection s2
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('csv_r1', 'csv_s', 'CREATE') AS r1_create,
+       has_schema_privilege('csv_r2', 'csv_s', 'USAGE') AS r2_usage
+FROM pg_namespace WHERE nspname = 'csv_s'
+----
+owner	r1_create	r2_usage
+postgres	f	f
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('csv_r1', 'csv_s', 'CREATE') AS r1_create,
+       has_schema_privilege('csv_r2', 'csv_s', 'USAGE') AS r2_usage
+FROM pg_namespace WHERE nspname = 'csv_s'
+----
+owner	r1_create	r2_usage
+postgres	f	f
+
+
+connection s1
+statement ok
+GRANT CREATE ON SCHEMA csv_s TO csv_r1
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r1', 'csv_s', 'CREATE') AS create_priv
+----
+create_priv
+t
+
+
+# ---------------------------------------------------------------------------
+# Snapshot: a transaction opened before the GRANT commits keeps the old version
+# until it ends, exactly like a table read.
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_owner', 'csv_s', 'USAGE') AS before
+----
+before
+f
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_owner
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_owner', 'csv_s', 'USAGE') AS same_snapshot
+----
+same_snapshot
+f
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_owner', 'csv_s', 'USAGE') AS after
+----
+after
+t
+
+
+# ---------------------------------------------------------------------------
+# Two writers: every kind of schema alter, and DROP SCHEMA, is refused while
+# another transaction holds a pending version. The refusal ends the statement,
+# not the connection, and each one lands on retry once the holder commits.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r2
+
+
+connection s2
+statement error
+REVOKE USAGE ON SCHEMA csv_s FROM csv_r1
+----
+db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+
+
+connection s3
+statement error
+ALTER SCHEMA csv_s OWNER TO csv_owner
+----
+db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+
+
+connection s4
+statement error
+GRANT CREATE ON SCHEMA csv_s TO csv_r3
+----
+db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+
+
+connection s5
+statement error
+DROP SCHEMA csv_s CASCADE
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s2
+query
+SELECT count(*) AS n FROM csv_s.t
+----
+n
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+REVOKE USAGE ON SCHEMA csv_s FROM csv_r1
+
+
+connection s3
+statement ok
+ALTER SCHEMA csv_s OWNER TO csv_owner
+
+
+connection s4
+statement ok
+GRANT CREATE ON SCHEMA csv_s TO csv_r3
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('csv_r1', 'csv_s', 'USAGE') AS r1_usage,
+       has_schema_privilege('csv_r2', 'csv_s', 'USAGE') AS r2_usage,
+       has_schema_privilege('csv_r3', 'csv_s', 'CREATE') AS r3_create
+FROM pg_namespace WHERE nspname = 'csv_s'
+----
+owner	r1_usage	r2_usage	r3_create
+csv_owner	f	t	t
+
+
+# ---------------------------------------------------------------------------
+# Several versions in one transaction commit as one: the other side sees only
+# the final state.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r3
+
+
+connection s1
+statement ok
+REVOKE CREATE ON SCHEMA csv_s FROM csv_r3
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r1
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r3', 'csv_s', 'USAGE') AS r3_usage,
+       has_schema_privilege('csv_r3', 'csv_s', 'CREATE') AS r3_create
+----
+r3_usage	r3_create
+f	t
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r3', 'csv_s', 'USAGE') AS r3_usage,
+       has_schema_privilege('csv_r3', 'csv_s', 'CREATE') AS r3_create
+----
+r3_usage	r3_create
+t	f
+
+
+# ---------------------------------------------------------------------------
+# Every version is the same object: the oid never moves, pg_class still joins
+# to it, and the tables report their schema by name from any connection.
+
+
+query
+SELECT (n.oid = o.oid) AS oid_kept
+FROM pg_namespace n, csv_oid o WHERE n.nspname = 'csv_s'
+----
+oid_kept
+t
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_s TO csv_r1
+
+
+connection s2
+query
+SELECT c.relname
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'csv_s' AND c.relkind = 'r' ORDER BY 1
+----
+relname
+t
+t2
+
+
+connection s2
+query
+SELECT table_name FROM duckdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
+----
+table_name
+t
+t2
+
+
+connection s1
+query
+SELECT table_name FROM duckdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
+----
+table_name
+t
+t2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+# ---------------------------------------------------------------------------
+# A pending DROP SCHEMA holds the entry too. Until it commits the schema is
+# still there for everyone else, and a rollback hands it back untouched.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP SCHEMA csv_s CASCADE
+
+
+connection s2
+statement error
+GRANT USAGE ON SCHEMA csv_s TO csv_r2
+----
+db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+
+
+connection s2
+query
+SELECT count(*) AS n FROM csv_s.t
+----
+n
+2
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+REVOKE USAGE ON SCHEMA csv_s FROM csv_r2
+
+
+query
+SELECT has_schema_privilege('csv_r2', 'csv_s', 'USAGE') AS r2_usage,
+       (SELECT count(*) FROM csv_s.t) AS n
+----
+r2_usage	n
+f	2
+
+
+# ---------------------------------------------------------------------------
+# A schema created, granted on and filled inside one transaction appears for
+# the others in one piece at COMMIT, and not at all after a ROLLBACK.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA csv_new
+
+
+connection s1
+statement ok
+GRANT USAGE ON SCHEMA csv_new TO csv_r1
+
+
+connection s1
+statement ok
+CREATE TABLE csv_new.t(a INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO csv_new.t VALUES (7)
+
+
+connection s1
+query
+SELECT has_schema_privilege('csv_r1', 'csv_new', 'USAGE') AS usage,
+       (SELECT count(*) FROM csv_new.t) AS n
+----
+usage	n
+t	1
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'csv_new'
+----
+n
+0
+
+
+connection s2
+statement error
+SELECT count(*) FROM csv_new.t
+----
+db error: ERROR: Table with name "csv_new.t" does not exist because schema "csv_new" does not exist.
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT has_schema_privilege('csv_r1', 'csv_new', 'USAGE') AS usage,
+       (SELECT count(*) FROM csv_new.t) AS n,
+       (SELECT schema_name FROM duckdb_tables() WHERE schema_name = 'csv_new') AS via_table
+----
+usage	n	via_table
+t	1	csv_new
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA csv_gone
+
+
+connection s1
+statement ok
+ALTER SCHEMA csv_gone OWNER TO csv_owner
+
+
+connection s1
+statement ok
+CREATE TABLE csv_gone.t(a INTEGER)
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'csv_gone'
+----
+n
+0
+
+
+connection s2
+statement ok
+CREATE SCHEMA csv_gone
+
+
+connection s2
+statement ok
+GRANT USAGE ON SCHEMA csv_gone TO csv_r1
+
+
+connection s1
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('csv_r1', 'csv_gone', 'USAGE') AS usage
+FROM pg_namespace WHERE nspname = 'csv_gone'
+----
+owner	usage
+postgres	t
+
+
+statement ok
+DROP SCHEMA csv_gone CASCADE
+
+
+statement ok
+DROP SCHEMA csv_new CASCADE
+
+
+statement ok
+DROP SCHEMA csv_s CASCADE
+
+
+statement ok
+DROP TABLE csv_oid
+
+
+statement ok
+DROP ROLE csv_r1
+
+
+statement ok
+DROP ROLE csv_r2
+
+
+statement ok
+DROP ROLE csv_r3
+
+
+statement ok
+DROP ROLE csv_owner

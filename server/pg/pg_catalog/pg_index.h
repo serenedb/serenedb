@@ -87,6 +87,6 @@ struct PgIndex {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData();
+MaterializedData SystemTableSnapshot<PgIndex>::GetTableData();
 
 }  // namespace sdb::pg

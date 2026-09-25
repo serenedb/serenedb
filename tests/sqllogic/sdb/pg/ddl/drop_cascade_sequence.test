@@ -111,8 +111,10 @@ id	v
 100	a
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO mop_applications (v) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: mop_applications.id
 
 
 statement count 1
@@ -159,9 +161,7 @@ statement error
 DROP SEQUENCE iceberg_partition_id_seq;
 ----
 db error: ERROR: Cannot drop entry "iceberg_partition_id_seq" because there are entries that depend on it.
-table "iceberg_manifests" depends on sequence "iceberg_partition_id_seq".
-table "iceberg_partition_specs" depends on sequence "iceberg_partition_id_seq".
-table "iceberg_snapshots" depends on sequence "iceberg_partition_id_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

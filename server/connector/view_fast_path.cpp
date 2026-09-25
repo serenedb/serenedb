@@ -26,8 +26,10 @@
 #include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -50,8 +52,6 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
@@ -70,8 +70,8 @@ namespace {
 
 struct RegistryEntry {
   std::string_view function_name;
-  catalog::PkSpec single_pk_spec;
-  catalog::PkSpec glob_pk_spec;
+  PkSpec single_pk_spec;
+  PkSpec glob_pk_spec;
   duckdb::TableFunction (*make_lookup)();
   // Whether the reader's lookup applies pushed table filters. csv/json/text
   // only fetch rows by offset and ignore filters, so filters on their lookup
@@ -83,60 +83,60 @@ struct RegistryEntry {
 const RegistryEntry kRegistry[] = {
   {
     .function_name = "read_parquet",
-    .single_pk_spec = catalog::PkSpec::FileRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   {
     .function_name = "read_csv",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeCSVLookupTableFunction,
   },
   {
     .function_name = "read_json",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_ndjson",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_json_objects",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
   {
     .function_name = "read_ndjson_objects",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
   // Iceberg data files are parquet; reuse the parquet lookup TF.
   {
     .function_name = "iceberg_scan",
-    .single_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileIndexPlusRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   // read_text emits one row per file; PK is (file_index, 0) in glob mode.
   {
     .function_name = "read_text",
-    .single_pk_spec = catalog::PkSpec::FileRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeTextLookupTableFunction,
   },
   {
     .function_name = "read_duckdb",
-    .single_pk_spec = catalog::PkSpec::DuckDBRowId,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusDuckDBRowId,
+    .single_pk_spec = PkSpec::DuckDBRowId,
+    .glob_pk_spec = PkSpec::FileIndexPlusDuckDBRowId,
     .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
     .supports_filters = true,
   },
@@ -170,12 +170,6 @@ const RegistryEntry* LookupRegistry(std::string_view function_name) {
     }
   }
   return nullptr;
-}
-
-bool LooksLikeGlob(std::string_view path) noexcept {
-  return path.find('*') != std::string_view::npos ||
-         path.find('?') != std::string_view::npos ||
-         path.find('[') != std::string_view::npos;
 }
 
 duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
@@ -260,27 +254,6 @@ duckdb::LogicalType ExternalKeyStructType(
 
 }  // namespace
 
-std::vector<std::string> KeyColumnsFromOptions(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  auto it = options.find("key_columns");
-  if (it == options.end()) {
-    return {};
-  }
-  // `text` borrows out of `value`, which owns the (possibly cast) characters
-  // for the rest of the scope -- no copy just to split it.
-  const auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR);
-  const std::string_view text = duckdb::StringValue::Get(value);
-  std::vector<std::string> cols;
-  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
-  // only needs trimming. The names outlive this scope -- they are persisted in
-  // the index options -- so cols owns them rather than viewing into `value`.
-  for (std::string_view part :
-       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
-    cols.emplace_back(absl::StripAsciiWhitespace(part));
-  }
-  return cols;
-}
-
 std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::ClientContext& context, const duckdb::CreateViewInfo& view,
   std::span<const std::string> key_columns) {
@@ -315,10 +288,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   if (select_node.select_list.empty()) {
     return std::nullopt;
   }
-  if (select_node.select_list.size() == 1 &&
-      select_node.select_list[0]->GetExpressionClass() ==
+  if (select_node.select_list.size() != 1 ||
+      select_node.select_list[0]->GetExpressionClass() !=
         duckdb::ExpressionClass::STAR) {
-  } else {
     for (const auto& item : select_node.select_list) {
       const duckdb::ParsedExpression* cur = item.get();
       while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
@@ -354,6 +326,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     }
     auto& entry = generic->Cast<duckdb::TableCatalogEntry>();
     const auto cat_type = entry.ParentCatalog().GetCatalogType();
+    const CatalogTableRef table_ref{
+      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+      .schema = entry.ParentSchemaName().GetIdentifierName(),
+      .table = entry.name.GetIdentifierName()};
     if (cat_type == "iceberg") {
       const auto* registry_entry = LookupRegistry("iceberg_scan");
       if (!registry_entry) {
@@ -361,15 +337,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = std::string{registry_entry->function_name};
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchema().name.GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = table_ref;
       out.is_glob = true;
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
       out.supports_filters = registry_entry->supports_filters;
-      out.supports_delta = catalog::IsGlobPK(out.pk_spec) && !has_limit;
+      out.supports_delta = IsGlobPK(out.pk_spec) && !has_limit;
       return out;
     }
     if (cat_type == "duckdb") {
@@ -380,34 +353,27 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = "read_duckdb";
-      out.catalog_ref =
-        CatalogTableRef{.catalog = src_catalog.GetName().GetIdentifierName(),
-                        .schema = entry.ParentSchema().name.GetIdentifierName(),
-                        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = table_ref;
       out.projection_columns = std::move(projection_columns);
-      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      out.pk_spec = PkSpec::DuckDBRowId;
       // Attached duckdb table: materialized via DataTable::LookupScan, which
       // applies pushed filters in-scan.
       out.supports_filters = true;
       return out;
     }
-    if (cat_type == catalog::kSereneDBCatalogType) {
-      const auto* sdb_entry = &entry.Cast<catalog::SereneDBTableEntry>();
+    if (cat_type == "serenedb") {
       // Views over a serenedb table ride the same rowid-keyed machinery as
       // views over an attached database.
       ViewFastPath out;
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchema().name.GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
-      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      out.catalog_ref = table_ref;
+      out.pk_spec = PkSpec::DuckDBRowId;
       out.supports_filters = true;
       // Only the check that every projected name is one of the relation's
       // columns: a name that belongs to none is not this fast path's to serve.
-      const auto& sdb_columns = sdb_entry->GetColumns();
+      const auto& sdb_columns = entry.GetColumns();
       const auto has_column = [&](std::string_view name) {
         for (const auto& col : sdb_columns.Logical()) {
-          if (absl::EqualsIgnoreCase(col.Name().GetIdentifierName(), name)) {
+          if (col.Name() == name) {
             return true;
           }
         }
@@ -428,16 +394,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     if (!is_postgres && cat_type != "clickhouse") {
       return std::nullopt;
     }
-    const CatalogTableRef ext_ref{
-      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-      .schema = entry.ParentSchema().name.GetIdentifierName(),
-      .table = entry.name.GetIdentifierName()};
     // Exactly one of the branches below returns, so each may consume
     // projection_columns.
-    auto external_fast_path = [&](catalog::PkSpec spec,
+    auto external_fast_path = [&](PkSpec spec,
                                   std::vector<ExternalKeyColumn> keys = {}) {
       ViewFastPath out;
-      out.catalog_ref = ext_ref;
+      out.catalog_ref = table_ref;
       out.pk_spec = spec;
       out.key_columns = std::move(keys);
       out.projection_columns = std::move(projection_columns);
@@ -450,36 +412,29 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (cols.empty()) {
         return std::nullopt;
       }
-      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                                std::move(cols));
+      return external_fast_path(PkSpec::ExternalColumnKey, std::move(cols));
     }
     if (is_postgres) {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
       // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
       // is pushed down as a `ctid IN (...)` TID scan.
-      return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
+      return external_fast_path(PkSpec::ExternalPostgresCtid);
     }
     // ClickHouse: part+offset ids die on merges, so key on the engine's PK
     // metadata -- the whole MergeTree key in order, whatever its arity and
     // types, since composite keys are the norm there. That key is a sorting
     // prefix and not a uniqueness constraint, so duplicate keys each index
     // their own document and a re-fetch returns every row sharing a key.
-    const auto& constraints = entry.GetConstraints();
-    const auto pk = absl::c_find_if(
-      constraints, [](const duckdb::unique_ptr<duckdb::Constraint>& c) {
-        return c->type == duckdb::ConstraintType::UNIQUE &&
-               c->Cast<duckdb::UniqueConstraint>().IsPrimaryKey();
-      });
-    if (pk == constraints.end()) {
+    const auto pk = entry.GetPrimaryKey();
+    if (!pk) {
       return std::nullopt;
     }
     auto cols = FindKeyColumns(
-      entry, (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames());
+      entry, pk->Cast<duckdb::UniqueConstraint>().GetColumnNames());
     if (cols.empty()) {
       return std::nullopt;
     }
-    return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                              std::move(cols));
+    return external_fast_path(PkSpec::ExternalColumnKey, std::move(cols));
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {
@@ -604,11 +559,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   out.function_name = std::move(canonical);
   out.args = std::move(args);
   out.named_params = std::move(named_params);
-  out.is_glob = LooksLikeGlob(out.args[0].GetValue<std::string>());
+  out.is_glob =
+    duckdb::FileSystem::HasGlob(out.args[0].GetValue<std::string>());
   out.projection_columns = std::move(projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
   out.supports_filters = entry->supports_filters;
-  out.supports_delta = catalog::IsGlobPK(out.pk_spec) &&
+  out.supports_delta = IsGlobPK(out.pk_spec) &&
                        !out.named_params.contains("union_by_name") &&
                        !has_limit;
   return out;
@@ -616,42 +572,42 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 
 duckdb::LogicalType ViewFastPath::GeneratedPkType() const {
   switch (pk_spec) {
-    case catalog::PkSpec::FileIndexPlusRowNumber:
-    case catalog::PkSpec::FileIndexPlusOffset:
-    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileIndexPlusDuckDBRowId:
       return FileIndexRowNumberStructType();
-    case catalog::PkSpec::FileRowNumber:
-    case catalog::PkSpec::FileOffset:
-    case catalog::PkSpec::DuckDBRowId:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::DuckDBRowId:
       return duckdb::LogicalType::BIGINT;
-    case catalog::PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalPostgresCtid:
       return pg::CTID();
-    case catalog::PkSpec::ExternalColumnKey:
+    case PkSpec::ExternalColumnKey:
       return ExternalKeyStructType(key_columns);
   }
   SDB_UNREACHABLE();
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::ExternalPostgresCtid) {
+  if (fp.pk_spec == PkSpec::ExternalPostgresCtid) {
     // Postgres ctid: the key is the virtual rowid, not a real column.
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
+  if (fp.pk_spec == PkSpec::ExternalColumnKey) {
     // Project the key columns in resolution order: the sink packs them into one
     // struct in that order, and the re-fetch matches on it positionally.
     return fp.key_columns |
            std::views::transform(&ExternalKeyColumn::source_index) |
            std::ranges::to<std::vector>();
   }
-  if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
+  if (fp.pk_spec == PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (fp.pk_spec == catalog::PkSpec::FileIndexPlusDuckDBRowId) {
+  if (fp.pk_spec == PkSpec::FileIndexPlusDuckDBRowId) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
             duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (catalog::IsGlobPK(fp.pk_spec)) {
+  if (IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
             duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER};
   }
@@ -705,7 +661,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
     if (fn.get_virtual_columns && bind_data) {
       fn.get_virtual_columns(context, bind_data.get());
     }
-    if (fp.function_name == "iceberg_scan" && bind_data) {
+    if (fp.function_name == "iceberg_scan") {
       EnableIcebergSort(bind_data.get());
     }
     return bind_data;
@@ -749,7 +705,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   if (reader.get_virtual_columns && bind_data) {
     reader.get_virtual_columns(context, bind_data.get());
   }
-  if (fp.function_name == "iceberg_scan" && bind_data) {
+  if (fp.function_name == "iceberg_scan") {
     EnableIcebergSort(bind_data.get());
   }
 

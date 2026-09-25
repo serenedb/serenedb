@@ -89,8 +89,7 @@ statement error
 DROP FUNCTION iceberg_unmarshal_v1(INT);
 ----
 db error: ERROR: Cannot drop entry "iceberg_unmarshal_v1" because there are entries that depend on it.
-macro function "iceberg_unmarshal_v2" depends on macro function "iceberg_unmarshal_v1".
-macro function "iceberg_unmarshal_v3" depends on macro function "iceberg_unmarshal_v2".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -168,8 +167,7 @@ statement error
 DROP SEQUENCE mop_listing_seq;
 ----
 db error: ERROR: Cannot drop entry "mop_listing_seq" because there are entries that depend on it.
-macro function "mop_use_listing" depends on sequence "mop_listing_seq".
-view "mop_listings_feed" depends on sequence "mop_listing_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

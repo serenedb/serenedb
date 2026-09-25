@@ -52,7 +52,7 @@ INSERT INTO vedernikoff_solid_witness VALUES (1, 'unaffected');
 
 
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF

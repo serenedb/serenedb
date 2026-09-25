@@ -45,11 +45,11 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "search/search_db_wal.h"
@@ -83,16 +83,14 @@ void InitRowSource(duckdb::ClientContext& context,
   source.projections.reserve(target.column_ids.size() + 1);
   duckdb::vector<duckdb::LogicalType> types = target.column_types;
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
-    source.projections.push_back(irs::ColumnstoreProjection{
-      .output_slot = i,
-      .column_id = static_cast<irs::field_id>(target.column_ids[i])});
+    source.projections.emplace_back(irs::ColumnstoreProjection{
+      .output_slot = i, .column_id = target.column_ids[i]});
   }
   // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
   // by definition), read here so each rebuilt row keeps its identity.
   source.rowid_slot = target.column_ids.size();
-  source.projections.push_back(
-    irs::ColumnstoreProjection{.output_slot = source.rowid_slot,
-                               .column_id = catalog::term_dict::kPKFieldId});
+  source.projections.emplace_back(irs::ColumnstoreProjection{
+    .output_slot = source.rowid_slot, .column_id = term_dict::kPKFieldId});
   types.push_back(duckdb::LogicalType::BIGINT);
   source.chunk.Initialize(duckdb::Allocator::Get(context), types);
 }
@@ -105,8 +103,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target) {
   const auto* col_reader = sub.GetColReader();
-  SDB_ENSURE(col_reader != nullptr,
-             "search-table build: segment has no columnstore");
+  SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
   auto it_mask = sub.MaskedDocs();
@@ -114,8 +111,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const uint64_t docs = irs::VisibleCount(sub.Meta());
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    const auto take = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row));
+    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
     auto& chunk = source.chunk;
     chunk.Reset();
     const auto produced = scanner.Scan(row, take, chunk);
@@ -167,8 +163,7 @@ void StageDeletes(irs::IndexWriter::Transaction& trx,
   std::string key;
   for (const auto rowid : rowids) {
     key.clear();
-    catalog::duckdb_primary_key::AppendGenerated(key,
-                                                 static_cast<uint64_t>(rowid));
+    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
     remover.DeleteRowImpl(key);
   }
   remover.FinishImpl();
@@ -215,18 +210,18 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       slice{slice_in},
       progress{progress_in} {}
 
-  void ExecuteTask() override {
+  void ExecuteTask() final {
     for (const auto* sub : slice.segments) {
       const auto fed =
         FeedSegment(context, *sub, slice.source, *slice.sink, target);
-      if (progress != nullptr) {
+      if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
       }
       if (context.IsInterrupted()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                        ERR_MSG("canceled while rebuilding search table ",
-                                target.table_id.id()));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_QUERY_CANCELED),
+          ERR_MSG("canceled while rebuilding search table ", target.table_id));
       }
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
@@ -236,7 +231,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
     }
   }
 
-  std::string TaskType() const override { return "SearchBackfillSlice"; }
+  std::string TaskType() const final { return "SearchBackfillSlice"; }
 
   duckdb::ClientContext& context;
   const SearchBackfillTarget& target;
@@ -266,7 +261,8 @@ void RebuildGroup(duckdb::ClientContext& context,
     // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
     // they must not share one with a concurrent writer.
     slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
-    slice->sink = MakeSearchTableInsertSink(slice->trx, shard, context);
+    slice->sink =
+      MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);
     InitRowSource(context, target, slice->source);
     slices.push_back(std::move(slice));
   }
@@ -330,7 +326,7 @@ void RebuildGroup(duckdb::ClientContext& context,
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
               "table ",
-              target.table_id.id()));
+              target.table_id));
   }
   Publish(shard);
 }
@@ -348,7 +344,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("an index build is already running on search "
                             "table ",
-                            target.table_id.id()));
+                            target.table_id));
   }
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
@@ -375,7 +371,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
                       ERR_MSG("canceled while waiting for compaction on "
                               "search table ",
-                              target.table_id.id()));
+                              target.table_id));
     }
     absl::SleepFor(kArmRetry);
   }
@@ -413,7 +409,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     if (group.empty()) {
       break;
     }
-    if (progress != nullptr && !counted) {
+    if (progress && !counted) {
       // Exact, unlike the transactional path's planner estimate.
       pg::ProgressMetrics::Set(progress->tuples_total,
                                static_cast<int64_t>(live));

@@ -35,7 +35,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
 
-#include "catalog/entry.h"
+#include "catalog/catalog.h"
 
 namespace sdb::search {
 

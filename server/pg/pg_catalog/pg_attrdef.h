@@ -41,6 +41,6 @@ struct PgAttrdef {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData();
 
 }  // namespace sdb::pg

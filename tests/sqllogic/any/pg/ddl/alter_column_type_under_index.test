@@ -1,0 +1,35 @@
+# A column changes type while an index exists on another column of the table.
+
+statement ok
+CREATE TABLE actu_t (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE INDEX actu_i ON actu_t (a);
+
+
+statement ok
+INSERT INTO actu_t VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE actu_t ALTER COLUMN b TYPE BIGINT;
+
+
+query
+SELECT a, b FROM actu_t ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+query
+SELECT a FROM actu_t WHERE a = 2;
+----
+a
+2
+
+
+statement ok
+DROP TABLE actu_t;

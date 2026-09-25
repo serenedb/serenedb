@@ -1,0 +1,76 @@
+# read_duckdb over a file whose database was just detached while another
+# connection still holds that database: the read returns the rows instead of
+# hanging the server.
+#
+# The holder lists every attached database inside an open transaction, which
+# keeps rdd_b open after the DETACH. read_duckdb then opens rdd_a.db while
+# binding and rdd_b.db while scanning.
+
+control substitution on
+
+statement ok
+DETACH IF EXISTS rdd_a;
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdd_a.db' AS rdd_a;
+
+statement ok
+CREATE OR REPLACE TABLE rdd_a.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO rdd_a.main.docs VALUES (1), (2);
+
+statement ok
+DETACH rdd_a;
+
+
+statement ok
+DETACH IF EXISTS rdd_b;
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdd_b.db' AS rdd_b;
+
+statement ok
+CREATE OR REPLACE TABLE rdd_b.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO rdd_b.main.docs VALUES (10);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection default
+statement ok
+DETACH rdd_b;
+
+
+connection default
+query
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdd_*.db', table_name='docs');
+----
+n
+3
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+query
+SELECT 1 AS ok;
+----
+ok
+1

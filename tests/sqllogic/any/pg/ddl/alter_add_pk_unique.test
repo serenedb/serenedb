@@ -29,6 +29,24 @@ statement error
 ALTER TABLE apk ADD PRIMARY KEY (b);
 
 
+# the existing primary key is found before any row is read, so a pending
+# update in the same transaction does not change the error
+statement ok
+BEGIN;
+
+
+statement count 2
+UPDATE apk SET b = b + 1;
+
+
+statement error (multiple primary keys for table "apk" are not allowed|table "apk" can have only one primary key)
+ALTER TABLE apk ADD PRIMARY KEY (b);
+
+
+statement ok
+ROLLBACK;
+
+
 # ADD [CONSTRAINT] UNIQUE is accepted and enforced from that point on.
 statement ok
 ALTER TABLE apk ADD CONSTRAINT u_b UNIQUE (b);

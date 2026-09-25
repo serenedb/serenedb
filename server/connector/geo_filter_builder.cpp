@@ -35,7 +35,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/geo_validate.h"
+#include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -136,7 +136,7 @@ void ParseGeoConstant(const duckdb::Value& value,
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
       if (duckdb::GeoType::HasCRS(value.type())) {
-        sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
+        ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       }
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!irs::geo::ParseShapeWKB(wkb_str, shape)) {
@@ -395,10 +395,10 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
   ParseGeoConstant(*shape_val, options->coding, shape);
   options->shape = std::move(shape);
 
-  if (func.Function().GetName().GetIdentifierName() == kGeoIntersects) {
+  if (func.Function().GetName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.Function().GetName().GetIdentifierName() == kGeoContains);
+    SDB_ASSERT(func.Function().GetName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -437,10 +437,10 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   if (func.GetChildren().size() != 2) {
     return nullptr;
   }
-  if (func.Function().GetName().GetIdentifierName() == kGeoDistance) {
+  if (func.Function().GetName() == kGeoDistance) {
     return &func;
   }
-  if (func.Function().GetName().GetIdentifierName() == kL2DistanceOp) {
+  if (func.Function().GetName() == kL2DistanceOp) {
     auto is_geo_col = [&ctx](const duckdb::Expression& child) {
       const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
       if (!info) {
@@ -481,7 +481,7 @@ void FromGeoDistanceComparison(BoolTarget filter, const FilterContext& ctx,
       options->range.min = setup.second;
       options->range.min_type = irs::BoundType::Inclusive;
       break;
-    default:
+    case ComparisonOp::None:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("ST_Distance_Centroid: unsupported comparison op"));
@@ -502,7 +502,7 @@ void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,
 
 bool TryDispatchGeoFunction(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.Function().GetName().GetIdentifierName();
+  const auto& name = func.Function().GetName();
   if (name == kGeoInRange) {
     FromGeoInRange(filter, ctx, func);
     return true;

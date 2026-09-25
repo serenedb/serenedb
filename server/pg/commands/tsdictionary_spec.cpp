@@ -51,7 +51,8 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/option_help.h"
 #include "pg/tokenizer_options.h"
@@ -87,6 +88,7 @@ struct Stage {
   std::string name;
   std::vector<std::pair<std::string, duckdb::Value>> options;
   std::vector<Chain> children;
+  const catalog::TokenizerCatalogEntry* dictionary = nullptr;
 };
 
 const duckdb::FunctionExpression* AsFunction(
@@ -258,7 +260,7 @@ bool IsStructuralAnalyzer(const duckdb::ParsedExpression& expr) {
 // A stage is a template call, an SQL function call, a lambda, a union list or
 // a stored dictionary name; only the first two are plain calls.
 bool IsStageExpression(const duckdb::ParsedExpression& expr) {
-  return IsStructuralAnalyzer(expr) || AsCall(expr) != nullptr;
+  return IsStructuralAnalyzer(expr) || AsCall(expr);
 }
 
 std::string SuggestionHint(std::span<const std::string_view> known,
@@ -301,8 +303,6 @@ void RejectNestedAnalyzers(const duckdb::ParsedExpression& expr) {
 
 struct BuildContext {
   duckdb::ClientContext& context;
-  ObjectId db_id;
-  std::string_view current_schema;
 };
 
 irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
@@ -321,9 +321,7 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
       type = kKeywordName;
       break;
     case Stage::Kind::Dictionary:
-      type = tokenizer_options::kDictionaryTemplate;
-      put(tokenizer_options::kFrom.name, duckdb::Value{stage.name});
-      break;
+      return irs::analysis::Clone(stage.dictionary->Config());
     case Stage::Kind::Sql:
       type = kSqlName;
       put(tokenizer_options::kSqlExpression.name, duckdb::Value{stage.name});
@@ -341,8 +339,8 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
                       BuildChainConfig(child, ctx));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, ctx.db_id, ctx.current_schema, type,
-                    std::move(options), std::move(children), kOperation);
+  return BuildStage(ctx.context, type, std::move(options), std::move(children),
+                    kOperation);
 }
 
 irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
@@ -355,15 +353,13 @@ irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
                       BuildStageConfig(stage, ctx));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, ctx.db_id, ctx.current_schema, kPipelineName,
-                    {}, std::move(children), kOperation);
+  return BuildStage(ctx.context, kPipelineName, {}, std::move(children),
+                    kOperation);
 }
 
 class SpecCompiler {
  public:
-  SpecCompiler(duckdb::ClientContext& context, ObjectId db_id,
-               std::string_view current_schema)
-    : _context{context}, _db_id{db_id}, _current_schema{current_schema} {}
+  explicit SpecCompiler(duckdb::ClientContext& context) : _context{context} {}
 
   irs::analysis::TokenizerConfig Compile(std::string_view spec) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
@@ -378,8 +374,7 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG(kOperation, ": expected one analyzer expression"));
     }
-    return BuildChainConfig(CompileChain(*exprs[0]),
-                            {_context, _db_id, _current_schema});
+    return BuildChainConfig(CompileChain(*exprs[0]), {_context});
   }
 
  private:
@@ -456,10 +451,12 @@ class SpecCompiler {
   }
 
   bool DictionaryExists(std::string_view name) {
-    const auto schema_id =
-      catalog::FindSchemaId(&_context, _db_id, _current_schema);
-    return schema_id.isSet() &&
-           catalog::FindTokenizer(&_context, schema_id, name);
+    return static_cast<bool>(
+      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+        _context,
+        duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{},
+                              duckdb::Identifier{name}},
+        duckdb::OnEntryNotFound::RETURN_NULL));
   }
 
   [[noreturn]] void ThrowUnknownStage(const duckdb::FunctionExpression& fn) {
@@ -491,21 +488,19 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("invalid text search dictionary reference \"", spelled, "\""));
     }
-    const std::string_view schema =
-      names.size() == 2 ? std::string_view{names[0].GetIdentifierName()}
-                        : _current_schema;
-    const auto schema_id = catalog::FindSchemaId(&_context, _db_id, schema);
     const auto tokenizer =
-      schema_id.isSet()
-        ? catalog::FindTokenizer(&_context, schema_id,
-                                 names.back().GetIdentifierName())
-        : nullptr;
+      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+        _context,
+        duckdb::QualifiedName{
+          duckdb::Identifier{},
+          names.size() == 2 ? names[0] : duckdb::Identifier{}, names.back()},
+        duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", spelled, "\" does not exist"));
     }
-    return {.kind = Stage::Kind::Dictionary, .name = spelled};
+    return {.kind = Stage::Kind::Dictionary, .dictionary = tokenizer.get()};
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {
@@ -680,16 +675,13 @@ class SpecCompiler {
   }
 
   duckdb::ClientContext& _context;
-  ObjectId _db_id;
-  std::string_view _current_schema;
 };
 
 }  // namespace
 
 irs::analysis::TokenizerConfig CompileTSDictionarySpec(
-  duckdb::ClientContext& context, ObjectId db_id,
-  std::string_view current_schema, std::string_view spec) {
-  return SpecCompiler{context, db_id, current_schema}.Compile(spec);
+  duckdb::ClientContext& context, std::string_view spec) {
+  return SpecCompiler{context}.Compile(spec);
 }
 
 namespace {

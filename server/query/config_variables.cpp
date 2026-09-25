@@ -44,7 +44,7 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
@@ -850,7 +850,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "...) overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.segment_memory_max);
+            catalog::InvertedIndexSettings{}.segment_memory_max);
         },
         RejectZero<"segment_memory_max">,
       },
@@ -886,7 +886,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Default 10.",
         [] {
           return duckdb::Value::UINTEGER(
-            catalog::InvertedIndexOptions{}.compaction_max_segments);
+            catalog::InvertedIndexSettings{}.compaction_max_segments);
         },
         RejectZero<"compaction_max_segments">,
       },
@@ -900,7 +900,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "overrides. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_max_segments_bytes);
+            catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
         },
         RejectZero<"compaction_max_segments_bytes">,
       },
@@ -915,7 +915,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "(2MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_floor_segment_bytes);
+            catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
         },
         RejectZero<"compaction_floor_segment_bytes">,
       },
@@ -1158,6 +1158,17 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
   }
+}
+
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value) {
+  duckdb::ExtensionOption option;
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
+                                                             option);
+  auto result = value.CastAs(context, option.type);
+  option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
+  return result;
 }
 
 }  // namespace connector

@@ -147,7 +147,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 statement error
 CREATE INDEX test_index ON test USING inverted (i);
 ----
-db error: ERROR: relation "test_index" already exists
+db error: ERROR: Index with name "test_index" already exists!
 
 
 statement ok
@@ -373,8 +373,7 @@ db error: ERROR: Can only delete from base table
 statement error
 DELETE FROM view_idx WHERE b = 'hello';
 ----
-db error: ERROR: cannot open relation "view_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: Can only delete from base table
 
 
 statement error
@@ -402,34 +401,34 @@ CREATE INDEX idx_dml_idx ON idx_dml_test USING inverted(b);
 statement error
 INSERT INTO idx_dml_idx VALUES (1, 'hello');
 ----
-db error: ERROR: Could not convert string 'hello' to INT32
+db error: ERROR: Table with name idx_dml_idx does not exist!
+Did you mean "idx_dml_test"?
 
 
 statement error
 UPDATE idx_dml_idx SET b = 'world' WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: projecting virtual column 18446744073709551615 through an inverted-index scan is not supported
 
 
 statement error
 DELETE FROM idx_dml_idx WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: projecting virtual column 18446744073709551615 through an inverted-index scan is not supported
 
 
 statement error
 COPY idx_dml_idx FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: No files found that match the pattern "<slt:ignore>/nonexistent.parquet"
+db error: ERROR: Table with name idx_dml_idx does not exist!
+Did you mean "idx_dml_test"?
 
 
 statement error
 CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: View with name idx_dml_idx does not exist!
+Did you mean "idx_dml_test"?
 
 
 statement ok
@@ -491,11 +490,8 @@ statement ok
 CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 
 
-statement error
-CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
-----
-db error: ERROR: Accessing text dictionary from different schema is not supported
-
+statement ok
+CREATE INDEX idx_cross ON s2.foo USING inverted(b s1.te);
 
 statement ok
 CREATE INDEX idx ON s1.foo USING inverted(b s1.te);

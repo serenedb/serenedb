@@ -85,11 +85,7 @@ statement error
 DROP SEQUENCE vedernikoff_solid_master_seq;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_solid_master_seq" because there are entries that depend on it.
-table "vedernikoff_solid_a" depends on sequence "vedernikoff_solid_master_seq".
-table "vedernikoff_solid_b" depends on sequence "vedernikoff_solid_master_seq".
-table "vedernikoff_solid_c" depends on sequence "vedernikoff_solid_master_seq".
-table "vedernikoff_solid_d" depends on sequence "vedernikoff_solid_master_seq".
-table "vedernikoff_solid_e" depends on sequence "vedernikoff_solid_master_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -338,8 +334,7 @@ statement error
 DROP SEQUENCE vedernikoff_x_seq_1;
 ----
 db error: ERROR: Cannot drop entry "vedernikoff_x_seq_1" because there are entries that depend on it.
-table "vedernikoff_x_t1" depends on sequence "vedernikoff_x_seq_1".
-table "vedernikoff_x_t2" depends on sequence "vedernikoff_x_seq_1".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

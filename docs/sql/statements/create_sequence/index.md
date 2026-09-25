@@ -25,7 +25,7 @@ Generate odd numbers using `INCREMENT BY`:
 
 <SqlLogicTest id="sql/statements/create_sequence/increment_by/example_003" />
 
-Descending sequences are not yet supported. A negative `INCREMENT BY` is rejected:
+A negative `INCREMENT BY` creates a descending sequence:
 
 <SqlLogicTest id="sql/statements/create_sequence/index/example_004" />
 

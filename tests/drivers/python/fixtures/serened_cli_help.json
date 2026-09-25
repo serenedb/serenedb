@@ -230,6 +230,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "skip_search_recovery",
+          "flag": "--skip_search_recovery",
+          "type": "",
+          "defaultValue": "false",
+          "description": "Do not replay the search-table WAL at startup; search tables come up with what their last refresh made durable.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "tls_ca",
           "flag": "--tls_ca",
           "type": "",
@@ -324,22 +334,6 @@
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
-        }
-      ]
-    },
-    {
-      "id": "server/catalog/ddl/catalog.cpp",
-      "label": "server/catalog/ddl/catalog.cpp",
-      "flags": [
-        {
-          "name": "missing_database",
-          "flag": "--missing_database",
-          "type": "",
-          "defaultValue": "refuse",
-          "description": "What boot does with a database whose data file is missing or will not open: 'refuse' (default) stops the server, 'skip' leaves it unattached, 'drop' removes it from the catalog.",
-          "source": "server/catalog/ddl/catalog.cpp",
-          "category": "server/catalog/ddl/catalog.cpp",
-          "categoryLabel": "server/catalog/ddl/catalog.cpp"
         }
       ]
     }

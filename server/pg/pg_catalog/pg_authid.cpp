@@ -24,11 +24,8 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "server/utils/app_server.h"
 
@@ -39,7 +36,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAuthid::rolpassword),
 });
 
-Timestamptz ValidUntilOf(const catalog::SereneDBRoleEntry& role) {
+Timestamptz ValidUntilOf(const catalog::RoleCatalogEntry& role) {
   if (!role.HasValidUntil()) {
     return {};
   }
@@ -49,25 +46,30 @@ Timestamptz ValidUntilOf(const catalog::SereneDBRoleEntry& role) {
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   std::vector<PgAuthid> values;
-  catalog::VisitRoles(&_config.GetClientContext(),
-                      [&](const catalog::SereneDBRoleEntry& role) {
-                        using catalog::RoleOption;
-                        values.push_back(PgAuthid{
-                          .oid = role.GetId().id(),
-                          .rolname = role.GetName(),
-                          .rolsuper = role.Has(RoleOption::Superuser),
-                          .rolinherit = role.Has(RoleOption::Inherit),
-                          .rolcreaterole = role.Has(RoleOption::CreateRole),
-                          .rolcreatedb = role.Has(RoleOption::CreateDb),
-                          .rolcanlogin = role.CanLogin(),
-                          .rolreplication = role.Has(RoleOption::Replication),
-                          .rolbypassrls = role.Has(RoleOption::BypassRls),
-                          .rolconnlimit = role.ConnLimit(),
-                          .rolvaliduntil = ValidUntilOf(role),
-                        });
-                      });
+  auto& context = _context;
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            using catalog::RoleOption;
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            const auto options = role.Options();
+            values.push_back(PgAuthid{
+              .oid = role.oid,
+              .rolname = role.name.GetIdentifierName(),
+              .rolsuper = role.IsSuperuser(),
+              .rolinherit = HasOption(options, RoleOption::Inherit),
+              .rolcreaterole = HasOption(options, RoleOption::CreateRole),
+              .rolcreatedb = HasOption(options, RoleOption::CreateDb),
+              .rolcanlogin = role.CanLogin(),
+              .rolreplication = HasOption(options, RoleOption::Replication),
+              .rolbypassrls = HasOption(options, RoleOption::BypassRls),
+              .rolconnlimit = role.ConnLimit(),
+              .rolvaliduntil = ValidUntilOf(role),
+            });
+          });
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

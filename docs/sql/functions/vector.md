@@ -212,7 +212,7 @@ Elasticsearch [kNN search](https://www.elastic.co/guide/en/elasticsearch/referen
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) query (`k`, `num_candidates`) | [`ORDER BY emb <-> $q LIMIT k`](#knn) |
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) with `filter` | a `WHERE` clause beside the `ORDER BY` ([Hybrid Search](../indexes/inverted/hybrid-search.md)) |
 
-**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_nprobe`](../indexes/inverted/maintenance.md#session-settings) — SereneDB's analogue of `num_candidates` — and [`sdb_rerank_factor`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
+**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_ivf_search_nprobe`](../indexes/inverted/maintenance.md#session-settings) — SereneDB's analogue of `num_candidates` — and [`sdb_rerank_factor`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
 
 ## See also
 

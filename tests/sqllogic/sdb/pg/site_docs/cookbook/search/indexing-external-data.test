@@ -76,8 +76,4 @@ id	level	message
 # DOCS_TEST_BODY
 
 statement ok
-DROP INDEX logs_idx;
-
-statement ok
-CREATE INDEX logs_idx ON logs
-    USING inverted (id, level, service, message english_dict);
+REINDEX INDEX logs_idx;

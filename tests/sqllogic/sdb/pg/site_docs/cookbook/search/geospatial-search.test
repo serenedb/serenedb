@@ -74,9 +74,7 @@ id	name
 
 query
 WITH pts AS (
-  SELECT
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  SELECT ST_X(geo) AS lon, ST_Y(geo) AS lat
   FROM shops
 )
 SELECT
@@ -99,9 +97,7 @@ cell_lon	cell_lat	shops
 
 query
 WITH pts AS (
-  SELECT
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  SELECT ST_X(geo) AS lon, ST_Y(geo) AS lat
   FROM shops
 )
 SELECT
@@ -124,9 +120,7 @@ cell_lon	cell_lat	shops
 
 query
 WITH pts AS (
-  SELECT id, name, ST_AsText(geo) AS location,
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
-    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  SELECT id, name, ST_AsText(geo) AS location, ST_X(geo) AS lon, ST_Y(geo) AS lat
   FROM shops
 )
 SELECT id, name, location

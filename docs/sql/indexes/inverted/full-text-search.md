@@ -175,22 +175,11 @@ Several wrapper functions read more naturally than `col @@ ts_*(...)` and expand
 
 ## Inspecting the query plan
 
-A full-text search is a first-class part of the SQL query plan, not a black box bolted on the side. The `@@` predicate compiles to an **`IRESEARCH_SCAN`** over the inverted index, with the matched terms pushed into the scan as a filter. `EXPLAIN` shows it:
+A full-text search is a first-class part of the SQL query plan, not a black box bolted on the side. The `@@` predicate compiles to an **`IRESEARCH_SCAN`** over the inverted index, with the matched terms pushed into the scan as its `Index Filter`. `EXPLAIN` shows it:
 
-```sql
-EXPLAIN SELECT a FROM sentences_idx WHERE b @@ 'fox';
-```
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
-```text
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: sentences_idx │
-│          Filter:          │
-│        (Term) b = fox     │
-│      Projections: a       │
-└───────────────────────────┘
-```
+A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan.
 
 Because the search executes inside the scan, it composes with the rest of SQL: a `JOIN`, a `GROUP BY`, or an `ORDER BY <scorer>` over the same query is planned and run as one statement. See [Profiling](../../../cookbook/performance/profiling.md) for reading plans, and [Ranking](./ranking.md#top-k-queries-and-wand-pruning) for the WAND-optimized `Top: k, optimized` plan.
 

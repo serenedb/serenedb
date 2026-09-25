@@ -38,9 +38,9 @@ Once built, query the index by name — just like any other inverted index:
 
 <SqlLogicTest id="cookbook/search/indexing-external-data/example_005" />
 
-## Rebuild the index
+## Refresh the index
 
-An external-data index is a static snapshot of the files at build time. When the underlying files change, rebuild the index:
+An external-data index holds a snapshot of the files. When they change, refresh it in one pass: behind a glob, `REINDEX INDEX` re-reads only the files that appeared, changed or disappeared. Set the `reindex_interval` index option to run the same pass on a timer ([Refreshing the index](../../sql/indexes/inverted/views.md#refreshing-the-index)).
 
 <SqlLogicTest id="cookbook/search/indexing-external-data/example_006" />
 

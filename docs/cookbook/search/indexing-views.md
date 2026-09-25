@@ -37,7 +37,7 @@ Wrap a search in a view and it becomes a named query you point applications at. 
 
 ## No materialized views
 
-SereneDB has no `MATERIALIZED VIEW`. You do not need one here: an index built on a view over a base table already holds a postings snapshot that only moves when you refresh or rebuild, which covers the usual reason to reach for a materialized view in the first place.
+SereneDB has no `MATERIALIZED VIEW`. You do not need one here: an index built on a view over a base table already holds a postings snapshot that only moves when you run `REINDEX INDEX` or set `reindex_interval`, which covers the usual reason to reach for a materialized view in the first place.
 
 ## See also
 

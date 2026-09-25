@@ -62,8 +62,9 @@ std::string Cell(duckdb::MaterializedQueryResult& result,
                  std::string_view column, size_t row) {
   const auto it = absl::c_find(result.names, column);
   SDB_ASSERT(it != result.names.end(), "no column ", column);
-  return duckdb::StringValue::Get(
-    result.GetValue(static_cast<size_t>(it - result.names.begin()), row));
+  const auto value =
+    result.GetValue(static_cast<size_t>(it - result.names.begin()), row);
+  return value.IsNull() ? std::string{} : duckdb::StringValue::Get(value);
 }
 
 ToolResult Error(std::string text) { return {std::move(text), true}; }
@@ -244,24 +245,27 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     kind.empty() ? std::string{"NULL"} : SqlLiteral(kind);
   auto result = co_await ctx.RunQuery(
     absl::StrCat(
-      "WITH exact AS (SELECT kind, title AS signature, breadcrumb, path "
+      "WITH catalog AS MATERIALIZED (SELECT kind, name, signature, summary, "
+      "path FROM sdb_docs.objects), "
+      "exact AS (SELECT e.kind, e.title AS signature, e.breadcrumb, e.path, "
+      "any_value(c.name) AS name, any_value(c.summary) AS summary "
       "FROM sdb_docs.object(",
       literal, ", ", kind_literal,
-      ") WHERE kind IS NOT NULL), "
-      "o AS MATERIALIZED (SELECT kind, name, signature FROM sdb_docs.objects",
+      ") e LEFT JOIN catalog c ON c.kind = e.kind AND c.path = e.path AND "
+      "c.signature = e.title WHERE e.kind IS NOT NULL "
+      "GROUP BY e.kind, e.title, e.breadcrumb, e.path), "
+      "candidates AS (SELECT kind, arg_min(signature, length(signature)) AS "
+      "signature, min(length(name)) AS width, name FROM catalog "
+      "WHERE NOT EXISTS (SELECT 1 FROM exact) AND name ILIKE '%' || ",
+      literal, " || '%'",
       kind.empty()
         ? ""
-        : absl::StrCat(" WHERE lower(kind) = lower(", kind_literal, ")"),
-      "), "
-      "candidates AS (SELECT kind, arg_min(signature, length(signature)) AS "
-      "signature, min(length(name)) AS width, name FROM o "
-      "WHERE NOT EXISTS (SELECT 1 FROM exact) AND name ILIKE '%' || ",
-      literal,
-      " || '%' GROUP BY kind, name ORDER BY width, name LIMIT 10) "
-      "SELECT kind, signature, breadcrumb, path, "
+        : absl::StrCat(" AND lower(kind) = lower(", kind_literal, ")"),
+      " GROUP BY kind, name ORDER BY width, name LIMIT 10) "
+      "SELECT kind, signature, breadcrumb, path, name, summary, "
       "row_number() OVER (ORDER BY kind, path) AS position FROM exact "
       "UNION ALL "
-      "SELECT kind, signature, NULL, NULL, "
+      "SELECT kind, signature, NULL, NULL, NULL, NULL, "
       "row_number() OVER (ORDER BY width, name) FROM candidates "
       "ORDER BY position"),
     /*writes=*/false);
@@ -285,11 +289,12 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
           functions
             ? absl::StrCat(
                 "SELECT function_type AS kind, function_name || '(' || "
-                "array_to_string(list_transform(generate_series(1, "
-                "len(parameters)), i -> parameters[i] || ' ' || "
-                "parameter_types[i]), ', ') || CASE WHEN varargs IS NULL THEN "
-                "'' ELSE ', ...' END || ')' || coalesce(' -> ' || return_type, "
-                "'') AS signature, coalesce(description, '') AS description "
+                "coalesce(array_to_string(list_transform(generate_series(1, "
+                "len(parameters)), i -> parameters[i] || coalesce(' ' || "
+                "parameter_types[i], '')), ', '), '') || CASE WHEN varargs IS "
+                "NULL THEN '' ELSE ', ...' END || ')' || coalesce(' -> ' || "
+                "return_type, '') AS signature, coalesce(description, '') AS "
+                "description "
                 "FROM duckdb_functions() WHERE lower(function_name) = lower(",
                 literal, ")", settings ? " UNION ALL " : "")
             : "",
@@ -351,7 +356,7 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
   auto bodies = co_await ctx.RunQuery(
     absl::StrCat("SELECT path, left(content, ", kContentChars,
                  ") AS content, length(content) > ", kContentChars,
-                 " AS truncated FROM sdb_docs.docs WHERE path IN (",
+                 " AS truncated, title FROM sdb_docs.docs WHERE path IN (",
                  absl::StrJoin(paths, ", "), ")"),
     /*writes=*/false);
   if (bodies->HasError()) {
@@ -374,6 +379,13 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     }
     const auto body = body_rows.find(path);
     if (body == body_rows.end()) {
+      continue;
+    }
+    if (const auto summary = Cell(*result, "summary", row);
+        !summary.empty() &&
+        !absl::StrContainsIgnoreCase(Cell(*bodies, "title", body->second),
+                                     Cell(*result, "name", row))) {
+      absl::StrAppend(&text, "\n", summary);
       continue;
     }
     if (const auto content = Cell(*bodies, "content", body->second);

@@ -200,6 +200,16 @@ TEST_F(DocsIndex, SearchFindsSymbolsAndSplitIdentifiers) {
   EXPECT_TRUE(error.empty()) << error;
 }
 
+TEST_F(DocsIndex, SearchMatchesSymbolsInTextNotInMarkup) {
+  std::string error;
+  const auto hits = Search(Db(), "##", 5, {.content_text = true}, error);
+  ASSERT_FALSE(hits.empty());
+  EXPECT_TRUE(absl::c_all_of(hits, [](const Entry& entry) {
+    return entry.title.contains("##") || entry.content_text.contains("##");
+  }));
+  EXPECT_TRUE(error.empty()) << error;
+}
+
 TEST_F(DocsIndex, SearchMatchesWordForms) {
   std::string error;
   const auto hits = Search(Db(), "how do I highlight matches", 3, {}, error);

@@ -816,7 +816,12 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
                    return;
                  }
                  const auto in_title = Occurrences(entry->title, needle);
-                 const auto in_body = Occurrences(entry->content, needle);
+                 if (in_title == 0 && !entry->content.contains(needle)) {
+                   return;
+                 }
+                 entry->content_text =
+                   duckdb::markdown_utils::MarkdownToText(entry->content);
+                 const auto in_body = Occurrences(entry->content_text, needle);
                  if (in_title + in_body > 0) {
                    entry->score = static_cast<double>(10 * in_title + in_body);
                    hits.push_back(std::move(*entry));
@@ -829,8 +834,8 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
     hits.resize(limit);
   }
   for (auto& hit : hits) {
-    if (columns.content_text) {
-      hit.content_text = duckdb::markdown_utils::MarkdownToText(hit.content);
+    if (!columns.content_text) {
+      hit.content_text.clear();
     }
     if (!columns.content) {
       hit.content.clear();

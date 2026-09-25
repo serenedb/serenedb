@@ -378,6 +378,21 @@ def test_describe_object_reports_what_only_the_server_knows(conn):
     assert not is_error and text.startswith("date_trunc(")
 
 
+def test_describe_object_reads_macros_the_docs_miss(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "pg_size_pretty"})
+    assert not is_error
+    assert "The server has it, undocumented:" in text
+    assert "pg_size_pretty(bytes) (macro)" in text
+
+
+def test_describe_object_prints_the_summary_of_a_table_row(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "max_memory"})
+    assert not is_error
+    assert text.startswith("max_memory (setting)\npath: configuration/overview.md#")
+    assert "The maximum memory of the system" in text
+    assert "configuration options that can be used" not in text
+
+
 def test_check_sql_plans_without_running(conn):
     text, is_error = call_tool(conn, "check_sql", {"sql": "SELECT 1 AS one"})
     assert not is_error and text.startswith("Valid. The plan:\n")

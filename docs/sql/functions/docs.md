@@ -64,7 +64,7 @@ catalog says so.
 | :--- | :--- |
 | `function` | Scalar, aggregate, window and table functions. |
 | `statement` | SQL statements such as `CREATE TABLE`. |
-| `tokenizer` | Text search dictionary templates such as `stem` and `ngram`. |
+| `tokenizer` | The dictionary templates with a page under [`CREATE TEXT SEARCH DICTIONARY`](../statements/create_text_search_dictionary/index.md): `keyword`, `pipeline`, `sql` and `union`. Analysis templates such as `split_text` are functions. |
 | `type` | Data types, with their aliases. |
 | `setting` | Configuration options. |
 | `index_type` | Index access methods: `inverted` and `art`. |
@@ -262,12 +262,21 @@ It speaks JSON-RPC 2.0 and accepts protocol versions `2025-06-18`, `2025-03-26` 
 `2024-11-05`.
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://127.0.0.1:8080?api=mcp'
+serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:8080?api=mcp'
 ```
 
+`--listen` takes every endpoint in one comma-separated value. A second `--listen`
+replaces the first, so keep the PostgreSQL endpoint in the same list.
+
 Point your agent at `http://127.0.0.1:8080/_mcp`. Auth works like every other HTTP API:
-Basic auth against the catalog roles. A role without a password only works from the
-local machine.
+Basic auth against the catalog roles. Every request needs the header, from the local
+machine too, and the endpoint answers 401 without it. A role without a password only
+works from the local machine. To register the endpoint with Claude Code:
+
+```bash
+claude mcp add --transport http serenedb http://127.0.0.1:8080/_mcp \
+  --header "Authorization: Basic $(printf 'postgres:' | base64)"
+```
 
 The first five tools read the tables and functions above, and `check_sql` checks your
 own SQL against the server:
@@ -278,7 +287,7 @@ own SQL against the server:
 | `read_doc` | `path` | One page or section as Markdown. Links in it become paths `read_doc` takes back, and a very long page is cut after listing its sections |
 | `list_docs` | optional `prefix` | `path - title` lines: the pages under a directory or the sections under a page |
 | `list_objects` | optional `kind` | One line per object with its signature, kind and summary |
-| `describe_object` | `name`, optional `kind` | Everything documented under a name or an alias. A function or setting the docs miss comes from the server's own catalog |
+| `describe_object` | `name`, optional `kind` | Everything documented under a name or an alias: the section about it, or its summary when a reference table row documents it. A function or setting the docs miss comes from the server's own catalog |
 | `check_sql` | `sql` | The plan of one statement or the server's error with its hint |
 
 `check_sql` only plans the statement with `EXPLAIN` and never runs it. It refuses more

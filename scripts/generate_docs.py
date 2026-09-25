@@ -11,7 +11,9 @@ DELIMITER = "sdbdoc"
 EXTENSIONS = {".md", ".mdx"}
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
-IMPORT_RE = re.compile(r"^\s*(import|export)\s.*$")
+MDX_ESM_RE = re.compile(
+    r"^(import\s.+\sfrom\s+['\"]|import\s+['\"]|export\s+(const|default|function|let|var)\b)")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 COMPONENT_OPEN_RE = re.compile(r"^\s*<([A-Z][A-Za-z.]*)(\s[^>]*)?>\s*$")
 COMPONENT_CLOSE_RE = re.compile(r"^\s*</([A-Z][A-Za-z.]*)>\s*$")
 COMPONENT_SELF_CLOSING_RE = re.compile(r"<[A-Z][A-Za-z.]*(\s[^>]*)?/>")
@@ -44,8 +46,14 @@ def clean(body: str) -> str:
     out = []
     depth = 0
     quote = False
+    fence = False
     for line in HTML_COMMENT_RE.sub("", body).split("\n"):
-        if IMPORT_RE.match(line) or EMPTY_DIV_RE.match(line):
+        if FENCE_RE.match(line):
+            fence = not fence
+        elif fence:
+            out.append(f"> {line}".rstrip() if quote else line.rstrip())
+            continue
+        elif MDX_ESM_RE.match(line) or EMPTY_DIV_RE.match(line):
             continue
         if not quote and (match := ADMONITION_OPEN_RE.match(line)):
             label = match.group(1).capitalize()
@@ -58,7 +66,7 @@ def clean(body: str) -> str:
             out.append("")
             quote = False
             continue
-        if COMPONENT_OPEN_RE.match(line):
+        if COMPONENT_OPEN_RE.match(line) and not line.rstrip().endswith("/>"):
             depth += 1
             continue
         if COMPONENT_CLOSE_RE.match(line):

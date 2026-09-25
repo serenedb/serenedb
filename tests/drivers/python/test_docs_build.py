@@ -45,6 +45,58 @@ def test_docs_generation_reports_the_embedded_text(tmp_path: Path) -> None:
     assert 0 < int(match.group(1)) < out.stat().st_size
 
 
+def test_docs_generation_keeps_code_that_starts_with_import_or_export(
+        tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "code.md").write_text(
+        "---\ntitle: Code\nsplit: page\n---\n"
+        'import Tabs from "@theme/Tabs";\n'
+        "export const answer = 42;\n\n"
+        "export endpoints directly.\n\n"
+        '```sh\nexport PATH="/opt/bin:$PATH"\n```\n\n'
+        "```python\nimport psycopg\n```\n\n"
+        "<Tabs />\n"
+        "  indented line\n",
+        encoding="utf-8")
+    out = tmp_path / "docs_data.cpp"
+    r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
+             "--tests-dir", str(REPO / "tests" / "sqllogic"))
+    assert r.returncode == 0, r.stderr
+    assert ('R"sdbdoc(export endpoints directly.\n\n'
+            '```sh\nexport PATH="/opt/bin:$PATH"\n```\n\n'
+            "```python\nimport psycopg\n```\n\n"
+            '  indented line\n)sdbdoc"') in out.read_text()
+
+
+def test_docs_generation_renders_test_directives_as_results(
+        tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "retry.md").write_text(
+        "---\ntitle: Retry\nsplit: page\n---\n"
+        '<SqlLogicTest id="retry/example" />\n',
+        encoding="utf-8")
+    site_docs = tmp_path / "tests" / "sdb" / "pg" / "site_docs"
+    site_docs.mkdir(parents=True)
+    (site_docs / "retry.test").write_text(
+        "# DOCS_TEST: example\n\n# DOCS_TEST_BODY\n\n"
+        "statement ok retry 40 backoff 250ms\nCREATE TABLE t (a INT);\n\n"
+        "statement count 2\nINSERT INTO t VALUES (1), (2);\n\n"
+        "query\nSELECT count(*) AS n FROM t;\n----\nn\n2\n\n"
+        "# DOCS_TEST_END\n\n"
+        "statement ok\nDROP TABLE t;\n",
+        encoding="utf-8")
+    out = tmp_path / "docs_data.cpp"
+    r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
+             "--tests-dir", str(tmp_path / "tests"))
+    assert r.returncode == 0, r.stderr
+    assert ('R"sdbdoc(```sql\nCREATE TABLE t (a INT);\n\n'
+            "INSERT INTO t VALUES (1), (2);\n\n"
+            "SELECT count(*) AS n FROM t;\n```\n\n"
+            '```\nn\n2\n```\n)sdbdoc"') in out.read_text()
+
+
 def test_docs_generation_turns_admonitions_into_quotes(tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

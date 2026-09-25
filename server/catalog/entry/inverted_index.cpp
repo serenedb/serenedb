@@ -228,7 +228,7 @@ std::vector<std::string> ParseKeyColumns(
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   irs::field_id id) const {
-  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  DeclaredCodec declared;
   if (const auto it = declared_compression.find(id);
       it != declared_compression.end()) {
     declared = it->second;
@@ -236,12 +236,16 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   if (const auto* entry = FindEntry(id)) {
     auto options = entry->column_options;
     if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-      options.compression = declared;
+      options.compression = declared.type;
+      options.compression_level = declared.compression_level;
     }
+    options.hyperloglog = options.hyperloglog || declared.hyperloglog;
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    return {.compression = declared};
+    return {.compression = declared.type,
+            .hyperloglog = declared.hyperloglog,
+            .compression_level = declared.compression_level};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its

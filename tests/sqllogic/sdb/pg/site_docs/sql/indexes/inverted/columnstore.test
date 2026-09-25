@@ -1,0 +1,62 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE events (
+    id BIGINT PRIMARY KEY,
+    host TEXT USING COMPRESSION dict_lz4,
+    body TEXT USING COMPRESSION lz4
+) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY events_eng AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE messages (id BIGINT PRIMARY KEY, body VARCHAR, sender VARCHAR);
+
+statement ok
+CREATE INDEX messages_idx ON messages USING inverted(body events_eng)
+    INCLUDE (sender included (compression = 'dict_lz4'));
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE logs (
+    id BIGINT PRIMARY KEY,
+    line TEXT USING COMPRESSION dict_zstd
+) WITH (storage = 'search', compression_level = 6, segment_target = 524288);
+
+statement ok
+CREATE TABLE metrics (
+    id BIGINT PRIMARY KEY,
+    labels TEXT
+) WITH (storage = 'search', compression_objective = 'size');
+
+# DOCS_TEST: example_004
+
+statement ok
+INSERT INTO events SELECT i, 'host-' || (i % 8), 'event ' || i || ' completed' FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) events;
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, compression, count(*) AS segments
+FROM pragma_storage_info('events')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body')
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression	segments
+body	LZ4	1
+host	DICT_LZ4	1

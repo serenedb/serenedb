@@ -1,0 +1,353 @@
+# Per-column compression levels on search tables: USING COMPRESSION
+# codec(compression_level = N) on a column, 'codec(compression_level = N)' on
+# an INCLUDE column, the table-level WITH (compression_level) as the default,
+# and every rejection: codecs that take no level, levels out of each codec's
+# range, unknown or malformed options, and levels on transactional tables.
+
+statement ok
+CREATE TABLE lvl_columns (a INTEGER PRIMARY KEY,
+                          lz4_1 TEXT USING COMPRESSION lz4(compression_level = 1),
+                          lz4_12 TEXT USING COMPRESSION lz4(compression_level = 12),
+                          dlz4_6 TEXT USING COMPRESSION dict_lz4(compression_level = 6),
+                          dzstd_1 TEXT USING COMPRESSION dict_zstd(compression_level = 1),
+                          dzstd_22 TEXT USING COMPRESSION dict_zstd(compression_level = 22),
+                          zxc_1 TEXT USING COMPRESSION zxc(compression_level = 1),
+                          zxc_7 TEXT USING COMPRESSION zxc(compression_level = 7),
+                          dzxc_4 TEXT USING COMPRESSION dict_zxc(compression_level = 4),
+                          dlz4_tbl TEXT USING COMPRESSION dict_lz4,
+                          dfsst TEXT USING COMPRESSION dict_fsst,
+                          fsst_col TEXT USING COMPRESSION fsst,
+                          auto_col TEXT,
+                          zstd_3 TEXT USING COMPRESSION zstd(compression_level = 3),
+                          zstd_22 TEXT USING COMPRESSION zstd(compression_level = 22),
+                          zstd_tbl TEXT USING COMPRESSION zstd)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 3);
+
+statement ok
+INSERT INTO lvl_columns SELECT a,
+  repeat('p' || a, 8), repeat('q' || a, 8), 'd' || (a % 11),
+  'z' || (a % 13), 'y' || (a % 17), repeat('r' || a, 6), repeat('s' || a, 6),
+  'x' || (a % 19), 'w' || (a % 23), 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0'),
+  CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END,
+  CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END,
+  repeat('t' || a, 6), CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END, 'n' || a
+  FROM range(20000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_columns;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('lvl_columns')
+WHERE column_name NOT IN ('a', 'auto_col', 'rowid') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+dfsst	DICT_FSST
+dlz4_6	DICT_LZ4
+dlz4_tbl	DICT_LZ4
+dzstd_1	DICT_ZSTD
+dzstd_22	DICT_ZSTD
+dzxc_4	DICT_ZXC
+fsst_col	FSST
+lz4_1	LZ4
+lz4_12	LZ4
+zstd_22	ZSTD
+zstd_3	ZSTD
+zstd_tbl	ZSTD
+zxc_1	ZXC
+zxc_7	ZXC
+
+query
+SELECT count(*) AS mismatches FROM lvl_columns
+WHERE lz4_1 IS DISTINCT FROM repeat('p' || a, 8)
+   OR lz4_12 IS DISTINCT FROM repeat('q' || a, 8)
+   OR dlz4_6 IS DISTINCT FROM 'd' || (a % 11)
+   OR dzstd_1 IS DISTINCT FROM 'z' || (a % 13)
+   OR dzstd_22 IS DISTINCT FROM 'y' || (a % 17)
+   OR zxc_1 IS DISTINCT FROM repeat('r' || a, 6)
+   OR zxc_7 IS DISTINCT FROM repeat('s' || a, 6)
+   OR dzxc_4 IS DISTINCT FROM 'x' || (a % 19)
+   OR dlz4_tbl IS DISTINCT FROM 'w' || (a % 23)
+   OR dfsst IS DISTINCT FROM 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0')
+   OR fsst_col IS DISTINCT FROM (CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END)
+   OR auto_col IS DISTINCT FROM (CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END)
+   OR zstd_3 IS DISTINCT FROM repeat('t' || a, 6)
+   OR zstd_22 IS DISTINCT FROM (CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END)
+   OR zstd_tbl IS DISTINCT FROM 'n' || a;
+----
+mismatches
+0
+
+query
+SELECT (SELECT count(*) FROM lvl_columns WHERE zstd_22 IS NULL) AS nulls,
+       (SELECT count(*) FROM lvl_columns WHERE zstd_3 = repeat('t7', 6)) AS eq,
+       (SELECT zstd_tbl FROM lvl_columns WHERE a = 19999) AS point;
+----
+nulls	eq	point
+2223	1	n19999
+
+query
+SELECT count(*) FROM lvl_columns WHERE dzstd_22 = 'y3' AND zxc_7 LIKE 's1%' AND dfsst = 'https://example.org/users/000001';
+----
+count
+6
+
+statement ok
+DROP TABLE lvl_columns;
+
+# The table-level level is a default, and a codec clamps it to its own range;
+# a level named on the column is checked against that range instead.
+statement ok
+CREATE TABLE lvl_table_default (a INTEGER PRIMARY KEY, v_lz4 TEXT USING COMPRESSION lz4, v_zxc TEXT USING COMPRESSION dict_zxc, v_zstd TEXT USING COMPRESSION dict_zstd, v_own TEXT USING COMPRESSION lz4(compression_level = 2))
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 22);
+
+statement ok
+INSERT INTO lvl_table_default SELECT a, repeat('a' || a, 5), 'b' || (a % 9), 'c' || (a % 7), repeat('d' || a, 5) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_table_default;
+
+query
+SELECT count(*) FROM lvl_table_default WHERE v_lz4 IS DISTINCT FROM repeat('a' || a, 5) OR v_zxc IS DISTINCT FROM 'b' || (a % 9) OR v_zstd IS DISTINCT FROM 'c' || (a % 7) OR v_own IS DISTINCT FROM repeat('d' || a, 5);
+----
+count
+0
+
+statement ok
+DROP TABLE lvl_table_default;
+
+# INCLUDE columns take the same string form and the same rules. On a search
+# table the index has no store of its own: its codec applies to the table's
+# column and wins over the column's USING COMPRESSION while the index exists.
+statement ok
+CREATE TABLE lvl_incl (pk INTEGER PRIMARY KEY, body TEXT, p1 TEXT, p2 TEXT, p3 TEXT USING COMPRESSION dict_fsst, p4 TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX lvl_incl_idx ON lvl_incl USING inverted(body)
+  INCLUDE (pk, p1 included (compression = 'dict_zstd(compression_level=9)'),
+           p2 included (compression = 'zxc(compression_level = 7)'),
+           p3 included (compression = 'lz4(compression_level=12)'),
+           p4 included (compression = 'dict_lz4'));
+
+statement ok
+INSERT INTO lvl_incl SELECT a, 'text ' || a, 'p' || (a % 13), repeat('q' || a, 6), repeat('r' || a, 6), 's' || (a % 17) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_incl;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('lvl_incl_idx')
+WHERE column_name IN ('p1', 'p2', 'p3', 'p4') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+p1	DICT_ZSTD
+p2	ZXC
+p3	LZ4
+p4	DICT_LZ4
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE p1 IS DISTINCT FROM 'p' || (pk % 13) OR p2 IS DISTINCT FROM repeat('q' || pk, 6) OR p3 IS DISTINCT FROM repeat('r' || pk, 6) OR p4 IS DISTINCT FROM 's' || (pk % 17)) AS mismatches FROM lvl_incl_idx;
+----
+n	mismatches
+5000	0
+
+# The table reports the same codecs: the index columns are the table's own.
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('lvl_incl')
+WHERE column_name IN ('p1', 'p2', 'p3', 'p4') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+p1	DICT_ZSTD
+p2	ZXC
+p3	LZ4
+p4	DICT_LZ4
+
+# Dropping the index hands p3 back to its own declaration for the segments
+# written from then on; the earlier segment keeps what it was written with.
+statement ok
+DROP INDEX lvl_incl_idx;
+
+statement ok
+INSERT INTO lvl_incl SELECT a, 'text ' || a, 'p' || (a % 13), repeat('q' || a, 6), repeat('r' || a, 6), 's' || (a % 17) FROM range(5000, 10000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_incl;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('lvl_incl')
+WHERE column_name = 'p3' AND segment_type <> 'VALIDITY'
+GROUP BY column_name;
+----
+column_name	compression
+p3	DICT_FSST,LZ4
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE p3 IS DISTINCT FROM repeat('r' || pk, 6)) AS mismatches FROM lvl_incl;
+----
+n	mismatches
+10000	0
+
+statement ok
+DROP TABLE lvl_incl;
+
+# Rejections on columns: codecs without a level, out-of-range levels, bad options.
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'dict_fsst' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'fsst' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zstd(compression_level = 23)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 23 is out of range for 'zstd' (1 to 22)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION uncompressed(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'uncompressed' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION rle(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'rle' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 13)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 13 is out of range for 'lz4' (1 to 12)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4(compression_level = 13)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 13 is out of range for 'dict_lz4' (1 to 12)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zstd(compression_level = 23)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 23 is out of range for 'dict_zstd' (1 to 22)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zxc(compression_level = 8)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 8 is out of range for 'zxc' (1 to 7)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zxc(compression_level = 8)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 8 is out of range for 'dict_zxc' (1 to 7)
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 0)) WITH (storage = 'search');
+----
+db error: ERROR: compression_level must be between 1 and 255, got 0
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 300)) WITH (storage = 'search');
+----
+db error: ERROR: compression_level must be between 1 and 255, got 300
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 'high')) WITH (storage = 'search');
+----
+db error: ERROR: compression_level must be an integer, got 'high'
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3)) WITH (storage = 'search');
+----
+db error: ERROR: Unknown compression option 'speed', expected compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level)) WITH (storage = 'search');
+----
+db error: ERROR: Compression option must be written as name = value, got 'compression_level'
+
+
+# Rejections on INCLUDE columns, through the string form.
+statement ok
+CREATE TABLE lvl_incl_bad (pk INTEGER PRIMARY KEY, body TEXT, p TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'dict_fsst(compression_level=2)'));
+----
+db error: ERROR: Column "p": compression 'dict_fsst' takes no compression_level
+
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=13)'));
+----
+db error: ERROR: Column "p": compression_level 13 is out of range for 'lz4' (1 to 12)
+
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(speed=1)'));
+----
+db error: ERROR: Column 'p': compression 'lz4(speed=1)': unknown option 'speed', expected compression_level
+
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=1'));
+----
+db error: ERROR: Column 'p': compression 'lz4(compression_level=1': expected name(compression_level = N)
+
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=x)'));
+----
+db error: ERROR: Column 'p': compression 'lz4(compression_level=x)': compression_level must be an integer between 1 and 255
+
+
+statement ok
+DROP TABLE lvl_incl_bad;
+
+# Transactional tables: a level implies a columnstore codec, which they refuse;
+# a duckdb codec never takes one.
+statement error
+CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION dict_lz4(compression_level = 2));
+----
+db error: ERROR: Column "v": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
+
+
+statement error
+CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION zstd(compression_level = 2));
+----
+db error: ERROR: Column "v": compression 'zstd' takes no compression_level
+
+
+statement ok
+CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION zstd);
+
+statement error
+ALTER TABLE lvl_plain ADD COLUMN w TEXT USING COMPRESSION dict_zstd(compression_level = 4);
+----
+db error: ERROR: Column "w": compression 'dict_zstd' is only available on search tables (WITH (storage = 'search'))
+
+
+statement ok
+DROP TABLE lvl_plain;

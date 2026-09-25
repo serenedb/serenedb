@@ -209,3 +209,162 @@ SET sdb_ai_request_timeout = 0;
 
 statement error invalid value for parameter "sdb_ai_embedding_max_batch_size"
 SET sdb_ai_embedding_max_batch_size = 0;
+
+query
+SELECT
+  typeof(ai_classify_labels(NULL, ['a', 'b'])) AS l,
+  typeof(ai_classify(NULL, [{label: 'a', description: 'first'}, {label: 'b', description: NULL}])) AS d,
+  typeof(ai_score(NULL, 'helpful')) AS s,
+  typeof(ai_rerank('query', NULL)) AS r,
+  ai_classify_labels(NULL, ['a', 'b']) IS NULL AS ln,
+  ai_rerank('query', NULL) IS NULL AS rn,
+  ai_embed('', 'm') IS NULL AS en;
+----
+l	d	s	r	ln	rn	en
+VARCHAR[]	VARCHAR	DOUBLE	DOUBLE	t	t	t
+
+query
+SELECT
+  typeof(ai_agg(body, 'q')) AS a,
+  ai_agg(body, 'q') IS NULL AS an,
+  ai_summarize_agg(body) IS NULL AS sn
+FROM ai_rows
+WHERE id > 10;
+----
+a	an	sn
+VARCHAR	t	t
+
+statement error ai_agg: "instruction" must not be NULL or empty
+SELECT ai_agg(body, NULL) FROM ai_rows;
+
+statement error ai_summarize_agg: "max_context_chars" must be a positive integer
+SELECT ai_summarize_agg(body, max_context_chars := 0) FROM ai_rows;
+
+statement error ai_classify_labels: "categories" must not be empty
+SELECT ai_classify_labels('x', []);
+
+statement ok
+CREATE OR REPLACE SECRET ai_far_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://example.invalid',
+  model 'm'
+);
+
+statement error ai_generate: secret '.*' uses the insecure endpoint 'http://example.invalid'
+SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}');
+
+statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
+query
+SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}') IS NULL AS n;
+----
+n
+t
+
+statement ok
+RESET sdb_ai_allow_insecure_endpoint;
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 1;
+
+statement ok
+SET sdb_ai_max_concurrent_requests = 1;
+
+query
+SELECT count(ai_classify(v, ['a', 'b'])) AS n FROM (VALUES ('x'), ('x')) t(v);
+----
+n
+0
+
+statement error sdb_ai_max_api_calls_per_query
+SELECT count(ai_classify(v, ['a', 'b'])) AS n FROM (VALUES ('x'), ('y')) t(v);
+
+statement ok
+RESET sdb_ai_max_api_calls_per_query;
+
+statement ok
+RESET sdb_ai_max_concurrent_requests;
+
+query
+EXPLAIN SELECT id, ai_generate(body) FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────╮
+│ Projections: id, #2   │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ AI_EVALUATE ─────────╮
+│ Calls: ai_generate    │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: ai_rows        │
+│ Type: Sequential Scan │
+│ Projections: id, body │
+│ ~3 rows               │
+╰───────────────────────╯
+
+query
+EXPLAIN SELECT id FROM ai_rows WHERE body <> 'c' AND ai_filter(body, 'x');
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: #1            │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ FILTER ─────┴─────────────╮
+│ Expression: #2             │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ AI_EVALUATE ┴─────────────╮
+│ Calls: ai_filter           │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: ai_rows             │
+│ Type: Sequential Scan      │
+│ Projections: body, id      │
+│ Column Filter: body != 'c' │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+query
+EXPLAIN SELECT id, CASE WHEN id = 1 THEN ai_generate(body) END FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                │
+│ id,                                                                                         │
+│ CASE  WHEN ((id = 1)) THEN (ai_generate(body, NULL, NULL, NULL, NULL, NULL)) ELSE NULL END  │
+│ ~3 rows                                                                                     │
+╰──────────────────────────────────────────────┬──────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────┴──────────────────────────────────────────────╮
+│ Table: ai_rows                                                                              │
+│ Type: Sequential Scan                                                                       │
+│ Projections: id, body                                                                       │
+│ ~3 rows                                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT ai_agg(body, 'q') FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────╮
+│ Projections: ai_agg(body) │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ AI_EVALUATE ─────────────╮
+│ Calls: ai_agg             │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: list(#0)      │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: ai_rows            │
+│ Type: Sequential Scan     │
+│ Projections: body         │
+│ ~3 rows                   │
+╰───────────────────────────╯

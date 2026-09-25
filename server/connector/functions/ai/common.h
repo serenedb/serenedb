@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
@@ -38,7 +37,11 @@
 
 namespace duckdb {
 
+class BoundAggregateExpression;
+class BoundFunctionExpression;
 class ClientContext;
+class DatabaseInstance;
+class DataChunk;
 class Expression;
 class ExpressionState;
 class ExtensionLoader;
@@ -118,44 +121,35 @@ class AIQueryUsage final : public duckdb::ClientContextState {
  public:
   void QueryBegin(duckdb::ClientContext&) final;
 
-  void Acquire(duckdb::ClientContext& context, size_t limit);
-  void Release();
-
   std::atomic_uint64_t calls = 0;
   std::atomic_uint64_t output_tokens = 0;
+};
 
- private:
-  absl::Mutex _mutex;
-  size_t _in_flight ABSL_GUARDED_BY(_mutex) = 0;
+struct Endpoint {
+  std::string_view fn;
+  std::string_view url;
+  std::string_view api_key;
 };
 
 class Requester {
  public:
-  Requester(duckdb::ClientContext& context, std::string fn, std::string url,
-            std::string_view api_key);
+  Requester(duckdb::ClientContext& context, const Endpoint& endpoint);
 
-  Response Send(size_t worker, std::string_view body);
+  Response Send(std::string_view body);
 
   std::optional<std::string> Accept(Response response) const;
 
-  std::optional<std::string> Post(size_t worker, std::string_view body) {
-    return Accept(Send(worker, body));
+  std::optional<std::string> Post(std::string_view body) {
+    return Accept(Send(body));
   }
 
   void AddOutputTokens(uint64_t tokens);
 
-  void ForEach(size_t n, absl::FunctionRef<void(size_t, size_t)> fn);
-
-  size_t MaxConcurrency() const noexcept { return _max_concurrency; }
+  void ForEach(size_t n, absl::FunctionRef<void(size_t)> fn);
 
   bool ThrowOnError() const noexcept { return _throw_on_error; }
 
  private:
-  struct Slot {
-    duckdb::unique_ptr<duckdb::HTTPParams> params;
-    duckdb::unique_ptr<duckdb::HTTPClient> client;
-  };
-
   bool ReserveCall();
   void Sleep(uint64_t ms) const;
 
@@ -164,30 +158,52 @@ class Requester {
   std::string _url;
   duckdb::HTTPHeaders _headers;
   duckdb::shared_ptr<AIQueryUsage> _usage;
-  std::vector<Slot> _slots;
+  duckdb::unique_ptr<duckdb::HTTPParams> _params;
+  duckdb::unique_ptr<duckdb::HTTPClient> _client;
   uint64_t _max_calls;
   uint64_t _max_output_tokens;
   uint32_t _max_retries;
   uint32_t _retry_delay_ms;
   uint32_t _timeout;
-  size_t _max_concurrency;
   bool _throw_on_error;
   bool _throw_on_quota;
 };
 
+class AIFunctionData : public duckdb::FunctionData {
+ public:
+  virtual Endpoint GetEndpoint() const = 0;
+
+  virtual size_t BatchSize() const { return 1; }
+
+  virtual void Evaluate(Requester& requester, duckdb::DataChunk& args,
+                        duckdb::Vector& result) const = 0;
+};
+
 struct AILocalState final : public duckdb::FunctionLocalState {
-  AILocalState(duckdb::ClientContext& context, std::string fn, std::string url,
-               std::string_view api_key);
+  AILocalState(duckdb::ClientContext& context, const AIFunctionData& bind);
 
   Requester requester;
 };
 
-Requester& LocalRequester(duckdb::ExpressionState& state);
+void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+               duckdb::Vector& result);
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> AIInitLocal(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
+  duckdb::FunctionData* bind_data);
+
+bool IsAIAggregate(const duckdb::BoundAggregateExpression& aggregate);
+
+duckdb::unique_ptr<duckdb::Expression> MakeAggregateReducer(
+  const duckdb::BoundAggregateExpression& aggregate,
+  duckdb::unique_ptr<duckdb::Expression> list);
 
 void RegisterTextFunctions(duckdb::ExtensionLoader& loader);
 
 void RegisterJevFunction(duckdb::ExtensionLoader& loader);
 
 void RegisterAggregateFunctions(duckdb::ExtensionLoader& loader);
+
+void RegisterAIOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector::ai

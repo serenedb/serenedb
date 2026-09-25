@@ -138,10 +138,10 @@ void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
   const auto& unique = inputs.texts;
   const size_t batch = std::max<size_t>(1, cfg.max_batch);
   std::vector<Embeddings> embeddings((unique.size() + batch - 1) / batch);
-  requester.ForEach(embeddings.size(), [&](size_t b, size_t worker) {
+  requester.ForEach(embeddings.size(), [&](size_t b) {
     const auto chunk = std::span{unique}.subspan(
       b * batch, std::min(batch, unique.size() - b * batch));
-    if (auto body = requester.Post(worker, BuildBody(cfg, chunk))) {
+    if (auto body = requester.Post(BuildBody(cfg, chunk))) {
       embeddings[b] = ParseEmbeddings(*body, chunk.size());
     }
   });

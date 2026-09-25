@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
 # DOCS_TEST: secret
 
 # DOCS_TEST_RAW
@@ -319,6 +322,206 @@ SELECT length(ai_redact('Purchase was done by customer John Doe with email test@
 ----
 redacted
 t
+
+# DOCS_TEST: classify_descriptions
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_classify(body, [{label: 'praise', description: 'the customer is satisfied'},
+#|                               {label: 'complaint', description: 'the customer reports a problem'}],
+#|                        secret_name := 'local_chat') AS kind
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	kind
+#| 1	praise
+#| 2	complaint
+#| 3	NULL
+#| 4	praise
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE k IN ('praise', 'complaint')) AS labelled
+FROM (
+    SELECT ai_classify(body, [{label: 'praise', description: 'the customer is satisfied'},
+                              {label: 'complaint', description: 'the customer reports a problem'}],
+                       secret_name := 'local_chat_${__DATABASE__}') AS k
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+labelled
+3
+
+# DOCS_TEST: classify_labels
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_classify_labels(body, ['price', 'quality', 'durability'],
+#|                               secret_name := 'local_chat') AS topics
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	topics
+#| 1	{price,quality}
+#| 2	{quality}
+#| 3	NULL
+#| 4	{quality}
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE list_has_all(['price', 'quality', 'durability'], l)) AS valid
+FROM (
+    SELECT ai_classify_labels(body, ['price', 'quality', 'durability'],
+                              secret_name := 'local_chat_${__DATABASE__}') AS l
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+valid
+3
+
+# DOCS_TEST: score
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_score(body, 'the review is positive about the product',
+#|                     secret_name := 'local_chat') AS score
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	score
+#| 1	1
+#| 2	0
+#| 3	NULL
+#| 4	1
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE s BETWEEN 0 AND 1) AS scored
+FROM (
+    SELECT ai_score(body, 'the review is positive about the product',
+                    secret_name := 'local_chat_${__DATABASE__}') AS s
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+scored
+3
+
+# DOCS_TEST: rerank
+
+# DOCS_TEST_RAW
+#| SELECT id, body
+#| FROM reviews
+#| WHERE body IS NOT NULL
+#| ORDER BY ai_rerank('product stopped working', body, secret_name := 'local_chat') DESC
+#| LIMIT 2;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE r BETWEEN 0 AND 1) AS ranked
+FROM (
+    SELECT ai_rerank('product stopped working', body,
+                     secret_name := 'local_chat_${__DATABASE__}') AS r
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+ranked
+3
+
+# DOCS_TEST: agg
+
+# DOCS_TEST_RAW
+#| SELECT ai_agg(body, 'What do customers like most? Answer in one sentence.',
+#|               secret_name := 'local_chat') AS answer
+#| FROM reviews;
+#| ----
+#| answer
+#| Customers like to have a great value and work perfectly.
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_agg(body, 'What do customers like most? Answer in one sentence.',
+                     secret_name := 'local_chat_${__DATABASE__}')) > 0 AS answered
+FROM reviews;
+----
+answered
+t
+
+query
+SELECT ai_agg(body, 'q', secret_name := 'local_chat_${__DATABASE__}') IS NULL AS empty
+FROM reviews
+WHERE body IS NULL;
+----
+empty
+t
+
+# DOCS_TEST: summarize_agg
+
+# DOCS_TEST_RAW
+#| SELECT ai_summarize_agg(body, secret_name := 'local_chat' ORDER BY id) AS summary
+#| FROM reviews;
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_summarize_agg(body, secret_name := 'local_chat_${__DATABASE__}' ORDER BY id)) > 0 AS summarized
+FROM reviews;
+----
+summarized
+t
+
+# DOCS_TEST: explain
+
+# DOCS_TEST_RAW
+#| EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
+#|                                secret_name := 'local_chat') AS sentiment
+#| FROM reviews;
+#| ----
+#| QUERY PLAN
+#| ╭─ PROJECTION ────────────╮
+#| │ Projections: id,        │
+#| │              sentiment  │
+#| │ ~4 rows                 │
+#| ╰────────────┬────────────╯
+#| ╭─ AI_EVALUATE ───────────╮
+#| │ Calls: ai_classify      │
+#| │ ~4 rows                 │
+#| ╰────────────┬────────────╯
+#| ╭─ SEQ_SCAN ─┴────────────╮
+#| │ Table: reviews          │
+#| │ Type: Sequential Scan   │
+#| │ Projections: id, body   │
+#| │ ~4 rows                 │
+#| ╰─────────────────────────╯
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
+                               secret_name := 'local_chat_${__DATABASE__}') AS sentiment
+FROM reviews;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────╮
+│ Projections: id,        │
+│              sentiment  │
+│ ~4 rows                 │
+╰────────────┬────────────╯
+╭─ AI_EVALUATE ───────────╮
+│ Calls: ai_classify      │
+│ ~4 rows                 │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: reviews          │
+│ Type: Sequential Scan   │
+│ Projections: id, body   │
+│ ~4 rows                 │
+╰─────────────────────────╯
 
 # DOCS_TEST: default_secret
 

@@ -284,16 +284,17 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
-sdb_ai_embedding_max_batch_size	64	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 64.
+sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_jev_default_secret	(empty)	Name of the typesafe secret used by prompt_jev when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests one executing thread keeps in flight at once. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of threads an AI_EVALUATE step uses. Each thread sends one AI provider request at a time, and the threads setting also limits the count. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
-sdb_ai_retry_initial_delay_ms	500	Delay before the first AI provider retry, in milliseconds; each further retry doubles it. A Retry-After response header overrides it. Default: 500.
-sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_extract, ai_filter, ai_translate and ai_redact when the call does not pass secret_name. Default: '' (no default).
+sdb_ai_retry_initial_delay_ms	500	Delay before the first AI provider retry, in milliseconds; each further retry doubles it, up to 60 seconds. A Retry-After response header overrides it, up to 60 seconds. Default: 500.
+sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_throw_on_error	on	When true, a row whose AI function request fails fails the query; when false, that row returns NULL. Authentication, not-found and validation (422) errors always fail the query. Default: true.
 sdb_ai_throw_on_quota_exceeded	on	When true, exceeding sdb_ai_max_api_calls_per_query or sdb_ai_max_output_tokens_per_query fails the query; when false, the remaining rows return NULL. Default: true.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).
@@ -637,16 +638,17 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
-sdb_ai_embedding_max_batch_size	64	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 64.
+sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_jev_default_secret	(empty)	Name of the typesafe secret used by prompt_jev when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests one executing thread keeps in flight at once. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of threads an AI_EVALUATE step uses. Each thread sends one AI provider request at a time, and the threads setting also limits the count. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
-sdb_ai_retry_initial_delay_ms	500	Delay before the first AI provider retry, in milliseconds; each further retry doubles it. A Retry-After response header overrides it. Default: 500.
-sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_extract, ai_filter, ai_translate and ai_redact when the call does not pass secret_name. Default: '' (no default).
+sdb_ai_retry_initial_delay_ms	500	Delay before the first AI provider retry, in milliseconds; each further retry doubles it, up to 60 seconds. A Retry-After response header overrides it, up to 60 seconds. Default: 500.
+sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_throw_on_error	on	When true, a row whose AI function request fails fails the query; when false, that row returns NULL. Authentication, not-found and validation (422) errors always fail the query. Default: true.
 sdb_ai_throw_on_quota_exceeded	on	When true, exceeding sdb_ai_max_api_calls_per_query or sdb_ai_max_output_tokens_per_query fails the query; when false, the remaining rows return NULL. Default: true.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).

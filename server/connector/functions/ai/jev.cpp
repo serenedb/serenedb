@@ -28,10 +28,8 @@
 #include <algorithm>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -337,7 +335,7 @@ std::vector<Question> ParseJsonQuestions(std::string_view json) {
   return questions;
 }
 
-struct JevBindData final : public duckdb::FunctionData {
+struct JevBindData final : public AIFunctionData {
   std::string url;
   std::string api_key;
   std::string model;
@@ -345,6 +343,15 @@ struct JevBindData final : public duckdb::FunctionData {
   duckdb::LogicalType type;
   bool multi = false;
   size_t batch_size = 1;
+
+  Endpoint GetEndpoint() const final {
+    return {.fn = kFn, .url = url, .api_key = api_key};
+  }
+
+  size_t BatchSize() const final { return batch_size; }
+
+  void Evaluate(Requester& requester, duckdb::DataChunk& args,
+                duckdb::Vector& result) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<JevBindData>(*this);
@@ -424,14 +431,6 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
                                         : std::string{kDefaultModel};
   input.GetBoundFunction().SetReturnType(bind->type);
   return bind;
-}
-
-duckdb::unique_ptr<duckdb::FunctionLocalState> JevInitLocal(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData* bind_data) {
-  const auto& bind = bind_data->Cast<JevBindData>();
-  return duckdb::make_uniq<AILocalState>(state.GetContext(), std::string{kFn},
-                                         bind.url, bind.api_key);
 }
 
 std::string RowKey(size_t k) { return absl::StrCat("r", k); }
@@ -599,15 +598,14 @@ duckdb::Value ParseAnswer(const Question& question,
      duckdb::Value::DOUBLE(confidence)});
 }
 
-void RunBatch(const JevBindData& bind, Requester& requester, size_t worker,
+void RunBatch(const JevBindData& bind, Requester& requester,
               std::span<const std::string_view> states,
               std::span<duckdb::Value> outputs) {
-  auto response = requester.Send(worker, BuildBody(bind, states));
+  auto response = requester.Send(BuildBody(bind, states));
   if (response.status == 422 && states.size() > 1) {
     const auto half = states.size() / 2;
-    RunBatch(bind, requester, worker, states.first(half), outputs.first(half));
-    RunBatch(bind, requester, worker, states.subspan(half),
-             outputs.subspan(half));
+    RunBatch(bind, requester, states.first(half), outputs.first(half));
+    RunBatch(bind, requester, states.subspan(half), outputs.subspan(half));
     return;
   }
   const auto body = requester.Accept(std::move(response));
@@ -643,23 +641,18 @@ void RunBatch(const JevBindData& bind, Requester& requester, size_t worker,
   }
 }
 
-void JevExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                duckdb::Vector& result) {
-  const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                       .BindInfo()
-                       ->Cast<JevBindData>();
-  auto& requester = LocalRequester(state);
+void JevBindData::Evaluate(Requester& requester, duckdb::DataChunk& args,
+                           duckdb::Vector& result) const {
   const auto inputs = CollectInputs(args.data[0], args.size(), true, false);
   const auto& texts = inputs.texts;
 
   std::vector<duckdb::Value> outputs(texts.size(),
                                      duckdb::Value{result.GetType()});
-  const auto batch = bind.batch_size;
   requester.ForEach(
-    (texts.size() + batch - 1) / batch, [&](size_t b, size_t worker) {
-      const auto begin = b * batch;
-      const auto size = std::min(batch, texts.size() - begin);
-      RunBatch(bind, requester, worker, std::span{texts}.subspan(begin, size),
+    (texts.size() + batch_size - 1) / batch_size, [&](size_t b) {
+      const auto begin = b * batch_size;
+      const auto size = std::min(batch_size, texts.size() - begin);
+      RunBatch(*this, requester, std::span{texts}.subspan(begin, size),
                std::span{outputs}.subspan(begin, size));
     });
   SetOutputs(result, inputs, outputs);
@@ -671,10 +664,10 @@ void RegisterJevFunction(duckdb::ExtensionLoader& loader) {
   duckdb::ScalarFunction fn{duckdb::Identifier{kFn},
                             {},
                             duckdb::LogicalType::DOUBLE,
-                            JevExecute,
+                            AIExecute,
                             JevBind,
                             nullptr,
-                            JevInitLocal};
+                            AIInitLocal};
   auto& signature = fn.GetSignature();
   signature.AddParameter(duckdb::Identifier{"input"},
                          duckdb::LogicalType::VARCHAR);

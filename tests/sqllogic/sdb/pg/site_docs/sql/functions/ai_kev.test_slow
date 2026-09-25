@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
 # DOCS_TEST: secret
 
 # DOCS_TEST_RAW

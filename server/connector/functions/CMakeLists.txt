@@ -36,6 +36,8 @@ target_sources(
         vector.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
+        ai/ai_operator.cpp
+        ai/ai_optimizer.cpp
         ai/chat.cpp
         ai/common.cpp
         ai/jev.cpp

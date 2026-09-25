@@ -29,11 +29,9 @@
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -119,12 +117,19 @@ const TextSpec& FindSpec(std::string_view name) {
   SDB_UNREACHABLE();
 }
 
-struct TextBindData final : public duckdb::FunctionData {
+struct TextBindData final : public AIFunctionData {
   const TextSpec* spec = nullptr;
   ChatConfig chat;
   ChatTemplate body;
   std::vector<std::string> labels;
   std::vector<std::string> keys;
+
+  Endpoint GetEndpoint() const final {
+    return {.fn = spec->name, .url = chat.url, .api_key = chat.api_key};
+  }
+
+  void Evaluate(Requester& requester, duckdb::DataChunk& args,
+                duckdb::Vector& result) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TextBindData>(*this);
@@ -393,15 +398,6 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   return bind;
 }
 
-duckdb::unique_ptr<duckdb::FunctionLocalState> TextInitLocal(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData* bind_data) {
-  const auto& bind = bind_data->Cast<TextBindData>();
-  return duckdb::make_uniq<AILocalState>(state.GetContext(),
-                                         std::string{bind.spec->name},
-                                         bind.chat.url, bind.chat.api_key);
-}
-
 std::string_view Unquote(std::string_view reply) {
   reply = absl::StripAsciiWhitespace(reply);
   while (!reply.empty() && (reply.back() == '.' || reply.back() == '!')) {
@@ -603,29 +599,23 @@ duckdb::Value Interpret(const TextBindData& bind, const ChatReply& reply) {
   SDB_UNREACHABLE();
 }
 
-void TextExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                 duckdb::Vector& result) {
-  const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                       .BindInfo()
-                       ->Cast<TextBindData>();
-  const auto& spec = *bind.spec;
-  auto& requester = LocalRequester(state);
+void TextBindData::Evaluate(Requester& requester, duckdb::DataChunk& args,
+                            duckdb::Vector& result) const {
   const auto inputs =
-    CollectInputs(args.data[spec.input_second ? 1 : 0], args.size(),
-                  spec.kind != TextKind::Generate, false);
+    CollectInputs(args.data[spec->input_second ? 1 : 0], args.size(),
+                  spec->kind != TextKind::Generate, false);
 
   std::vector<duckdb::Value> outputs(inputs.texts.size(),
                                      duckdb::Value{result.GetType()});
-  requester.ForEach(inputs.texts.size(), [&](size_t k, size_t worker) {
-    auto body =
-      requester.Post(worker, BuildChatBody(bind.body, inputs.texts[k]));
+  requester.ForEach(inputs.texts.size(), [&](size_t k) {
+    auto body = requester.Post(BuildChatBody(this->body, inputs.texts[k]));
     if (!body) {
       return;
     }
-    const auto reply = ParseChatReply(spec.name, *body);
+    const auto reply = ParseChatReply(spec->name, *body);
     requester.AddOutputTokens(reply.output_tokens);
-    CheckFinish(spec.name, reply, bind.chat.max_tokens);
-    outputs[k] = Interpret(bind, reply);
+    CheckFinish(spec->name, reply, chat.max_tokens);
+    outputs[k] = Interpret(*this, reply);
   });
   SetOutputs(result, inputs, outputs);
 }
@@ -659,10 +649,10 @@ duckdb::ScalarFunction MakeTextFunction(const TextSpec& spec,
     : spec.kind == TextKind::Score || spec.kind == TextKind::Rerank
       ? duckdb::LogicalType::DOUBLE
       : duckdb::LogicalType::VARCHAR,
-    TextExecute,
+    AIExecute,
     TextBind,
     nullptr,
-    TextInitLocal};
+    AIInitLocal};
   auto& signature = fn.GetSignature();
   if (spec.second_type == Second::None) {
     signature.AddParameter(duckdb::Identifier{spec.input},

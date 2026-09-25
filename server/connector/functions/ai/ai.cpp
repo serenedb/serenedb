@@ -27,12 +27,10 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/secret/secret.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
@@ -103,9 +101,19 @@ void RegisterSecretType(duckdb::ExtensionLoader& loader, std::string_view name,
   loader.RegisterFunction(fn);
 }
 
-struct EmbeddingBindData final : public duckdb::FunctionData {
+struct EmbeddingBindData final : public ai::AIFunctionData {
   std::string fn;
   ProviderConfig cfg;
+  bool similarity = false;
+
+  ai::Endpoint GetEndpoint() const final {
+    return {.fn = fn, .url = cfg.url, .api_key = cfg.api_key};
+  }
+
+  size_t BatchSize() const final { return cfg.max_batch; }
+
+  void Evaluate(ai::Requester& requester, duckdb::DataChunk& args,
+                duckdb::Vector& result) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<EmbeddingBindData>(*this);
@@ -113,7 +121,7 @@ struct EmbeddingBindData final : public duckdb::FunctionData {
 
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<EmbeddingBindData>();
-    return fn == o.fn && cfg == o.cfg;
+    return fn == o.fn && cfg == o.cfg && similarity == o.similarity;
   }
 };
 
@@ -137,6 +145,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindEmbedding(
 
   auto bind = duckdb::make_uniq<EmbeddingBindData>();
   bind->fn = fn;
+  bind->similarity = model_index == 2;
   bind->cfg.model = *model;
   if (dimensions) {
     const auto n = dimensions->GetValue<int32_t>();
@@ -162,32 +171,15 @@ duckdb::unique_ptr<duckdb::FunctionData> AISimilarityBind(
   return BindEmbedding(input, 2);
 }
 
-duckdb::unique_ptr<duckdb::FunctionLocalState> EmbeddingInitLocal(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData* bind_data) {
-  const auto& bind = bind_data->Cast<EmbeddingBindData>();
-  return duckdb::make_uniq<ai::AILocalState>(state.GetContext(), bind.fn,
-                                             bind.cfg.url, bind.cfg.api_key);
-}
-
-const EmbeddingBindData& GetBind(duckdb::ExpressionState& state) {
-  return state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .BindInfo()
-    ->Cast<EmbeddingBindData>();
-}
-
-void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                     duckdb::Vector& result) {
+void Embed(ai::Requester& requester, const ProviderConfig& cfg,
+           duckdb::DataChunk& args, duckdb::Vector& result) {
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  ai::EmbedBatch(ai::LocalRequester(state), GetBind(state).cfg, args.data[0],
-                 args.size(), result);
+  ai::EmbedBatch(requester, cfg, args.data[0], args.size(), result);
 }
 
-void AISimilarityFunction(duckdb::DataChunk& args,
-                          duckdb::ExpressionState& state,
-                          duckdb::Vector& result) {
-  const auto& bind = GetBind(state);
+void Similarity(ai::Requester& requester, const EmbeddingBindData& bind,
+                duckdb::DataChunk& args, duckdb::Vector& result) {
   const auto count = args.size();
   auto left = args.data[0].Values<duckdb::string_t>();
   auto right = args.data[1].Values<duckdb::string_t>();
@@ -222,7 +214,7 @@ void AISimilarityFunction(duckdb::DataChunk& args,
     duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT), n};
   embeddings.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(embeddings, 0);
-  ai::EmbedBatch(ai::LocalRequester(state), bind.cfg, texts, n, embeddings);
+  ai::EmbedBatch(requester, bind.cfg, texts, n, embeddings);
 
   const auto* entries =
     duckdb::FlatVector::GetData<duckdb::list_entry_t>(embeddings);
@@ -260,6 +252,16 @@ void AISimilarityFunction(duckdb::DataChunk& args,
   }
 }
 
+void EmbeddingBindData::Evaluate(ai::Requester& requester,
+                                 duckdb::DataChunk& args,
+                                 duckdb::Vector& result) const {
+  if (similarity) {
+    Similarity(requester, *this, args, result);
+  } else {
+    Embed(requester, cfg, args, result);
+  }
+}
+
 void AddEmbeddingOptions(duckdb::FunctionSignature& signature) {
   signature.AddParameter(duckdb::Identifier{"model"},
                          duckdb::LogicalType::VARCHAR);
@@ -285,10 +287,10 @@ void RegisterAIFunctions(duckdb::DatabaseInstance& db) {
     duckdb::Identifier{"ai_embed"},
     {},
     duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT),
-    AIEmbedFunction,
+    ai::AIExecute,
     AIEmbedBind,
     nullptr,
-    EmbeddingInitLocal,
+    ai::AIInitLocal,
   };
   ai_embed.GetSignature().AddParameter(duckdb::Identifier{"text"},
                                        duckdb::LogicalType::VARCHAR);
@@ -301,10 +303,10 @@ void RegisterAIFunctions(duckdb::DatabaseInstance& db) {
     duckdb::Identifier{"ai_similarity"},
     {},
     duckdb::LogicalType::DOUBLE,
-    AISimilarityFunction,
+    ai::AIExecute,
     AISimilarityBind,
     nullptr,
-    EmbeddingInitLocal,
+    ai::AIInitLocal,
   };
   ai_similarity.GetSignature().AddParameter(duckdb::Identifier{"text1"},
                                             duckdb::LogicalType::VARCHAR);
@@ -318,6 +320,7 @@ void RegisterAIFunctions(duckdb::DatabaseInstance& db) {
   ai::RegisterTextFunctions(loader);
   ai::RegisterJevFunction(loader);
   ai::RegisterAggregateFunctions(loader);
+  ai::RegisterAIOptimizer(db);
 }
 
 }  // namespace sdb::connector

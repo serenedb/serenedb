@@ -20,7 +20,6 @@
 
 #include "connector/functions/ai/common.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
@@ -39,8 +38,7 @@
 #include <duckdb/main/extension_helper.hpp>
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
-#include <duckdb/parallel/task_executor.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -62,7 +60,6 @@ constinit SettingRef gMaxOutputTokens{"sdb_ai_max_output_tokens_per_query"};
 constinit SettingRef gMaxRetries{"sdb_ai_max_retries"};
 constinit SettingRef gRetryDelay{"sdb_ai_retry_initial_delay_ms"};
 constinit SettingRef gTimeout{"sdb_ai_request_timeout"};
-constinit SettingRef gConcurrency{"sdb_ai_max_concurrent_requests"};
 constinit SettingRef gThrowOnError{"sdb_ai_throw_on_error"};
 constinit SettingRef gThrowOnQuota{"sdb_ai_throw_on_quota_exceeded"};
 
@@ -169,21 +166,6 @@ std::string ProviderError(std::string_view body) {
   }
   return ReadableText(body);
 }
-
-class RequestTask final : public duckdb::BaseExecutorTask {
- public:
-  RequestTask(duckdb::TaskExecutor& executor,
-              absl::FunctionRef<void(size_t)> work, size_t worker)
-    : BaseExecutorTask{executor}, _work{work}, _worker{worker} {}
-
-  void ExecuteTask() final { _work(_worker); }
-
-  std::string TaskType() const final { return "AIRequests"; }
-
- private:
-  absl::FunctionRef<void(size_t)> _work;
-  size_t _worker;
-};
 
 uint64_t RetryDelayMs(uint32_t initial_ms, uint32_t attempt,
                       std::string_view retry_after) {
@@ -398,43 +380,22 @@ void AIQueryUsage::QueryBegin(duckdb::ClientContext&) {
   output_tokens.store(0, std::memory_order_relaxed);
 }
 
-void AIQueryUsage::Acquire(duckdb::ClientContext& context, size_t limit) {
-  absl::MutexLock lock{&_mutex};
-  const auto has_room = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
-    return _in_flight < limit;
-  };
-  while (!_mutex.AwaitWithTimeout(absl::Condition{&has_room},
-                                  absl::Milliseconds(50))) {
-    if (context.IsInterrupted()) {
-      ThrowInterrupted();
-    }
-  }
-  ++_in_flight;
-}
-
-void AIQueryUsage::Release() {
-  absl::MutexLock lock{&_mutex};
-  --_in_flight;
-}
-
-Requester::Requester(duckdb::ClientContext& context, std::string fn,
-                     std::string url, std::string_view api_key)
+Requester::Requester(duckdb::ClientContext& context, const Endpoint& endpoint)
   : _context{context},
-    _fn{std::move(fn)},
-    _url{std::move(url)},
+    _fn{endpoint.fn},
+    _url{endpoint.url},
     _usage{context.registered_state->GetOrCreate<AIQueryUsage>("sdb_ai_usage")},
     _max_calls{gMaxCalls.Int(context)},
     _max_output_tokens{gMaxOutputTokens.Int(context)},
     _max_retries{gMaxRetries.Int(context)},
     _retry_delay_ms{gRetryDelay.Int(context)},
     _timeout{gTimeout.Int(context)},
-    _max_concurrency{std::max<size_t>(1, gConcurrency.Int(context))},
     _throw_on_error{gThrowOnError.Bool(context)},
     _throw_on_quota{gThrowOnQuota.Bool(context)} {
   _headers.Insert("Content-Type", "application/json");
   _headers.Insert("X-SereneDB-AI-Function", _fn);
-  if (!api_key.empty()) {
-    _headers.Insert("Authorization", absl::StrCat("Bearer ", api_key));
+  if (!endpoint.api_key.empty()) {
+    _headers.Insert("Authorization", absl::StrCat("Bearer ", endpoint.api_key));
   }
 }
 
@@ -479,9 +440,14 @@ void Requester::Sleep(uint64_t ms) const {
   }
 }
 
-Response Requester::Send(size_t worker, std::string_view body) {
-  auto& slot = _slots[worker];
+Response Requester::Send(std::string_view body) {
   auto& http = duckdb::HTTPUtil::Get(*_context.db);
+  if (!_params) {
+    _params = http.InitializeParameters(_context, _url);
+    _params->retries = 0;
+    _params->timeout = _timeout;
+    _params->timeout_usec = 0;
+  }
   Response response;
   for (uint32_t attempt = 0;; ++attempt) {
     if (_context.IsInterrupted()) {
@@ -491,18 +457,13 @@ Response Requester::Send(size_t worker, std::string_view body) {
       return {.skipped = true};
     }
     duckdb::PostRequestInfo request{
-      _url, _headers, *slot.params,
+      _url, _headers, *_params,
       reinterpret_cast<duckdb::const_data_ptr_t>(body.data()), body.size()};
     request.try_request = true;
-    duckdb::unique_ptr<duckdb::HTTPResponse> result;
-    {
-      _usage->Acquire(_context, _max_concurrency);
-      const absl::Cleanup release = [&] { _usage->Release(); };
-      result = http.Request(request, slot.client);
-    }
+    auto result = http.Request(request, _client);
     std::string retry_after;
     if (!result || result->HasRequestError()) {
-      slot.client.reset();
+      _client.reset();
       response.status = 0;
       response.body =
         result ? result->GetRequestError() : std::string{"no response"};
@@ -547,72 +508,39 @@ void Requester::AddOutputTokens(uint64_t tokens) {
   _usage->output_tokens.fetch_add(tokens, std::memory_order_relaxed);
 }
 
-void Requester::ForEach(size_t n, absl::FunctionRef<void(size_t, size_t)> fn) {
-  if (n == 0) {
-    return;
-  }
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(_context);
-  const auto workers = std::min(
-    {n, _max_concurrency,
-     std::max<size_t>(1, static_cast<size_t>(scheduler.NumberOfThreads()))});
-  auto& http = duckdb::HTTPUtil::Get(*_context.db);
-  while (_slots.size() < workers) {
-    auto& slot = _slots.emplace_back(http.InitializeParameters(_context, _url));
-    slot.params->retries = 0;
-    slot.params->timeout = _timeout;
-    slot.params->timeout_usec = 0;
-  }
-
-  std::atomic_size_t next = 0;
-  std::atomic_bool stop = false;
-  absl::Mutex mutex;
-  std::exception_ptr error;
-  auto record = [&] {
-    absl::MutexLock lock{&mutex};
-    if (!error) {
-      error = std::current_exception();
-    }
-    stop.store(true, std::memory_order_relaxed);
-  };
-  auto work = [&](size_t worker) {
-    while (!stop.load(std::memory_order_relaxed)) {
-      const auto i = next.fetch_add(1, std::memory_order_relaxed);
-      if (i >= n) {
-        return;
-      }
-      try {
-        fn(i, worker);
-      } catch (const irs::SqlException& e) {
-        if (!_throw_on_error &&
-            e.error().errcode == ERRCODE_EXTERNAL_ROUTINE_EXCEPTION) {
-          continue;
-        }
-        record();
-      } catch (...) {
-        record();
+void Requester::ForEach(size_t n, absl::FunctionRef<void(size_t)> fn) {
+  for (size_t i = 0; i != n; ++i) {
+    try {
+      fn(i);
+    } catch (const irs::SqlException& e) {
+      if (_throw_on_error ||
+          e.error().errcode != ERRCODE_EXTERNAL_ROUTINE_EXCEPTION) {
+        throw;
       }
     }
-  };
-  duckdb::TaskExecutor executor{_context};
-  for (size_t worker = 1; worker < workers; ++worker) {
-    executor.ScheduleTask(duckdb::make_uniq<RequestTask>(
-      executor, absl::FunctionRef<void(size_t)>{work}, worker));
-  }
-  work(0);
-  executor.WorkOnTasks();
-  if (error) {
-    std::rethrow_exception(error);
   }
 }
 
-AILocalState::AILocalState(duckdb::ClientContext& context, std::string fn,
-                           std::string url, std::string_view api_key)
-  : requester{context, std::move(fn), std::move(url), api_key} {}
+AILocalState::AILocalState(duckdb::ClientContext& context,
+                           const AIFunctionData& bind)
+  : requester{context, bind.GetEndpoint()} {}
 
-Requester& LocalRequester(duckdb::ExpressionState& state) {
-  return duckdb::ExecuteFunctionState::GetFunctionState(state)
-    ->Cast<AILocalState>()
-    .requester;
+void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+               duckdb::Vector& result) {
+  state.expr.Cast<duckdb::BoundFunctionExpression>()
+    .BindInfo()
+    ->Cast<AIFunctionData>()
+    .Evaluate(duckdb::ExecuteFunctionState::GetFunctionState(state)
+                ->Cast<AILocalState>()
+                .requester,
+              args, result);
+}
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> AIInitLocal(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData* bind_data) {
+  return duckdb::make_uniq<AILocalState>(state.GetContext(),
+                                         bind_data->Cast<AIFunctionData>());
 }
 
 }  // namespace sdb::connector::ai

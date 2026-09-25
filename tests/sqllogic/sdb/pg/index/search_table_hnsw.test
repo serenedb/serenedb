@@ -1,0 +1,52 @@
+statement ok
+CREATE TABLE h (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX h_idx ON h USING inverted (vec hnsw(metric='l2', quant='none'));
+
+statement ok
+INSERT INTO h VALUES
+  (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
+  (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT)),
+  (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)),
+  (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
+
+statement ok
+VACUUM (REFRESH_TABLE) h;
+
+query
+SELECT id FROM h_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+query
+SELECT id FROM h
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+query
+EXPLAIN SELECT id FROM h_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: h_idx                           │
+│ Lookup: search                         │
+│ Score: l2_distance(vec, FLOAT[3])      │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯

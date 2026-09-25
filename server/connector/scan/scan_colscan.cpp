@@ -99,9 +99,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         output.SetChildCardinality(added);
         return;
       }
-      if (FinishUnit(g, l)) {
-        FinishSegments(g, 1);
-      }
+      FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       break;

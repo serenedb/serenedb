@@ -399,16 +399,12 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     return;
   }
   if (!l.published) {
-    uint32_t finished = 0;
     while (NextLiveUnit(g, l)) {
       CollectUnit(g, l);
-      finished += static_cast<uint32_t>(FinishUnit(g, l));
+      FinishUnit(g, l);
     }
     PublishHits(g, l);
     l.published = true;
-    if (finished != 0) {
-      FinishSegments(g, finished);
-    }
     t.published.fetch_add(1, std::memory_order_acq_rel);
   }
   if (!t.merge_barrier.Released()) {

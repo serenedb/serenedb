@@ -64,9 +64,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                          ->Run(range.begin, range.end);
       l.root_end = range.end;
     }
-    if (FinishUnit(g, l)) {
-      FinishSegments(g, 1);
-    }
+    FinishUnit(g, l);
   }
   FinishRoot(l);
   if (l.local_emitted >= l.local_count) {

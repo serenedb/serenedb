@@ -783,11 +783,7 @@ void RunTsDictScan(duckdb::ClientContext&, ScanGlobalState& g,
       }
       if (l.has_unit) {
         const bool split = !l.unit.whole;
-        const bool segment_done = FinishUnit(g, l);
-        if (segment_done) {
-          FinishSegments(g, 1);
-        }
-        if (segment_done && split) {
+        if (FinishUnit(g, l) && split) {
           l.BeginEmit(g);
           continue;
         }

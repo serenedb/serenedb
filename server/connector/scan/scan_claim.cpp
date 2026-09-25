@@ -221,14 +221,16 @@ void BuildOrderedHeap(ScanGlobalState& g) {
   g.ordered = true;
 }
 
-void BuildSegmentOrderedUnits(ScanGlobalState& g, SegmentWork& work,
-                              uint32_t seg, duckdb::Value segment_key) {
+std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
+  ScanGlobalState& g, SegmentWork& work, uint32_t seg,
+  duckdb::Value segment_key) {
   const auto& order = *g.Bind().scan_order;
+  auto built = std::make_unique<OrderedUnits>();
   if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-    work.ordered_units.push_back(
+    built->units.push_back(
       {.seg = seg, .rg_begin = 0, .rg_end = work.rg_count, .whole = true});
-    work.ordered_keys.push_back(std::move(segment_key));
-    return;
+    built->keys.push_back(std::move(segment_key));
+    return built;
   }
   const auto* column = OrderColumn(g, seg);
   const uint64_t docs = irs::VisibleCount((*g.reader)[seg].Meta());
@@ -244,13 +246,14 @@ void BuildSegmentOrderedUnits(ScanGlobalState& g, SegmentWork& work,
     keys.push_back({rg, std::move(v)});
   }
   SortScanOrderKeys(keys, order);
-  work.ordered_units.reserve(keys.size());
-  work.ordered_keys.reserve(keys.size());
+  built->units.reserve(keys.size());
+  built->keys.reserve(keys.size());
   for (auto& key : keys) {
-    work.ordered_units.push_back(
+    built->units.push_back(
       {.seg = seg, .rg_begin = key.id, .rg_end = key.id + 1, .whole = false});
-    work.ordered_keys.push_back(std::move(key.value));
+    built->keys.push_back(std::move(key.value));
   }
+  return built;
 }
 
 bool ConstantCount(const irs::Filter& filter) {
@@ -318,23 +321,58 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
       absl::c_pop_heap(heap, heap_order);
       head = std::move(heap.back());
       heap.pop_back();
-      auto& work = g.Segment(head.id);
-      if (work.ordered_built) {
-        const auto k = work.ordered_next++;
-        TakeUnit(l, work.ordered_units[k]);
-        if (work.ordered_next < work.ordered_units.size()) {
-          heap.push_back({head.id, work.ordered_keys[work.ordered_next]});
+      if (auto* ordered = g.Segment(head.id).ordered.get()) {
+        const auto k = ordered->next++;
+        TakeUnit(l, ordered->units[k]);
+        if (ordered->next < ordered->units.size()) {
+          heap.push_back({head.id, ordered->keys[ordered->next]});
           absl::c_push_heap(heap, heap_order);
         }
         return true;
       }
     }
     auto& work = g.Segment(head.id);
-    BuildSegmentOrderedUnits(g, work, head.id, std::move(head.value));
+    auto built =
+      BuildSegmentOrderedUnits(g, work, head.id, std::move(head.value));
     absl::MutexLock lock{&g.ordered_mutex};
-    work.ordered_built = true;
-    heap.push_back({head.id, work.ordered_keys.front()});
+    heap.push_back({head.id, built->keys.front()});
+    work.ordered = std::move(built);
     absl::c_push_heap(heap, heap_order);
+  }
+}
+
+void PublishFinished(ScanGlobalState& g, ScanLocalState& l) {
+  if (l.finished_segments != 0) {
+    g.done_segments.fetch_add(l.finished_segments, std::memory_order_acq_rel);
+    l.finished_segments = 0;
+  }
+}
+
+void Share(ScanGlobalState& g, const ScanLocalState& l, uint32_t seg) {
+  if (l.worker < g.workers) {
+    g.joinable[l.worker].store(seg, std::memory_order_relaxed);
+  }
+}
+
+bool ClaimBatch(ScanGlobalState& g, ScanLocalState& l) {
+  auto begin = g.next_segment.load(std::memory_order_relaxed);
+  for (;;) {
+    if (begin >= g.live_segments) {
+      return false;
+    }
+    const auto& first = g.Segment(g.segment_order[begin]);
+    const auto take =
+      std::max<uint32_t>(1, (g.live_segments - begin) / (2 * g.workers));
+    const auto end =
+      first.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
+        ? begin + 1
+        : std::min(first.run_end, begin + take);
+    if (g.next_segment.compare_exchange_weak(
+          begin, end, std::memory_order_relaxed, std::memory_order_relaxed)) {
+      l.batch_next = begin;
+      l.batch_end = end;
+      return true;
+    }
   }
 }
 
@@ -342,12 +380,12 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   for (;;) {
     uint32_t best = std::numeric_limits<uint32_t>::max();
     uint32_t most = 0;
-    for (uint32_t i = 0; i != g.live_segments; ++i) {
-      const auto seg = g.segment_order[i];
-      auto& work = g.Segment(seg);
-      if (work.claim.load(std::memory_order_relaxed) != SegmentWork::kSplit) {
+    for (uint32_t w = 0; w != g.workers; ++w) {
+      const auto seg = g.joinable[w].load(std::memory_order_relaxed);
+      if (seg == std::numeric_limits<uint32_t>::max()) {
         continue;
       }
+      const auto& work = g.Segment(seg);
       const auto next = work.next_rg.load(std::memory_order_relaxed);
       if (next < work.rg_count && work.rg_count - next > most) {
         most = work.rg_count - next;
@@ -358,6 +396,7 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
       return false;
     }
     if (ClaimRowGroups(g, l, best)) {
+      Share(g, l, best);
       return true;
     }
   }
@@ -406,7 +445,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                               ConstantCount(*bind.search.filter);
   uint64_t parallel = 0;
   uint64_t rgs = 0;
-  for (const auto seg : g.segment_order) {
+  auto run_end = g.live_segments;
+  for (auto i = g.live_segments; i-- != 0;) {
+    const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);
     const auto& sub = (*g.reader)[seg];
     const uint64_t docs = irs::VisibleCount(sub.Meta());
@@ -417,6 +458,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       !(constant_count && sub.live_docs_count() == sub.docs_count());
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
+    if (split) {
+      run_end = i;
+    }
+    work.run_end = run_end;
     parallel += split ? work.rg_count : 1;
     rgs += work.rg_count;
   }
@@ -425,6 +470,11 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));
+  g.joinable = std::make_unique<std::atomic_uint32_t[]>(g.workers);
+  for (uint32_t w = 0; w != g.workers; ++w) {
+    g.joinable[w].store(std::numeric_limits<uint32_t>::max(),
+                        std::memory_order_relaxed);
+  }
   constexpr uint64_t kFoldSharers = 4;
   g.fold_rgs = kFoldSharers * rgs / g.workers;
 
@@ -439,6 +489,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
     return false;
   }
   if (g.Ordered()) {
+    PublishFinished(g, l);
     if (ClaimOrderedUnit(g, l)) {
       return true;
     }
@@ -446,6 +497,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
     return false;
   }
   if (g.split == SplitMode::Always) {
+    PublishFinished(g, l);
     for (;;) {
       auto i = g.next_segment.load(std::memory_order_relaxed);
       if (i >= g.live_segments) {
@@ -479,25 +531,30 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       ClaimRowGroups(g, l, l.current_seg)) {
     return true;
   }
-  while (g.next_segment.load(std::memory_order_relaxed) < g.live_segments) {
-    const auto i = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (i >= g.live_segments) {
+  for (;;) {
+    while (l.batch_next != l.batch_end) {
+      const auto seg = g.segment_order[l.batch_next++];
+      auto& work = g.Segment(seg);
+      if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
+        TakeUnit(
+          l,
+          {.seg = seg, .rg_begin = 0, .rg_end = work.rg_count, .whole = true});
+        return true;
+      }
+      Share(g, l, seg);
+      if (ClaimRowGroups(g, l, seg)) {
+        return true;
+      }
+    }
+    PublishFinished(g, l);
+    if (!ClaimBatch(g, l)) {
       break;
-    }
-    const auto seg = g.segment_order[i];
-    auto& work = g.Segment(seg);
-    if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-      TakeUnit(
-        l, {.seg = seg, .rg_begin = 0, .rg_end = work.rg_count, .whole = true});
-      return true;
-    }
-    if (ClaimRowGroups(g, l, seg)) {
-      return true;
     }
   }
   if (Join(g, l)) {
     return true;
   }
+  PublishFinished(g, l);
   l.units_exhausted = true;
   return false;
 }
@@ -508,9 +565,7 @@ bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
     if (!l.seg_cls.segment_dead) {
       return true;
     }
-    if (FinishUnit(g, l)) {
-      FinishSegments(g, 1);
-    }
+    FinishUnit(g, l);
   }
   return false;
 }
@@ -519,20 +574,16 @@ bool FinishUnit(ScanGlobalState& g, ScanLocalState& l) {
   SDB_ASSERT(l.has_unit);
   l.has_unit = false;
   const auto& unit = l.unit;
-  if (unit.whole) {
-    return true;
+  if (!unit.whole) {
+    auto& work = g.Segment(unit.seg);
+    const auto rgs = unit.rg_end - unit.rg_begin;
+    if (work.done_rgs.fetch_add(rgs, std::memory_order_acq_rel) + rgs !=
+        work.rg_count) {
+      return false;
+    }
   }
-  auto& work = g.Segment(unit.seg);
-  const auto rgs = unit.rg_end - unit.rg_begin;
-  const auto done =
-    work.done_rgs.fetch_add(rgs, std::memory_order_acq_rel) + rgs;
-  return done == work.rg_count;
-}
-
-bool FinishSegments(ScanGlobalState& g, uint32_t count) {
-  SDB_ASSERT(count != 0);
-  return g.done_segments.fetch_add(count, std::memory_order_acq_rel) + count ==
-         g.live_segments;
+  ++l.finished_segments;
+  return true;
 }
 
 }  // namespace sdb::connector

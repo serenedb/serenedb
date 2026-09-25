@@ -97,6 +97,12 @@ struct ScanOrderKey {
   duckdb::Value value;
 };
 
+struct OrderedUnits {
+  std::vector<ScanUnit> units;
+  std::vector<duckdb::Value> keys;
+  uint32_t next = 0;
+};
+
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
@@ -107,14 +113,12 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kReady = 2;
 
   uint32_t rg_count = 0;
+  uint32_t run_end = 0;
   std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
-  bool ordered_built = false;
-  uint32_t ordered_next = 0;
-  std::vector<ScanUnit> ordered_units;
-  std::vector<duckdb::Value> ordered_keys;
+  std::unique_ptr<OrderedUnits> ordered;
 };
 
 class ScanBarrier {
@@ -219,6 +223,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
+  std::unique_ptr<std::atomic_uint32_t[]> joinable;
   uint32_t live_segments = 0;
   bool ordered = false;
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
@@ -292,6 +297,9 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t batch_next = 0;
+  uint32_t batch_end = 0;
+  uint32_t finished_segments = 0;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
@@ -373,7 +381,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
-bool FinishSegments(ScanGlobalState& g, uint32_t count);
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,

@@ -184,9 +184,7 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         }
         continue;
       }
-      if (FinishUnit(g, l)) {
-        FinishSegments(g, 1);
-      }
+      FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       if (const auto added = EmitChunk(ctx, g, l, output, true); added != 0) {

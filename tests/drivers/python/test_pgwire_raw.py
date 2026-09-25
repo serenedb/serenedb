@@ -71,8 +71,17 @@ class WireConn:
             payload += struct.pack("!I", oid)
         self.send("P", payload)
 
-    def bind(self, portal: str, stmt: str, params=(), result_format: int | None = None):
-        payload = _cstr(portal) + _cstr(stmt) + struct.pack("!H", 0)
+    def bind(
+        self,
+        portal: str,
+        stmt: str,
+        params=(),
+        result_format: int | None = None,
+        formats=(),
+    ):
+        payload = _cstr(portal) + _cstr(stmt) + struct.pack("!H", len(formats))
+        for fmt in formats:
+            payload += struct.pack("!H", fmt)
         payload += struct.pack("!H", len(params))
         for v in params:
             if v is None:
@@ -2052,3 +2061,85 @@ def test_suspended_portal_survives_ddl_in_same_transaction(conn):
     assert statuses(conn.run("COMMIT")) == ["I"]
     assert _exists(conn, "ddl_sp_unrelated") == 1
     _drop(conn, "ddl_sp", "ddl_sp_unrelated")
+
+
+def _data_row(payload: bytes):
+    (ncols,) = struct.unpack("!H", payload[:2])
+    off, values = 2, []
+    for _ in range(ncols):
+        (ln,) = struct.unpack("!i", payload[off : off + 4])
+        off += 4
+        if ln == -1:
+            values.append(None)
+            continue
+        values.append(payload[off : off + ln])
+        off += ln
+    return values
+
+
+def _float4_array(values) -> bytes:
+    out = struct.pack("!iiiii", 1, 0, 700, len(values), 1)
+    for v in values:
+        out += struct.pack("!i", 4) + struct.pack("!f", v)
+    return out
+
+
+def test_bind_keeps_parse_types_after_an_unresolved_parameter(conn):
+    conn.parse("", "SELECT $1, $2::INTEGER", oids=(0, 23))
+    conn.bind("", "", params=(None, struct.pack("!i", 7)), formats=(0, 1))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [[None, b"7"]]
+
+
+def test_bind_keeps_parse_types_in_a_values_list_with_nulls(conn):
+    conn.parse(
+        "",
+        "SELECT * FROM (VALUES ($1::INTEGER, $2), ($3::INTEGER, $4)) t(a, b)",
+        oids=(23, 0, 23, 0),
+    )
+    conn.bind(
+        "",
+        "",
+        params=(struct.pack("!i", 1), None, struct.pack("!i", 2), None),
+        formats=(1, 0, 1, 0),
+    )
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [[b"1", None], [b"2", None]]
+
+
+def test_parameter_description_echoes_client_types(conn):
+    conn.parse("ptypes", "SELECT $1, $2, $3::INTEGER", oids=(1043, 0, 20))
+    conn.describe("S", "ptypes")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    (payload,) = [p for t, p in m if t == "t"]
+    (count,) = struct.unpack("!H", payload[:2])
+    oids = list(struct.unpack(f"!{count}I", payload[2 : 2 + 4 * count]))
+    assert oids[0] == 1043
+    assert oids[2] == 20
+
+
+def test_binary_fixed_size_array_parameter(conn):
+    conn.parse("", "SELECT $1::FLOAT[3] = [1, 2, 3]::FLOAT[3], ($1::FLOAT[3])[2]")
+    conn.bind("", "", params=(_float4_array([1.0, 2.0, 3.0]),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [[b"t", b"2"]]
+
+
+def test_binary_fixed_size_array_parameter_of_the_wrong_length(conn):
+    conn.parse("", "SELECT $1::FLOAT[3]")
+    conn.bind("", "", params=(_float4_array([1.0, 2.0]),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P03"], errors(m)

@@ -57,8 +57,9 @@ struct FormSpec<sz_normal_form_nfc_k> {
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC3, 0xC8), Range(0xCC, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next,
-                                         uint8_t third) {
+  IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
+                                                          uint8_t next,
+                                                          uint8_t third) {
     if (lead == 0xCE) {
       return next == 0x87;
     }
@@ -107,7 +108,9 @@ struct FormSpec<sz_normal_form_nfkc_k> {
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC2, 0xC8), Range(0xCA, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next, uint8_t) {
+  IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
+                                                          uint8_t next,
+                                                          uint8_t) {
     if (lead == 0xCE) {
       return next == 0x84 || next == 0x85 || next == 0x87;
     }

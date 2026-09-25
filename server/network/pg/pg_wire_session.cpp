@@ -432,16 +432,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     };
 
   _conn->context->session_user = std::string{UserName()};
-  std::vector<duckdb::CatalogSearchEntry> default_paths{
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"$user"}},
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"public"}},
-  };
-  _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-    std::vector{default_paths});
-  _conn->context->client_data->catalog_search_path->Set(
-    std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+  connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);

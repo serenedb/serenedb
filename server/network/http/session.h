@@ -195,16 +195,7 @@ class HttpSession final
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};
-      std::vector<duckdb::CatalogSearchEntry> default_paths{
-        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
-                                   duckdb::Identifier{"$user"}},
-        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
-                                   duckdb::Identifier{"public"}},
-      };
-      _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-        std::vector{default_paths});
-      _conn->context->client_data->catalog_search_path->Set(
-        std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+      connector::SetDefaultSearchPath(*_conn->context, dbname);
     }
     return *_conn;
   }
@@ -337,6 +328,12 @@ class HttpSession final
   // view over _recv). Returns false when the connection died / parse failed.
   yaclib::Task<bool> ReadBody(HttpRequest& request, size_t& pinned_body);
 
+  struct BodyDecoding {
+    http::HttpStatus status = http::HttpStatus::None;
+    std::string_view error;
+  };
+  BodyDecoding DecodeRequestBody(HttpRequest& request);
+
   asio_ns::io_context& _io;
   asio_ns::steady_timer _deadline;
   HttpRouter& _router;
@@ -353,6 +350,7 @@ class HttpSession final
   H1Codec _codec;
 
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
+  std::optional<message::Buffer> _decoded;
 
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout) vs mid-request (strict header/body timeout).
@@ -528,6 +526,42 @@ yaclib::Task<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
 }
 
 template<SocketKind Kind>
+auto HttpSession<Kind>::DecodeRequestBody(HttpRequest& request)
+  -> BodyDecoding {
+  const auto field = request.Header(HttpHeader::ContentEncoding);
+  if (field.empty()) {
+    return {};
+  }
+  const auto codings = http::ParseContentEncoding(field);
+  if (!codings) {
+    return {http::HttpStatus::UnsupportedMediaType,
+            "unsupported_content_encoding"};
+  }
+  if (codings->empty() || request.body.Empty()) {
+    return {};
+  }
+  try {
+    _decoded.emplace(kReadBlock, kWireChunkMax);
+    message::Writer out{*_decoded};
+    http::DecodeContent(
+      request.body, *codings, [&](std::string_view part) { out.Write(part); },
+      _codec.MaxBodyBytes());
+    out.Commit(false);
+    request.body = _decoded->Written();
+    return {};
+  } catch (const irs::SqlException& error) {
+    switch (error.error().errcode) {
+      case ERRCODE_PROGRAM_LIMIT_EXCEEDED:
+        return {http::HttpStatus::ContentTooLarge, "decoded_body_too_large"};
+      case ERRCODE_DATA_EXCEPTION:
+        return {http::HttpStatus::BadRequest, "bad_content_encoding"};
+      default:
+        return {http::HttpStatus::InternalError, "internal"};
+    }
+  }
+}
+
+template<SocketKind Kind>
 yaclib::Future<> HttpSession<Kind>::SessionMain() {
   co_await _task->Park();
   absl::Cleanup finish_guard = [this] { _task->Finish(); };
@@ -566,114 +600,124 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
-      const auto negotiated = http::NegotiateContentCoding(
-        request.Header(HttpHeader::AcceptEncoding));
-      switch (negotiated.acceptance) {
-        case http::Acceptance::Ok:
-          if (negotiated.coding != nullptr) {
-            writer.SetContentCoding(*negotiated.coding);
-          }
-          break;
-        case http::Acceptance::Malformed:
+      bool close = false;
+      do {
+        const auto negotiated = http::NegotiateContentCoding(
+          request.Header(HttpHeader::AcceptEncoding));
+        if (negotiated.acceptance == http::Acceptance::Malformed) {
           writer.Error(http::HttpStatus::BadRequest, "bad_accept_encoding");
           co_await DrainSendOnTask();
-          continue;
-        case http::Acceptance::NotAcceptable:
-          writer.Error(http::HttpStatus::UnsupportedMediaType,
+          break;
+        }
+        if (negotiated.acceptance == http::Acceptance::NotAcceptable) {
+          writer.Error(http::HttpStatus::NotAcceptable,
                        "no_acceptable_content_coding");
           co_await DrainSendOnTask();
-          continue;
-      }
+          break;
+        }
+        if (negotiated.coding != nullptr) {
+          writer.SetContentCoding(*negotiated.coding);
+        }
+        if (_max_conn != 0 && _active &&
+            _active->load(std::memory_order_relaxed) > _max_conn) {
+          writer.Fixed(http::HttpStatus::ServiceUnavailable,
+                       http::kJsonContentType,
+                       R"({"error":"too_many_connections"})", "");
+          co_await DrainSendOnTask();
+          close = true;
+          break;
+        }
 
-      if (_max_conn != 0 && _active &&
-          _active->load(std::memory_order_relaxed) > _max_conn) {
-        writer.Fixed(http::HttpStatus::ServiceUnavailable,
-                     http::kJsonContentType,
-                     R"({"error":"too_many_connections"})", "");
-        co_await DrainSendOnTask();
-        break;
-      }
-
-      // CORS: echo an allowed Origin (credentials-safe), answer preflight here.
-      std::string cors_headers;
-      if (const std::string_view origin = request.Header(HttpHeader::Origin);
-          !origin.empty() && !_cors_origins.empty()) {
-        bool allowed = _cors_origins == "*";
-        if (!allowed) {
-          for (std::string_view o :
-               absl::StrSplit(_cors_origins, ',', absl::SkipEmpty())) {
-            if (absl::StripAsciiWhitespace(o) == origin) {
-              allowed = true;
-              break;
+        // CORS: echo an allowed Origin (credentials-safe), answer preflight
+        // here.
+        std::string cors_headers;
+        if (const std::string_view origin = request.Header(HttpHeader::Origin);
+            !origin.empty() && !_cors_origins.empty()) {
+          bool allowed = _cors_origins == "*";
+          if (!allowed) {
+            for (std::string_view o :
+                 absl::StrSplit(_cors_origins, ',', absl::SkipEmpty())) {
+              if (absl::StripAsciiWhitespace(o) == origin) {
+                allowed = true;
+                break;
+              }
             }
           }
-        }
-        if (allowed) {
-          cors_headers = absl::StrCat(
-            "Access-Control-Allow-Origin: ", origin,
-            "\r\nAccess-Control-Allow-Credentials: true\r\nVary: Origin\r\n");
-          if (request.method == HttpMethod::Options) {
-            writer.Fixed(
-              http::HttpStatus::NoContent, "text/plain", "",
-              absl::StrCat(
-                cors_headers,
-                "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, HEAD, "
-                "OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, "
-                "Authorization\r\nAccess-Control-Max-Age: 86400\r\n"));
-            co_await DrainSendOnTask();
-            continue;
+          if (allowed) {
+            cors_headers = absl::StrCat(
+              "Access-Control-Allow-Origin: ", origin,
+              "\r\nAccess-Control-Allow-Credentials: true\r\nVary: Origin\r\n");
+            if (request.method == HttpMethod::Options) {
+              writer.Fixed(
+                http::HttpStatus::NoContent, "text/plain", "",
+                absl::StrCat(
+                  cors_headers,
+                  "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, HEAD, "
+                  "OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, "
+                  "Authorization\r\nAccess-Control-Max-Age: 86400\r\n"));
+              co_await DrainSendOnTask();
+              break;
+            }
+            writer.SetExtraHeaders(cors_headers);
           }
-          writer.SetExtraHeaders(cors_headers);
         }
-      }
 
-      // A unix socket is inherently local; a TCP peer is loopback only if its
-      // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only when
-      // this is true (see HttpAuthenticator) -- never over the network.
-      bool peer_is_loopback = true;
-      if constexpr (Kind != SocketKind::Unix) {
-        asio_ns::error_code peer_ec;
-        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
-      }
-      auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
-                                     peer_is_loopback);
-      _user = std::move(auth.context.user);
-      if (auth.status != http::HttpStatus::None) {
-        writer.Fixed(auth.status, http::kJsonContentType,
-                     R"({"error":"unauthorized"})",
-                     "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
-      } else if (HttpHandler* handler = _router.Match(request)) {
-        try {
-          co_await handler->Handle(*this, request, writer);
-        } catch (const std::exception&) {
+        // A unix socket is inherently local; a TCP peer is loopback only if its
+        // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only
+        // when this is true (see HttpAuthenticator) -- never over the network.
+        bool peer_is_loopback = true;
+        if constexpr (Kind != SocketKind::Unix) {
+          asio_ns::error_code peer_ec;
+          const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+          peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+        }
+        auto auth = _auth.Authenticate(
+          request.Header(HttpHeader::Authorization), peer_is_loopback);
+        _user = std::move(auth.context.user);
+        if (auth.status != http::HttpStatus::None) {
+          writer.Fixed(auth.status, http::kJsonContentType,
+                       R"({"error":"unauthorized"})",
+                       "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
+        } else if (const auto decoding = DecodeRequestBody(request);
+                   decoding.status != http::HttpStatus::None) {
+          writer.Error(decoding.status, decoding.error);
+        } else if (HttpHandler* handler = _router.Match(request)) {
+          try {
+            co_await handler->Handle(*this, request, writer);
+          } catch (const std::exception&) {
+            if (!writer.HeadWritten()) {
+              writer.Error(http::HttpStatus::InternalError, "internal");
+            }
+          }
+          if (writer.HeadWritten() && !writer.Finished()) {
+            // The head promised a body that never fully materialized; a clean
+            // HTTP error is no longer possible -- drop the connection so the
+            // client sees truncation, not a corrupt next response.
+            this->Stop();
+            break;
+          }
           if (!writer.HeadWritten()) {
             writer.Error(http::HttpStatus::InternalError, "internal");
           }
+          if (_connection_ctx) {
+            // No NoticeResponse equivalent on this protocol (and the
+            // ConnectionContext dtor asserts the queue is empty).
+            _connection_ctx->ConsumeNotices(
+              [](const irs::pg::SqlErrorData&) {});
+          }
+        } else {
+          writer.Error(http::HttpStatus::NotFound, "not_found");
         }
-        if (writer.HeadWritten() && !writer.Finished()) {
-          // The head promised a body that never fully materialized; a clean
-          // HTTP error is no longer possible -- drop the connection so the
-          // client sees truncation, not a corrupt next response.
-          this->Stop();
-          break;
-        }
-        if (!writer.HeadWritten()) {
-          writer.Error(http::HttpStatus::InternalError, "internal");
-        }
-        if (_connection_ctx) {
-          // No NoticeResponse equivalent on this protocol (and the
-          // ConnectionContext dtor asserts the queue is empty).
-          _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
-        }
-      } else {
-        writer.Error(http::HttpStatus::NotFound, "not_found");
+      } while (false);
+      if (close) {
+        break;
       }
       KickSend();
 
       if (pinned_body != 0) {
         _recv.Consume(pinned_body);
       }
+      _decoded.reset();
       if (!keep_alive || SendBroken()) {
         break;
       }

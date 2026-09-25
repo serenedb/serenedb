@@ -100,12 +100,14 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 `.json` and a `.pb` of the same payload: a test asserts that each
 row shape arrives twice, once per decoder.
 
-Request bodies may be gzip-compressed (`Content-Encoding: gzip`, the
-collector's default); a body may decompress to at most 256 MiB. Any other
-`Content-Encoding` answers `400`.
+Request bodies may be compressed with any coding the HTTP listener supports —
+`gzip` (the collector's default), `zstd`, `lz4` or `zxc`; see
+[HTTP Compression](../configuration/http_compression.md). An unsupported
+`Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
+before the payload is decoded.
 
-Errors use `google.rpc.Status`, encoded the same way as the request: `400` for
-an undecodable payload or an unsupported `Content-Encoding`.
+Errors of the export itself use `google.rpc.Status`, encoded the same way as
+the request: `400` for an undecodable payload.
 
 Authentication is the HTTP layer's usual Basic auth against the catalog roles.
 

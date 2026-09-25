@@ -559,9 +559,6 @@ template<typename Record>
 struct ExportRequest {
   std::vector<ResourceRecords<Record>> resources;
   ValueArena arena;
-  // The text fields are views: into the protobuf wire bytes (owned by the
-  // caller), or into the JSON parser's string buffer, which this keeps alive.
-  std::shared_ptr<const void> storage;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/logs/v1/logs_service.proto

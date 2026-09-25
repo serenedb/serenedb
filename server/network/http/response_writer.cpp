@@ -48,6 +48,8 @@ std::string_view ReasonPhrase(HttpStatus status) noexcept {
       return "Not Found";
     case 405:
       return "Method Not Allowed";
+    case 406:
+      return "Not Acceptable";
     case 408:
       return "Request Timeout";
     case 409:

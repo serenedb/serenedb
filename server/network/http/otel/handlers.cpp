@@ -25,7 +25,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
-#include <zlib.h>
 
 #include <algorithm>
 #include <array>
@@ -36,6 +35,7 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <memory>
+#include <optional>
 #include <protozero/pbf_writer.hpp>
 #include <span>
 #include <string>
@@ -190,28 +190,45 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
 }
 
 template<typename Signal>
+std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
+                                                size_t target,
+                                                network::PreparedEntry& entry) {
+  using Box = connector::OtelRequestBox<typename Signal::Request>;
+  try {
+    auto& connection = ctx.Connection();
+    auto& context = *connection.context;
+    if (entry.statement != nullptr) {
+      bool stale = false;
+      context.RunFunctionInTransaction([&] {
+        stale = entry.statement->data->RequireRebind(context, nullptr);
+      });
+      if (stale) {
+        entry.statement.reset();
+      }
+    }
+    if (entry.statement == nullptr) {
+      auto box = duckdb::make_shared_ptr<Box>();
+      auto statement = connection.Prepare(Signal::Insert(target, box));
+      if (statement->HasError()) {
+        // Not cached: the schema may appear later.
+        return statement->GetErrorObject();
+      }
+      entry.statement = std::move(statement);
+      entry.info = std::move(box);
+    }
+  } catch (const std::exception& error) {
+    return duckdb::ErrorData{error};
+  }
+  return std::nullopt;
+}
+
+template<typename Signal>
 yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
   using Box = connector::OtelRequestBox<typename Signal::Request>;
   auto& entry = ctx.PreparedSlot(Signal::kTargets[target]);
-  auto& context = *ctx.Connection().context;
-  if (entry.statement != nullptr) {
-    bool stale = false;
-    context.RunFunctionInTransaction(
-      [&] { stale = entry.statement->data->RequireRebind(context, nullptr); });
-    if (stale) {
-      entry.statement.reset();
-    }
-  }
-  if (entry.statement == nullptr) {
-    auto box = duckdb::make_shared_ptr<Box>();
-    auto statement = ctx.Connection().Prepare(Signal::Insert(target, box));
-    if (statement->HasError()) {
-      // Not cached: the schema may appear later.
-      co_return Failed(statement->GetErrorObject());
-    }
-    entry.statement = std::move(statement);
-    entry.info = std::move(box);
+  if (auto error = EnsurePrepared<Signal>(ctx, target, entry)) {
+    co_return Failed(*error);
   }
   auto& box = static_cast<Box&>(*entry.info);
   box.request = &request;
@@ -229,11 +246,12 @@ struct LogsSignal {
   static constexpr std::array<std::string_view, 1> kTargets{
     connector::kOtelLogsTable};
 
-  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+  static void Decode(std::string_view raw, bool protobuf,
+                     simdjson::ondemand::parser& parser, Request& out) {
     if (protobuf) {
       DecodeLogsRequest(raw, out);
     } else {
-      ParseLogsRequest(raw, out, /*padded=*/true);
+      ParseLogsRequest(raw, parser, out, /*padded=*/true);
     }
   }
 
@@ -248,11 +266,12 @@ struct TracesSignal {
   static constexpr std::array<std::string_view, 1> kTargets{
     connector::kOtelTracesTable};
 
-  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+  static void Decode(std::string_view raw, bool protobuf,
+                     simdjson::ondemand::parser& parser, Request& out) {
     if (protobuf) {
       DecodeTracesRequest(raw, out);
     } else {
-      ParseTracesRequest(raw, out, /*padded=*/true);
+      ParseTracesRequest(raw, parser, out, /*padded=*/true);
     }
   }
 
@@ -268,11 +287,12 @@ struct MetricsSignal {
   static constexpr std::string_view kRejectedField = "rejectedDataPoints";
   static constexpr auto& kTargets = connector::kOtelMetricTables;
 
-  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+  static void Decode(std::string_view raw, bool protobuf,
+                     simdjson::ondemand::parser& parser, Request& out) {
     if (protobuf) {
       DecodeMetricsRequest(raw, out);
     } else {
-      ParseMetricsRequest(raw, out, /*padded=*/true);
+      ParseMetricsRequest(raw, parser, out, /*padded=*/true);
     }
   }
 
@@ -281,57 +301,6 @@ struct MetricsSignal {
     return connector::OtelMetricsInsert(target, std::move(box));
   }
 };
-
-// A decompressed request may not exceed this: a few KB of gzip can inflate to
-// gigabytes.
-inline constexpr size_t kMaxInflatedBytes = size_t{256} << 20;
-
-// Inflates a gzip body straight from the receive chunks into a buffer that
-// ends with kJsonPadding zero bytes, like FlattenBody's. Empty on failure,
-// with `error` set.
-// https://opentelemetry.io/docs/specs/otlp/#otlphttp-request
-std::string InflateGzip(const message::SequenceView& body, std::string& error) {
-  z_stream stream{};
-  // 16 + MAX_WBITS: a gzip wrapper, not raw deflate or zlib.
-  if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) {
-    error = "gzip: cannot initialize the decoder";
-    return {};
-  }
-  const absl::Cleanup end = [&] { inflateEnd(&stream); };
-  std::string out;
-  size_t size = 0;
-  int rc = Z_OK;
-  for (const auto chunk : body) {
-    stream.next_in =
-      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(chunk.data()));
-    stream.avail_in = static_cast<uInt>(chunk.size());
-    while (stream.avail_in != 0 && rc != Z_STREAM_END) {
-      if (out.size() - size < 64 * 1024) {
-        out.resize(std::max<size_t>(out.size() * 2, 1 << 20));
-      }
-      stream.next_out = reinterpret_cast<Bytef*>(out.data() + size);
-      stream.avail_out = static_cast<uInt>(out.size() - size);
-      rc = inflate(&stream, Z_NO_FLUSH);
-      size = out.size() - stream.avail_out;
-      if (rc != Z_OK && rc != Z_STREAM_END) {
-        error = absl::StrCat("gzip: ", stream.msg ? stream.msg : zError(rc));
-        return {};
-      }
-      if (size > kMaxInflatedBytes) {
-        error = absl::StrCat("gzip: decompressed body exceeds ",
-                             kMaxInflatedBytes, " bytes");
-        return {};
-      }
-    }
-  }
-  if (rc != Z_STREAM_END) {
-    error = "gzip: truncated body";
-    return {};
-  }
-  out.resize(size);
-  out.append(kJsonPadding, '\0');
-  return out;
-}
 
 // Answers a failed insert; false when there is nothing to answer.
 bool WriteFailure(HttpResponseWriter& writer, const InsertOutcome& outcome,
@@ -356,31 +325,9 @@ class ExportHandler final : public HttpHandler {
                   /*protobuf=*/false);
       co_return {};
     }
-    const auto encoding = request.Header(HttpHeader::ContentEncoding);
-    const bool gzip = absl::EqualsIgnoreCase(encoding, "gzip");
-    if (!encoding.empty() && !gzip &&
-        !absl::EqualsIgnoreCase(encoding, "identity")) {
-      WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                  absl::StrCat("unsupported Content-Encoding: ", encoding,
-                               "; expected gzip"),
-                  protobuf);
-      co_return {};
-    }
-
     // One copy of the body, padded so the JSON parser reads it in place. The
     // decoded model's text points into it (protobuf) or into the parser.
-    std::string buffer;
-    if (gzip) {
-      std::string error;
-      buffer = InflateGzip(request.body, error);
-      if (buffer.empty()) {
-        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument, error,
-                    protobuf);
-        co_return {};
-      }
-    } else {
-      buffer = FlattenBody(request.body, kJsonPadding);
-    }
+    const std::string buffer = FlattenBody(request.body, kJsonPadding);
     const std::string_view raw{buffer.data(), buffer.size() - kJsonPadding};
     if (raw.empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
@@ -388,9 +335,10 @@ class ExportHandler final : public HttpHandler {
       co_return {};
     }
 
+    simdjson::ondemand::parser parser;
     typename Signal::Request decoded;
     try {
-      Signal::Decode(raw, protobuf, decoded);
+      Signal::Decode(raw, protobuf, parser, decoded);
     } catch (const std::exception& error) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   error.what(), protobuf);

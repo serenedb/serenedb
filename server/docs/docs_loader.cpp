@@ -26,14 +26,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <exception>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -45,7 +42,6 @@
 #include "connector/duckdb_client_state.h"
 #include "docs/docs_data.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 
 namespace sdb::docs {
 namespace {
@@ -60,25 +56,10 @@ constexpr int kLayout = 12;
 constexpr size_t kInsertBatch = 32;
 class Loader {
  public:
-  Loader(std::string_view database, duckdb::idx_t database_id)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
-        database, database_id, nullptr, 0, nullptr)} {
-    _ctx->MarkSystemWriter();
-    connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
-    std::vector<duckdb::CatalogSearchEntry> paths{
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"$user"}},
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"public"}},
-    };
-    _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-      std::vector{paths});
-    _conn->context->client_data->catalog_search_path->Set(
-      std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+  Loader(std::string_view database, duckdb::idx_t database_id) {
+    auto system = connector::MakeSystemConnection(database, database_id);
+    _conn = std::move(system.conn);
+    _ctx = std::move(system.ctx);
   }
 
   ~Loader() {

@@ -1,13 +1,14 @@
 ---
 layout: docu
-title: HTTP Response Compression
+title: HTTP Compression
 split: page
 ---
 
 The HTTP listener (`--listen 'http://…?api=…'`) compresses response bodies
-when the client asks for one of the codings below. There is nothing to
-configure: every coding is always available, and a request that asks for
-none is answered uncompressed.
+when the client asks for one of the codings below, and decompresses request
+bodies sent with one of them, for every endpoint. There is nothing to
+configure: every coding is always available in both directions, and a request
+that asks for none is answered uncompressed.
 
 | Coding | Token | Notes |
 |---|---|---|
@@ -33,15 +34,34 @@ An encoding that does not make the body smaller is dropped, and the body is
 sent as-is.
 
 Compressed responses carry `Content-Encoding: <token>` and
-`Vary: Accept-Encoding`. Request bodies are not decompressed.
+`Vary: Accept-Encoding`.
+
+## Compressed request bodies
+
+A request body sent with `Content-Encoding` is decompressed once the request
+is authenticated, before it reaches the endpoint, so every API accepts
+compressed bodies the same way. The field may list up to two codings in the
+order they were applied (`Content-Encoding: gzip, zstd`); `identity` is
+ignored, and the tokens are case-insensitive. A decompressed body is held to
+the same size limit as an uncompressed one (64 MiB).
 
 ## Rejected requests
 
 | `Accept-Encoding` | Response |
 |---|---|
 | absent, empty, or asking only for codings we do not have (`br`) | `200`, uncompressed |
-| `identity;q=0` or `*;q=0`, with no coding we have left acceptable | `415 Unsupported Media Type` — nothing can be sent |
-| a weight that is not a qvalue (`gzip;q=huh`, `gzip;q=2`) | `400 Bad Request` |
+| `identity;q=0` or `*;q=0`, with no coding we have left acceptable | `406 Not Acceptable` — nothing can be sent |
+| a weight that is not a qvalue (`gzip;q=huh`, `gzip;q=2`, `gzip;q=nan`) | `400 Bad Request` |
+
+| `Content-Encoding` | Response |
+|---|---|
+| a coding we do not have (`br`), or more than two codings | `415 Unsupported Media Type` |
+| a body that is corrupt or truncated for its coding | `400 Bad Request` |
+| a body that decompresses past the body size limit | `413 Content Too Large` |
+
+These errors are answered after authentication and before the endpoint runs, as
+`{"error": "<reason>"}`, and the connection stays usable for the next
+request.
 
 ## Limitations
 

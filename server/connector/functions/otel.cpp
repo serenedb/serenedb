@@ -21,6 +21,7 @@
 #include "connector/functions/otel.h"
 
 #include <absl/strings/escaping.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <array>
@@ -30,8 +31,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/parser/expression/star_expression.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
@@ -390,8 +390,9 @@ duckdb::unique_ptr<SourceBindData> BindSource(
   return data;
 }
 
-// The columns every record of one scope shares, computed once per scope.
-struct ScopeColumns {
+// Values a record inherits from its outer scope or resource, shared by every
+// record of one scope and computed once per scope.
+struct InheritedColumns {
   std::string service_name;
   bool has_service = false;
   std::string resource_attributes;
@@ -443,7 +444,7 @@ class RecordCursor {
   const otel::ScopeRecords<Record>& Scopes() const {
     return Resources().scopes[_scope];
   }
-  const ScopeColumns& Shared() const { return _shared; }
+  const InheritedColumns& Shared() const { return _shared; }
 
  private:
   const otel::ExportRequest<Record>* _request;
@@ -451,7 +452,7 @@ class RecordCursor {
   size_t _scope = 0;
   size_t _record = 0;
   bool _ready = false;
-  ScopeColumns _shared;
+  InheritedColumns _shared;
 };
 
 template<typename Column, typename Put>
@@ -467,9 +468,10 @@ constexpr bool Named(std::string_view name) {
   return ColumnOf<C>().name == name;
 }
 
-// Every table's resource and scope columns, under the same enumerator names.
+// A column the record inherits from its outer scope or resource rather than
+// carrying itself. Every table has them, under the same enumerator names.
 template<auto C>
-constexpr bool IsScope() {
+constexpr bool IsInherited() {
   using Column = decltype(C);
   return C == Column::ServiceName || C == Column::ResourceSchemaUrl ||
          C == Column::ScopeSchemaUrl || C == Column::ScopeName ||
@@ -478,7 +480,7 @@ constexpr bool IsScope() {
 }
 
 template<auto C, typename Record>
-void PutScope(Out& out, const RecordCursor<Record>& cursor) {
+void PutInherited(Out& out, const RecordCursor<Record>& cursor) {
   using Column = decltype(C);
   const auto& shared = cursor.Shared();
   if constexpr (C == Column::ServiceName) {
@@ -506,15 +508,15 @@ struct LogsSource {
   using Record = otel::LogRecord;
   using Cursor = RecordCursor<Record>;
   using Column = schema::LogsColumn;
-  static constexpr std::string_view kTable = schema::kLogs.name;
-
   using Request = otel::ExportLogsRequest;
+
+  static constexpr std::string_view kTable = schema::kLogs.name;
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& record) {
     using enum Column;
-    if constexpr (IsScope<C>()) {
-      PutScope<C>(out, cursor);
+    if constexpr (IsInherited<C>()) {
+      PutInherited<C>(out, cursor);
     } else if constexpr (C == Timestamp) {
       out.Timestamp<C>(record.time_unix_nano != 0
                          ? record.time_unix_nano
@@ -566,15 +568,15 @@ struct TracesSource {
   using Record = otel::Span;
   using Cursor = RecordCursor<Record>;
   using Column = schema::TracesColumn;
-  static constexpr std::string_view kTable = schema::kTraces.name;
-
   using Request = otel::ExportTracesRequest;
+
+  static constexpr std::string_view kTable = schema::kTraces.name;
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& span) {
     using enum Column;
-    if constexpr (IsScope<C>()) {
-      PutScope<C>(out, cursor);
+    if constexpr (IsInherited<C>()) {
+      PutInherited<C>(out, cursor);
     } else if constexpr (C == Timestamp) {
       out.Timestamp<C>(span.start_time_unix_nano);
     } else if constexpr (C == EndTimestamp) {
@@ -672,16 +674,16 @@ template<typename MetricShape>
 struct MetricsSource {
   using Cursor = PointCursor<MetricShape>;
   using Column = typename MetricShape::Column;
-  static constexpr std::string_view kTable = schema::TableOf(Column{}).name;
-
   using Request = otel::ExportMetricsRequest;
+
+  static constexpr std::string_view kTable = schema::TableOf(Column{}).name;
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor,
                   const typename Cursor::Point& point) {
     const auto& metric = cursor.Metric();
-    if constexpr (IsScope<C>()) {
-      PutScope<C>(out, cursor.Records());
+    if constexpr (IsInherited<C>()) {
+      PutInherited<C>(out, cursor.Records());
     } else if constexpr (C == Column::Timestamp) {
       out.Timestamp<C>(point.time_unix_nano);
     } else if constexpr (C == Column::StartTimestamp) {
@@ -882,63 +884,58 @@ template<typename Source>
 duckdb::unique_ptr<duckdb::SQLStatement> SourceInsert(
   std::string_view name,
   duckdb::shared_ptr<OtelRequestBox<typename Source::Request>> box) {
+  duckdb::Parser parser;
+  parser.ParseQuery(absl::StrCat("INSERT INTO ", kOtelSchema, ".",
+                                 Source::kTable, " SELECT * FROM ", name,
+                                 "()"));
+  auto statement = std::move(parser.statements[0]);
+  auto& insert = statement->Cast<duckdb::InsertStatement>();
+  auto& select =
+    insert.node->select_statement->node->Cast<duckdb::SelectNode>();
+  auto& source = select.from_table->Cast<duckdb::TableFunctionRef>();
+
   auto function = duckdb::make_shared_ptr<duckdb::TableFunction>(
     duckdb::Identifier{std::string{name}},
     duckdb::vector<duckdb::LogicalType>{}, SourceExecute<Source>,
     SourceBind<Source>, SourceState<Source>::Init);
   function->function_info = std::move(box);
-
-  auto source = duckdb::make_uniq<duckdb::TableFunctionRef>();
-  source->function = duckdb::make_uniq<duckdb::FunctionExpression>(
-    duckdb::Identifier{std::string{name}},
-    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
-  source->inline_function = std::move(function);
-  auto select_node = duckdb::make_uniq<duckdb::SelectNode>();
-  select_node->select_list.push_back(
-    duckdb::make_uniq<duckdb::StarExpression>());
-  select_node->from_table = std::move(source);
-  auto select = duckdb::make_uniq<duckdb::SelectStatement>();
-  select->node = std::move(select_node);
-
-  auto node = duckdb::make_uniq<duckdb::InsertQueryNode>();
-  node->SetQualifiedName(duckdb::Identifier{}, duckdb::Identifier{kOtelSchema},
-                         duckdb::Identifier{std::string{Source::kTable}});
-  node->select_statement = std::move(select);
-  auto statement = duckdb::make_uniq<duckdb::InsertStatement>();
-  statement->node = std::move(node);
+  source.inline_function = std::move(function);
   return statement;
 }
 
 void Decode(std::string_view wire, bool protobuf,
-            otel::ExportLogsRequest& out) {
+            simdjson::ondemand::parser& parser, otel::ExportLogsRequest& out) {
   if (protobuf) {
     otel::DecodeLogsRequest(wire, out);
   } else {
-    otel::ParseLogsRequest(wire, out, /*padded=*/true);
+    otel::ParseLogsRequest(wire, parser, out, /*padded=*/true);
   }
 }
 
 void Decode(std::string_view wire, bool protobuf,
+            simdjson::ondemand::parser& parser,
             otel::ExportTracesRequest& out) {
   if (protobuf) {
     otel::DecodeTracesRequest(wire, out);
   } else {
-    otel::ParseTracesRequest(wire, out, /*padded=*/true);
+    otel::ParseTracesRequest(wire, parser, out, /*padded=*/true);
   }
 }
 
 void Decode(std::string_view wire, bool protobuf,
+            simdjson::ondemand::parser& parser,
             otel::ExportMetricsRequest& out) {
   if (protobuf) {
     otel::DecodeMetricsRequest(wire, out);
   } else {
-    otel::ParseMetricsRequest(wire, out, /*padded=*/true);
+    otel::ParseMetricsRequest(wire, parser, out, /*padded=*/true);
   }
 }
 
 template<typename Request>
 struct ParsedPayload {
   std::string wire;
+  simdjson::ondemand::parser parser;
   Request request;
   OtelRequestBox<Request> box;
 };
@@ -957,7 +954,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   }
   const size_t size = parsed->wire.size();
   parsed->wire.append(otel::kJsonPadding, '\0');
-  Decode(std::string_view{parsed->wire.data(), size}, protobuf,
+  Decode(std::string_view{parsed->wire.data(), size}, protobuf, parsed->parser,
          parsed->request);
   parsed->box.request = &parsed->request;
   data->box = &parsed->box;

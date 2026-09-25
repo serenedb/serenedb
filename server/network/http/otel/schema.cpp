@@ -20,14 +20,12 @@
 
 #include "network/http/otel/schema.h"
 
+#include <absl/status/status.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -49,28 +47,7 @@ namespace {
 class Creator {
  public:
   Creator(std::string_view database, duckdb::idx_t database_id)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()} {
-    // The catalog layer reaches the role, database and transaction through
-    // this; a bare DuckDB connection cannot resolve a SereneDB relation.
-    auto ctx = std::make_shared<ConnectionContext>(
-      *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
-      database, database_id, nullptr, 0, nullptr);
-    ctx->MarkSystemWriter();
-    connector::SereneDBClientState::Register(*_conn->context, std::move(ctx));
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
-    std::vector<duckdb::CatalogSearchEntry> paths{
-      // TODO()
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"$user"}},
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"public"}},
-    };
-    _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-      std::vector{paths});
-    _conn->context->client_data->catalog_search_path->Set(
-      std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
-  }
+    : _conn{connector::MakeSystemConnection(database, database_id).conn} {}
 
   // A search table cannot gain an index once it holds rows, so re-running the
   // DDL over an existing schema is not just wasteful, it fails. Presence of
@@ -100,7 +77,7 @@ class Creator {
     return true;
   }
 
-  std::string Check() {
+  absl::Status Check() {
     std::vector<duckdb::unique_ptr<duckdb::SQLStatement>> inserts;
     inserts.push_back(connector::OtelLogsInsert(
       duckdb::make_shared_ptr<connector::OtelLogsBox>()));
@@ -113,10 +90,11 @@ class Creator {
     for (auto& insert : inserts) {
       auto prepared = _conn->Prepare(std::move(insert));
       if (prepared->HasError()) {
-        return prepared->GetErrorObject().RawMessage();
+        return absl::FailedPreconditionError(
+          prepared->GetErrorObject().RawMessage());
       }
     }
-    return {};
+    return absl::OkStatus();
   }
 
  private:
@@ -125,26 +103,25 @@ class Creator {
 
 }  // namespace
 
-// TODO -- returning std::string is strange for errors, idk. Smth like result or
-// expected, IDK
-std::string EnsureSchema(std::string_view database) {
+absl::Status EnsureSchema(std::string_view database) {
   auto entry = catalog::FindDatabase(database);
   if (!entry) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
     auto home = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
     if (!home) {
-      return "default database not found";
+      return absl::NotFoundError("default database not found");
     }
     Creator bootstrap{home->name.GetIdentifierName(), home->oid};
     if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
                                     network::http::SqlIdentifier(database)))) {
-      return absl::StrCat("cannot create database '", database, "'");
+      return absl::InternalError(
+        absl::StrCat("cannot create database '", database, "'"));
     }
     entry = catalog::FindDatabase(database);
     if (!entry) {
-      return absl::StrCat("database '", database,
-                          "' not visible after CREATE DATABASE");
+      return absl::InternalError(absl::StrCat(
+        "database '", database, "' not visible after CREATE DATABASE"));
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
@@ -154,15 +131,16 @@ std::string EnsureSchema(std::string_view database) {
   } else if (creator.Create()) {
     SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database);
   }
-  auto error = creator.Check();
-  if (error.empty()) {
-    return error;
+  auto status = creator.Check();
+  if (status.ok()) {
+    return status;
   }
-  return absl::StrCat(
-    "database '", database, "' does not match the built-in schema: ", error,
+  return absl::FailedPreconditionError(absl::StrCat(
+    "database '", database,
+    "' does not match the built-in schema: ", status.message(),
     ". Fix the table, or start with the built-in schema in a new database: "
     "set db=<new database> on the ?api=otel listener, e.g. "
-    "--listen='http://0.0.0.0:4318?api=otel&db=otel'");
+    "--listen='http://0.0.0.0:4318?api=otel&db=otel'"));
 }
 
 }  // namespace sdb::otel

@@ -147,15 +147,15 @@ def test_corrupt_gzip_is_rejected(conn):
         conn, "/v1/logs", b"not gzip", headers={"Content-Encoding": "gzip"}
     )
     assert status == 400, payload
-    assert "gzip" in json.loads(payload)["message"]
+    assert json.loads(payload)["error"] == "bad_content_encoding"
 
 
 def test_unknown_content_encoding_is_rejected(conn):
     status, payload = _post(
         conn, "/v1/logs", b"{}", headers={"Content-Encoding": "br"}
     )
-    assert status == 400, payload
-    assert "Content-Encoding" in json.loads(payload)["message"]
+    assert status == 415, payload
+    assert json.loads(payload)["error"] == "unsupported_content_encoding"
 
 
 def test_malformed_json_is_rejected(conn):

@@ -100,17 +100,17 @@ class HttpResponseWriter {
     // encoding is never smaller) would re-enter here forever.
     if (_encoder == nullptr && ShouldEncode(status, body.size())) {
       std::string compressed;
-      _encoder = _coding->make();
-      _encoder->Encode(body, true,
-                       [&](std::string_view out) { compressed.append(out); });
+      auto encoder = _coding->make();
+      encoder->Encode(body, true,
+                      [&](std::string_view out) { compressed.append(out); });
       if (compressed.size() < body.size()) {
+        _encoder = std::move(encoder);
         Fixed(status, content_type, compressed, extra_headers);
         return;
       }
       // Encoding made this body bigger; send it as-is. Clearing the coding
       // drops the Content-Encoding header and stops WriteHead below from
       // taking the compress-and-chunk path for the same body.
-      _encoder.reset();
       _coding = nullptr;
     }
     WriteHead(status, content_type, body.size(), extra_headers);
@@ -189,37 +189,11 @@ class HttpResponseWriter {
   // the reserved fixed-width hex length. HEAD requests skip body bytes but
   // keep the same control flow.
   void BeginChunk() {
-    SDB_ASSERT(_state == State::kChunkedBody && !_chunk.has_value());
-    if (_head_only) {
-      return;
-    }
-    _chunk.emplace(_send);
-    _chunk_header = _chunk->Alloc(kChunkHeaderLen);
-    _chunk_start = _chunk->Written();
+    SDB_ASSERT(_encoder == nullptr);
+    BeginRawChunk();
   }
 
-  void EndChunk() {
-    if (_head_only) {
-      return;
-    }
-    SDB_ASSERT(_chunk.has_value());
-    const size_t payload = _chunk->Written() - _chunk_start;
-    // A zero-size chunk would terminate the body (RFC 9112 7.1); callers
-    // must write payload between Begin/End.
-    SDB_ASSERT(payload != 0);
-    // Fixed-width hex: leading zeros are legal in chunk-size, which is what
-    // makes the reserve-then-patch framing possible.
-    static constexpr char kHex[] = "0123456789abcdef";
-    for (int i = 0; i < 8; ++i) {
-      _chunk_header[i] = kHex[(payload >> ((7 - i) * 4)) & 0xF];
-    }
-    _chunk_header[8] = '\r';
-    _chunk_header[9] = '\n';
-    _chunk_header = nullptr;
-    _chunk->Write("\r\n");
-    _chunk->Commit(false);
-    _chunk.reset();
-  }
+  void EndChunk() { EndRawChunk(); }
 
   yaclib::Task<> Drain() { return _sink.Drain(); }
   bool Broken() const noexcept { return _sink.Broken(); }
@@ -278,9 +252,42 @@ class HttpResponseWriter {
   }
 
   void WriteChunk(std::string_view data) {
-    BeginChunk();
+    BeginRawChunk();
     _chunk->Write(data);
-    EndChunk();
+    EndRawChunk();
+  }
+
+  void BeginRawChunk() {
+    SDB_ASSERT(_state == State::kChunkedBody && !_chunk.has_value());
+    if (_head_only) {
+      return;
+    }
+    _chunk.emplace(_send);
+    _chunk_header = _chunk->Alloc(kChunkHeaderLen);
+    _chunk_start = _chunk->Written();
+  }
+
+  void EndRawChunk() {
+    if (_head_only) {
+      return;
+    }
+    SDB_ASSERT(_chunk.has_value());
+    const size_t payload = _chunk->Written() - _chunk_start;
+    // A zero-size chunk would terminate the body (RFC 9112 7.1); callers
+    // must write payload between Begin/End.
+    SDB_ASSERT(payload != 0);
+    // Fixed-width hex: leading zeros are legal in chunk-size, which is what
+    // makes the reserve-then-patch framing possible.
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (int i = 0; i < 8; ++i) {
+      _chunk_header[i] = kHex[(payload >> ((7 - i) * 4)) & 0xF];
+    }
+    _chunk_header[8] = '\r';
+    _chunk_header[9] = '\n';
+    _chunk_header = nullptr;
+    _chunk->Write("\r\n");
+    _chunk->Commit(false);
+    _chunk.reset();
   }
 
   void EncodeChunks(std::string_view data, bool finish) {

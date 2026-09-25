@@ -23,15 +23,20 @@
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
+#include <duckdb/main/connection.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
@@ -39,6 +44,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 
 namespace sdb::connector {
 namespace {
@@ -296,6 +302,33 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
              context.GetCurrentQuery());
   return *ctx;
+}
+
+void SetDefaultSearchPath(duckdb::ClientContext& context,
+                          std::string_view database) {
+  const duckdb::Identifier catalog{std::string{database}};
+  std::vector<duckdb::CatalogSearchEntry> paths{
+    duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"$user"}},
+    duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"public"}},
+  };
+  auto& search_path = *context.client_data->catalog_search_path;
+  search_path.SetDefaultPaths(std::vector{paths});
+  search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+}
+
+SystemConnection MakeSystemConnection(std::string_view database,
+                                      duckdb::idx_t database_id) {
+  SystemConnection system{.conn =
+                            irs::DuckDBEngine::Instance().CreateConnection()};
+  auto& context = *system.conn->context;
+  system.ctx = std::make_shared<ConnectionContext>(
+    context, irs::StaticStrings::kDefaultUser, pg::kRootUser, database,
+    database_id, nullptr, 0, nullptr);
+  system.ctx->MarkSystemWriter();
+  SereneDBClientState::Register(context, system.ctx);
+  context.session_user = std::string{irs::StaticStrings::kDefaultUser};
+  SetDefaultSearchPath(context, database);
+  return system;
 }
 
 }  // namespace sdb::connector

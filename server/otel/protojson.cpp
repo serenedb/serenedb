@@ -338,11 +338,8 @@ void SerdeRead(Context ctx, ResourceRecords<Record>& out) {
 }
 
 template<typename Record>
-void ParseRequest(std::string_view json, bool padded,
-                  ExportRequest<Record>& out) {
-  // The model's text fields point into the parser's string buffer.
-  auto parser = std::make_shared<simdjson::ondemand::parser>();
-  out.storage = parser;
+void ParseRequest(std::string_view json, simdjson::ondemand::parser& parser,
+                  bool padded, ExportRequest<Record>& out) {
   simdjson::padded_string copy;
   simdjson::padded_string_view input;
   if (padded) {
@@ -353,8 +350,7 @@ void ParseRequest(std::string_view json, bool padded,
     input = copy;
   }
   simdjson::ondemand::document doc;
-  if (const auto ec = parser->iterate(input).get(doc);
-      ec != simdjson::SUCCESS) {
+  if (const auto ec = parser.iterate(input).get(doc); ec != simdjson::SUCCESS) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                     ERR_MSG("OTLP/JSON: ", simdjson::error_message(ec)));
   }
@@ -382,19 +378,21 @@ void ParseRequest(std::string_view json, bool padded,
 
 static_assert(kJsonPadding >= simdjson::SIMDJSON_PADDING);
 
-void ParseLogsRequest(std::string_view json, ExportLogsRequest& out,
-                      bool padded) {
-  ParseRequest(json, padded, out);
+void ParseLogsRequest(std::string_view json, simdjson::ondemand::parser& parser,
+                      ExportLogsRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
-void ParseTracesRequest(std::string_view json, ExportTracesRequest& out,
-                        bool padded) {
-  ParseRequest(json, padded, out);
+void ParseTracesRequest(std::string_view json,
+                        simdjson::ondemand::parser& parser,
+                        ExportTracesRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
-void ParseMetricsRequest(std::string_view json, ExportMetricsRequest& out,
-                         bool padded) {
-  ParseRequest(json, padded, out);
+void ParseMetricsRequest(std::string_view json,
+                         simdjson::ondemand::parser& parser,
+                         ExportMetricsRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
 }  // namespace sdb::otel

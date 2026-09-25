@@ -71,6 +71,9 @@ class H1Codec final {
     return _content_length;
   }
   [[nodiscard]] bool IsChunked() const noexcept { return _chunked; }
+  [[nodiscard]] uint64_t MaxBodyBytes() const noexcept {
+    return _limits.max_body_bytes;
+  }
   [[nodiscard]] bool KeepAlive() const noexcept { return _keep_alive; }
   [[nodiscard]] http::HttpStatus ErrorStatus() const noexcept {
     return _error_status == http::HttpStatus::None

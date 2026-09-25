@@ -41,6 +41,7 @@ enum class HttpStatus : int {
   Forbidden = 403,
   NotFound = 404,
   MethodNotAllowed = 405,
+  NotAcceptable = 406,
   RequestTimeout = 408,
   Conflict = 409,
   ContentTooLarge = 413,

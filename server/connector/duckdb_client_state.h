@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "catalog/boot.h"
@@ -135,5 +136,16 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
+
+void SetDefaultSearchPath(duckdb::ClientContext& context,
+                          std::string_view database);
+
+struct SystemConnection {
+  duckdb::unique_ptr<duckdb::Connection> conn;
+  std::shared_ptr<ConnectionContext> ctx;
+};
+
+SystemConnection MakeSystemConnection(std::string_view database,
+                                      duckdb::idx_t database_id);
 
 }  // namespace sdb::connector

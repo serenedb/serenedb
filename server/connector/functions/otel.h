@@ -31,19 +31,19 @@
 namespace sdb::connector {
 
 // OTLP payloads as table functions: each takes one
-// Export<Signal>ServiceRequest, as ProtoJSON or, with 'protobuf', base64
+// Export{SignalName}ServiceRequest, as ProtoJSON or, with 'protobuf', base64
 // protobuf, and emits rows shaped exactly like its target table, so a captured
 // payload loads with one `INSERT INTO <table> SELECT * FROM
 // otel_parse_*(<payload>)`.
 //
 // clang-format off
-//   otel_parse_logs(payload [, encoding])                        -> otel_logs
-//   otel_parse_traces(payload [, encoding])                      -> otel_traces
-//   otel_parse_metrics_gauge(payload [, encoding])               -> otel_metrics_gauge
-//   otel_parse_metrics_sum(payload [, encoding])                 -> otel_metrics_sum
-//   otel_parse_metrics_histogram(payload [, encoding])           -> otel_metrics_histogram
+//   otel_parse_logs(payload [, encoding])                          -> otel_logs
+//   otel_parse_traces(payload [, encoding])                        -> otel_traces
+//   otel_parse_metrics_gauge(payload [, encoding])                 -> otel_metrics_gauge
+//   otel_parse_metrics_sum(payload [, encoding])                   -> otel_metrics_sum
+//   otel_parse_metrics_histogram(payload [, encoding])             -> otel_metrics_histogram
 //   otel_parse_metrics_exponential_histogram(payload [, encoding]) -> otel_metrics_exponential_histogram
-//   otel_parse_metrics_summary(payload [, encoding])             -> otel_metrics_summary
+//   otel_parse_metrics_summary(payload [, encoding])               -> otel_metrics_summary
 // clang-format on
 //
 // Columns the schema does not know are left NULL, so a deployment may add

@@ -435,9 +435,9 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      if (const auto error = otel::EnsureSchema(database); !error.empty()) {
+      if (const auto status = otel::EnsureSchema(database); !status.ok()) {
         SDB_FATAL(GENERAL, "endpoint '", spec.url,
-                  "': OpenTelemetry schema: ", error);
+                  "': OpenTelemetry schema: ", status.message());
       }
     }
     if (!catalog::FindDatabase(database)) {

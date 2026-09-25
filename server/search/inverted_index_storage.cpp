@@ -460,6 +460,12 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
 
     const auto before_refresh = TickDomain::Instance().Current();
     SDB_ASSERT(_last_durable_tick <= before_refresh);
+    SDB_IF_FAILURE("pause_index_refresh_after_tick") {
+      if (progress) {
+        progress("pause_index_refresh_after_tick", 0, 0);
+      }
+      SDB_WAIT_ON_FAILURE("pause_index_refresh_after_tick");
+    }
 
     // Stamp the EXACT durable WAL cursor consistently with the durable tick
     // this refresh persists. RefreshCommit (below) flushes every staged batch

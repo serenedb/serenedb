@@ -29,9 +29,12 @@
 
 #include <algorithm>
 #include <array>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <memory>
 #include <protozero/pbf_writer.hpp>
 #include <span>
@@ -41,9 +44,11 @@
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
+#include "network/pg/wire_frames.h"
 #include "otel/model.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
+#include "pg/sql_utils.h"
 
 // Endpoint paths, response shapes and status codes follow the OTLP/HTTP spec:
 // https://opentelemetry.io/docs/specs/otlp/#otlphttp
@@ -72,6 +77,7 @@ inline constexpr std::string_view kProtobufContentType =
 // https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
 inline constexpr int32_t kCodeInvalidArgument = 3;
 inline constexpr int32_t kCodeInternal = 13;
+inline constexpr int32_t kCodeUnavailable = 14;
 
 // google/rpc/status.proto is not vendored -- it is googleapis, not protobuf --
 // and the message is two fields, so it is written directly:
@@ -153,20 +159,34 @@ bool IsProtobufRequest(const HttpRequest& request) {
 }
 
 struct InsertOutcome {
-  bool ok = false;
-  bool bad_schema = false;
+  HttpStatus status = HttpStatus::Ok;
+  int32_t code = 0;
   std::string error;
 };
 
-InsertOutcome Failed(std::string message) {
-  if (message.find("does not exist") != std::string::npos) {
-    return {
-      .bad_schema = true,
-      .error = absl::StrCat("the OpenTelemetry schema is missing: ", message)};
+// https://opentelemetry.io/docs/specs/otlp/#failures-1
+InsertOutcome Failed(const duckdb::ErrorData& error) {
+  auto sql = network::pg::DuckErrorToSqlData(error);
+  if (sql.errcode == ERRCODE_UNDEFINED_TABLE) {
+    return {HttpStatus::InternalError, kCodeInternal,
+            absl::StrCat("the OpenTelemetry schema is missing: ", sql.errmsg)};
   }
-  const bool invalid =
-    message.find("invalid OpenTelemetry schema") != std::string::npos;
-  return {.bad_schema = invalid, .error = std::move(message)};
+  if (sql.errcode == ERRCODE_INVALID_TABLE_DEFINITION) {
+    return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
+  }
+  char state[pg::kSqlStateSize];
+  pg::UnpackSqlState(state, sql.errcode);
+  const std::string_view sql_class{state, 2};
+  if (sql_class == "22" || sql_class == "23") {
+    return {HttpStatus::BadRequest, kCodeInvalidArgument,
+            std::move(sql.errmsg)};
+  }
+  if (sql_class == "40" || sql_class == "53" || sql_class == "57" ||
+      sql_class == "58") {
+    return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
+            std::move(sql.errmsg)};
+  }
+  return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
 }
 
 template<typename Signal>
@@ -174,12 +194,21 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
   using Box = connector::OtelRequestBox<typename Signal::Request>;
   auto& entry = ctx.PreparedSlot(Signal::kTargets[target]);
+  auto& context = *ctx.Connection().context;
+  if (entry.statement != nullptr) {
+    bool stale = false;
+    context.RunFunctionInTransaction(
+      [&] { stale = entry.statement->data->RequireRebind(context, nullptr); });
+    if (stale) {
+      entry.statement.reset();
+    }
+  }
   if (entry.statement == nullptr) {
     auto box = duckdb::make_shared_ptr<Box>();
     auto statement = ctx.Connection().Prepare(Signal::Insert(target, box));
     if (statement->HasError()) {
       // Not cached: the schema may appear later.
-      co_return Failed(statement->GetError());
+      co_return Failed(statement->GetErrorObject());
     }
     entry.statement = std::move(statement);
     entry.info = std::move(box);
@@ -189,9 +218,9 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   const absl::Cleanup clear = [&] { box.request = nullptr; };
   auto result = co_await ctx.RunPrepared(*entry.statement);
   if (!result->HasError()) {
-    co_return InsertOutcome{.ok = true};
+    co_return InsertOutcome{};
   }
-  co_return Failed(result->GetError());
+  co_return Failed(result->GetErrorObject());
 }
 
 struct LogsSignal {
@@ -307,17 +336,11 @@ std::string InflateGzip(const message::SequenceView& body, std::string& error) {
 // Answers a failed insert; false when there is nothing to answer.
 bool WriteFailure(HttpResponseWriter& writer, const InsertOutcome& outcome,
                   bool protobuf) {
-  if (outcome.bad_schema) {
-    WriteStatus(writer, HttpStatus::InternalError, kCodeInternal, outcome.error,
-                protobuf);
-    return true;
+  if (outcome.status == HttpStatus::Ok) {
+    return false;
   }
-  if (!outcome.ok) {
-    WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                outcome.error, protobuf);
-    return true;
-  }
-  return false;
+  WriteStatus(writer, outcome.status, outcome.code, outcome.error, protobuf);
+  return true;
 }
 
 template<typename Signal>

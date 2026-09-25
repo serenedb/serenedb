@@ -26,7 +26,6 @@
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -183,13 +182,11 @@ struct SourceBindData final : duckdb::TableFunctionData {
   const duckdb::TableFunctionInfo* box = nullptr;
   // Output column of each schema column.
   std::vector<duckdb::idx_t> slots;
-  // otel_parse_*: the payload decoded at bind, which `box` points into.
   std::shared_ptr<const void> parsed;
 };
 
 // Writes one output row. A chunk starts all-NULL (PrepareChunk), so a column
-// nothing writes -- a deployment's own addition -- stays NULL. Each write
-// checks at compile time that it matches the column's type in the schema.
+// nothing writes -- a deployment's own addition -- stays NULL.
 class Out {
  public:
   Out(duckdb::DataChunk& output, const SourceBindData& data)
@@ -457,7 +454,6 @@ class RecordCursor {
   ScopeColumns _shared;
 };
 
-// Calls put.operator()<C>() for every column C of the table, in order.
 template<typename Column, typename Put>
 void ForEachColumn(Put&& put) {
   constexpr size_t kCount = schema::TableOf(Column{}).columns.size();
@@ -672,8 +668,6 @@ class PointCursor {
   size_t _point = 0;
 };
 
-// The columns every metric table has, and the few several shapes share;
-// MetricShape::Put writes the rest.
 template<typename MetricShape>
 struct MetricsSource {
   using Cursor = PointCursor<MetricShape>;
@@ -835,8 +829,7 @@ struct SummarySource {
   }
 };
 
-// --- the table function
-// --------------------------------------------------------
+// --- the table function ------------------------------------------------------
 
 template<typename Source>
 struct SourceState final : duckdb::GlobalTableFunctionState {
@@ -945,14 +938,11 @@ void Decode(std::string_view wire, bool protobuf,
 
 template<typename Request>
 struct ParsedPayload {
-  // Ends with kJsonPadding zero bytes, so the JSON parser reads it in place.
   std::string wire;
   Request request;
   OtelRequestBox<Request> box;
 };
 
-// otel_parse_<signal>(payload [, 'json' | 'protobuf']): the same scan as the
-// HTTP path, over a payload decoded here.
 template<typename Source>
 duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,

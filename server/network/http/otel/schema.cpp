@@ -60,6 +60,7 @@ class Creator {
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};
     std::vector<duckdb::CatalogSearchEntry> paths{
+      // TODO()
       duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
                                  duckdb::Identifier{"$user"}},
       duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
@@ -99,8 +100,6 @@ class Creator {
     return true;
   }
 
-  // Prepares every OTLP insert: binding it checks the tables against the
-  // built-in schema, as each export does.
   std::string Check() {
     std::vector<duckdb::unique_ptr<duckdb::SQLStatement>> inserts;
     inserts.push_back(connector::OtelLogsInsert(
@@ -126,6 +125,8 @@ class Creator {
 
 }  // namespace
 
+// TODO -- returning std::string is strange for errors, idk. Smth like result or
+// expected, IDK
 std::string EnsureSchema(std::string_view database) {
   auto entry = catalog::FindDatabase(database);
   if (!entry) {

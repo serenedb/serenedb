@@ -63,13 +63,20 @@ the `otel` API creates nothing, and an export against a missing schema answers
 
 To run a schema of your own — extra promoted columns, expression indexes over
 hot attribute paths — apply it before the first start; startup leaves an
-existing schema alone. It must keep every shipped column with its shipped
-type: extra columns are left `NULL`, but a missing or retyped one stops the
-server at startup with a message naming the database and the column. Fix the
-table, or leave that database alone and start with the built-in schema in a
-new one: `db=` on the listener creates it, e.g.
-`--listen='http://0.0.0.0:4318?api=otel&db=otel'`. A table changed that way
-after startup fails each export with `500` and the same message.
+existing schema alone. All seven tables must exist, each with every shipped
+column in its shipped type: extra columns are left `NULL`, but a missing table,
+or a missing or retyped column, stops the server at startup with a message
+naming the database and the column. Fix the table, or leave that database
+alone and start with the built-in schema in a new one: `db=` on the listener
+creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&db=otel'`.
+
+A table dropped or changed after startup fails each export to it with `500`:
+`the OpenTelemetry schema is missing: …` for a dropped table, and
+`invalid OpenTelemetry schema: column … is …, expected …` for a changed one.
+Other failures follow the OTLP retry rules: rejected data (a constraint or a
+value the column cannot hold) answers `400`, which clients do not retry, and
+a transient server condition (a transaction conflict, out of memory, shutdown)
+answers `503`, which they do.
 
 ### Encodings
 

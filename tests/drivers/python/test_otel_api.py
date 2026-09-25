@@ -186,6 +186,9 @@ def _logs_ddl() -> list[str]:
 
 
 def test_mistyped_schema_is_rejected(conn):
+    body = (FIXTURES / "logs/basic.json").read_bytes()
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
     with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
         pg.execute("DROP TABLE otel_logs")
         pg.execute(
@@ -193,7 +196,6 @@ def test_mistyped_schema_is_rejected(conn):
             "WITH (storage = 'search')"
         )
         try:
-            body = (FIXTURES / "logs/basic.json").read_bytes()
             status, payload = _post(conn, "/v1/logs", body)
             assert status == 500, payload
             message = json.loads(payload)["message"]
@@ -203,3 +205,23 @@ def test_mistyped_schema_is_rejected(conn):
             pg.execute("DROP TABLE otel_logs")
             for statement in _logs_ddl():
                 pg.execute(statement)
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
+
+
+def test_dropped_table_is_reported_missing(conn):
+    body = (FIXTURES / "logs/basic.json").read_bytes()
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute("DROP TABLE otel_logs")
+        try:
+            status, payload = _post(conn, "/v1/logs", body)
+            assert status == 500, payload
+            message = json.loads(payload)["message"]
+            assert "schema is missing" in message, message
+        finally:
+            for statement in _logs_ddl():
+                pg.execute(statement)
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload

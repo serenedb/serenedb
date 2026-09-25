@@ -30,21 +30,23 @@
 
 namespace sdb::connector {
 
-// OTLP payloads as table functions: each takes one ProtoJSON
-// Export<Signal>ServiceRequest and emits rows shaped exactly like its target
-// table, so a captured payload loads with one
-// `INSERT INTO <table> SELECT * FROM otel_parse_*(<payload>)`.
+// OTLP payloads as table functions: each takes one
+// Export<Signal>ServiceRequest, as ProtoJSON or, with 'protobuf', base64
+// protobuf, and emits rows shaped exactly like its target table, so a captured
+// payload loads with one `INSERT INTO <table> SELECT * FROM
+// otel_parse_*(<payload>)`.
 //
-//   otel_parse_logs(json)                          -> otel_logs rows
-//   otel_parse_traces(json)                        -> otel_traces rows
-//   otel_parse_metrics_gauge(json)                 -> otel_metrics_gauge rows
-//   otel_parse_metrics_sum(json)                   -> otel_metrics_sum rows
-//   otel_parse_metrics_histogram(json)             -> otel_metrics_histogram
-//   rows otel_parse_metrics_exponential_histogram(json) ->
-//   ..._exponential_histogram otel_parse_metrics_summary(json)               ->
-//   otel_metrics_summary rows
+// clang-format off
+//   otel_parse_logs(payload [, encoding])                        -> otel_logs
+//   otel_parse_traces(payload [, encoding])                      -> otel_traces
+//   otel_parse_metrics_gauge(payload [, encoding])               -> otel_metrics_gauge
+//   otel_parse_metrics_sum(payload [, encoding])                 -> otel_metrics_sum
+//   otel_parse_metrics_histogram(payload [, encoding])           -> otel_metrics_histogram
+//   otel_parse_metrics_exponential_histogram(payload [, encoding]) -> otel_metrics_exponential_histogram
+//   otel_parse_metrics_summary(payload [, encoding])             -> otel_metrics_summary
+// clang-format on
 //
-// Columns the mapping does not produce are left NULL, so a deployment may add
+// Columns the schema does not know are left NULL, so a deployment may add
 // promoted columns to its own DDL without breaking the INSERT.
 void RegisterOtelFunctions(duckdb::DatabaseInstance& db);
 

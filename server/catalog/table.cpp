@@ -26,7 +26,11 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -82,7 +86,9 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
   for (const auto& key :
        {kStorageOption, kRefreshIntervalSetting, kCompactionIntervalSetting,
         kCleanupIntervalStepSetting, kRowGroupSizeSetting,
-        kSegmentMemoryMaxSetting, kGeneratedPkSeqTag}) {
+        kSegmentMemoryMaxSetting, kCompressionLevelSetting,
+        kSegmentTargetSetting, kCompressionObjectiveSetting,
+        kGeneratedPkSeqTag}) {
     if (const auto it = tags.find(std::string{key}); it != tags.end()) {
       tags.erase(it);
     }
@@ -105,10 +111,109 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
                 absl::StrCat(search_options.row_group_size));
     tags.insert(std::string{kSegmentMemoryMaxSetting},
                 absl::StrCat(search_options.segment_memory_max));
+    tags.insert(std::string{kCompressionLevelSetting},
+                absl::StrCat(search_options.compression_level));
+    tags.insert(std::string{kSegmentTargetSetting},
+                absl::StrCat(search_options.segment_target));
+    tags.insert(
+      std::string{kCompressionObjectiveSetting},
+      std::string{CompressionObjectiveName(static_cast<irs::AutoObjective>(
+        search_options.compression_objective))});
   }
   if (generated_pk_seq_id.isSet()) {
     tags.insert(std::string{kGeneratedPkSeqTag},
                 absl::StrCat(generated_pk_seq_id.id()));
+  }
+}
+
+namespace {
+
+duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+      return LeafPhysicalType(duckdb::ArrayType::GetChildType(type));
+    case duckdb::LogicalTypeId::LIST:
+      return LeafPhysicalType(duckdb::ListType::GetChildType(type));
+    default:
+      return type.InternalType();
+  }
+}
+
+}  // namespace
+
+void CheckCompressionLevel(std::string_view column_name,
+                           duckdb::CompressionType type, uint8_t level,
+                           bool columnstore) {
+  if (level == 0) {
+    return;
+  }
+  uint8_t max_level = 0;
+  switch (type) {
+    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
+    case duckdb::CompressionType::COMPRESSION_LZ4:
+      max_level = 12;
+      break;
+    case duckdb::CompressionType::COMPRESSION_ZSTD:
+      if (!columnstore) {
+        max_level = 0;
+        break;
+      }
+      [[fallthrough]];
+    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
+      max_level = 22;
+      break;
+    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
+    case duckdb::CompressionType::COMPRESSION_ZXC:
+      max_level = 7;
+      break;
+    default:
+      break;
+  }
+  if (max_level == 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column \"", column_name, "\": compression '",
+              duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
+              "' takes no compression_level"));
+  }
+  if (level > max_level) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column \"", column_name, "\": compression_level ",
+              static_cast<uint32_t>(level), " is out of range for '",
+              duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
+              "' (1 to ", static_cast<uint32_t>(max_level), ")"));
+  }
+}
+
+void CheckColumnCompression(const duckdb::ColumnDefinition& column,
+                            TableEngine engine) {
+  const auto type = column.CompressionType();
+  CheckCompressionLevel(column.Name().GetIdentifierName(), type,
+                        column.CompressionLevel(),
+                        engine == TableEngine::Search);
+  if (!duckdb::IsSereneDBCompressionType(type) &&
+      type != duckdb::CompressionType::COMPRESSION_FSST) {
+    return;
+  }
+  if (engine != TableEngine::Search) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Column \"", column.Name().GetIdentifierName(),
+              "\": compression '",
+              duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
+              "' is only available on search tables (WITH (storage = "
+              "'search'))"));
+  }
+  const auto physical = LeafPhysicalType(column.GetType());
+  if (physical != duckdb::PhysicalType::VARCHAR) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("Can't compress column \"", column.Name().GetIdentifierName(),
+              "\" with type '", column.GetType().ToString(),
+              "' (physical: ", duckdb::EnumUtil::ToString(physical),
+              ") using compression type '",
+              duckdb::CompressionTypeToString(type), "'"));
   }
 }
 
@@ -128,8 +233,39 @@ persistence::SearchTableOptions ReadSearchOptionTags(
       TagUint<uint32_t>(tags, kCleanupIntervalStepSetting),
     .row_group_size = TagUint<uint32_t>(tags, kRowGroupSizeSetting),
     .segment_memory_max = TagUint<uint64_t>(tags, kSegmentMemoryMaxSetting),
+    .compression_level =
+      static_cast<uint8_t>(TagUint<uint32_t>(tags, kCompressionLevelSetting)),
+    .segment_target = TagUint<uint32_t>(tags, kSegmentTargetSetting),
+    .compression_objective = static_cast<uint8_t>(
+      ParseCompressionObjective(TagValue(tags, kCompressionObjectiveSetting))
+        .value_or(irs::AutoObjective::Balanced)),
     .topk_scorer = ReadScorerTag(TagValue(tags, kOptimizeTopKSetting)),
   };
+}
+
+std::optional<irs::AutoObjective> ParseCompressionObjective(
+  std::string_view name) noexcept {
+  for (const auto objective :
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size,
+        irs::AutoObjective::Speed}) {
+    if (name == CompressionObjectiveName(objective)) {
+      return objective;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string_view CompressionObjectiveName(
+  irs::AutoObjective objective) noexcept {
+  switch (objective) {
+    case irs::AutoObjective::Size:
+      return "size";
+    case irs::AutoObjective::Speed:
+      return "speed";
+    case irs::AutoObjective::Balanced:
+      break;
+  }
+  return "balanced";
 }
 
 ObjectId ReadGeneratedPkSeqTag(const TableTags& tags) noexcept {

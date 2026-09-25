@@ -26,6 +26,12 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 
+namespace sdb::search {
+
+struct InvertedIndexSnapshot;
+
+}  // namespace sdb::search
+
 namespace sdb::catalog {
 
 // Catalog entry for `SELECT * FROM idx_name WHERE ...`. Its own identity is the
@@ -71,8 +77,12 @@ class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
 
   virtual std::vector<IResearchColumnBinding> SegmentInfoBindings() const = 0;
   virtual duckdb::column_t RowIdentityColumnId() const = 0;
+  virtual std::shared_ptr<search::InvertedIndexSnapshot> SegmentInfoSnapshot(
+    duckdb::ClientContext& context);
 
   std::vector<IResearchColumnBinding> IndexSegmentInfoBindings() const;
+  std::shared_ptr<search::InvertedIndexSnapshot> IndexSnapshot(
+    duckdb::ClientContext& context) const;
 
   // The index this wrapper projects, by id. The definition is resolved at bind
   // time and the strong reference goes into the bind data, which is what has to
@@ -99,8 +109,13 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  protected:
   std::vector<IResearchColumnBinding> SegmentInfoBindings() const final;
   duckdb::column_t RowIdentityColumnId() const final;
+  std::shared_ptr<search::InvertedIndexSnapshot> SegmentInfoSnapshot(
+    duckdb::ClientContext& context) final;
 
  private:
+  std::shared_ptr<search::InvertedIndexSnapshot> SearchTableSnapshot(
+    duckdb::ClientContext& context, const SereneDBTableEntry& relation) const;
+
   // The indexed relation is Search-backed, so rows are identified by the
   // synthetic rowid. Captured at construction: the shape accessors take no
   // context and so cannot look the relation up themselves.

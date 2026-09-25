@@ -1827,6 +1827,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("adding a generated column is not supported"));
       }
+      catalog::CheckColumnCompression(
+        add_info.new_column, catalog::ReadTableEngineTag(relation->tags));
       // The stable id, allocated here: duckdb's alter carries the column
       // through whole, and its identity must be decided before the definition
       // is built.

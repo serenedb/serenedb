@@ -29,8 +29,10 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -66,6 +68,16 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
                     const persistence::SearchTableOptions& search_options,
                     ObjectId generated_pk_seq_id);
 TableEngine ReadTableEngineTag(const TableTags& tags) noexcept;
+void CheckColumnCompression(const duckdb::ColumnDefinition& column,
+                            TableEngine engine);
+void CheckCompressionLevel(std::string_view column_name,
+                           duckdb::CompressionType type, uint8_t level,
+                           bool columnstore);
+std::optional<irs::AutoObjective> ParseCompressionObjective(
+  std::string_view name) noexcept;
+std::string_view CompressionObjectiveName(
+  irs::AutoObjective objective) noexcept;
+
 persistence::SearchTableOptions ReadSearchOptionTags(
   const TableTags& tags) noexcept;
 ObjectId ReadGeneratedPkSeqTag(const TableTags& tags) noexcept;

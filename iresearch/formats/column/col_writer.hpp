@@ -51,7 +51,7 @@ struct AnnBuildEnv;
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -65,7 +65,8 @@ class ColWriter final {
                            bool skip_validity, uint32_t row_group_size,
                            duckdb::CompressionType compression =
                              duckdb::CompressionType::COMPRESSION_AUTO,
-                           bool hyperloglog = false);
+                           bool hyperloglog = false,
+                           ColCodecParams codec_params = {});
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -104,12 +105,14 @@ class ColWriter final {
   ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
                                    bool skip_validity, uint32_t row_group_size,
                                    duckdb::CompressionType forced,
-                                   bool hyperloglog);
+                                   bool hyperloglog,
+                                   ColCodecParams codec_params);
 
   Directory* _dir;
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;
+  WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;

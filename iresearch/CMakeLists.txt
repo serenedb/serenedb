@@ -61,6 +61,11 @@ set(IResearch_core_sources
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
+    ./formats/column/codecs/byte_codec.cpp
+    ./formats/column/codecs/fsst_codec.cpp
+    ./formats/column/codecs/registry.cpp
+    ./formats/column/codecs/string_scan.cpp
+    ./formats/column/codecs/string_writer.cpp
     ./formats/column/read_context.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
@@ -516,6 +521,8 @@ target_link_libraries(
     PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
+    PRIVATE duckdb_fsst
+    PRIVATE zxc::zxc_lib
     PRIVATE stemmer-static
 )
 

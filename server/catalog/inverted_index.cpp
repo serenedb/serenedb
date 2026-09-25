@@ -91,6 +91,7 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .null_field_id = entry.null_field_id,
     .bool_field_id = entry.bool_field_id,
     .numeric_field_id = entry.numeric_field_id,
+    .compression_level = entry.compression_level,
   };
 }
 
@@ -132,6 +133,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
                                 .null_field_id = cfg.null_field_id,
                                 .bool_field_id = cfg.bool_field_id,
                                 .numeric_field_id = cfg.numeric_field_id,
+                                .compression_level = cfg.compression_level,
                               });
   }
   // The Search layout carries a ColumnKey per column (its allocated term
@@ -531,6 +533,7 @@ irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
   if (const auto* entry = FindEntry(id)) {
     return {
       .compression = entry->compression,
+      .compression_level = entry->compression_level,
       .ann_info = GetAnnInfo(id),
       .hyperloglog = entry->hyperloglog,
     };

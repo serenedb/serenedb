@@ -1033,6 +1033,7 @@ bool SereneDBCatalog::ReplayMissingReshapes(
       duckdb::ColumnDefinition definition{column.Name(), column.Type()};
       definition.SetCatalogOid(column.CatalogOid());
       definition.SetCompressionType(column.CompressionType());
+      definition.SetCompressionLevel(column.CompressionLevel());
       if (!column.Generated() && column.HasDefaultValue()) {
         definition.SetDefaultValue(column.DefaultValue().Copy());
       }

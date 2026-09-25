@@ -77,7 +77,6 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto& conn_ctx = connector::GetSereneDBContext(context);
   auto data = duckdb::make_uniq<connector::ScanBindData>();
   for (const auto& col : GetColumns().Logical()) {
     data->columns.ids.emplace_back(col.CatalogOid());
@@ -94,27 +93,44 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     // Storage-less index: it shares the table's own iresearch store, so serve
     // the scan exactly like a plain search-table one -- there is no separate
     // index reader to open.
-    auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
-      GetIndexedRelationId(),
-      [&] { return relation->GetSearchData()->GetDirectoryReader(); });
     data->relation.kind = connector::ScanEntryKind::SearchTableIndex;
     auto options = relation->SearchOptions();
     data->relation.row_group_size = options.row_group_size;
     data->score.prune = std::move(options.topk_scorer);
     data->lookup.label = "search";
-    data->search.snapshot = std::make_shared<search::InvertedIndexSnapshot>(
-      irs::DirectoryReader{*reader}, nullptr);
+    data->search.snapshot = SearchTableSnapshot(context, *relation);
   } else {
     data->relation.kind = connector::ScanEntryKind::InvertedIndex;
     data->relation.row_group_size =
       data->relation.ScannedIndex().GetOptions().row_group_size;
     data->lookup.label = "table";
     data->score.prune = data->relation.ScannedIndex().GetTopKScorer();
-    data->search.snapshot = conn_ctx.EnsureSearchSnapshot(
-      _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
+    data->search.snapshot = IndexSnapshot(context);
   }
   bind_data = std::move(data);
   return connector::CreateIResearchScanFunction();
+}
+
+search::InvertedIndexSnapshotPtr
+TableInvertedIndexScanEntry::SearchTableSnapshot(
+  duckdb::ClientContext& context, const SereneDBTableEntry& relation) const {
+  auto reader =
+    connector::GetSereneDBContext(context).SearchTxn().EnsureSearchTableReader(
+      GetIndexedRelationId(),
+      [&] { return relation.GetSearchData()->GetDirectoryReader(); });
+  return std::make_shared<search::InvertedIndexSnapshot>(
+    irs::DirectoryReader{*reader}, nullptr);
+}
+
+search::InvertedIndexSnapshotPtr
+TableInvertedIndexScanEntry::SegmentInfoSnapshot(
+  duckdb::ClientContext& context) {
+  const auto* relation =
+    catalog::FindSessionTableEntry(context, GetIndexedRelationId());
+  if (relation != nullptr && relation->IsSearchTable()) {
+    return SearchTableSnapshot(context, *relation);
+  }
+  return IndexSnapshot(context);
 }
 
 duckdb::TableStorageInfo SereneDBIndexScanEntry::GetStorageInfo(
@@ -137,11 +153,21 @@ bool InvertedIndexScanEntry::ScanColumnSegmentInfo(
   if (!client) {
     return false;
   }
-  auto snapshot = connector::GetSereneDBContext(*client).EnsureSearchSnapshot(
-    _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
+  auto snapshot = SegmentInfoSnapshot(*client);
   return ScanIResearchColumnSegmentInfo(snapshot->reader,
                                         IndexSegmentInfoBindings(),
                                         GetVirtualColumns(), state, result);
+}
+
+search::InvertedIndexSnapshotPtr InvertedIndexScanEntry::IndexSnapshot(
+  duckdb::ClientContext& context) const {
+  return connector::GetSereneDBContext(context).EnsureSearchSnapshot(
+    _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
+}
+
+search::InvertedIndexSnapshotPtr InvertedIndexScanEntry::SegmentInfoSnapshot(
+  duckdb::ClientContext& context) {
+  return IndexSnapshot(context);
 }
 
 std::vector<IResearchColumnBinding>
@@ -187,8 +213,7 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto snapshot = connector::GetSereneDBContext(context).EnsureSearchSnapshot(
-    _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
+  auto snapshot = IndexSnapshot(context);
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
   auto data = duckdb::make_uniq<connector::ScanBindData>();

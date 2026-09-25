@@ -61,11 +61,12 @@ void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw) {
 }
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
+                     duckdb::DatabaseInstance& db, WriteTier tier)
   : _dir{&dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
-    _db{&db} {}
+    _db{&db},
+    _tier{tier} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {
@@ -100,22 +101,23 @@ void ColWriter::SetFieldOptions(
 
 ColumnWriter& ColWriter::OpenColumnInternal(
   field_id id, duckdb::LogicalType type, bool skip_validity,
-  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog) {
+  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog,
+  ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
-        existing._forced == forced &&
+        existing._forced == forced && existing._codec_params == codec_params &&
         (existing._meta.hyperloglog != nullptr) == hyperloglog,
       "ColWriter::OpenColumn: re-opened id ", id, " with mismatched settings");
     return existing;
   }
   EnsureOut();
-  auto col =
-    std::make_unique<ColumnWriter>(*this, id, std::move(type), skip_validity,
-                                   row_group_size, forced, hyperloglog);
+  auto col = std::make_unique<ColumnWriter>(*this, id, std::move(type),
+                                            skip_validity, row_group_size,
+                                            forced, hyperloglog, codec_params);
   auto* ptr = col.get();
   _by_id.emplace(id, ptr);
   _columns.push_back(std::move(col));
@@ -125,13 +127,21 @@ ColumnWriter& ColWriter::OpenColumnInternal(
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   ColumnOptions opts{};
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  ColCodecParams codec_params;
   if (_field_options) {
     opts = _field_options->GetColumnOptions(id);
     row_group_size = _field_options->row_group_size;
+    codec_params = _field_options->codec_params;
+    if (opts.compression_level != 0) {
+      codec_params.compression_level = opts.compression_level;
+    }
+    if (_tier == WriteTier::Flush) {
+      codec_params.objective = AutoObjective::Speed;
+    }
   }
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
-                       opts.compression, opts.hyperloglog);
+                       opts.compression, opts.hyperloglog, codec_params);
   if (opts.ann_info) {
     AttachAnn(id, *opts.ann_info);
   }
@@ -141,9 +151,10 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool skip_validity, uint32_t row_group_size,
                                     duckdb::CompressionType compression,
-                                    bool hyperloglog) {
+                                    bool hyperloglog,
+                                    ColCodecParams codec_params) {
   return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
-                            compression, hyperloglog);
+                            compression, hyperloglog, codec_params);
 }
 
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,

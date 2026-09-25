@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/allocator.hpp>
@@ -42,6 +43,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -53,6 +55,8 @@
 #include <utility>
 
 #include "iresearch/formats/column/array_column_reader.hpp"
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/list_column_reader.hpp"
@@ -83,12 +87,16 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::Deserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
-  auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
+  const duckdb::CompressionFunction* codec =
+    codecs::ColCodecs::Get(compression_type, physical);
+  if (!codec) {
+    auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
+    codec = cfg.TryGetCompressionFunction(compression_type, physical).get();
+  }
   SDB_ENSURE(codec, "ColumnReader: missing compression function for codec ",
              static_cast<uint8_t>(compression_type));
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
-                         codec.get()};
+                         codec};
 }
 
 }  // namespace
@@ -197,11 +205,21 @@ ColumnReader::ScanState& ColumnReader::ScanState::operator=(ScanState&&) =
   default;
 ColumnReader::ScanState::~ScanState() = default;
 
+namespace {
+
+uint64_t NextCacheScope() noexcept {
+  static std::atomic<uint64_t> next{1};
+  return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<ColumnBlockMeta> segments,
                            std::unique_ptr<ColumnReader> validity,
                            std::vector<std::unique_ptr<ColumnReader>> children)
   : _id{id},
+    _cache_scope{NextCacheScope()},
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
@@ -209,6 +227,10 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
                   : 0} {
+  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+      !_segments.empty()) {
+    _touched = std::make_unique<std::atomic<bool>[]>(_segments.size());
+  }
   auto stats = duckdb::BaseStatistics::CreateEmpty(
     _segments.empty() ? _type : _segments.front().statistics.GetType());
   _offsets.reserve(_segments.size() + 1);
@@ -219,6 +241,22 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     stats.Merge(m.statistics);
   }
   FinishStats(std::move(stats));
+}
+
+void ColumnReader::DropDictionaryCache(duckdb::ObjectCache& cache) const {
+  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
+    for (size_t block = 0; block < _segments.size(); ++block) {
+      if (duckdb::IsSereneDBCompressionType(_segments[block].codec->type)) {
+        cache.Delete(codecs::DictionaryCacheKey(_cache_scope, block));
+      }
+    }
+  }
+  if (_validity) {
+    _validity->DropDictionaryCache(cache);
+  }
+  for (const auto& child : _children) {
+    child->DropDictionaryCache(cache);
+  }
 }
 
 bool ColumnReader::NullsInData() const noexcept {
@@ -303,7 +341,12 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
   }
 
-  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size);
+  ReadContext::CacheSlot slot;
+  if (_touched && duckdb::IsSereneDBCompressionType(codec.type)) {
+    slot = {.key = codecs::DictionaryCacheKey(_cache_scope, w.block),
+            .touched = &_touched[w.block]};
+  }
+  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
   auto segment = std::make_unique<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(m.tuple_count), codec, std::move(stats),

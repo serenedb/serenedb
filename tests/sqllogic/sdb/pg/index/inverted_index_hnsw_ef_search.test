@@ -99,7 +99,7 @@ SET sdb_nprobe = 3;
 ----
 db error: ERROR: unrecognized configuration parameter "sdb_nprobe"
 
-Did you mean: "role"
+Did you mean: "sdb_object_cache_size"
 
 
 query

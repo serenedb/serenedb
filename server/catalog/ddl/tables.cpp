@@ -194,6 +194,10 @@ const SereneDBTableEntry* CreateTable(
     generated_pk_seq_id = catalog::IdOf(*generated_pk_seq);
     sequences.push_back(std::move(generated_pk_seq));
   }
+  for (const auto& column : info->columns.Logical()) {
+    catalog::CheckColumnCompression(column,
+                                    catalog::ReadTableEngineTag(info->tags));
+  }
   catalog::SetTableTags(*info, catalog::ReadTableEngineTag(info->tags),
                         catalog::ReadSearchOptionTags(info->tags),
                         generated_pk_seq_id);

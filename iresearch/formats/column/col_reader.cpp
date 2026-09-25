@@ -28,6 +28,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <map>
 #include <utility>
 
@@ -191,7 +192,16 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   deserializer.End();
 }
 
-ColReader::~ColReader() = default;
+ColReader::~ColReader() {
+  const auto db = _db->weak_from_this().lock();
+  if (!db) {
+    return;
+  }
+  auto& cache = db->GetObjectCache();
+  for (const auto& column : _columns) {
+    column->DropDictionaryCache(cache);
+  }
+}
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);

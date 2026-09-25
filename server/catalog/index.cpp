@@ -22,8 +22,10 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_split.h>
 
 #include <array>
 #include <duckdb/common/enum_util.hpp>
@@ -353,10 +355,6 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
                                              std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
-  // Excluded on purpose: dictionary/fsst (disabled upstream by
-  // storage_version, replaced by dict_fsst), chimp/patas (deprecated, throw at
-  // init_compression) and constant (internal-only, analyzer-selected) --
-  // accepting the name would defer the failure to the async commit path.
   static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
     {
       {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
@@ -368,6 +366,12 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
       {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD},
       {"roaring", duckdb::CompressionType::COMPRESSION_ROARING},
       {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST},
+      {"fsst", duckdb::CompressionType::COMPRESSION_FSST},
+      {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4},
+      {"dict_zstd", duckdb::CompressionType::COMPRESSION_DICT_ZSTD},
+      {"lz4", duckdb::CompressionType::COMPRESSION_LZ4},
+      {"dict_zxc", duckdb::CompressionType::COMPRESSION_DICT_ZXC},
+      {"zxc", duckdb::CompressionType::COMPRESSION_ZXC},
     };
   for (const auto& [k, v] : kMap) {
     if (n == k) {
@@ -379,7 +383,7 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
     ERR_MSG("Column '", column_name, "': unknown compression '", name,
             "'. Accepted: auto, uncompressed, rle, "
             "bitpacking, zstd, alp, alprd, roaring, "
-            "dict_fsst"));
+            "dict_fsst, fsst, dict_lz4, dict_zstd, lz4, dict_zxc, zxc"));
 }
 
 // The "data" physical type that a forced codec must support. Composite
@@ -410,8 +414,13 @@ void ValidateColumnCompression(duckdb::ClientContext& context,
   }
   const auto& db_config = duckdb::DBConfig::GetConfig(context);
   const auto leaf = LeafDataPhysicalType(column_type);
-  auto fn = db_config.TryGetCompressionFunction(compression, leaf);
-  if (fn && fn->init_analyze) {
+  if (duckdb::IsSereneDBCompressionType(compression) ||
+      compression == duckdb::CompressionType::COMPRESSION_FSST) {
+    if (leaf == duckdb::PhysicalType::VARCHAR) {
+      return;
+    }
+  } else if (auto fn = db_config.TryGetCompressionFunction(compression, leaf);
+             fn && fn->init_analyze) {
     return;
   }
   THROW_SQL_ERROR(
@@ -421,13 +430,63 @@ void ValidateColumnCompression(duckdb::ClientContext& context,
             "' is not supported for type ", column_type.ToString()));
 }
 
-duckdb::CompressionType ParseCompressionOption(
-  duckdb::ClientContext& context, std::string_view kind,
-  std::string_view owner_label, std::string_view key, const duckdb::Value& v,
-  const duckdb::LogicalType& value_type) {
+struct CompressionSpec {
+  duckdb::CompressionType type;
+  uint8_t compression_level = 0;
+};
+
+// "name" or "name(compression_level = N)", the column form of USING
+// COMPRESSION written as one string.
+CompressionSpec ParseCompressionSpec(std::string_view column_name,
+                                     std::string_view spec) {
+  const auto open = spec.find('(');
+  if (open == std::string_view::npos) {
+    return {.type = ParseCompressionName(column_name, spec)};
+  }
+  auto bad = [&](std::string_view detail) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name, "': compression '", spec,
+                            "': ", detail));
+  };
+  if (spec.back() != ')') {
+    bad("expected name(compression_level = N)");
+  }
+  CompressionSpec out{
+    .type = ParseCompressionName(
+      column_name, absl::StripAsciiWhitespace(spec.substr(0, open)))};
+  const auto body = spec.substr(open + 1, spec.size() - open - 2);
+  for (const auto option : absl::StrSplit(body, ',', absl::SkipWhitespace())) {
+    const std::pair<std::string_view, std::string_view> kv =
+      absl::StrSplit(option, absl::MaxSplits('=', 1));
+    const auto key =
+      absl::AsciiStrToLower(absl::StripAsciiWhitespace(kv.first));
+    const auto value = absl::StripAsciiWhitespace(kv.second);
+    if (key != "compression_level") {
+      bad(
+        absl::StrCat("unknown option '", key, "', expected compression_level"));
+    }
+    uint32_t level = 0;
+    if (value.empty() || !absl::SimpleAtoi(value, &level) || level < 1 ||
+        level > 255) {
+      bad("compression_level must be an integer between 1 and 255");
+    }
+    out.compression_level = static_cast<uint8_t>(level);
+  }
+  return out;
+}
+
+CompressionSpec ParseCompressionOption(duckdb::ClientContext& context,
+                                       std::string_view kind,
+                                       std::string_view owner_label,
+                                       std::string_view key,
+                                       const duckdb::Value& v,
+                                       const duckdb::LogicalType& value_type) {
   auto str = GetIndexStringOption(kind, owner_label, key, v);
-  auto parsed = ParseCompressionName(owner_label, str);
-  ValidateColumnCompression(context, owner_label, parsed, value_type);
+  auto parsed = ParseCompressionSpec(owner_label, str);
+  ValidateColumnCompression(context, owner_label, parsed.type, value_type);
+  catalog::CheckCompressionLevel(owner_label, parsed.type,
+                                 parsed.compression_level,
+                                 /*columnstore=*/true);
   return parsed;
 }
 
@@ -775,8 +834,10 @@ void ApplyIncludedOpclass(
   }
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      entry.compression = ParseCompressionOption(
+      const auto spec = ParseCompressionOption(
         context, kIncludedKind, owner_label, key, raw_val, value_type);
+      entry.compression = spec.type;
+      entry.compression_level = spec.compression_level;
     } else if (key == kHyperLogLogField) {
       entry.hyperloglog =
         GetIndexBoolOption(kIncludedKind, owner_label, key, raw_val);

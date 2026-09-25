@@ -54,6 +54,7 @@ set(iresearch-tests_sources
     ./analysis/sql_tokenizer_tests.cpp
     ./analysis/sql_tokenizer_fuzz_tests.cpp
     ./analysis/wildcard_tokenizer_tests.cpp
+    ./formats/column/col_codecs_test.cpp
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
@@ -148,6 +149,7 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
+    ./utils/serializer_tests.cpp
     ./duckdb/validity_mask_tests.cpp
     ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
@@ -220,6 +222,7 @@ target_include_directories(
         ${Boost_INCLUDE_DIRS}
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and

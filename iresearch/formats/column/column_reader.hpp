@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
@@ -45,6 +46,7 @@ namespace duckdb {
 class Serializer;
 class Deserializer;
 class CompressionFunction;
+class ObjectCache;
 
 }  // namespace duckdb
 namespace irs {
@@ -221,6 +223,9 @@ class ColumnReader {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
 
+  uint64_t CacheScope() const noexcept { return _cache_scope; }
+  void DropDictionaryCache(duckdb::ObjectCache& cache) const;
+
   ScanState InitScan(ReadContext& ctx) const {
     return InitScan(
       std::shared_ptr<ReadContext>{std::shared_ptr<ReadContext>{}, &ctx});
@@ -340,6 +345,8 @@ class ColumnReader {
   }
 
   field_id _id;
+  uint64_t _cache_scope;
+  mutable std::unique_ptr<std::atomic<bool>[]> _touched;
   duckdb::LogicalType _type;
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;

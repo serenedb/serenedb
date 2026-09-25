@@ -75,8 +75,18 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
+  struct DeclaredCodec {
+    duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
+    uint8_t compression_level = 0;
+  };
   using CompressionByColumn =
-    irs::containers::FlatHashMap<catalog::ColumnId, duckdb::CompressionType>;
+    irs::containers::FlatHashMap<catalog::ColumnId, DeclaredCodec>;
+  struct IncludedOptions {
+    DeclaredCodec codec;
+    bool hyperloglog = false;
+  };
+  using IncludedByColumn =
+    irs::containers::FlatHashMap<catalog::ColumnId, IncludedOptions>;
 
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
               bool is_new,
@@ -419,6 +429,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<const CompressionByColumn> _compression;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
+  irs::ColCodecParams _codec_params;
   std::atomic<int64_t> _num_rows{0};
   mutable std::shared_mutex _table_lock;
   // Merged per-field index config (PK + declared inverted indexes), RCU-swapped
@@ -427,6 +438,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
   // Column -> its term field_ids, RCU-swapped together with _entries.
   std::shared_ptr<const TermsByColumn> _terms_by_column;
+  std::shared_ptr<const IncludedByColumn> _included;
   // Writer encoding config over the merged _entries, RCU-swapped with them.
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;

@@ -1,0 +1,281 @@
+# The .col string codecs (dict_lz4, dict_zstd, lz4, and the columnstore's own
+# dict_fsst / fsst) on search tables: named per column, on an INCLUDE column,
+# forced globally, tuned by the table-level compression_level / segment_target
+# options, refused on a transactional table, and read back after a restart so
+# the frames are decoded from disk rather than from the writer's memory.
+# force_compression is a global setting, so this file owns its serened
+# instance.
+
+control substitution on
+
+
+statement ok
+CREATE TABLE cc_named (a INTEGER PRIMARY KEY,
+                       url TEXT USING COMPRESSION dict_lz4,
+                       host TEXT USING COMPRESSION dict_zstd,
+                       body TEXT USING COMPRESSION lz4,
+                       n TEXT USING COMPRESSION dict_lz4,
+                       bn TEXT USING COMPRESSION lz4,
+                       k TEXT USING COMPRESSION dict_fsst,
+                       s TEXT USING COMPRESSION fsst)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 3);
+
+
+statement ok
+INSERT INTO cc_named SELECT a,
+  'https://example.org/p/' || (a % 5000),
+  'host-' || (a % 17),
+  repeat('event ' || a || ' status ok; ', 8),
+  CASE WHEN a % 7 = 0 THEN NULL ELSE 'n' || (a % 13) END,
+  CASE WHEN a % 5 = 0 THEN NULL ELSE repeat('b' || a, 3) END,
+  'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0') || '/profile',
+  CASE WHEN a % 11 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END
+  FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cc_named;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('cc_named')
+WHERE column_name IN ('url', 'host', 'body', 'n', 'bn', 'k', 's') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+bn	LZ4
+body	LZ4
+host	DICT_ZSTD
+k	DICT_FSST
+n	DICT_LZ4
+s	FSST
+url	DICT_LZ4
+
+
+# every value round-trips, nulls included
+query
+SELECT count(*) AS mismatches FROM cc_named
+WHERE url IS DISTINCT FROM 'https://example.org/p/' || (a % 5000)
+   OR host IS DISTINCT FROM 'host-' || (a % 17)
+   OR body IS DISTINCT FROM repeat('event ' || a || ' status ok; ', 8)
+   OR n IS DISTINCT FROM (CASE WHEN a % 7 = 0 THEN NULL ELSE 'n' || (a % 13) END)
+   OR bn IS DISTINCT FROM (CASE WHEN a % 5 = 0 THEN NULL ELSE repeat('b' || a, 3) END)
+   OR k IS DISTINCT FROM 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0') || '/profile'
+   OR s IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END);
+----
+mismatches
+0
+
+
+# pushed filters: the dictionary shapes evaluate once per entry, the plain
+# shape decodes and filters
+query
+SELECT (SELECT count(*) FROM cc_named WHERE host = 'host-3') AS host3,
+       (SELECT count(*) FROM cc_named WHERE n IS NULL) AS n_nulls,
+       (SELECT count(*) FROM cc_named WHERE n = 'n4') AS n4,
+       (SELECT count(*) FROM cc_named WHERE bn IS NULL) AS bn_nulls,
+       (SELECT count(*) FROM cc_named WHERE body = repeat('event 777 status ok; ', 8)) AS body777,
+       (SELECT count(*) FROM cc_named WHERE url LIKE 'https://example.org/p/49%') AS url49,
+       (SELECT count(*) FROM cc_named WHERE k = 'https://example.org/users/000042/profile') AS k42,
+       (SELECT count(*) FROM cc_named WHERE s = 'key-00000123') AS s123,
+       (SELECT count(*) FROM cc_named WHERE s IS NULL) AS s_nulls;
+----
+host3	n_nulls	n4	bn_nulls	body777	url49	k42	s123	s_nulls
+1177	2858	1319	4000	1	444	100	1	1819
+
+
+# point lookups through the primary key
+query
+SELECT url, host, body IS NOT NULL AS has_body, n, bn IS NULL AS bn_null FROM cc_named WHERE a IN (0, 7, 19999) ORDER BY a;
+----
+url	host	has_body	n	bn_null
+https://example.org/p/0	host-0	t	NULL	t
+https://example.org/p/7	host-7	t	NULL	f
+https://example.org/p/4999	host-7	t	NULL	f
+
+
+# --- INCLUDE column of an inverted index --------------------------------------
+statement ok
+CREATE TEXT SEARCH DICTIONARY cc_eng AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE cc_idx (pk INTEGER PRIMARY KEY, txt VARCHAR, payload VARCHAR);
+
+
+statement ok
+INSERT INTO cc_idx SELECT i, 'word' || i, 'payload-' || (i % 100) FROM range(5000) t(i);
+
+
+statement ok
+CREATE INDEX cc_idx_i ON cc_idx USING inverted(txt cc_eng)
+  INCLUDE (pk, payload included (compression = 'dict_lz4'));
+
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('cc_idx_i') WHERE column_name = 'payload' AND segment_type <> 'VALIDITY';
+----
+compression
+DICT_LZ4
+
+
+query
+SELECT count(*) AS n, min(pk) AS first FROM cc_idx_i WHERE payload = 'payload-7';
+----
+n	first
+50	7
+
+
+# --- forced globally ----------------------------------------------------------
+statement ok
+SET GLOBAL force_compression = 'dict_zstd';
+
+
+statement ok
+CREATE TABLE cc_forced (a INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO cc_forced SELECT a, 'v' || (a % 300) FROM range(10000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cc_forced;
+
+
+statement ok
+RESET GLOBAL force_compression;
+
+
+# --- the decoded-dictionary cache budget is a global setting ------------------
+query
+SELECT current_setting('sdb_object_cache_size') AS bytes;
+----
+bytes
+0
+
+
+statement ok
+SET GLOBAL sdb_object_cache_size = 1073741824;
+
+
+query
+SELECT current_setting('sdb_object_cache_size') AS bytes;
+----
+bytes
+1073741824
+
+
+statement ok
+RESET GLOBAL sdb_object_cache_size;
+
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('cc_forced') WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
+----
+compression
+DICT_ZSTD
+
+
+query
+SELECT count(*) AS mismatches FROM cc_forced WHERE v IS DISTINCT FROM 'v' || (a % 300);
+----
+mismatches
+0
+
+
+# --- segment_target cuts a column into several segments -----------------------
+statement ok
+CREATE TABLE cc_small (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_target = 65536);
+
+
+statement ok
+INSERT INTO cc_small SELECT a, md5(a::VARCHAR) || md5((a * 31)::VARCHAR) FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cc_small;
+
+
+query
+SELECT count(*) > 1 AS several, count(*) < 40 AS bounded FROM pragma_storage_info('cc_small') WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
+----
+several	bounded
+t	t
+
+
+query
+SELECT count(*) AS mismatches FROM cc_small WHERE v IS DISTINCT FROM md5(a::VARCHAR) || md5((a * 31)::VARCHAR);
+----
+mismatches
+0
+
+
+# --- option validation and where the codecs are refused -----------------------
+statement error
+CREATE TABLE cc_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_level = 23);
+----
+db error: ERROR: WITH option "compression_level" must be between 0 and 22
+
+
+statement error
+CREATE TABLE cc_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', segment_target = 1000);
+----
+db error: ERROR: WITH option "segment_target" must be a multiple of 4096 bytes of at least 16384
+
+
+statement error
+CREATE TABLE cc_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION dict_lz4) WITH (storage = 'search');
+----
+db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'DICT_LZ4'
+
+
+statement error
+CREATE TABLE cc_plain (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Column "v": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
+
+
+statement ok
+CREATE TABLE cc_plain (a INTEGER, v TEXT);
+
+
+statement error
+ALTER TABLE cc_plain ADD COLUMN w TEXT USING COMPRESSION lz4;
+----
+db error: ERROR: Column "w": compression 'lz4' is only available on search tables (WITH (storage = 'search'))
+
+
+# --- everything survives a restart ------------------------------------------------
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM cc_named WHERE url IS DISTINCT FROM 'https://example.org/p/' || (a % 5000)
+                                       OR host IS DISTINCT FROM 'host-' || (a % 17)
+                                       OR body IS DISTINCT FROM repeat('event ' || a || ' status ok; ', 8)
+                                       OR n IS DISTINCT FROM (CASE WHEN a % 7 = 0 THEN NULL ELSE 'n' || (a % 13) END)
+                                       OR bn IS DISTINCT FROM (CASE WHEN a % 5 = 0 THEN NULL ELSE repeat('b' || a, 3) END)
+                                       OR k IS DISTINCT FROM 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0') || '/profile'
+                                       OR s IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END)) AS named_mismatches,
+       (SELECT count(*) FROM cc_forced WHERE v IS DISTINCT FROM 'v' || (a % 300)) AS forced_mismatches,
+       (SELECT count(*) FROM cc_small WHERE v IS DISTINCT FROM md5(a::VARCHAR) || md5((a * 31)::VARCHAR)) AS small_mismatches,
+       (SELECT count(*) FROM cc_idx_i WHERE payload = 'payload-7') AS idx_hits;
+----
+named_mismatches	forced_mismatches	small_mismatches	idx_hits
+0	0	0	50

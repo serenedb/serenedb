@@ -100,6 +100,9 @@ uint64_t ExtractValidatedUbigint(std::string_view option_key,
     option_key, expr.Cast<duckdb::ConstantExpression>().GetValue());
 }
 
+constexpr uint32_t kMaxCompressionLevel = 22;
+constexpr uint32_t kSegmentTargetGranule = 4096;
+constexpr uint32_t kMinSegmentTarget = 16 * 1024;
 }  // namespace
 
 catalog::TableEngine ReadStorageEngine(
@@ -237,6 +240,49 @@ void ApplyStorageKind(
     } else {
       search_options.row_group_size = ResolveUintWithOption(
         context, kRowGroupSizeSetting, /*with_value=*/nullptr);
+    }
+    if (const auto it =
+          with_options.find(std::string{kCompressionLevelSetting});
+        it != with_options.end() && it->second) {
+      const auto level =
+        ExtractUint(kCompressionLevelSetting, *it->second).GetValue<uint32_t>();
+      if (level > kMaxCompressionLevel) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("WITH option \"", kCompressionLevelSetting,
+                  "\" must be between 0 and ", kMaxCompressionLevel));
+      }
+      search_options.compression_level = static_cast<uint8_t>(level);
+      with_options.erase(std::string{kCompressionLevelSetting});
+    }
+    if (const auto it = with_options.find(std::string{kSegmentTargetSetting});
+        it != with_options.end() && it->second) {
+      const auto target =
+        ExtractUint(kSegmentTargetSetting, *it->second).GetValue<uint32_t>();
+      if (target < kMinSegmentTarget || target % kSegmentTargetGranule != 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("WITH option \"", kSegmentTargetSetting,
+                  "\" must be a multiple of ", kSegmentTargetGranule,
+                  " bytes of at least ", kMinSegmentTarget));
+      }
+      search_options.segment_target = target;
+      with_options.erase(std::string{kSegmentTargetSetting});
+    }
+    if (const auto it =
+          with_options.find(std::string{kCompressionObjectiveSetting});
+        it != with_options.end() && it->second) {
+      const auto text =
+        *ExtractString(kCompressionObjectiveSetting, *it->second);
+      const auto objective =
+        catalog::ParseCompressionObjective(duckdb::StringUtil::Lower(text));
+      if (!objective) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("WITH option \"", kCompressionObjectiveSetting,
+                                "\" must be one of balanced, size, speed"));
+      }
+      search_options.compression_objective = static_cast<uint8_t>(*objective);
+      with_options.erase(std::string{kCompressionObjectiveSetting});
     }
     if (const auto topk = with_options.find(std::string{kOptimizeTopKSetting});
         topk != with_options.end() && topk->second) {

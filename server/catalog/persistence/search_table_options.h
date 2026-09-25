@@ -36,6 +36,9 @@ struct SearchTableOptions {
   uint32_t cleanup_interval_step = 0;
   uint32_t row_group_size = 0;
   uint64_t segment_memory_max = uint64_t{256} << 20;
+  uint8_t compression_level = 0;
+  uint32_t segment_target = 0;
+  uint8_t compression_objective = 0;
   std::optional<ScorerOptions> topk_scorer;
 };
 

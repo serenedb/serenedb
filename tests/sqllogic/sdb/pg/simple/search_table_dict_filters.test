@@ -1,0 +1,293 @@
+statement ok
+CREATE TABLE df_s (a INTEGER PRIMARY KEY,
+                   k TEXT USING COMPRESSION dict_fsst,
+                   l TEXT USING COMPRESSION dict_lz4,
+                   p TEXT USING COMPRESSION fsst)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_target = 65536);
+
+statement ok
+CREATE TABLE df_d (a INTEGER PRIMARY KEY, k TEXT, l TEXT, p TEXT);
+
+statement ok
+INSERT INTO df_d SELECT a,
+  CASE WHEN a % 11 = 0 THEN NULL WHEN a % 13 = 0 THEN '' ELSE 'k-' || (a % 3000) END,
+  CASE WHEN a % 7 = 0 THEN NULL ELSE 'l-' || (a % 500) END,
+  CASE WHEN a % 17 = 0 THEN NULL ELSE 'row ' || a || ' of the plain column' END
+  FROM range(60000) t(a);
+
+statement ok
+INSERT INTO df_s SELECT * FROM df_d;
+
+statement ok
+VACUUM (REFRESH_TABLE) df_s;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression, count(*) > 1 AS several
+FROM pragma_storage_info('df_s')
+WHERE column_name IN ('k', 'l', 'p') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression	several
+k	DICT_FSST	t
+l	DICT_LZ4	t
+p	FSST	t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-42') = (SELECT count(*) FROM df_d WHERE k = 'k-42') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-0') = (SELECT count(*) FROM df_d WHERE k = 'k-0') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-2999') = (SELECT count(*) FROM df_d WHERE k = 'k-2999') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-') = (SELECT count(*) FROM df_d WHERE k = 'k-') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'zzz') = (SELECT count(*) FROM df_d WHERE k = 'zzz') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = '') = (SELECT count(*) FROM df_d WHERE k = '') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k <> 'k-42') = (SELECT count(*) FROM df_d WHERE k <> 'k-42') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k < 'k-1') = (SELECT count(*) FROM df_d WHERE k < 'k-1') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k <= 'k-1') = (SELECT count(*) FROM df_d WHERE k <= 'k-1') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k > 'k-998') = (SELECT count(*) FROM df_d WHERE k > 'k-998') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k >= 'k-999') = (SELECT count(*) FROM df_d WHERE k >= 'k-999') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k < '') = (SELECT count(*) FROM df_d WHERE k < '') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k > '') = (SELECT count(*) FROM df_d WHERE k > '') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k BETWEEN 'k-100' AND 'k-1005') = (SELECT count(*) FROM df_d WHERE k BETWEEN 'k-100' AND 'k-1005') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE 'k-5' < k) = (SELECT count(*) FROM df_d WHERE 'k-5' < k) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE 'k-5' >= k) = (SELECT count(*) FROM df_d WHERE 'k-5' >= k) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IN ('k-1', 'k-10', 'k-100', 'missing', NULL)) = (SELECT count(*) FROM df_d WHERE k IN ('k-1', 'k-10', 'k-100', 'missing', NULL)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IS NULL) = (SELECT count(*) FROM df_d WHERE k IS NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IS NOT NULL) = (SELECT count(*) FROM df_d WHERE k IS NOT NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-7' OR k = 'k-70' OR k IS NULL) = (SELECT count(*) FROM df_d WHERE k = 'k-7' OR k = 'k-70' OR k IS NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k >= 'k-2' AND k < 'k-3' AND k <> 'k-25') = (SELECT count(*) FROM df_d WHERE k >= 'k-2' AND k < 'k-3' AND k <> 'k-25') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k LIKE 'k-12%') = (SELECT count(*) FROM df_d WHERE k LIKE 'k-12%') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k LIKE '%9') = (SELECT count(*) FROM df_d WHERE k LIKE '%9') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l = 'l-42') = (SELECT count(*) FROM df_d WHERE l = 'l-42') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l IS NULL) = (SELECT count(*) FROM df_d WHERE l IS NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l IS NOT NULL) = (SELECT count(*) FROM df_d WHERE l IS NOT NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l IN ('l-1', 'l-499')) = (SELECT count(*) FROM df_d WHERE l IN ('l-1', 'l-499')) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l > 'l-45') = (SELECT count(*) FROM df_d WHERE l > 'l-45') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE p = 'row 42 of the plain column') = (SELECT count(*) FROM df_d WHERE p = 'row 42 of the plain column') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE p IS NULL) = (SELECT count(*) FROM df_d WHERE p IS NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE p > 'row 5') = (SELECT count(*) FROM df_d WHERE p > 'row 5') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k = 'k-42') = (SELECT count(*) FROM df_d WHERE k = 'k-42') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k >= 'k-2' AND k < 'k-3' AND k <> 'k-25') = (SELECT count(*) FROM df_d WHERE k >= 'k-2' AND k < 'k-3' AND k <> 'k-25') AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IN ('k-1', 'k-10', 'k-100', 'missing', NULL)) = (SELECT count(*) FROM df_d WHERE k IN ('k-1', 'k-10', 'k-100', 'missing', NULL)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IS NULL) = (SELECT count(*) FROM df_d WHERE k IS NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE l IS NOT NULL) = (SELECT count(*) FROM df_d WHERE l IS NOT NULL) AS ok;
+----
+ok
+t
+
+query
+SELECT count(*) AS mismatches FROM (
+  (SELECT a, k, l FROM df_s WHERE k BETWEEN 'k-100' AND 'k-1005' EXCEPT SELECT a, k, l FROM df_d WHERE k BETWEEN 'k-100' AND 'k-1005')
+  UNION ALL
+  (SELECT a, k, l FROM df_d WHERE k BETWEEN 'k-100' AND 'k-1005' EXCEPT SELECT a, k, l FROM df_s WHERE k BETWEEN 'k-100' AND 'k-1005')
+  UNION ALL
+  (SELECT a, k, p FROM df_s WHERE k = 'k-42' EXCEPT SELECT a, k, p FROM df_d WHERE k = 'k-42')
+);
+----
+mismatches
+0
+
+query
+SELECT count(*) AS mismatches FROM (
+  (SELECT a, k, l, p FROM df_s WHERE a % 997 = 3 EXCEPT SELECT a, k, l, p FROM df_d WHERE a % 997 = 3)
+  UNION ALL
+  (SELECT a, k, l, p FROM df_d WHERE a % 997 = 3 EXCEPT SELECT a, k, l, p FROM df_s WHERE a % 997 = 3)
+);
+----
+mismatches
+0
+
+query
+SELECT count(*) AS n, count(k) AS k_values, count(p) AS p_values FROM df_s WHERE a % 997 = 3;
+----
+n	k_values	p_values
+61	56	57
+
+query
+SELECT a, k, l, p FROM df_s WHERE a IN (0, 1, 13, 42, 59999) ORDER BY a;
+----
+a	k	l	p
+0	NULL	NULL	NULL
+1	k-1	l-1	row 1 of the plain column
+13	(empty)	l-13	row 13 of the plain column
+42	k-42	NULL	row 42 of the plain column
+59999	k-2999	l-499	row 59999 of the plain column
+
+statement ok
+DROP TABLE df_s;
+
+statement ok
+DROP TABLE df_d;

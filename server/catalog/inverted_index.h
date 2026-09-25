@@ -146,6 +146,7 @@ struct InvertedIndexEntryInfo {
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
+  uint8_t compression_level = 0;
 
   bool IsAnn() const noexcept { return ann_config.has_value(); }
   bool IsIVF() const noexcept {

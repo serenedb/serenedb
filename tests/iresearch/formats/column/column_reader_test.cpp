@@ -2130,7 +2130,8 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
-                             /*skip_validity=*/false, 1024);
+                             /*skip_validity=*/false, 1024,
+                             duckdb::CompressionType::COMPRESSION_DICT_FSST);
     auto put = [&](uint64_t row, const std::string& s) {
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =

@@ -68,6 +68,7 @@ struct EntryConfigSerialized {
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
+  uint8_t compression_level = 0;
 };
 
 // One expression key: its payload plus the iresearch field_id allocated for it

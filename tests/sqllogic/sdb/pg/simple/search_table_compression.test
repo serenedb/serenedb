@@ -264,6 +264,89 @@ db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32)
 
 
 statement ok
+CREATE TABLE search_col_codecs (a INTEGER PRIMARY KEY, v_dict_lz4 TEXT USING COMPRESSION dict_lz4, v_dict_zstd TEXT USING COMPRESSION dict_zstd, v_lz4 TEXT USING COMPRESSION lz4, v_fsst TEXT USING COMPRESSION fsst, v_dict_zxc TEXT USING COMPRESSION dict_zxc, v_zxc TEXT USING COMPRESSION zxc)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 2);
+
+statement ok
+INSERT INTO search_col_codecs SELECT a, 'd' || (a % 11), 'z' || (a % 13), repeat('p' || a, 10), 'f' || a, 'x' || (a % 17), repeat('q' || a, 6) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_col_codecs;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_col_codecs') WHERE column_name LIKE 'v\_%' AND segment_type <> 'VALIDITY' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+v_dict_lz4	DICT_LZ4
+v_dict_zstd	DICT_ZSTD
+v_dict_zxc	DICT_ZXC
+v_fsst	FSST
+v_lz4	LZ4
+v_zxc	ZXC
+
+query
+SELECT count(*) FROM search_col_codecs WHERE v_dict_lz4 IS DISTINCT FROM 'd' || (a % 11) OR v_dict_zstd IS DISTINCT FROM 'z' || (a % 13) OR v_lz4 IS DISTINCT FROM repeat('p' || a, 10) OR v_fsst IS DISTINCT FROM 'f' || a OR v_dict_zxc IS DISTINCT FROM 'x' || (a % 17) OR v_zxc IS DISTINCT FROM repeat('q' || a, 6);
+----
+count
+0
+
+statement error
+CREATE TABLE plain_col_codec (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Column "v": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
+
+
+statement ok
+CREATE TABLE search_col_levels (a INTEGER PRIMARY KEY, v_zstd9 TEXT USING COMPRESSION dict_zstd(compression_level = 9), v_zxc5 TEXT USING COMPRESSION zxc(compression_level = 5), v_lz4 TEXT USING COMPRESSION dict_lz4)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 2);
+
+statement ok
+INSERT INTO search_col_levels SELECT a, 'z' || (a % 13), repeat('q' || a, 6), 'd' || (a % 11) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_col_levels;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_col_levels') WHERE column_name LIKE 'v\_%' AND segment_type <> 'VALIDITY' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+v_lz4	DICT_LZ4
+v_zstd9	DICT_ZSTD
+v_zxc5	ZXC
+
+query
+SELECT count(*) FROM search_col_levels WHERE v_zstd9 IS DISTINCT FROM 'z' || (a % 13) OR v_zxc5 IS DISTINCT FROM repeat('q' || a, 6) OR v_lz4 IS DISTINCT FROM 'd' || (a % 11);
+----
+count
+0
+
+statement error
+CREATE TABLE search_level_fsst (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'dict_fsst' takes no compression_level
+
+
+statement error
+CREATE TABLE search_level_range (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 99)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression_level 99 is out of range for 'lz4' (1 to 12)
+
+
+statement error
+CREATE TABLE search_level_option (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3)) WITH (storage = 'search');
+----
+db error: ERROR: Unknown compression option 'speed', expected compression_level
+
+
+statement ok
+DROP TABLE search_col_levels;
+
+
+statement ok
+DROP TABLE search_col_codecs;
+
+
+statement ok
 DROP TABLE search_declared;
 
 statement ok
@@ -289,3 +372,214 @@ DROP TABLE search_forced_alprd;
 
 statement ok
 DROP TABLE search_forced_roaring;
+
+# compression_objective steers auto; it takes balanced, size or speed
+statement error
+CREATE TABLE obj_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_objective = 'tiny');
+----
+db error: ERROR: WITH option "compression_objective" must be one of balanced, size, speed
+
+
+statement error
+CREATE TABLE obj_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_objective = 3);
+----
+db error: ERROR: WITH option "compression_objective" must be one of balanced, size, speed
+
+
+statement ok
+CREATE TABLE obj_size (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_objective = 'SIZE');
+
+statement error
+CREATE TABLE obj_plain (a INTEGER PRIMARY KEY, v TEXT) WITH (compression_objective = 'size');
+----
+db error: ERROR: unrecognized parameter "compression_objective"
+
+
+statement ok
+DROP TABLE obj_size;
+
+# A refresh always writes the speed set (lz4 leaves); compaction re-encodes
+# with the table's objective. Two flushed segments so the compaction merges.
+statement ok
+CREATE TABLE obj_balanced (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_objective = 'balanced');
+
+statement ok
+CREATE TABLE obj_size (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_objective = 'size');
+
+statement ok
+CREATE TABLE obj_speed (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_objective = 'speed');
+
+statement ok
+INSERT INTO obj_balanced SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_balanced;
+
+statement ok
+INSERT INTO obj_size SELECT * FROM obj_balanced;
+
+statement ok
+INSERT INTO obj_speed SELECT * FROM obj_balanced;
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_size;
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_speed;
+
+statement ok
+INSERT INTO obj_balanced SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000, 20000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_balanced;
+
+statement ok
+INSERT INTO obj_size SELECT * FROM obj_balanced WHERE a >= 10000;
+
+statement ok
+INSERT INTO obj_speed SELECT * FROM obj_balanced WHERE a >= 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_size;
+
+statement ok
+VACUUM (REFRESH_TABLE) obj_speed;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('obj_balanced')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+body	LZ4
+host	DICT_LZ4
+url	DICT_LZ4
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('obj_size')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+body	LZ4
+host	DICT_LZ4
+url	DICT_LZ4
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('obj_speed')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+body	LZ4
+host	DICT_LZ4
+url	DICT_LZ4
+
+statement ok
+VACUUM (COMPACT_TABLE) obj_balanced;
+
+statement ok
+VACUUM (COMPACT_TABLE) obj_size;
+
+statement ok
+VACUUM (COMPACT_TABLE) obj_speed;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('obj_balanced')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+body	FSST
+host	DICT_FSST
+url	DICT_FSST
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('obj_speed')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+body	LZ4
+host	DICT_LZ4
+url	DICT_LZ4
+
+query
+SELECT column_name, bool_and(compression IN ('DICT_ZSTD', 'ZSTD', 'DICT_ZXC', 'ZXC')) AS size_leaf
+FROM pragma_storage_info('obj_size')
+WHERE segment_type <> 'VALIDITY' AND column_name IN ('body', 'url')
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	size_leaf
+body	t
+url	t
+
+query
+SELECT (SELECT count(*) FROM obj_balanced WHERE url = 'https://example.org/section/42/page?id=0') AS balanced,
+       (SELECT count(*) FROM obj_size WHERE url = 'https://example.org/section/42/page?id=0') AS size,
+       (SELECT count(*) FROM obj_speed WHERE url = 'https://example.org/section/42/page?id=0') AS speed,
+       (SELECT count(*) FROM obj_size s JOIN obj_balanced b USING (a) WHERE s.body IS DISTINCT FROM b.body OR s.url IS DISTINCT FROM b.url OR s.host IS DISTINCT FROM b.host) AS mismatches;
+----
+balanced	size	speed	mismatches
+6	6	6	0
+
+statement ok
+DROP TABLE obj_balanced;
+
+statement ok
+DROP TABLE obj_size;
+
+statement ok
+DROP TABLE obj_speed;
+
+statement ok
+CREATE TABLE bg_merge (a INTEGER PRIMARY KEY, url TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 50);
+
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(0, 20000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(20000, 40000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(40000, 60000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(60000, 80000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
+query ok retry 300 backoff 100ms
+SELECT count(*) < 4 AS merged, bool_or(compression = 'DICT_FSST') AS objective
+FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
+----
+merged	objective
+t	t
+
+query
+SELECT count(*), count(DISTINCT url) FROM bg_merge;
+----
+count	count
+80000	3500
+
+statement ok
+DROP TABLE bg_merge;

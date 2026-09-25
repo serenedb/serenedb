@@ -407,7 +407,11 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
         }
       };
       if constexpr (std::is_aggregate_v<T>) {
-        check_size(boost::pfr::tuple_size_v<T>);
+        if (count > boost::pfr::tuple_size_v<T>) {
+          THROW_SQL_ERROR(ERR_MSG("Failed to read: serialized data has ", count,
+                                  " element(s), expected at most ",
+                                  boost::pfr::tuple_size_v<T>));
+        }
       } else if constexpr (kIsTuple<T>) {
         check_size(std::tuple_size_v<T>);
       } else if constexpr (kIsArray<T>) {
@@ -418,7 +422,9 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       try {
         if constexpr (std::is_aggregate_v<T>) {
           boost::pfr::for_each_field(value, [&](auto& v) {
-            self(v, src);
+            if (element_idx < count) {
+              self(v, src);
+            }
             ++element_idx;
           });
         } else if constexpr (kIsTuple<T>) {

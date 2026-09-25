@@ -545,6 +545,7 @@ void AppendIResearchBlockRows(
     info.persistent = true;
     info.block_id = INVALID_BLOCK;
     info.block_offset = meta.file_offset;
+    info.segment_info = absl::StrCat("byte_size=", meta.byte_size);
   }
 }
 

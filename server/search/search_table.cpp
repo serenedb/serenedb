@@ -52,6 +52,7 @@
 #include "catalog/entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "catalog/persistence/index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/scorer_options.h"
 #include "scheduler/background_scheduler.h"
@@ -95,7 +96,10 @@ SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
   CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.CatalogOid(), column.CompressionType());
+      compression.emplace(
+        column.CatalogOid(),
+        DeclaredCodec{.type = column.CompressionType(),
+                      .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -126,6 +130,7 @@ void BuildPkInto(catalog::InvertedIndex::Entries& entries,
 // column id). Only genuinely term-indexed entries contribute to `terms`.
 void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
                     SearchTable::TermsByColumn& terms,
+                    SearchTable::IncludedByColumn& included,
                     const catalog::InvertedIndex& index) {
   for (auto col_id : index.GetColumns()) {
     const auto* entry = index.FindColumnInfo(col_id);
@@ -139,6 +144,17 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
     if (merged.IsTermDict()) {
       terms[col_id].push_back(term_field);
     }
+    const bool own_codec =
+      entry->compression != duckdb::CompressionType::COMPRESSION_AUTO;
+    if (!own_codec && !entry->hyperloglog) {
+      continue;
+    }
+    auto& options = included[col_id];
+    if (own_codec) {
+      options.codec = {.type = entry->compression,
+                       .compression_level = entry->compression_level};
+    }
+    options.hyperloglog = options.hyperloglog || entry->hyperloglog;
   }
   // Indexed expressions are synthetic and single-field: value + terms (and any
   // IVF/JSON-leaf/norm sub-fields) live under the expression's own field id, so
@@ -157,32 +173,47 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
   MergedFieldOptions(
     std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
     std::shared_ptr<const SearchTable::CompressionByColumn> compression,
-    uint32_t rows_per_row_group)
-    : _entries{std::move(entries)}, _compression{std::move(compression)} {
+    std::shared_ptr<const SearchTable::IncludedByColumn> included,
+    uint32_t rows_per_row_group, irs::ColCodecParams codec_params_p)
+    : _entries{std::move(entries)},
+      _compression{std::move(compression)},
+      _included{std::move(included)} {
     row_group_size = rows_per_row_group;
+    codec_params = codec_params_p;
   }
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
-    auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+    SearchTable::DeclaredCodec declared;
+    bool hyperloglog = false;
     if (const auto it = _compression->find(catalog::ColumnId{id});
         it != _compression->end()) {
       declared = it->second;
     }
+    if (const auto it = _included->find(catalog::ColumnId{id});
+        it != _included->end()) {
+      if (it->second.codec.type != duckdb::CompressionType::COMPRESSION_AUTO) {
+        declared = it->second.codec;
+      }
+      hyperloglog = it->second.hyperloglog;
+    }
     const auto it = _entries->find(id);
     if (it == _entries->end()) {
-      return {.compression = declared};
+      return {.compression = declared.type,
+              .compression_level = declared.compression_level,
+              .hyperloglog = hyperloglog};
     }
     const auto& entry = it->second;
+    const bool own =
+      entry.compression != duckdb::CompressionType::COMPRESSION_AUTO;
     return {
-      .compression =
-        entry.compression == duckdb::CompressionType::COMPRESSION_AUTO
-          ? declared
-          : entry.compression,
+      .compression = own ? entry.compression : declared.type,
+      .compression_level =
+        own ? entry.compression_level : declared.compression_level,
       // An IVF entry keys the merged config by its column id (the value
       // column), not a per-index term field, so this attaches the ANN index to
       // that column.
       .ann_info = catalog::AnnInfoForEntry(id, entry),
-      .hyperloglog = entry.hyperloglog,
+      .hyperloglog = entry.hyperloglog || hyperloglog,
     };
   }
 
@@ -201,14 +232,17 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
  private:
   std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
   std::shared_ptr<const SearchTable::CompressionByColumn> _compression;
+  std::shared_ptr<const SearchTable::IncludedByColumn> _included;
 };
 
 std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
   std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
   std::shared_ptr<const SearchTable::CompressionByColumn> compression,
-  uint32_t row_group_size) {
+  std::shared_ptr<const SearchTable::IncludedByColumn> included,
+  uint32_t row_group_size, irs::ColCodecParams codec_params) {
   return std::make_shared<const MergedFieldOptions>(
-    std::move(entries), std::move(compression), row_group_size);
+    std::move(entries), std::move(compression), std::move(included),
+    row_group_size, codec_params);
 }
 
 }  // namespace
@@ -227,22 +261,36 @@ SearchTable::SearchTable(
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size != 0
                       ? options.row_group_size
-                      : static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE)} {
+                      : static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE)},
+    _codec_params{.compression_level = options.compression_level,
+                  .segment_target = options.segment_target != 0
+                                      ? options.segment_target
+                                      : irs::kDefaultColSegmentTarget,
+                  .objective = static_cast<irs::AutoObjective>(
+                    options.compression_objective)} {
   catalog::InvertedIndex::Entries entries;
   TermsByColumn terms;
   BuildPkInto(entries, terms, _pk_columns);
   _entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
+  _included = std::make_shared<const IncludedByColumn>();
+  _field_options = MakeFieldOptions(_entries, _compression, _included,
+                                    _row_group_size, _codec_params);
   if (options.topk_scorer) {
     _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
   }
   OpenWriter();
 
+  const catalog::persistence::InvertedIndexOptions tier;
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
   _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
+  _maint_settings.compaction_max_segments = tier.compaction_max_segments;
+  _maint_settings.compaction_max_segments_bytes =
+    tier.compaction_max_segments_bytes;
+  _maint_settings.compaction_floor_segment_bytes =
+    tier.compaction_floor_segment_bytes;
 }
 
 std::shared_ptr<const catalog::InvertedIndex::Entries>
@@ -349,27 +397,35 @@ void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   auto merged_entries =
     std::make_shared<catalog::InvertedIndex::Entries>(*_entries);
   auto merged_terms = std::make_shared<TermsByColumn>(*_terms_by_column);
-  MergeIndexInto(*merged_entries, *merged_terms, index);
+  auto merged_included = std::make_shared<IncludedByColumn>(*_included);
+  MergeIndexInto(*merged_entries, *merged_terms, *merged_included, index);
   _entries = std::move(merged_entries);
   _terms_by_column = std::move(merged_terms);
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
+  _included = std::move(merged_included);
+  _field_options = MakeFieldOptions(_entries, _compression, _included,
+                                    _row_group_size, _codec_params);
 }
 
 void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
   catalog::InvertedIndex::Entries entries;
   TermsByColumn terms;
+  IncludedByColumn included;
   BuildPkInto(entries, terms, _pk_columns);
   for (const auto& index :
        catalog::RelationInvertedIndexes(context, _schema_id, _table_id)) {
-    MergeIndexInto(entries, terms, catalog::InvertedInfo(*index));
+    MergeIndexInto(entries, terms, included, catalog::InvertedInfo(*index));
   }
   auto next_entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   auto next_terms = std::make_shared<const TermsByColumn>(std::move(terms));
+  auto next_included =
+    std::make_shared<const IncludedByColumn>(std::move(included));
   std::unique_lock lock(_table_lock);
   _entries = std::move(next_entries);
   _terms_by_column = std::move(next_terms);
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
+  _included = std::move(next_included);
+  _field_options = MakeFieldOptions(_entries, _compression, _included,
+                                    _row_group_size, _codec_params);
 }
 
 SearchTable::~SearchTable() {
@@ -623,6 +679,9 @@ ResultWithTime SearchTable::CleanupUnsafe() {
 void SearchTable::VacuumRefresh() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
+  }
   CleanupUnsafe();
 }
 

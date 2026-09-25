@@ -91,6 +91,58 @@ dict_rows	flat_rows
 2733	2733
 
 statement ok
+CREATE TABLE stdi_sparse (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_sparse_idx ON stdi_sparse USING inverted (i, body stdi_en, tag);
+
+statement ok
+CREATE TABLE stdi_sparse_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_sparse_flat_idx ON stdi_sparse_flat USING inverted (i, body stdi_en, tag);
+
+statement count 206
+INSERT INTO stdi_sparse SELECT i, body, tag FROM read_parquet('${__TEST_DIR__}/stdi.parquet') WHERE i % 97 = 0;
+
+statement count 206
+INSERT INTO stdi_sparse_flat SELECT i, body || '', tag || '' FROM stdi_src WHERE i % 97 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_sparse;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_sparse_flat;
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_sparse_idx.tableoid) AS s FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_sparse_flat_idx.tableoid) AS s FROM stdi_sparse_flat_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_sparse_flat_idx.tableoid) AS s FROM stdi_sparse_flat_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_sparse_idx.tableoid) AS s FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT (SELECT count(*) FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven')) AS sparse_rows,
+       (SELECT count(*) FROM stdi_sparse_idx WHERE tag = 'Tag 3') AS sparse_tags,
+       (SELECT count(*) FROM stdi_sparse_flat_idx WHERE tag = 'Tag 3') AS flat_tags;
+----
+sparse_rows	sparse_tags	flat_tags
+64	28	28
+
+statement ok
 CREATE TABLE stdi_const (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
 WITH (storage = 'search', compaction_interval = 0);
 

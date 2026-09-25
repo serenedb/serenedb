@@ -132,9 +132,11 @@ SearchSinkInsertBaseImpl::DictionaryOf(const duckdb::Vector& vec) {
     case duckdb::VectorType::CONSTANT_VECTOR:
       return DictionaryValues{&vec, {}, 1};
     case duckdb::VectorType::DICTIONARY_VECTOR: {
+      static constexpr duckdb::idx_t kMaxDictionarySize = 20000;
       const auto size = duckdb::DictionaryVector::DictionarySize(vec);
       const auto& id = duckdb::DictionaryVector::DictionaryId(vec);
-      if (!size.IsValid() || id.empty()) {
+      if (!size.IsValid() || id.empty() ||
+          size.GetIndex() >= kMaxDictionarySize) {
         return std::nullopt;
       }
       return DictionaryValues{&duckdb::DictionaryVector::Child(vec), id,
@@ -175,7 +177,7 @@ void SearchSinkInsertBaseImpl::InvertEntryTokens(const Field& field,
   }
 }
 
-void SearchSinkInsertBaseImpl::InvertDictionary(
+bool SearchSinkInsertBaseImpl::InvertDictionary(
   const Field& field, const DictionaryValues& dict,
   const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
   irs::doc_id_t first_doc) {
@@ -185,6 +187,10 @@ void SearchSinkInsertBaseImpl::InvertDictionary(
     return true;
   });
   if (!known) {
+    if (2 * count <
+        std::min<uint32_t>(dict.size, uint32_t{STANDARD_VECTOR_SIZE})) {
+      return false;
+    }
     duckdb::UnifiedVectorFormat values;
     dict.values->ToUnifiedFormat(values);
     if (field.keyword) {
@@ -203,6 +209,7 @@ void SearchSinkInsertBaseImpl::InvertDictionary(
   InvertField(field, [&](irs::FieldInverter& fld) {
     return fld.InvertDictionaryRows(fmt, count, first_doc);
   });
+  return true;
 }
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -278,8 +285,7 @@ void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(const Field& field,
     null_field, count,
     [&](const duckdb::UnifiedVectorFormat& fmt, uint32_t n,
         irs::doc_id_t first_doc) {
-      if (dict) {
-        InvertDictionary(field, *dict, fmt, n, first_doc);
+      if (dict && InvertDictionary(field, *dict, fmt, n, first_doc)) {
         return;
       }
       InvertTokens(
@@ -321,8 +327,7 @@ void SearchSinkInsertBaseImpl::WriteKeywordColumn(const Field& field,
           });
         }
       }
-      if (dict) {
-        InvertDictionary(field, *dict, fmt, n, first_doc);
+      if (dict && InvertDictionary(field, *dict, fmt, n, first_doc)) {
         return;
       }
       InvertField(field, [&](irs::FieldInverter& fld) {

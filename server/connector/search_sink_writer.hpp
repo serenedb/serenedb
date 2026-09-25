@@ -183,7 +183,7 @@ class SearchSinkInsertBaseImpl {
   template<typename Func>
   void InvertEntryTokens(const Field& field, Func&& func);
 
-  void InvertDictionary(const Field& field, const DictionaryValues& dict,
+  bool InvertDictionary(const Field& field, const DictionaryValues& dict,
                         const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                         irs::doc_id_t first_doc);
 

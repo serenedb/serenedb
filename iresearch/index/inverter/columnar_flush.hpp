@@ -117,7 +117,7 @@ class ScatteredField : util::Noncopyable {
     return _s->term_starts.empty() ? rank : _s->term_starts[rank];
   }
 
-  void BuildHistogram(const LogColumn& term_ids, size_t vocab);
+  void BuildHistogram(const PostingLogBase& log, size_t vocab);
   void RankLiveTerms(std::span<const duckdb::string_t> entries);
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);
@@ -127,8 +127,13 @@ class ScatteredField : util::Noncopyable {
                           size_t& next);
   void RadixSortByKey();
 
-  template<typename Log>
+  template<bool kRefs, typename Log>
   void Scatter(const Log& log, uint64_t nocc);
+
+  template<typename Log>
+  bool ScatterEntry(const Log& log, const LogEntry& entry, uint32_t ntokens,
+                    doc_id_t doc, uint32_t** docs, uint32_t** positions,
+                    uint32_t** offs_start, uint32_t** offs_end);
 
   InverterMemory* _mem;
   ScatterScratch* _s;

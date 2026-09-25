@@ -38,8 +38,10 @@
 
 #include <benchmark/benchmark.h>
 
+#include <bit>
 #include <cstdint>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
+#include <iresearch/analysis/text/classify/block_masks.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
@@ -152,6 +154,75 @@ void BmSingleScan(benchmark::State& state) {
   ReportTokens(state, tokens, text.size());
 }
 
+constexpr std::string_view kSeparatorChars = "#0123456789ABCDEFGHIJ";
+constexpr std::string_view kDelimChars = ",;|\t:.!?/\\#&@$%^*()[]{}~";
+
+void BmSingleLenScan(benchmark::State& state) {
+  const auto delimiter =
+    kSeparatorChars.substr(0, static_cast<size_t>(state.range(0)));
+  const auto text = MakeText(delimiter, static_cast<size_t>(state.range(1)));
+  auto stream = Tokenizer::Make({.delimiters = {Bytes(delimiter)}});
+
+  size_t tokens = 0;
+  for (auto _ : state) {
+    tokens += Drain(*stream, text);
+  }
+  ReportTokens(state, tokens, text.size());
+}
+
+void BmManyCharsScan(benchmark::State& state) {
+  const auto n = static_cast<size_t>(state.range(0));
+  const auto text = MakeText(",", static_cast<size_t>(state.range(1)));
+  std::vector<irs::bstring> delimiters;
+  for (const char c : kDelimChars.substr(0, n)) {
+    delimiters.push_back(Bytes(std::string_view{&c, 1}));
+  }
+  auto stream = Tokenizer::Make({.delimiters = std::move(delimiters)});
+
+  size_t tokens = 0;
+  for (auto _ : state) {
+    tokens += Drain(*stream, text);
+  }
+  ReportTokens(state, tokens, text.size());
+}
+
+template<typename ClassifyFn>
+void RunClassify(benchmark::State& state, ClassifyFn classify) {
+  namespace classify_ns = irs::analysis::classify;
+  const auto text = MakeText(",", 8);
+  const auto* bytes = reinterpret_cast<const irs::byte_type*>(text.data());
+  uint64_t hits = 0;
+  for (auto _ : state) {
+    for (size_t i = 0; i + classify_ns::kClassifyBlock <= text.size();
+         i += classify_ns::kClassifyBlock) {
+      hits += std::popcount(classify(bytes + i));
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+  state.SetBytesProcessed(static_cast<int64_t>(text.size()) *
+                          static_cast<int64_t>(state.iterations()));
+}
+
+void BmClassifyEq(benchmark::State& state) {
+  const auto n = static_cast<size_t>(state.range(0));
+  const std::span<const irs::byte_type> targets{
+    reinterpret_cast<const irs::byte_type*>(kDelimChars.data()), n};
+  RunClassify(state, [&](const irs::byte_type* block) {
+    return irs::analysis::classify::ClassifyAnyEqBlock(block, targets);
+  });
+}
+
+void BmClassifyNibble(benchmark::State& state) {
+  const auto n = static_cast<size_t>(state.range(0));
+  irs::analysis::classify::NibbleSet set;
+  for (const char c : kDelimChars.substr(0, n)) {
+    set.Add(static_cast<irs::byte_type>(c));
+  }
+  RunClassify(state, [&](const irs::byte_type* block) {
+    return irs::analysis::classify::ClassifyNibbleBlock(block, set);
+  });
+}
+
 // The delimiter set size is the argument: the planted delimiter is always the
 // first one, so only the table size varies.
 void BmGenericScan(benchmark::State& state) {
@@ -227,6 +298,22 @@ void SetSizes(benchmark::internal::Benchmark* b) {
 BENCHMARK(BmSingleCharScan)->Apply(TokenPeriods);
 BENCHMARK(BmCharsScan)->Apply(TokenPeriods);
 BENCHMARK(BmSingleScan)->Apply(TokenPeriods);
+BENCHMARK(BmSingleLenScan)
+  ->ArgsProduct({{2, 4, 8, 9, 16}, {8, 64, 1024}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BmManyCharsScan)
+  ->ArgsProduct({{4, 8, 9, 12, 16, 24}, {8, 64}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BmClassifyEq)->DenseRange(1, 8)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BmClassifyNibble)
+  ->Arg(1)
+  ->Arg(2)
+  ->Arg(4)
+  ->Arg(8)
+  ->Arg(12)
+  ->Arg(16)
+  ->Arg(24)
+  ->Unit(benchmark::kMicrosecond);
 BENCHMARK(BmGenericScan)->Apply(SetSizes);
 BENCHMARK(BmGenericSharedPrefixScan)->Apply(SetSizes);
 BENCHMARK(BmGenericBuild)->Apply(SetSizes);

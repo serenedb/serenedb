@@ -75,6 +75,17 @@ const std::vector<std::string_view> kPieces{
   "Kn0",
   "\xC3\x84",
   "\xC3\xA9",
+  "\xC3\x97",
+  "\xC3\x9F",
+  "\xC3\xB7",
+  "\xC3\xBF",
+  "\xD0\x80",
+  "\xD0\xAF",
+  "\xD1\x8F",
+  "\xD1\x90",
+  "\xD1\xA0",
+  "\xD1\xA1",
+  "\xD1\xBF",
   "\xCE\xA9",
   "\xCF\x89",
   "\xD0\x94",
@@ -117,6 +128,17 @@ TEST(case_convert_utf8_test, invalid_bytes_pass_through) {
   Check(std::string(40, 'A') + "\xE0\x41" + std::string(40, 'b'));
   Check(std::string(31, 'A') + "\xC3");
   Check(std::string(32, 'A') + "\xC3");
+}
+
+TEST(case_convert_utf8_test, every_two_byte_codepoint_at_block_offsets) {
+  for (uint32_t cp = 0; cp < 0x800; ++cp) {
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    const std::string c{reinterpret_cast<const char*>(buf), len};
+    for (const size_t pad : {0, 1, 29, 30, 31, 32, 61, 62, 63}) {
+      Check(std::string(pad, 'a') + c + "Zz" + c + std::string(pad % 7, 'Q'));
+    }
+  }
 }
 
 TEST(case_convert_utf8_test, random_mixes_match_reference) {

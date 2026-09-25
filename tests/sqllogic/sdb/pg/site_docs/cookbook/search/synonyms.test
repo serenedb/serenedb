@@ -112,4 +112,4 @@ SELECT ts_lexize('wn', 'sofa')  AS sofa,
        ts_lexize('wn', 'table') AS unknown;
 ----
 sofa	couch	unknown
-{100000001}	{100000001}	{}
+{100000001}	{100000001}	{table}

@@ -154,7 +154,7 @@ class Tokenizer {
     sink.BeginValue(doc, value.GetSize());
     const bool ok = Fill(value, sink, ctx);
     if (!ok) [[unlikely]] {
-      sink.RewindValue();
+      sink.RejectValue();
     }
     sink.EndValue();
     return ok;
@@ -162,6 +162,26 @@ class Tokenizer {
 
   virtual void Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                     doc_id_t first_doc, TokenSink& sink, FillCtx ctx) = 0;
+
+  virtual bool FillTokens(std::span<const duckdb::string_t> /*tokens*/,
+                          TokenSink& /*sink*/, FillCtx /*ctx*/) {
+    return false;
+  }
+
+  bool FillTokens(std::span<const duckdb::string_t> tokens, doc_id_t doc,
+                  TokenSink& sink, FillCtx ctx) {
+    uint32_t size = 0;
+    for (const auto& token : tokens) {
+      size += token.GetSize();
+    }
+    sink.BeginValue(doc, size);
+    const bool ok = FillTokens(tokens, sink, ctx);
+    if (!ok) [[unlikely]] {
+      sink.RejectValue();
+    }
+    sink.EndValue();
+    return ok;
+  }
 };
 
 // The generic per-block preparation step: derive only the facts some
@@ -191,6 +211,7 @@ template<typename Impl>
 class TypedTokenizer : public Tokenizer {
  public:
   using Tokenizer::Fill;
+  using Tokenizer::FillTokens;
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<Impl>::id();
@@ -210,9 +231,9 @@ class TypedTokenizer : public Tokenizer {
                         });
   }
 
-  IRS_NO_INLINE void Fill(const duckdb::UnifiedVectorFormat& fmt,
-                          uint32_t count, doc_id_t first_doc, TokenSink& sink,
-                          FillCtx ctx) final {
+  IRS_NO_INLINE IRS_ALIGN_HOT void Fill(const duckdb::UnifiedVectorFormat& fmt,
+                                        uint32_t count, doc_id_t first_doc,
+                                        TokenSink& sink, FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     SDB_ASSERT(!impl->Impl::Traits().keyword || impl->Impl::Traits().unique);
     const auto* data =
@@ -227,7 +248,7 @@ class TypedTokenizer : public Tokenizer {
                        sink.BeginValue(first_doc + i, data[idx].GetSize());
                        if (!impl->template DoFill<layout_tag(), tags()...>(
                              data[idx], sink)) [[unlikely]] {
-                         sink.RewindValue();
+                         sink.RejectValue();
                        }
                        sink.EndValue();
                        return true;

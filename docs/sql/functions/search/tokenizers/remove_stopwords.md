@@ -40,7 +40,7 @@ On its own the template treats the whole input value as a single token, so the r
 
 ### Filtering inside a pipeline
 
-In practice `remove_stopwords` follows a tokenizer. A [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) that splits on spaces and then filters drops the common words from a phrase while keeping the rest. A dropped token leaves no position gap: the surviving tokens are renumbered consecutively.
+In practice `remove_stopwords` follows a tokenizer. A [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) that splits on spaces and then filters drops the common words from a phrase while keeping the rest. A dropped token leaves no position gap: a position whose tokens are all dropped disappears and the later positions close up, while tokens that shared a position with a dropped one, such as its synonyms, keep it.
 
 | Input | Pipeline | Output tokens |
 |---|---|---|

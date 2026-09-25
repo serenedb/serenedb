@@ -120,7 +120,7 @@ void ScatteredField::Reset(const FieldInverter& field) {
   }
 
   if (!_all_inline) {
-    BuildHistogram(field.Log().TermIds(), entries.size());
+    BuildHistogram(field.Log(), entries.size());
   }
   RankLiveTerms(entries);
   if (field.UniqueTerms()) {
@@ -138,7 +138,13 @@ void ScatteredField::Reset(const FieldInverter& field) {
   }
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size());
-  field.VisitLog([&](const auto& log) { Scatter(log, nocc); });
+  field.VisitLog([&](const auto& log) {
+    if (log.Refs().Size() != 0) {
+      Scatter<true>(log, nocc);
+    } else {
+      Scatter<false>(log, nocc);
+    }
+  });
 }
 
 void ScatteredField::FoldDuplicateTerms(
@@ -171,13 +177,23 @@ void ScatteredField::FoldDuplicateTerms(
   starts.push_back(static_cast<uint32_t>(ranked.size()));
 }
 
-void ScatteredField::BuildHistogram(const LogColumn& term_ids, size_t vocab) {
+void ScatteredField::BuildHistogram(const PostingLogBase& log, size_t vocab) {
   auto& cursors = _s->cursors;
   cursors.assign(vocab, 0);
-  LogColumn::Cursor ids{term_ids};
+  LogColumn::Cursor ids{log.TermIds()};
   for (auto vals = ids.Next(); !vals.empty(); vals = ids.Next()) {
     for (const auto id : vals) {
       ++cursors[id];
+    }
+  }
+  const auto entry_ids = log.EntryIds();
+  for (const auto& entry : log.Entries()) {
+    if (entry.refs == 0) {
+      continue;
+    }
+    for (uint32_t j = entry.begin, end = entry.begin + entry.count; j != end;
+         ++j) {
+      cursors[entry_ids[j]] += entry.refs;
     }
   }
 }
@@ -332,6 +348,51 @@ uint32_t** ScatteredField::AssignBlocks(ManagedVector<uint32_t*>& col,
 }
 
 template<typename Log>
+IRS_FORCE_INLINE bool ScatteredField::ScatterEntry(
+  const Log& log, const LogEntry& entry, uint32_t ntokens, doc_id_t doc,
+  uint32_t** docs, [[maybe_unused]] uint32_t** positions,
+  [[maybe_unused]] uint32_t** offs_start,
+  [[maybe_unused]] uint32_t** offs_end) {
+  constexpr bool kPos = Log::kLayout != TokenLayout::Terms;
+  constexpr bool kOffs = Log::kLayout == TokenLayout::TermsPosOffs;
+  if (entry.count != ntokens) [[unlikely]] {
+    return false;
+  }
+  auto* const cursors = _s->cursors.data();
+  const auto* ids = log.EntryIds().data() + entry.begin;
+  [[maybe_unused]] const uint32_t* starts = nullptr;
+  [[maybe_unused]] const uint32_t* ends = nullptr;
+  if constexpr (kOffs) {
+    starts = log.EntryOffsStart().data() + entry.begin;
+    ends = log.EntryOffsEnd().data() + entry.begin;
+  }
+  const auto emit = [&](auto&& pos_of) IRS_FORCE_INLINE {
+    for (uint32_t j = 0; j != entry.count; ++j) {
+      const auto c = cursors[ids[j]]++;
+      Put(docs, c, doc);
+      if constexpr (kPos) {
+        Put(positions, c, pos_of(j));
+      }
+      if constexpr (kOffs) {
+        Put(offs_start, c, starts[j]);
+        Put(offs_end, c, ends[j]);
+      }
+    }
+  };
+  if constexpr (kPos) {
+    if (log.EntryPosDense()) {
+      emit([](uint32_t j) { return j + 1; });
+    } else {
+      const auto* pos = log.EntryPos().data() + entry.begin;
+      emit([pos](uint32_t j) { return pos[j]; });
+    }
+  } else {
+    emit([](uint32_t) { return uint32_t{0}; });
+  }
+  return true;
+}
+
+template<bool kRefs, typename Log>
 void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
   constexpr auto kLayout = Log::kLayout;
   constexpr bool kPos = kLayout != TokenLayout::Terms;
@@ -389,6 +450,15 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
     }
   }();
 
+  auto refs = [&] {
+    if constexpr (kRefs) {
+      return LogColumnReader{log.Refs(), field};
+    } else {
+      return std::monostate{};
+    }
+  }();
+  [[maybe_unused]] uint64_t refs_consumed = 0;
+
   LogColumnReader doc_tokens{log.DocTokens(), field};
   const uint64_t doc_slots = log.DocTokens().Size();
   size_t doc_idx = 0;
@@ -398,6 +468,16 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
     for (uint32_t k = 0; k < run.ndocs; ++k, ++doc_idx) {
       const doc_id_t doc = run.first_doc + k;
       const uint32_t ntokens = doc_tokens.Read();
+      if constexpr (kRefs) {
+        if (log.DocRef(doc_idx)) {
+          if (ScatterEntry<Log>(log, log.Entries()[refs.Read()], ntokens, doc,
+                                docs, positions, offs_start, offs_end)) {
+            ++refs_consumed;
+            continue;
+          }
+          ThrowDesyncedLog(field, "reference disagrees with its entry");
+        }
+      }
       consumed += ntokens;
       [[maybe_unused]] uint32_t offs = 0;
       const auto emit = [&](auto&& pos_of) {
@@ -435,6 +515,9 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
   }
   if (consumed != nids) [[unlikely]] {
     ThrowDesyncedLog(_field->Meta().id, "ids outlive the doc slots");
+  }
+  if (refs_consumed != log.Refs().Size()) [[unlikely]] {
+    ThrowDesyncedLog(_field->Meta().id, "references outlive the doc slots");
   }
   if constexpr (kPos) {
     if (pos_consumed != log.Pos().Size()) [[unlikely]] {

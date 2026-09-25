@@ -33,6 +33,8 @@ class ParsedExpression;
 }  // namespace duckdb
 namespace irs::analysis {
 
+struct SqlCall;
+
 class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
  public:
   struct Options {
@@ -65,13 +67,33 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
  private:
-  struct Call;
-
   void BindExpression(duckdb::ClientContext& ctx);
 
   std::unique_ptr<duckdb::ParsedExpression> _parsed;
   std::unique_ptr<duckdb::Expression> _expr;
-  std::unique_ptr<Call> _call;
+  std::unique_ptr<SqlCall> _call;
+};
+
+class SqlPredicate final : private util::Noncopyable {
+ public:
+  SqlPredicate(std::string_view owner, std::string_view expression);
+  ~SqlPredicate();
+
+  void Bind(duckdb::ClientContext& ctx);
+  void Unbind() noexcept;
+
+  bool Test(const duckdb::string_t& value);
+  bool Apply(const duckdb::string_t* terms, uint32_t count, uint64_t* valid);
+
+  size_t MemoryUsage() const noexcept;
+
+ private:
+  void BindExpression(duckdb::ClientContext& ctx);
+
+  std::string_view _owner;
+  std::unique_ptr<duckdb::ParsedExpression> _parsed;
+  std::unique_ptr<duckdb::Expression> _expr;
+  std::unique_ptr<SqlCall> _call;
 };
 
 }  // namespace irs::analysis

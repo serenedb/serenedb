@@ -1,0 +1,187 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stdi_en AS
+    split_text(case := 'lower')
+    WITH (frequency, position, norm, offset);
+
+statement ok
+CREATE TABLE stdi_src AS
+SELECT i,
+       CASE WHEN i % 29 = 0 THEN NULL
+            WHEN i % 31 = 0 THEN ''
+            ELSE 'Red car number ' || (i % 41)::VARCHAR ||
+                 CASE WHEN i % 3 = 0 THEN ' with a long tail of seven words ' || (i % 5)::VARCHAR ELSE '' END END AS body,
+       CASE WHEN i % 23 = 0 THEN NULL ELSE 'Tag ' || (i % 7)::VARCHAR END AS tag
+FROM generate_series(1, 20000) g(i);
+
+statement ok
+COPY stdi_src TO '${__TEST_DIR__}/stdi.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 5000);
+
+statement ok
+CREATE TABLE stdi_dict (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_dict_idx ON stdi_dict USING inverted (i, body stdi_en, tag);
+
+statement ok
+CREATE TABLE stdi_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_flat_idx ON stdi_flat USING inverted (i, body stdi_en, tag);
+
+statement count 20000
+INSERT INTO stdi_dict SELECT i, body, tag FROM read_parquet('${__TEST_DIR__}/stdi.parquet');
+
+statement count 20000
+INSERT INTO stdi_flat SELECT i, body || '', tag || '' FROM stdi_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_dict;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_flat;
+
+query
+SELECT count(*) AS n FROM stdi_dict_idx WHERE body @@ plainto_tsquery('red car seven');
+----
+n
+6229
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_dict_idx.tableoid) AS s FROM stdi_dict_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_flat_idx.tableoid) AS s FROM stdi_flat_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_flat_idx.tableoid) AS s FROM stdi_flat_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_dict_idx.tableoid) AS s FROM stdi_dict_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_dict_idx.tableoid) AS s FROM stdi_dict_idx WHERE body @@ phraseto_tsquery('number 7 with')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_flat_idx.tableoid) AS s FROM stdi_flat_idx WHERE body @@ phraseto_tsquery('number 7 with'));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM stdi_flat_idx WHERE body @@ phraseto_tsquery('number 7 with');
+----
+n
+153
+
+query
+SELECT (SELECT count(*) FROM stdi_dict_idx WHERE tag = 'Tag 3') AS dict_rows,
+       (SELECT count(*) FROM stdi_flat_idx WHERE tag = 'Tag 3') AS flat_rows;
+----
+dict_rows	flat_rows
+2733	2733
+
+statement ok
+CREATE TABLE stdi_sparse (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_sparse_idx ON stdi_sparse USING inverted (i, body stdi_en, tag);
+
+statement ok
+CREATE TABLE stdi_sparse_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_sparse_flat_idx ON stdi_sparse_flat USING inverted (i, body stdi_en, tag);
+
+statement count 206
+INSERT INTO stdi_sparse SELECT i, body, tag FROM read_parquet('${__TEST_DIR__}/stdi.parquet') WHERE i % 97 = 0;
+
+statement count 206
+INSERT INTO stdi_sparse_flat SELECT i, body || '', tag || '' FROM stdi_src WHERE i % 97 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_sparse;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_sparse_flat;
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_sparse_idx.tableoid) AS s FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_sparse_flat_idx.tableoid) AS s FROM stdi_sparse_flat_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_sparse_flat_idx.tableoid) AS s FROM stdi_sparse_flat_idx WHERE body @@ plainto_tsquery('red car seven')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_sparse_idx.tableoid) AS s FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven'));
+----
+n
+0
+
+query
+SELECT (SELECT count(*) FROM stdi_sparse_idx WHERE body @@ plainto_tsquery('red car seven')) AS sparse_rows,
+       (SELECT count(*) FROM stdi_sparse_idx WHERE tag = 'Tag 3') AS sparse_tags,
+       (SELECT count(*) FROM stdi_sparse_flat_idx WHERE tag = 'Tag 3') AS flat_tags;
+----
+sparse_rows	sparse_tags	flat_tags
+64	28	28
+
+statement ok
+CREATE TABLE stdi_const (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_const_idx ON stdi_const USING inverted (i, body stdi_en, tag);
+
+statement ok
+CREATE TABLE stdi_const_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX stdi_const_flat_idx ON stdi_const_flat USING inverted (i, body stdi_en, tag);
+
+statement count 3000
+INSERT INTO stdi_const SELECT i, 'Red car number 7 with a long tail', 'Tag 3' FROM generate_series(1, 3000) g(i);
+
+statement count 3000
+INSERT INTO stdi_const_flat
+SELECT i, CASE WHEN i > 0 THEN 'Red car number 7 with a long tail' END, CASE WHEN i > 0 THEN 'Tag 3' END
+FROM generate_series(1, 3000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_const;
+
+statement ok
+VACUUM (REFRESH_TABLE) stdi_const_flat;
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, BM25(stdi_const_idx.tableoid) AS s FROM stdi_const_idx WHERE body @@ phraseto_tsquery('car number 7')
+  EXCEPT ALL
+  SELECT i, BM25(stdi_const_flat_idx.tableoid) AS s FROM stdi_const_flat_idx WHERE body @@ phraseto_tsquery('car number 7'));
+----
+n
+0
+
+query
+SELECT (SELECT count(*) FROM stdi_const_idx WHERE body @@ phraseto_tsquery('car number 7')) AS const_rows,
+       (SELECT count(*) FROM stdi_const_idx WHERE tag = 'Tag 3') AS const_tags;
+----
+const_rows	const_tags
+3000	3000

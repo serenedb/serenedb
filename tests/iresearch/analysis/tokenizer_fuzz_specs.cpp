@@ -90,28 +90,36 @@ bool HasModel() {
 }
 
 const std::filesystem::path& FixtureDir() {
-  static const std::filesystem::path kDir = [] {
-    const auto dir =
-      std::filesystem::path{::testing::TempDir()} / "sdb_tokenizer_fuzz";
-    std::error_code ignored;
-    std::filesystem::remove_all(dir, ignored);
-    std::filesystem::create_directories(dir / "text_stopwords" / "en");
-    std::filesystem::create_directories(dir / "words");
-    {
-      std::ofstream out{dir / "stopwords.txt"};
-      out << "the\na\nan\nof\nand\nquick\n";
+  static const struct Fixture {
+    Fixture()
+      : dir{std::filesystem::path{::testing::TempDir()} /
+            ("sdb_tokenizer_fuzz_" + std::to_string(::getpid()))} {
+      std::error_code ignored;
+      std::filesystem::remove_all(dir, ignored);
+      std::filesystem::create_directories(dir / "text_stopwords" / "en");
+      std::filesystem::create_directories(dir / "words");
+      {
+        std::ofstream out{dir / "stopwords.txt"};
+        out << "the\na\nan\nof\nand\nquick\n";
+      }
+      {
+        std::ofstream out{dir / "words" / "list.txt"};
+        out << "the\na\nan\nof\nand\n";
+      }
+      {
+        std::ofstream out{dir / "text_stopwords" / "en" / "list.txt"};
+        out << "the\na\nof\nand\n";
+      }
     }
-    {
-      std::ofstream out{dir / "words" / "list.txt"};
-      out << "the\na\nan\nof\nand\n";
+
+    ~Fixture() {
+      std::error_code ignored;
+      std::filesystem::remove_all(dir, ignored);
     }
-    {
-      std::ofstream out{dir / "text_stopwords" / "en" / "list.txt"};
-      out << "the\na\nof\nand\n";
-    }
-    return dir;
-  }();
-  return kDir;
+
+    std::filesystem::path dir;
+  } kFixture;
+  return kFixture.dir;
 }
 
 std::string StopwordsFile() {
@@ -507,31 +515,88 @@ void AddSparseNGram(std::vector<Spec>& out) {
   Add(out, {.name = "sparse_ngram[1]", .config = [] {
               return Cfg{SparseNGramTokenizer::Options{.max_ngram_length = 1}};
             }});
+  Add(out, {.name = "sparse_ngram[8,min4]",
+            .config =
+              [] {
+                return Cfg{SparseNGramTokenizer::Options{
+                  .max_ngram_length = 8, .min_ngram_length = 4}};
+              },
+            .cost = 4});
+  Add(out, {.name = "sparse_ngram[16,cutoff5]",
+            .config =
+              [] {
+                return Cfg{SparseNGramTokenizer::Options{
+                  .max_ngram_length = 16, .min_cutoff_length = 5}};
+              },
+            .cost = 4});
+  Add(out,
+      {.name = "sparse_ngram[12,covering,min5,cutoff6]",
+       .config =
+         [] {
+           return Cfg{SparseNGramTokenizer::Options{.max_ngram_length = 12,
+                                                    .covering = true,
+                                                    .min_ngram_length = 5,
+                                                    .min_cutoff_length = 6}};
+         },
+       .cost = 4});
 }
 
 void AddSplitByNonAlpha(std::vector<Spec>& out) {
-  for (const auto convert :
-       {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
-    Add(out, {.name = std::string{"split_by_non_alpha["} +
-                      std::to_string(static_cast<int>(convert)) + "]",
-              .config =
-                [convert] {
-                  return Cfg{
-                    SplitByNonAlphaTokenizer::Options{.case_convert = convert}};
-                },
-              .dict = {"_", "0", "a", "Z", "-", "İ", "ﬁ"},
-              .native = WordValues(),
-              .model = Model::RunsOfSet,
-              .params = {.token_bytes = AlnumBytes(), .convert = convert}});
+  using Chars = SplitByNonAlphaTokenizer::Options::Chars;
+  auto kept = AlnumBytes();
+  for (size_t b = 0x80; b < kept.size(); ++b) {
+    kept.set(b);
+  }
+  for (const auto chars : {Chars::Ascii, Chars::AsciiBytes, Chars::Alnum,
+                           Chars::Letters, Chars::Whitespace}) {
+    for (const auto convert :
+         {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
+      const bool bytes_model =
+        chars == Chars::Ascii || chars == Chars::AsciiBytes;
+      const bool keep = chars == Chars::AsciiBytes;
+      Add(out,
+          {.name = std::string{"split_by_non_alpha[chars="} +
+                   std::to_string(static_cast<int>(chars)) + ",convert=" +
+                   std::to_string(static_cast<int>(convert)) + "]",
+           .config =
+             [chars, convert] {
+               return Cfg{SplitByNonAlphaTokenizer::Options{
+                 .case_convert = convert, .chars = chars}};
+             },
+           .dict = {"_", "0", "a", "Z", "-", "\xC4\xB0", "\xEF\xAC\x81",
+                    "\xE2\x80\x94", "\xEF\xBC\x8C", "\xC3\xA9", "\xCC\x81",
+                    "\xE5\x8C\x97", "\xD9\xA3", "\xF0\x9F\x98\x80", "\t",
+                    "\xC2\xA0", "\xE2\x80\x8A", "\xE2\x80\x8B", "\xE3\x80\x80"},
+           .native = WordValues(),
+           .model = bytes_model ? Model::RunsOfSet : Model::None,
+           .params = {.token_bytes = keep ? kept : AlnumBytes(),
+                      .convert = convert,
+                      .unicode_case = keep}});
+    }
   }
 }
 
 void AddNormalizing(std::vector<Spec>& out) {
-  const std::vector<std::string> dict = {"Straße", "İ", "ı", "ﬁ", "é",
-                                         "é",      "ǅ", "①", "㍿"};
+  const std::vector<std::string> dict = {"Straße",
+                                         "İ",
+                                         "ı",
+                                         "ﬁ",
+                                         "é",
+                                         "é",
+                                         "ǅ",
+                                         "①",
+                                         "㍿",
+                                         "\xCE\x90",
+                                         "\xE1\xBE\xB3",
+                                         "\xC7\xB0",
+                                         "\xE1\xBA\x9E",
+                                         "\xEA\xAD\xB0",
+                                         "\xE2\x85\xAB",
+                                         "\xC2\xAD"};
   for (const auto convert :
        {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
-    for (const auto form : {NormForm::Nfc, NormForm::Nfkc}) {
+    for (const auto form : {NormForm::Nfc, NormForm::Nfkc, NormForm::Nfd,
+                            NormForm::Nfkd, NormForm::NfkcCf}) {
       for (const bool accent : {true, false}) {
         Add(out, {.name = std::string{"norm[case="} +
                           std::to_string(static_cast<int>(convert)) +
@@ -549,6 +614,23 @@ void AddNormalizing(std::vector<Spec>& out) {
       }
     }
   }
+  for (const auto form :
+       {NormForm::Nfc, NormForm::Nfkc, NormForm::Nfd, NormForm::Nfkd}) {
+    for (const bool accent : {true, false}) {
+      Add(out,
+          {.name = std::string{"norm[fold,form="} +
+                   std::to_string(static_cast<int>(form)) +
+                   ",accent=" + (accent ? "1" : "0") + "]",
+           .config =
+             [form, accent] {
+               return Cfg{NormalizingTokenizer::Options{.locale = Loc("en"),
+                                                        .accent = accent,
+                                                        .form = form,
+                                                        .fold = true}};
+             },
+           .dict = dict});
+    }
+  }
   for (const auto* locale : {"ru_RU.UTF-8", "tr_TR.UTF-8", "el_GR.UTF-8"}) {
     Add(out, {.name = std::string{"norm["} + locale + ",lower]",
               .config =
@@ -558,6 +640,162 @@ void AddNormalizing(std::vector<Spec>& out) {
                 },
               .dict = dict});
   }
+  Add(out, {.name = "norm[tr_TR.UTF-8,fold]",
+            .config =
+              [] {
+                return Cfg{NormalizingTokenizer::Options{
+                  .locale = Loc("tr_TR.UTF-8"), .fold = true}};
+              },
+            .dict = dict});
+}
+
+void AddHtmlStrip(std::vector<Spec>& out) {
+  const std::vector<std::string> dict = {"<",
+                                         ">",
+                                         "</",
+                                         "/>",
+                                         "<p>",
+                                         "</p>",
+                                         "<b>",
+                                         "</b>",
+                                         "<br/>",
+                                         "<!--",
+                                         "-->",
+                                         "<!-->",
+                                         "<![CDATA[",
+                                         "]]>",
+                                         "<script>",
+                                         "</script>",
+                                         "<style>",
+                                         "</style>",
+                                         "<SCRIPT >",
+                                         "</ScRiPt >",
+                                         "<script/>",
+                                         "<script:x>",
+                                         "<!DOCTYPE html>",
+                                         "<?xml?>",
+                                         "&amp;",
+                                         "\"",
+                                         "=",
+                                         "'",
+                                         "&eacute;",
+                                         "&nbsp;",
+                                         "&#x41;",
+                                         "&#150;",
+                                         "&#0;",
+                                         "&lt",
+                                         "<i>",
+                                         "</i>",
+                                         "<span>",
+                                         "</span>",
+                                         "<wbr>",
+                                         "<a href=\""};
+  Add(out, {.name = "strip_html",
+            .config = [] { return Cfg{HtmlStripTokenizer::Options{}}; },
+            .dict = dict});
+  Add(out,
+      {.name = "strip_html[join_inline_tags]",
+       .config =
+         [] {
+           return Cfg{HtmlStripTokenizer::Options{.join_inline_tags = true}};
+         },
+       .dict = dict});
+  const auto children = [] {
+    std::vector<Ptr> subs;
+    subs.push_back(MakeChild(Cfg{HtmlStripTokenizer::Options{}}));
+    subs.push_back(MakeChild(Cfg{
+      SplitByNonAlphaTokenizer::Options{.case_convert = irs::Case::Lower}}));
+    return subs;
+  };
+  Add(out,
+      {.name = "pipeline[strip_html,split_by_non_alpha]",
+       .config =
+         [] {
+           PipelineTokenizer::Options opts;
+           opts.children.push_back(Child(Cfg{HtmlStripTokenizer::Options{}}));
+           opts.children.push_back(Child(Cfg{SplitByNonAlphaTokenizer::Options{
+             .case_convert = irs::Case::Lower}}));
+           return Cfg{std::move(opts)};
+         },
+       .dict = dict,
+       .native = WordValues(),
+       .model = Model::Chain,
+       .model_children = children,
+       .cost = 2});
+}
+
+void AddFilterTokens(std::vector<Spec>& out) {
+  struct Bounds {
+    size_t min;
+    size_t max;
+  };
+  const std::vector<std::string> dict = {
+    "a", "ab", "abc", "é", "日本", "😀", "straße", "http://", "the"};
+  for (const auto bounds : {Bounds{2, 5}, Bounds{0, 3}, Bounds{4, 0}}) {
+    Add(out, {.name = "filter_tokens[" + std::to_string(bounds.min) + "," +
+                      std::to_string(bounds.max) + "]",
+              .config =
+                [bounds] {
+                  return Cfg{FilterTokensTokenizer::Options{
+                    .min_length = bounds.min, .max_length = bounds.max}};
+                },
+              .dict = dict,
+              .native = WordValues()});
+  }
+  for (const auto* predicate :
+       {"input NOT LIKE 'http%'", "length(input) % 2 = 0",
+        "CASE WHEN input = 'the' THEN NULL ELSE true END"}) {
+    Add(out, {.name = std::string{"filter_tokens["} + predicate + "]",
+              .config =
+                [predicate] {
+                  return Cfg{FilterTokensTokenizer::Options{
+                    .min_length = 1, .max_length = 12, .predicate = predicate}};
+                },
+              .dict = dict,
+              .native = WordValues(),
+              .utf8_only = true});
+  }
+  const auto children = [] {
+    std::vector<Ptr> subs;
+    subs.push_back(
+      MakeChild(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+    subs.push_back(MakeChild(
+      Cfg{FilterTokensTokenizer::Options{.min_length = 2, .max_length = 6}}));
+    return subs;
+  };
+  Add(out,
+      {.name = "pipeline[text,filter_tokens]",
+       .config =
+         [] {
+           PipelineTokenizer::Options opts;
+           opts.children.push_back(
+             Child(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+           opts.children.push_back(Child(Cfg{FilterTokensTokenizer::Options{
+             .min_length = 2, .max_length = 6}}));
+           return Cfg{std::move(opts)};
+         },
+       .dict = Merge({WordDict(), BreakDict()}),
+       .native = WordValues(),
+       .model = Model::Chain,
+       .model_children = children,
+       .cost = 2});
+  Add(out,
+      {.name = "pipeline[text,filter_tokens,predicate]",
+       .config =
+         [] {
+           PipelineTokenizer::Options opts;
+           opts.children.push_back(
+             Child(Cfg{TextTokenizer::Options{.convert = irs::Case::Lower}}));
+           opts.children.push_back(Child(Cfg{FilterTokensTokenizer::Options{
+             .min_length = 2, .predicate = "input NOT IN ('the', 'quick')"}}));
+           opts.children.push_back(
+             Child(Cfg{StopwordsTokenizer::Options{.mask = {"brown"}}}));
+           return Cfg{std::move(opts)};
+         },
+       .dict = Merge({WordDict(), BreakDict()}),
+       .native = WordValues(),
+       .utf8_only = true,
+       .cost = 2});
 }
 
 void AddStemming(std::vector<Spec>& out) {
@@ -704,7 +942,7 @@ void AddText(std::vector<Spec>& out) {
   for (const auto separate :
        {Options::Separate::None, Options::Separate::Word,
         Options::Separate::Sentence, Options::Separate::Line,
-        Options::Separate::Paragraph}) {
+        Options::Separate::Paragraph, Options::Separate::Grapheme}) {
     add(separate, Options::Accept::AlphaNumeric, irs::Case::Lower);
   }
   for (const auto accept : {Options::Accept::Any, Options::Accept::Graphic,
@@ -716,6 +954,7 @@ void AddText(std::vector<Spec>& out) {
   }
   add(Options::Separate::Sentence, Options::Accept::Any, irs::Case::None);
   add(Options::Separate::None, Options::Accept::Any, irs::Case::Upper);
+  add(Options::Separate::Grapheme, Options::Accept::Graphic, irs::Case::None);
 }
 
 void AddIcuText(std::vector<Spec>& out) {
@@ -1253,6 +1492,8 @@ const std::vector<Spec>& AllSpecs() {
     AddSparseNGram(out);
     AddSplitByNonAlpha(out);
     AddNormalizing(out);
+    AddHtmlStrip(out);
+    AddFilterTokens(out);
     AddStemming(out);
     AddCollation(out);
     AddStopwords(out);

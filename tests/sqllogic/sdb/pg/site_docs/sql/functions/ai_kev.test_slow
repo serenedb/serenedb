@@ -1,0 +1,301 @@
+control substitution on
+
+# DOCS_TEST: secret
+
+# DOCS_TEST_RAW
+#| CREATE SECRET local_jev (
+#|     TYPE typesafe,
+#|     base_url 'http://localhost:8009'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET local_jev_${__DATABASE__} (
+    TYPE typesafe,
+    base_url 'http://${KEV_HOST}:${KEV_PORT}'
+);
+
+# DOCS_TEST: noul
+
+# DOCS_TEST_RAW
+#| SELECT prompt_jev(
+#|     'Please refund my order, it never arrived.',
+#|     'Does this request a refund?',
+#|     secret_name := 'local_jev'
+#| ) AS refund_probability;
+#| ----
+#| refund_probability
+#| 0.9143
+
+# DOCS_TEST_BODY
+
+query
+SELECT refund_probability BETWEEN 0 AND 1 AS in_range
+FROM (
+    SELECT prompt_jev(
+        'Please refund my order, it never arrived.',
+        'Does this request a refund?',
+        secret_name := 'local_jev_${__DATABASE__}'
+    ) AS refund_probability
+) t;
+----
+in_range
+t
+
+# DOCS_TEST: choice
+
+# DOCS_TEST_RAW
+#| SELECT (routing).choice, (routing).confidence, (routing).probabilities
+#| FROM (
+#|     SELECT prompt_jev(
+#|         'I was charged twice for last month and the invoice does not match.',
+#|         'Which team should handle this?',
+#|         choice := ['billing', 'technical', 'sales'],
+#|         secret_name := 'local_jev'
+#|     ) AS routing
+#| ) t;
+#| ----
+#| choice	confidence	probabilities
+#| billing	0.7331	{"(billing,0.8221)","(technical,0.0797)","(sales,0.0983)"}
+
+# DOCS_TEST_BODY
+
+query
+SELECT (routing).choice AS choice,
+       len((routing).probabilities) AS options,
+       abs(list_sum(list_transform((routing).probabilities, lambda p: p.probability)) - 1) < 0.01 AS sums_to_one,
+       (routing).confidence BETWEEN 0 AND 1 AS confidence_in_range
+FROM (
+    SELECT prompt_jev(
+        'I was charged twice for last month and the invoice does not match.',
+        'Which team should handle this?',
+        choice := ['billing', 'technical', 'sales'],
+        secret_name := 'local_jev_${__DATABASE__}'
+    ) AS routing
+) t;
+----
+choice	options	sums_to_one	confidence_in_range
+billing	3	t	t
+
+# DOCS_TEST: choice_descriptions
+
+# DOCS_TEST_RAW
+#| SELECT (prompt_jev(
+#|     'My invoice shows the wrong VAT number.',
+#|     'Which team should handle this?',
+#|     choice := [
+#|         {label: 'billing', description: 'Payments, invoices, and refunds'},
+#|         {label: 'technical', description: 'Errors, outages, and integrations'},
+#|         {label: 'sales', description: 'Pricing, trials, and upgrades'}
+#|     ],
+#|     secret_name := 'local_jev'
+#| )).choice AS team;
+#| ----
+#| team
+#| billing
+
+# DOCS_TEST_BODY
+
+query
+SELECT (prompt_jev(
+    'My invoice shows the wrong VAT number.',
+    'Which team should handle this?',
+    choice := [
+        {label: 'billing', description: 'Payments, invoices, and refunds'},
+        {label: 'technical', description: 'Errors, outages, and integrations'},
+        {label: 'sales', description: 'Pricing, trials, and upgrades'}
+    ],
+    secret_name := 'local_jev_${__DATABASE__}'
+)).choice IN ('billing', 'technical', 'sales') AS labelled;
+----
+labelled
+t
+
+# DOCS_TEST: score
+
+# DOCS_TEST_RAW
+#| SELECT (severity).score, (severity).confidence, (severity).probabilities
+#| FROM (
+#|     SELECT prompt_jev(
+#|         'The product is unusable and we are considering cancelling.',
+#|         'Rate the severity of this message.',
+#|         score := ['low', 'medium', 'high'],
+#|         secret_name := 'local_jev'
+#|     ) AS severity
+#| ) t;
+#| ----
+#| score	confidence	probabilities
+#| 1.2858	0.6429	{"(0,low,0.2022)","(1,medium,0.3098)","(2,high,0.488)"}
+
+# DOCS_TEST_BODY
+
+query
+SELECT (severity).score BETWEEN 0 AND 2 AS score_in_range,
+       list_transform((severity).probabilities, lambda p: p.index) AS indexes,
+       list_transform((severity).probabilities, lambda p: p.value) AS levels
+FROM (
+    SELECT prompt_jev(
+        'The product is unusable and we are considering cancelling.',
+        'Rate the severity of this message.',
+        score := ['low', 'medium', 'high'],
+        secret_name := 'local_jev_${__DATABASE__}'
+    ) AS severity
+) t;
+----
+score_in_range	indexes	levels
+t	{0,1,2}	{low,medium,high}
+
+# DOCS_TEST: questions
+
+# DOCS_TEST_RAW
+#| SELECT
+#|     (answer).refund,
+#|     (answer).category.choice AS category,
+#|     (answer).urgency.score AS urgency
+#| FROM (
+#|     SELECT prompt_jev(
+#|         'Please refund my order, it never arrived. The app keeps crashing too.',
+#|         questions := {
+#|             refund: {type: 'noul', instructions: 'Does this request a refund?'},
+#|             category: {type: 'choice', instructions: 'Classify the primary subject.',
+#|                        criteria: ['billing', 'technical', 'other']},
+#|             urgency: {type: 'score', instructions: 'How urgent is this?',
+#|                       criteria: ['low', 'medium', 'high']}
+#|         },
+#|         secret_name := 'local_jev'
+#|     ) AS answer
+#| ) t;
+#| ----
+#| refund	category	urgency
+#| 0.9129	other	1.3825
+
+# DOCS_TEST_BODY
+
+query
+SELECT (answer).refund BETWEEN 0 AND 1 AS refund_ok,
+       (answer).category.choice IN ('billing', 'technical', 'other') AS category_ok,
+       (answer).urgency.score BETWEEN 0 AND 2 AS urgency_ok
+FROM (
+    SELECT prompt_jev(
+        'Please refund my order, it never arrived. The app keeps crashing too.',
+        questions := {
+            refund: {type: 'noul', instructions: 'Does this request a refund?'},
+            category: {type: 'choice', instructions: 'Classify the primary subject.',
+                       criteria: ['billing', 'technical', 'other']},
+            urgency: {type: 'score', instructions: 'How urgent is this?',
+                      criteria: ['low', 'medium', 'high']}
+        },
+        secret_name := 'local_jev_${__DATABASE__}'
+    ) AS answer
+) t;
+----
+refund_ok	category_ok	urgency_ok
+t	t	t
+
+# DOCS_TEST: questions_json
+
+# DOCS_TEST_RAW
+#| SELECT (prompt_jev(
+#|     'My invoice shows a duplicate charge.',
+#|     questions := '{
+#|       "category": {
+#|         "type": "choice",
+#|         "instructions": {"question": "Classify the primary subject", "focus": ["primary intent"]},
+#|         "criteria": {
+#|           "billing": {"description": "Charges and invoices", "examples": ["duplicate charge"]},
+#|           "technical": "Bugs and integrations"
+#|         }
+#|       }
+#|     }'::JSON,
+#|     secret_name := 'local_jev'
+#| )).category.choice AS category;
+#| ----
+#| category
+#| billing
+
+# DOCS_TEST_BODY
+
+query
+SELECT (prompt_jev(
+    'My invoice shows a duplicate charge.',
+    questions := '{
+      "category": {
+        "type": "choice",
+        "instructions": {"question": "Classify the primary subject", "focus": ["primary intent"]},
+        "criteria": {
+          "billing": {"description": "Charges and invoices", "examples": ["duplicate charge"]},
+          "technical": "Bugs and integrations"
+        }
+      }
+    }'::JSON,
+    secret_name := 'local_jev_${__DATABASE__}'
+)).category.choice IN ('billing', 'technical') AS labelled;
+----
+labelled
+t
+
+statement ok
+CREATE TABLE support_messages (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO support_messages VALUES
+    (1, 'I was double charged on my card.'),
+    (2, 'The API returns 500 errors since this morning.'),
+    (3, NULL),
+    (4, 'Can I get a discount for 50 seats?');
+
+# DOCS_TEST: table
+
+# DOCS_TEST_RAW
+#| SELECT id, (prompt_jev(body, 'Which team should handle this?',
+#|                        choice := ['billing', 'technical', 'sales'],
+#|                        secret_name := 'local_jev')).choice AS team
+#| FROM support_messages
+#| ORDER BY id;
+#| ----
+#| id	team
+#| 1	billing
+#| 2	technical
+#| 3	NULL
+#| 4	sales
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE team IN ('billing', 'technical', 'sales')) AS routed,
+       count(*) FILTER (WHERE team IS NULL) AS skipped
+FROM (
+    SELECT (prompt_jev(body, 'Which team should handle this?',
+                       choice := ['billing', 'technical', 'sales'],
+                       secret_name := 'local_jev_${__DATABASE__}')).choice AS team
+    FROM support_messages
+) t;
+----
+routed	skipped
+3	1
+
+# DOCS_TEST: batch_size
+
+# DOCS_TEST_RAW
+#| SELECT id, prompt_jev(body, 'Does this message report a problem?',
+#|                       batch_size := 1, secret_name := 'local_jev') AS problem
+#| FROM support_messages
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE problem BETWEEN 0 AND 1) AS answered,
+       count(*) FILTER (WHERE problem IS NULL) AS skipped
+FROM (
+    SELECT prompt_jev(body, 'Does this message report a problem?',
+                      batch_size := 1, secret_name := 'local_jev_${__DATABASE__}') AS problem
+    FROM support_messages
+) t;
+----
+answered	skipped
+3	1
+
+statement error prompt_jev: requires at least two criteria for type "choice"
+SELECT prompt_jev('x', 'q', choice := ['only'], secret_name := 'local_jev_${__DATABASE__}');

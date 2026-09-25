@@ -18,48 +18,34 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/functions/embedding/provider.h"
+#include "connector/functions/ai/provider.h"
 
-#include <absl/strings/str_cat.h>
-
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "connector/functions/embedding/provider_openai.h"
+#include "connector/functions/ai/provider_openai.h"
 
-namespace sdb::connector::embedding {
+namespace sdb::connector::ai {
 
-ProviderType ResolveProviderType(std::string_view protocol) {
-  if (protocol == "openai") {
-    return ProviderType::OpenAI;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("Unknown embedding protocol '", protocol, "' (supported: openai)"));
-}
-
-void NormalizeProviderConfig(duckdb::DatabaseInstance& db,
-                             ProviderConfig& cfg) {
+void NormalizeProviderConfig(ProviderConfig& cfg, const SecretConfig& secret) {
   switch (cfg.type) {
     case ProviderType::OpenAI:
-      NormalizeOpenAIConfig(db, cfg);
+      NormalizeOpenAIConfig(cfg, secret);
       break;
     default:
       SDB_UNREACHABLE();
   }
 }
 
-void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
+void EmbedBatch(Requester& requester, const ProviderConfig& cfg,
                 duckdb::Vector& texts, duckdb::idx_t count,
                 duckdb::Vector& result) {
   switch (cfg.type) {
     case ProviderType::OpenAI:
-      EmbedBatchOpenAI(db, cfg, texts, count, result);
+      EmbedBatchOpenAI(requester, cfg, texts, count, result);
       break;
     default:
       SDB_UNREACHABLE();
   }
 }
 
-}  // namespace sdb::connector::embedding
+}  // namespace sdb::connector::ai

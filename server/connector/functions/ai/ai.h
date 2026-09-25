@@ -24,6 +24,6 @@
 
 namespace sdb::connector {
 
-void RegisterEmbeddingFunctions(duckdb::DatabaseInstance& db);
+void RegisterAIFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

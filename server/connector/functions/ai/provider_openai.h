@@ -20,36 +20,19 @@
 
 #pragma once
 
-#include <duckdb/common/types/vector.hpp>
-#include <string>
 #include <string_view>
 
-namespace duckdb {
+#include "connector/functions/ai/provider.h"
 
-class DatabaseInstance;
-}
+namespace sdb::connector::ai {
 
-namespace sdb::connector::embedding {
+inline constexpr std::string_view kOpenAIDefaultBaseUrl =
+  "https://api.openai.com";
 
-enum class ProviderType {
-  OpenAI,
-};
+void NormalizeOpenAIConfig(ProviderConfig& cfg, const SecretConfig& secret);
 
-struct ProviderConfig {
-  ProviderType type = ProviderType::OpenAI;
-  std::string model;
-  std::string api_key;
-  std::string base_url;
-  std::string embeddings_path;
-  std::string auth_header;
-};
+void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
+                      duckdb::Vector& texts, duckdb::idx_t count,
+                      duckdb::Vector& result);
 
-ProviderType ResolveProviderType(std::string_view protocol);
-
-void NormalizeProviderConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
-
-void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                duckdb::Vector& texts, duckdb::idx_t count,
-                duckdb::Vector& result);
-
-}  // namespace sdb::connector::embedding
+}  // namespace sdb::connector::ai

@@ -1,0 +1,618 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "connector/functions/ai/common.h"
+
+#include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_map.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
+#include <simdjson.h>
+
+#include <algorithm>
+#include <chrono>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/main/extension_helper.hpp>
+#include <duckdb/main/secret/secret.hpp>
+#include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <thread>
+#include <utility>
+
+#include "query/config.h"
+
+namespace sdb::connector::ai {
+namespace {
+
+constexpr uint64_t kMaxRetryDelayMs = 60'000;
+constexpr size_t kMaxErrorBody = 256;
+
+constinit SettingRef gAllowInsecure{"sdb_ai_allow_insecure_endpoint"};
+constinit SettingRef gMaxCalls{"sdb_ai_max_api_calls_per_query"};
+constinit SettingRef gMaxOutputTokens{"sdb_ai_max_output_tokens_per_query"};
+constinit SettingRef gMaxRetries{"sdb_ai_max_retries"};
+constinit SettingRef gRetryDelay{"sdb_ai_retry_initial_delay_ms"};
+constinit SettingRef gTimeout{"sdb_ai_request_timeout"};
+constinit SettingRef gConcurrency{"sdb_ai_max_concurrent_requests"};
+constinit SettingRef gThrowOnError{"sdb_ai_throw_on_error"};
+constinit SettingRef gThrowOnQuota{"sdb_ai_throw_on_quota_exceeded"};
+
+std::string ReadStringSetting(duckdb::ClientContext& context,
+                              std::string_view name) {
+  duckdb::Value value;
+  if (!context.TryGetCurrentSetting(std::string{name}, value) ||
+      value.IsNull()) {
+    return {};
+  }
+  return value.ToString();
+}
+
+bool IsSuccess(uint16_t status) { return status >= 200 && status < 300; }
+
+bool IsRetryable(uint16_t status) {
+  switch (status) {
+    case 0:
+    case 408:
+    case 429:
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+    case 529:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int FatalErrorCode(uint16_t status) {
+  switch (status) {
+    case 401:
+    case 403:
+      return ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION;
+    case 404:
+      return ERRCODE_UNDEFINED_OBJECT;
+    case 422:
+      return ERRCODE_INVALID_PARAMETER_VALUE;
+    default:
+      return 0;
+  }
+}
+
+[[noreturn]] void ThrowInterrupted() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
+                  ERR_MSG("canceling statement due to user request"));
+}
+
+std::string_view UrlHost(std::string_view url) {
+  if (const auto pos = url.find("://"); pos != std::string_view::npos) {
+    url.remove_prefix(pos + 3);
+  }
+  url = url.substr(0, url.find_first_of("/?#"));
+  if (const auto at = url.rfind('@'); at != std::string_view::npos) {
+    url.remove_prefix(at + 1);
+  }
+  if (url.starts_with('[')) {
+    return url.substr(0, url.find(']') + 1);
+  }
+  return url.substr(0, url.find(':'));
+}
+
+bool IsLoopbackHost(std::string_view host) {
+  return absl::EqualsIgnoreCase(host, "localhost") || host == "::1" ||
+         host == "[::1]" ||
+         (host.starts_with("127.") &&
+          host.find_first_not_of("0123456789.") == std::string_view::npos);
+}
+
+bool IsInsecureEndpoint(std::string_view base_url) {
+  return !absl::StartsWithIgnoreCase(base_url, "https://") &&
+         !IsLoopbackHost(UrlHost(base_url));
+}
+
+std::string ReadableText(std::string_view text) {
+  std::string out{text.substr(0, kMaxErrorBody)};
+  for (auto& c : out) {
+    const auto u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7F) {
+      c = ' ';
+    }
+  }
+  return out;
+}
+
+std::string ProviderError(std::string_view body) {
+  simdjson::dom::parser parser;
+  simdjson::dom::element error;
+  std::string_view message;
+  if (parser.parse(body.data(), body.size())["error"].get(error) ==
+      simdjson::SUCCESS) {
+    if (error.get_string().get(message) == simdjson::SUCCESS ||
+        error["message"].get_string().get(message) == simdjson::SUCCESS) {
+      std::string_view type;
+      if (error["type"].get_string().get(type) == simdjson::SUCCESS &&
+          !type.empty()) {
+        return absl::StrCat("[", ReadableText(type), "] ",
+                            ReadableText(message));
+      }
+      return ReadableText(message);
+    }
+  }
+  return ReadableText(body);
+}
+
+class RequestTask final : public duckdb::BaseExecutorTask {
+ public:
+  RequestTask(duckdb::TaskExecutor& executor,
+              absl::FunctionRef<void(size_t)> work, size_t worker)
+    : BaseExecutorTask{executor}, _work{work}, _worker{worker} {}
+
+  void ExecuteTask() final { _work(_worker); }
+
+  std::string TaskType() const final { return "AIRequests"; }
+
+ private:
+  absl::FunctionRef<void(size_t)> _work;
+  size_t _worker;
+};
+
+uint64_t RetryDelayMs(uint32_t initial_ms, uint32_t attempt,
+                      std::string_view retry_after) {
+  if (uint64_t seconds = 0; absl::SimpleAtoi(retry_after, &seconds)) {
+    return std::min(seconds, kMaxRetryDelayMs / 1000) * 1000;
+  }
+  return std::min(uint64_t{initial_ms} << std::min(attempt, 16U),
+                  kMaxRetryDelayMs);
+}
+
+}  // namespace
+
+void ThrowRowError(std::string message) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION), ERR_MSG(message),
+    ERR_HINT("SET sdb_ai_throw_on_error = false to return NULL for rows "
+             "that fail."));
+}
+
+std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
+                                          duckdb::Expression& expr,
+                                          std::string_view fn,
+                                          std::string_view arg) {
+  if (expr.HasParameter() || !expr.IsFoldable()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(fn, ": \"", arg, "\" parameter must be a constant value"));
+  }
+  auto value = duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
+  if (value.IsNull()) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+std::optional<std::string> FoldString(duckdb::ClientContext& context,
+                                      duckdb::Expression& expr,
+                                      std::string_view fn,
+                                      std::string_view arg) {
+  auto value = FoldArgument(context, expr, fn, arg);
+  if (!value) {
+    return std::nullopt;
+  }
+  return value->ToString();
+}
+
+SecretConfig LoadSecret(duckdb::ClientContext& context, std::string_view fn,
+                        const std::optional<std::string>& secret_name,
+                        std::string_view default_setting,
+                        std::string_view type) {
+  const auto name =
+    secret_name ? *secret_name : ReadStringSetting(context, default_setting);
+  if (name.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(fn, ": no secret given"),
+                    ERR_HINT("Pass secret_name := '<name>' or SET ",
+                             default_setting, " = '<name>'."));
+  }
+  auto& secret_manager = duckdb::SecretManager::Get(context);
+  auto txn = duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
+  auto entry = secret_manager.GetSecretByName(txn, name);
+  if (!entry || !entry->secret) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(fn, ": secret '", name, "' not found"));
+  }
+  const auto actual = entry->secret->GetType().GetIdentifierName();
+  if (actual != type) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG(fn, ": secret '", name, "' has type '", actual,
+                            "', expected '", type, "'"));
+  }
+  const auto& kv =
+    irs::utils::downCast<const duckdb::KeyValueSecret>(*entry->secret);
+  auto get = [&](const char* key) {
+    duckdb::Value v;
+    if (kv.TryGetValue(duckdb::Identifier{key}, v) && !v.IsNull()) {
+      return v.ToString();
+    }
+    return std::string{};
+  };
+  SecretConfig config{
+    .api_key = get("api_key"),
+    .base_url = get("base_url"),
+    .model = get("model"),
+    .chat_path = get("chat_path"),
+    .embeddings_path = get("embeddings_path"),
+  };
+  if (!config.base_url.empty() && IsInsecureEndpoint(config.base_url) &&
+      !gAllowInsecure.Bool(context)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(fn, ": secret '", name, "' uses the insecure endpoint '",
+              config.base_url, "'"),
+      ERR_HINT("Use an https:// base_url, or SET "
+               "sdb_ai_allow_insecure_endpoint = true to send requests over "
+               "plain HTTP to hosts other than localhost."));
+  }
+  duckdb::ExtensionHelper::TryAutoLoadExtension(*context.db, "httpfs");
+  return config;
+}
+
+std::string JoinUrl(std::string_view base_url, std::string_view default_base,
+                    std::string_view path) {
+  std::string url{base_url.empty() ? default_base : base_url};
+  while (!url.empty() && url.back() == '/') {
+    url.pop_back();
+  }
+  if (!path.empty() && path.front() != '/') {
+    url.push_back('/');
+  }
+  url.append(path);
+  return url;
+}
+
+std::string ToJson(std::string_view text) {
+  simdjson::builder::string_builder builder(text.size() + 8);
+  builder.escape_and_append_with_quotes(text);
+  std::string_view out;
+  if (builder.view().get(out) != simdjson::SUCCESS) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("failed to serialize a JSON string"));
+  }
+  return std::string{out};
+}
+
+std::vector<Criterion> ParseCriteria(const duckdb::Value& value,
+                                     std::string_view fn,
+                                     std::string_view param) {
+  auto fail = [&] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(fn, ": \"", param,
+                            "\" must be VARCHAR[] or STRUCT(label VARCHAR, "
+                            "description VARCHAR)[]"));
+  };
+  if (value.type().id() != duckdb::LogicalTypeId::LIST) {
+    fail();
+  }
+  std::vector<Criterion> criteria;
+  for (const auto& child : duckdb::ListValue::GetChildren(value)) {
+    auto& criterion = criteria.emplace_back();
+    if (child.IsNull()) {
+      continue;
+    }
+    if (child.type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      criterion.label = child.ToString();
+      continue;
+    }
+    if (child.type().id() != duckdb::LogicalTypeId::STRUCT) {
+      fail();
+    }
+    const auto& fields = duckdb::StructValue::GetChildren(child);
+    for (size_t i = 0; i != fields.size(); ++i) {
+      const auto name =
+        duckdb::StructType::GetChildName(child.type(), i).GetIdentifierName();
+      if (absl::EqualsIgnoreCase(name, "label")) {
+        criterion.label = fields[i].IsNull() ? "" : fields[i].ToString();
+      } else if (absl::EqualsIgnoreCase(name, "description")) {
+        if (!fields[i].IsNull()) {
+          criterion.description = fields[i].ToString();
+        }
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG(fn, ": unknown criteria field \"", name,
+                                "\" (label or description)"));
+      }
+    }
+  }
+  return criteria;
+}
+
+Inputs CollectInputs(duckdb::Vector& input, duckdb::idx_t count, bool dedup,
+                     bool skip_empty) {
+  Inputs inputs;
+  inputs.slots.assign(count, Inputs::kNone);
+  absl::flat_hash_map<std::string_view, size_t> seen;
+  auto values = input.Values<duckdb::string_t>();
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto value = values[i];
+    if (!value.IsValid()) {
+      continue;
+    }
+    const auto& text = value.GetValue();
+    const std::string_view view{text.GetData(), text.GetSize()};
+    if (skip_empty && view.empty()) {
+      continue;
+    }
+    if (dedup) {
+      const auto [it, inserted] = seen.try_emplace(view, inputs.texts.size());
+      if (!inserted) {
+        inputs.slots[i] = it->second;
+        continue;
+      }
+    }
+    inputs.slots[i] = inputs.texts.size();
+    inputs.texts.push_back(view);
+  }
+  return inputs;
+}
+
+void SetOutputs(duckdb::Vector& result, const Inputs& inputs,
+                std::span<const duckdb::Value> outputs) {
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  const duckdb::Value null{result.GetType()};
+  for (size_t i = 0; i != inputs.slots.size(); ++i) {
+    const auto slot = inputs.slots[i];
+    result.SetValue(i, slot == Inputs::kNone ? null : outputs[slot]);
+  }
+}
+
+void AIQueryUsage::QueryBegin(duckdb::ClientContext&) {
+  calls.store(0, std::memory_order_relaxed);
+  output_tokens.store(0, std::memory_order_relaxed);
+}
+
+void AIQueryUsage::Acquire(duckdb::ClientContext& context, size_t limit) {
+  absl::MutexLock lock{&_mutex};
+  const auto has_room = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
+    return _in_flight < limit;
+  };
+  while (!_mutex.AwaitWithTimeout(absl::Condition{&has_room},
+                                  absl::Milliseconds(50))) {
+    if (context.IsInterrupted()) {
+      ThrowInterrupted();
+    }
+  }
+  ++_in_flight;
+}
+
+void AIQueryUsage::Release() {
+  absl::MutexLock lock{&_mutex};
+  --_in_flight;
+}
+
+Requester::Requester(duckdb::ClientContext& context, std::string fn,
+                     std::string url, std::string_view api_key)
+  : _context{context},
+    _fn{std::move(fn)},
+    _url{std::move(url)},
+    _usage{context.registered_state->GetOrCreate<AIQueryUsage>("sdb_ai_usage")},
+    _max_calls{gMaxCalls.Int(context)},
+    _max_output_tokens{gMaxOutputTokens.Int(context)},
+    _max_retries{gMaxRetries.Int(context)},
+    _retry_delay_ms{gRetryDelay.Int(context)},
+    _timeout{gTimeout.Int(context)},
+    _max_concurrency{std::max<size_t>(1, gConcurrency.Int(context))},
+    _throw_on_error{gThrowOnError.Bool(context)},
+    _throw_on_quota{gThrowOnQuota.Bool(context)} {
+  _headers.Insert("Content-Type", "application/json");
+  _headers.Insert("X-SereneDB-AI-Function", _fn);
+  if (!api_key.empty()) {
+    _headers.Insert("Authorization", absl::StrCat("Bearer ", api_key));
+  }
+}
+
+bool Requester::ReserveCall() {
+  std::string_view setting;
+  uint64_t limit = 0;
+  if (_max_output_tokens != 0 &&
+      _usage->output_tokens.load(std::memory_order_relaxed) >=
+        _max_output_tokens) {
+    setting = "sdb_ai_max_output_tokens_per_query";
+    limit = _max_output_tokens;
+  } else if (const auto calls =
+               _usage->calls.fetch_add(1, std::memory_order_relaxed) + 1;
+             _max_calls != 0 && calls > _max_calls) {
+    setting = "sdb_ai_max_api_calls_per_query";
+    limit = _max_calls;
+  } else {
+    return true;
+  }
+  if (_throw_on_quota) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
+      ERR_MSG(_fn, ": query exceeded ", setting, " (", limit, ")"),
+      ERR_HINT("Raise ", setting,
+               " or SET sdb_ai_throw_on_quota_exceeded = "
+               "false to return NULL for the remaining "
+               "rows."));
+  }
+  return false;
+}
+
+void Requester::Sleep(uint64_t ms) const {
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::milliseconds{ms};
+  for (auto now = std::chrono::steady_clock::now(); now < deadline;
+       now = std::chrono::steady_clock::now()) {
+    if (_context.IsInterrupted()) {
+      ThrowInterrupted();
+    }
+    std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(
+      deadline - now, std::chrono::milliseconds{50}));
+  }
+}
+
+Response Requester::Send(size_t worker, std::string_view body) {
+  auto& slot = _slots[worker];
+  auto& http = duckdb::HTTPUtil::Get(*_context.db);
+  Response response;
+  for (uint32_t attempt = 0;; ++attempt) {
+    if (_context.IsInterrupted()) {
+      ThrowInterrupted();
+    }
+    if (!ReserveCall()) {
+      return {.skipped = true};
+    }
+    duckdb::PostRequestInfo request{
+      _url, _headers, *slot.params,
+      reinterpret_cast<duckdb::const_data_ptr_t>(body.data()), body.size()};
+    request.try_request = true;
+    duckdb::unique_ptr<duckdb::HTTPResponse> result;
+    {
+      _usage->Acquire(_context, _max_concurrency);
+      const absl::Cleanup release = [&] { _usage->Release(); };
+      result = http.Request(request, slot.client);
+    }
+    std::string retry_after;
+    if (!result || result->HasRequestError()) {
+      slot.client.reset();
+      response.status = 0;
+      response.body =
+        result ? result->GetRequestError() : std::string{"no response"};
+    } else {
+      response.status = static_cast<uint16_t>(result->status);
+      response.body = request.buffer_out.empty()
+                        ? std::move(result->body)
+                        : std::move(request.buffer_out);
+      if (result->HasHeader("Retry-After")) {
+        retry_after = result->GetHeaderValue("Retry-After");
+      }
+    }
+    if (IsSuccess(response.status) || !IsRetryable(response.status) ||
+        attempt >= _max_retries) {
+      return response;
+    }
+    Sleep(RetryDelayMs(_retry_delay_ms, attempt, retry_after));
+  }
+}
+
+std::optional<std::string> Requester::Accept(Response response) const {
+  if (response.skipped) {
+    return std::nullopt;
+  }
+  if (IsSuccess(response.status)) {
+    return std::move(response.body);
+  }
+  if (response.status == 0) {
+    ThrowRowError(absl::StrCat(_fn, ": request to '", _url,
+                               "' failed: ", ReadableText(response.body)));
+  }
+  auto message =
+    absl::StrCat(_fn, ": '", _url, "' returned HTTP ", response.status, ": ",
+                 ProviderError(response.body));
+  if (const auto code = FatalErrorCode(response.status); code != 0) {
+    THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(message));
+  }
+  ThrowRowError(std::move(message));
+}
+
+void Requester::AddOutputTokens(uint64_t tokens) {
+  _usage->output_tokens.fetch_add(tokens, std::memory_order_relaxed);
+}
+
+void Requester::ForEach(size_t n, absl::FunctionRef<void(size_t, size_t)> fn) {
+  if (n == 0) {
+    return;
+  }
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(_context);
+  const auto workers = std::min(
+    {n, _max_concurrency,
+     std::max<size_t>(1, static_cast<size_t>(scheduler.NumberOfThreads()))});
+  auto& http = duckdb::HTTPUtil::Get(*_context.db);
+  while (_slots.size() < workers) {
+    auto& slot = _slots.emplace_back(http.InitializeParameters(_context, _url));
+    slot.params->retries = 0;
+    slot.params->timeout = _timeout;
+    slot.params->timeout_usec = 0;
+  }
+
+  std::atomic_size_t next = 0;
+  std::atomic_bool stop = false;
+  absl::Mutex mutex;
+  std::exception_ptr error;
+  auto record = [&] {
+    absl::MutexLock lock{&mutex};
+    if (!error) {
+      error = std::current_exception();
+    }
+    stop.store(true, std::memory_order_relaxed);
+  };
+  auto work = [&](size_t worker) {
+    while (!stop.load(std::memory_order_relaxed)) {
+      const auto i = next.fetch_add(1, std::memory_order_relaxed);
+      if (i >= n) {
+        return;
+      }
+      try {
+        fn(i, worker);
+      } catch (const irs::SqlException& e) {
+        if (!_throw_on_error &&
+            e.error().errcode == ERRCODE_EXTERNAL_ROUTINE_EXCEPTION) {
+          continue;
+        }
+        record();
+      } catch (...) {
+        record();
+      }
+    }
+  };
+  duckdb::TaskExecutor executor{_context};
+  for (size_t worker = 1; worker < workers; ++worker) {
+    executor.ScheduleTask(duckdb::make_uniq<RequestTask>(
+      executor, absl::FunctionRef<void(size_t)>{work}, worker));
+  }
+  work(0);
+  executor.WorkOnTasks();
+  if (error) {
+    std::rethrow_exception(error);
+  }
+}
+
+AILocalState::AILocalState(duckdb::ClientContext& context, std::string fn,
+                           std::string url, std::string_view api_key)
+  : requester{context, std::move(fn), std::move(url), api_key} {}
+
+Requester& LocalRequester(duckdb::ExpressionState& state) {
+  return duckdb::ExecuteFunctionState::GetFunctionState(state)
+    ->Cast<AILocalState>()
+    .requester;
+}
+
+}  // namespace sdb::connector::ai

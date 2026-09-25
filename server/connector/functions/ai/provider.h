@@ -20,19 +20,34 @@
 
 #pragma once
 
-#include "connector/functions/embedding/provider.h"
+#include <cstdint>
+#include <duckdb/common/types/vector.hpp>
+#include <string>
 
-namespace duckdb {
+namespace sdb::connector::ai {
 
-class DatabaseInstance;
-}
+class Requester;
+struct SecretConfig;
 
-namespace sdb::connector::embedding {
+enum class ProviderType {
+  OpenAI,
+};
 
-void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
+struct ProviderConfig {
+  ProviderType type = ProviderType::OpenAI;
+  std::string model;
+  std::string api_key;
+  std::string url;
+  uint32_t dimensions = 0;
+  uint32_t max_batch = 0;
 
-void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result);
+  bool operator==(const ProviderConfig&) const = default;
+};
 
-}  // namespace sdb::connector::embedding
+void NormalizeProviderConfig(ProviderConfig& cfg, const SecretConfig& secret);
+
+void EmbedBatch(Requester& requester, const ProviderConfig& cfg,
+                duckdb::Vector& texts, duckdb::idx_t count,
+                duckdb::Vector& result);
+
+}  // namespace sdb::connector::ai

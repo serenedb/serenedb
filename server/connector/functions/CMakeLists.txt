@@ -34,7 +34,12 @@ target_sources(
         ts_to_tsquery.cpp
         ts_tokenize.cpp
         vector.cpp
-        embedding/embedding.cpp
-        embedding/provider.cpp
-        embedding/provider_openai.cpp
+        ai/aggregate_functions.cpp
+        ai/ai.cpp
+        ai/chat.cpp
+        ai/common.cpp
+        ai/jev.cpp
+        ai/provider.cpp
+        ai/provider_openai.cpp
+        ai/text_functions.cpp
 )

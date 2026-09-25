@@ -506,7 +506,7 @@ connection s5
 statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
 ----
-db error: ERROR: Attempting to write to database "__cluster__" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
+db error: ERROR: Attempting to write to database "sdb_cluster" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
 
 
 connection s5

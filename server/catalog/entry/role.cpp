@@ -96,16 +96,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     next.config.clear();
   }
   for (const auto& key : alter.reset_config) {
-    std::erase_if(next.config, [&](const std::string& entry) {
+    std::erase_if(next.config, [&](std::string_view entry) {
       return ConfigKey(entry) == key;
     });
   }
   for (const auto& entry : alter.set_config) {
     const auto key = ConfigKey(entry);
     auto it = std::ranges::find_if(
-      next.config, [&](const std::string& e) { return ConfigKey(e) == key; });
+      next.config, [&](std::string_view e) { return ConfigKey(e) == key; });
     if (it == next.config.end()) {
-      next.config.push_back(entry);
+      next.config.emplace_back(entry);
     } else {
       *it = entry;
     }
@@ -138,7 +138,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
         edge.set_option = alter.set_option == 1;
       }
       if (it == next.member_of.end()) {
-        next.member_of.push_back(edge);
+        next.member_of.emplace_back(edge);
       } else {
         *it = edge;
       }

@@ -82,7 +82,7 @@ std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
   SDB_ASSERT(table_id != 0);
   auto path = GetWalPath(db_id);
   path /= "chunks";
-  path /= std::to_string(table_id);
+  path /= absl::StrCat(table_id);
   return path;
 }
 
@@ -352,7 +352,7 @@ void SearchTable::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
   std::unique_lock lock(_table_lock);
-  _configs.push_back({index_oid, std::move(config)});
+  _configs.emplace_back(index_oid, std::move(config));
   RebuildConfig();
 }
 

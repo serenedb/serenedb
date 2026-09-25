@@ -96,7 +96,7 @@ std::vector<std::string> Names(const duckdb::FunctionParameters& params,
                                size_t i) {
   std::vector<std::string> out;
   for (const auto& value : duckdb::ListValue::GetChildren(Arg(params, i))) {
-    out.push_back(value.GetValue<std::string>());
+    out.emplace_back(value.GetValue<std::string>());
   }
   return out;
 }
@@ -105,7 +105,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindRole(const Session& s,
                                                     std::string_view name) {
   return s.Cluster()
     .GetCatalogSet(CatalogType::ROLE_ENTRY)
-    .GetEntry(s.ClusterTransaction(), duckdb::Identifier{std::string{name}});
+    .GetEntry(s.ClusterTransaction(), duckdb::Identifier{name});
 }
 
 catalog::RoleCatalogEntry& RoleByName(const Session& s, std::string_view name) {
@@ -121,7 +121,8 @@ std::string RoleName(const Session& s, duckdb::idx_t role) {
   return std::string{s.roles->NameOf(role)};
 }
 
-[[noreturn]] void DenyRoleAction(std::string_view verb, std::string detail) {
+[[noreturn]] void DenyRoleAction(std::string_view verb,
+                                 std::string_view detail) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to ", verb, " role"),
                   ERR_DETAIL(detail));
@@ -374,7 +375,7 @@ void DropRolePragma(duckdb::ClientContext& client,
         const auto& candidate = other.Cast<catalog::RoleCatalogEntry>();
         if (std::ranges::contains(candidate.MemberOf(), role.oid,
                                   &duckdb::Membership::role)) {
-          members.push_back(candidate.name);
+          members.emplace_back(candidate.name);
         }
       });
     for (const auto& member : members) {

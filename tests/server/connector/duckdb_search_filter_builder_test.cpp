@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 
 #include <algorithm>
@@ -806,19 +807,17 @@ class SearchFilterBuilderTest : public ::testing::Test {
         const auto name = [&]() -> std::string {
           if (type == irs::Type<irs::BooleanFilter>::id()) {
             const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
-            return "Boolean(mm=" + std::to_string(node.MinShouldMatch()) + ")";
+            return absl::StrCat("Boolean(mm=", node.MinShouldMatch(), ")");
           }
           if (type == irs::Type<irs::ByRange>::id()) {
-            return "ByRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByRange(f=", irs::utils::downCast<irs::ByRange>(f).field_id(),
+              ")");
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
-            return "ByGranularRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByGranularRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByGranularRange(f=",
+              irs::utils::downCast<irs::ByGranularRange>(f).field_id(), ")");
           }
           return std::string{f.type()().name()};
         }();
@@ -828,14 +827,13 @@ class SearchFilterBuilderTest : public ::testing::Test {
           for (const auto occur : irs::kAllOccur) {
             for (const auto& clause : node.Terms(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "Term(occur=" + std::to_string(irs::OccurIndex(occur)) +
-                     ", f=" + std::to_string(clause.field) +
-                     ", boost=" + std::to_string(clause.boost) +
-                     ", scorer=" + ScorerName(clause.scorer) + ")\n";
+              absl::StrAppend(&out, "Term(occur=", irs::OccurIndex(occur),
+                              ", f=", clause.field, ", boost=", clause.boost,
+                              ", scorer=", ScorerName(clause.scorer), ")\n");
             }
             for (const auto& child : node.Filters(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "occur=" + std::to_string(irs::OccurIndex(occur)) + "\n";
+              absl::StrAppend(&out, "occur=", irs::OccurIndex(occur), "\n");
               self(*child, out, depth + 2);
             }
           }

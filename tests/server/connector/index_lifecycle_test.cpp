@@ -26,6 +26,7 @@
 // database the index instance is recreated through create_instance with the
 // WAL/checkpoint state.
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -214,7 +215,7 @@ class IndexLifecycleTest : public ::testing::Test {
  protected:
   void SetUp() final {
     _dir = std::filesystem::temp_directory_path() /
-           ("sdb_index_lifecycle_" + std::to_string(::getpid()));
+           absl::StrCat("sdb_index_lifecycle_", ::getpid());
     std::filesystem::remove_all(_dir);
     std::filesystem::create_directories(_dir);
     Log().events.clear();

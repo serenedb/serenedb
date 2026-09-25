@@ -127,7 +127,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         if (param_type.id() == duckdb::LogicalTypeId::UNKNOWN) {
           argtypes.push_back(0);
         } else {
-          argtypes.push_back(Type2Oid(param_type, &context));
+          argtypes.emplace_back(Type2Oid(param_type, &context));
         }
       }
 
@@ -169,10 +169,10 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
     std::vector<Oid> argtypes;
     argtypes.reserve(builtin.parameter_types.size());
     for (const auto& param_type : builtin.parameter_types) {
-      argtypes.push_back(BuiltinArgOid(param_type));
+      argtypes.emplace_back(BuiltinArgOid(param_type));
     }
     auto pronargs = static_cast<int16_t>(argtypes.size());
-    argtypes_storage.push_back(std::move(argtypes));
+    argtypes_storage.emplace_back(std::move(argtypes));
     const auto& name = name_storage.emplace_back(builtin.name);
 
     const Oid rettype = builtin.returns_set

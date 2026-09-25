@@ -299,19 +299,13 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
-  auto dict = ResolveCatalogTokenizer(context, name);
+  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+    context, duckdb::QualifiedName::Parse(std::string{name}),
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};
   }
   return dict->Acquire(context);
-}
-
-duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>
-ResolveCatalogTokenizer(duckdb::ClientContext& context, std::string_view name) {
-  return duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-           context, duckdb::QualifiedName::Parse(std::string{name}),
-           duckdb::OnEntryNotFound::RETURN_NULL)
-    .get();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

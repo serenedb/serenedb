@@ -226,7 +226,7 @@ ParsedOp ParseOp(Cursor& c, std::vector<uint64_t>& seg_scratch,
       seg_scratch.clear();
       seg_scratch.reserve(n);
       for (uint32_t k = 0; k < n; ++k) {
-        seg_scratch.push_back(c.Read<uint64_t>());
+        seg_scratch.emplace_back(c.Read<uint64_t>());
       }
       op.seg_ids = seg_scratch;
       break;
@@ -321,10 +321,6 @@ void ReplayChunkFile(
 
 }  // namespace
 
-SearchDbWal::PendingChunk::PendingChunk(uint64_t seg_id,
-                                        std::filesystem::path path)
-  : _seg_id(seg_id), _path(std::move(path)) {}
-
 SearchDbWal::PendingChunk::PendingChunk(PendingChunk&& o) noexcept
   : _seg_id(o._seg_id), _path(std::move(o._path)), _committed(o._committed) {
   o._committed = true;  // the moved-from husk must not reclaim the file
@@ -341,8 +337,6 @@ SearchDbWal::PendingChunk& SearchDbWal::PendingChunk::operator=(
   }
   return *this;
 }
-
-SearchDbWal::PendingChunk::~PendingChunk() { ReclaimIfUncommitted(); }
 
 void SearchDbWal::PendingChunk::ReclaimIfUncommitted() noexcept {
   if (_committed || _path.empty()) {
@@ -666,7 +660,7 @@ void SearchDbWal::RunGc() {
               return;
             }
             for (uint64_t sid : op.seg_ids) {
-              chunk_paths.push_back(ChunkDir(table_id) / ChunkName(sid));
+              chunk_paths.emplace_back(ChunkDir(table_id) / ChunkName(sid));
             }
           });
       }

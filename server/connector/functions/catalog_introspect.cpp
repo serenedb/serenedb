@@ -204,7 +204,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
                                  const duckdb::DependencyDependentFlags&) {
         state.rows.push_back({.schema = {},
                               .entry_type = "Dependency",
-                              .name = std::to_string(dependent.oid),
+                              .name = absl::StrCat(dependent.oid),
                               .entry_oid = referenced.oid,
                               .visible = true});
       });

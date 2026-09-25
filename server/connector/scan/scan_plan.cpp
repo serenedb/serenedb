@@ -232,9 +232,8 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
     }
     const auto* info =
       index_meta ? index_meta->FindColumnInfo(col_id) : nullptr;
-    const bool index_stored = !index_meta ||
-                              bind_data.relation.IsSearchTable() ||
-                              (info && info->IsStored());
+    const bool index_stored =
+      bind_data.relation.IsSearchTable() || (info && info->IsStored());
     if (!index_stored) {
       state.has_lookup_filter = true;
     } else {

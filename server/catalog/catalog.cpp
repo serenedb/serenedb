@@ -58,6 +58,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
+#include <vector>
 
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
@@ -92,9 +93,6 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
     .ModifyDatabase(catalog.GetAttached(), type);
 }
 
-SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::DuckCatalog{db, true} {}
-
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -114,7 +112,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
     }
     return std::move(entry);
   }
-  options.erase(std::string{kStorageOption});
+  options.erase(kStorageOption);
   return duckdb::DuckCatalog::MakeTableEntry(transaction, schema, info);
 }
 
@@ -173,9 +171,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
     }
     return result;
   }
-  duckdb::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   duckdb::DuckCatalog::ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
   for (auto& schema : schemas) {
     schema.get().Scan(type, match);
   }
@@ -193,7 +191,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   SDB_ASSERT(plan);
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
-  insert.children.push_back(*plan);
+  insert.children.emplace_back(*plan);
   return insert;
 }
 
@@ -212,7 +210,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
     op.return_chunk, std::move(op.return_columns));
-  del.children.push_back(plan);
+  del.children.emplace_back(plan);
   return del;
 }
 
@@ -224,7 +222,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   }
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
-  insert.children.push_back(plan);
+  insert.children.emplace_back(plan);
   return insert;
 }
 
@@ -250,7 +248,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk);
-  update.children.push_back(plan);
+  update.children.emplace_back(plan);
   return update;
 }
 
@@ -334,7 +332,8 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
-    .Scan([&](duckdb::CatalogEntry& entry) { servers.push_back(entry.name); });
+    .Scan(
+      [&](duckdb::CatalogEntry& entry) { servers.emplace_back(entry.name); });
   for (const auto& server : servers) {
     duckdb::DatabaseManager::Get(context).DetachDatabase(
       context, server, duckdb::OnEntryNotFound::RETURN_NULL);

@@ -63,7 +63,7 @@ struct LocalTableChangesEntry {
       op.pk_segments = std::make_unique<std::vector<SearchDbWal::InlinePk>>();
     }
     op.collection->Append(chunk);
-    op.pk_segments->push_back({pk_base, chunk.size()});
+    op.pk_segments->emplace_back(pk_base, chunk.size());
   }
 
   // Move a bulk statement's chunk files into the current insert run (does not
@@ -80,7 +80,7 @@ struct LocalTableChangesEntry {
     }
     // A prior bulk statement already coalesced into this run; append.
     for (auto& c : chunks) {
-      run.chunks.push_back(std::move(c));
+      run.chunks.emplace_back(std::move(c));
     }
   }
 

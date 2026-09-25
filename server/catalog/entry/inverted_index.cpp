@@ -72,7 +72,7 @@ duckdb::Value Pack(const persistence::InvertedIndexData& data) {
 
 std::optional<persistence::InvertedIndexData> Unpack(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  const auto it = options.find(std::string{kPayloadOption});
+  const auto it = options.find(kPayloadOption);
   if (it == options.end() || it->second.IsNull()) {
     return std::nullopt;
   }
@@ -114,10 +114,10 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   for (auto& record : data.keys) {
     const auto slot = config->keys.size();
     const bool has_expression = !record.normalized_expression.empty();
-    config->keys.push_back(
-      {std::move(record), has_expression && slot < parsed_expressions.size()
-                            ? parsed_expressions[slot]->ToString()
-                            : std::string{}});
+    config->keys.emplace_back(std::move(record),
+                              has_expression && slot < parsed_expressions.size()
+                                ? parsed_expressions[slot]->ToString()
+                                : std::string{});
   }
   return config;
 }
@@ -217,7 +217,7 @@ InvertedIndexSettings ResolveSettings(
 
 std::vector<std::string> ParseKeyColumns(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  auto it = options.find(std::string{kKeyColumnsOption});
+  auto it = options.find(kKeyColumnsOption);
   if (it == options.end()) {
     return {};
   }
@@ -345,7 +345,7 @@ std::vector<irs::field_id> InvertedIndexConfig::TermFields(
   for (const auto& key : keys) {
     const auto* entry = FindEntry(key.field_id);
     if (key.column_id == column_id && entry && entry->IsTermDict()) {
-      result.push_back(key.field_id);
+      result.emplace_back(key.field_id);
     }
   }
   return result;
@@ -410,7 +410,7 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
                                       .top_k_scorer = _config->top_k_scorer};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
-    data.keys.push_back(key);
+    data.keys.emplace_back(key);
   }
   data.fields.reserve(_config->fields.size());
   for (const auto& [field_id, field] : _config->fields) {
@@ -430,7 +430,7 @@ InvertedIndexEntry::InvertedIndexEntry(
   }
   if (auto data = Unpack(info.options)) {
     _config = FromPersisted(std::move(*data), options, parsed_expressions);
-    options.erase(std::string{kPayloadOption});
+    options.erase(kPayloadOption);
   }
 }
 

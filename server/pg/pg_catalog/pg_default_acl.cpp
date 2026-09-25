@@ -56,7 +56,7 @@ MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   auto& context = _context;
   std::vector<duckdb::idx_t> schemas;
   VisitSchemas(context, GetDatabase(), [&](duckdb::SchemaCatalogEntry& schema) {
-    schemas.push_back(schema.oid);
+    schemas.emplace_back(schema.oid);
   });
   auto& cluster = catalog::ClusterOf(context);
   auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)

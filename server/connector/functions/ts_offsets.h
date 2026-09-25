@@ -32,6 +32,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+
 namespace sdb::connector {
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
@@ -52,7 +53,9 @@ struct OffsetsBindData final : duckdb::FunctionData {
 
   bool IsStandalone() const noexcept { return dict_tokenizer; }
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<OffsetsBindData>(*this);
+  }
   bool Equals(const duckdb::FunctionData& other) const final;
 };
 

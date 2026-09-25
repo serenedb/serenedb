@@ -309,8 +309,7 @@ CollectMaintainTargets(duckdb::ClientContext& context,
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-        if (schema.empty() ||
-            table.ParentSchemaName() == duckdb::Identifier{schema}) {
+        if (schema.empty() || table.ParentSchemaName() == schema) {
           out.emplace_back(table);
         }
       });
@@ -330,14 +329,14 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
       if (inverted.Storage()) {
-        steps.push_back({inverted.Storage(), inverted.Config(), nullptr});
+        steps.emplace_back(inverted.Storage(), inverted.Config(), nullptr);
       }
     });
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
   // synchronous, on-demand path through the same maintenance ops.
   if (const auto* search =
         dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
-    steps.push_back({nullptr, nullptr, search->Storage()});
+    steps.emplace_back(nullptr, nullptr, search->Storage());
   }
 }
 
@@ -416,7 +415,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.push_back({std::move(storage), inverted->Config(), nullptr});
+      steps.emplace_back(std::move(storage), inverted->Config(), nullptr);
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(

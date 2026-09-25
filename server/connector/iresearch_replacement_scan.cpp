@@ -49,9 +49,9 @@ duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
     return nullptr;
   }
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> arguments;
-  arguments.push_back(NameArgument(index->ParentCatalog().GetName()));
-  arguments.push_back(NameArgument(index->ParentSchemaName()));
-  arguments.push_back(NameArgument(index->name));
+  arguments.emplace_back(NameArgument(index->ParentCatalog().GetName()));
+  arguments.emplace_back(NameArgument(index->ParentSchemaName()));
+  arguments.emplace_back(NameArgument(index->name));
 
   auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
   ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(

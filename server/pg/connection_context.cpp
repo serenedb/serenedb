@@ -86,9 +86,9 @@ ConnectionContext::ConnectionContext(
 namespace {
 
 std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
-                     const std::string& fallback) {
+                     std::string_view fallback) {
   auto name = roles.NameOf(role);
-  return name.empty() ? fallback : std::string{name};
+  return std::string{name.empty() ? fallback : name};
 }
 
 }  // namespace

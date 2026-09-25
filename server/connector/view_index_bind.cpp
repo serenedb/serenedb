@@ -37,6 +37,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_client_state.h"
@@ -111,7 +112,7 @@ duckdb::ColumnBinding CarryUp(duckdb::LogicalOperator& op,
     return below;
   }
   auto& projection = op.Cast<duckdb::LogicalProjection>();
-  projection.expressions.push_back(
+  projection.expressions.emplace_back(
     duckdb::make_uniq<duckdb::BoundColumnRefExpression>(type, below));
   return {projection.table_index,
           duckdb::ProjectionIndex(projection.expressions.size() - 1)};
@@ -136,7 +137,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   const auto fp = ResolveViewFastPath(context, view_base,
                                       catalog::ParseKeyColumns(info->options));
   duckdb::optional_ptr<duckdb::LogicalGet> leaf;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> pk_refs;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> pk_refs;
   std::optional<std::pair<size_t, duckdb::ProjectionIndex>> file_index;
   if (fp) {
     leaf = &LeafScan(*plan);
@@ -150,7 +151,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
           vcols[i], duckdb::TableColumn("rowid", pg::CTID()));
       }
       const auto& type = ColumnType(*leaf, slot);
-      pk_refs.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      pk_refs.emplace_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
         type,
         CarryUp(*plan, duckdb::ColumnBinding(leaf->table_index, slot), type)));
       if (vcols[i] == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
@@ -186,7 +187,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
-    expressions.push_back(index_binder.Bind(expr));
+    expressions.emplace_back(index_binder.Bind(expr));
   }
   duckdb::unique_ptr<duckdb::Expression> bound_where;
   if (info->where_clause) {
@@ -202,13 +203,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   select_list.reserve(kept.size() + pk_refs.size());
   for (const auto& column : kept) {
     const auto position = column.GetPrimaryIndex();
-    info->column_ids.push_back(position);
-    info->scan_types.push_back(view_base.types[position]);
-    select_list.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      view_base.types[position], top[position]));
+    info->column_ids.emplace_back(position);
+    info->scan_types.emplace_back(view_base.types[position]);
+    select_list.emplace_back(
+      duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        view_base.types[position], top[position]));
   }
   for (auto& ref : pk_refs) {
-    select_list.push_back(std::move(ref));
+    select_list.emplace_back(std::move(ref));
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = view_base.names;
@@ -247,7 +249,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), view, nullptr);
-  result->children.push_back(std::move(input));
+  result->children.emplace_back(std::move(input));
   return std::move(result);
 }
 
@@ -262,7 +264,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("only inverted indexes are supported on a search-backed table"));
   }
-  if (info->options.contains(std::string{kOptimizeTopKSetting})) {
+  if (info->options.contains(kOptimizeTopKSetting)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(kOptimizeTopKSetting,
@@ -298,14 +300,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
-    expressions.push_back(index_binder.Bind(expr));
+    expressions.emplace_back(index_binder.Bind(expr));
   }
 
   auto& get = plan->Cast<duckdb::LogicalGet>();
   for (const auto& column_id : get.GetColumnIds()) {
     const auto position = column_id.GetPrimaryIndex();
-    info->column_ids.push_back(position);
-    info->scan_types.push_back(get.returned_types[position]);
+    info->column_ids.emplace_back(position);
+    info->scan_types.emplace_back(get.returned_types[position]);
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = get.names;
@@ -314,7 +316,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);
-  result->children.push_back(std::move(plan));
+  result->children.emplace_back(std::move(plan));
   return std::move(result);
 }
 

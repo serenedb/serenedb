@@ -123,7 +123,7 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
       const auto kind = MacroKindOf(_set);
       pg::VisitSystemFunctions(schema, [&](const pg::StaticFunction& function) {
         if (function.first->macros[0]->type == kind) {
-          names.push_back(function.first->GetFunctionName());
+          names.emplace_back(function.first->GetFunctionName());
         }
       });
       return names;
@@ -132,7 +132,7 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
       names.emplace_back(table.GetName());
     });
     pg::VisitSystemViews(schema, [&](const pg::StaticView& view) {
-      names.push_back(view.info->GetViewName());
+      names.emplace_back(view.info->GetViewName());
     });
     return names;
   }
@@ -147,7 +147,7 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
   using DefaultGenerator::DefaultGenerator;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
-    duckdb::CatalogTransaction, const duckdb::Identifier& name) override {
+    duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
     if (!duckdb::DefaultSchemaGenerator::IsDefaultSchema(name)) {
       return nullptr;
     }
@@ -165,7 +165,7 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
     return schema;
   }
 
-  duckdb::vector<duckdb::Identifier> GetDefaultEntries() override {
+  duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
     return {duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema},
             duckdb::Identifier{irs::StaticStrings::kInformationSchema}};
   }

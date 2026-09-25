@@ -243,7 +243,7 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   std::lock_guard<std::mutex> lock(gstate.combine_mu);
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
-    gstate.bulk_chunks.push_back(std::move(pending));
+    gstate.bulk_chunks.emplace_back(std::move(pending));
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
       gstate.search_table, std::move(lstate->search_trx));
   }

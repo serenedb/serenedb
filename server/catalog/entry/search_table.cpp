@@ -20,6 +20,7 @@
 
 #include "catalog/entry/search_table.h"
 
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
@@ -66,7 +67,7 @@ using WithOptions =
 
 duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
   const WithOptions& options, std::string_view key) {
-  const auto it = options.find(std::string{key});
+  const auto it = options.find(key);
   if (it == options.end() || !it->second ||
       it->second->GetExpressionType() !=
         duckdb::ExpressionType::VALUE_CONSTANT) {
@@ -119,7 +120,7 @@ duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
   for (duckdb::idx_t attempt = 1; schema.GetEntry(
          transaction, duckdb::CatalogType::SEQUENCE_ENTRY, candidate);
        ++attempt) {
-    candidate = duckdb::Identifier{stem + std::to_string(attempt)};
+    candidate = duckdb::Identifier{absl::StrCat(stem, attempt)};
   }
   return candidate;
 }
@@ -139,7 +140,7 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
 }  // namespace
 
 TableEngine ReadStorageEngine(const WithOptions& options) {
-  if (!options.contains(std::string{kStorageOption})) {
+  if (!options.contains(kStorageOption)) {
     return TableEngine::Transactional;
   }
   const auto value = FindConstant(options, kStorageOption);
@@ -151,11 +152,10 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
   const auto engine = value->GetValue()
                         .DefaultCastAs(duckdb::LogicalType::VARCHAR)
                         .GetValue<std::string>();
-  const auto lower = duckdb::StringUtil::Lower(engine);
-  if (lower == "transactional") {
+  if (absl::EqualsIgnoreCase(engine, "transactional")) {
     return TableEngine::Transactional;
   }
-  if (lower == kEngineSearch) {
+  if (absl::EqualsIgnoreCase(engine, kEngineSearch)) {
     return TableEngine::Search;
   }
   THROW_SQL_ERROR(
@@ -244,20 +244,20 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
   AppendIResearchBlockRows(node, column_id, path, node.Type().ToString(),
                            segment, row_base, virtual_columns, out);
   if (const auto* validity = node.Validity()) {
-    path.push_back(0);
+    path.emplace_back(0);
     AppendIResearchBlockRows(*validity, column_id, path, "VALIDITY", segment,
                              row_base, virtual_columns, out);
     path.pop_back();
   }
   if (node.Type().id() == duckdb::LogicalTypeId::STRUCT) {
     for (size_t i = 0; i < node.StructFieldCount(); ++i) {
-      path.push_back(i + 1);
+      path.emplace_back(i + 1);
       WalkIResearchColumn(node.StructField(i), column_id, path, segment,
                           row_base, virtual_columns, out);
       path.pop_back();
     }
   } else if (const auto* child = node.Child()) {
-    path.push_back(1);
+    path.emplace_back(1);
     WalkIResearchColumn(*child, column_id, path, segment, row_base,
                         virtual_columns, out);
     path.pop_back();

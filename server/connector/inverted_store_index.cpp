@@ -197,7 +197,7 @@ void InvertedStoreIndex::WriteChunk(DuckDBSearchSinkInsertWriter& writer,
           return earlier.field_id == keys[i].field_id;
         });
       if (first) {
-        values.push_back({keys[i].field_id, &results.data[i]});
+        values.emplace_back(keys[i].field_id, &results.data[i]);
       }
     }
     FeedChunk(writer, count,

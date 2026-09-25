@@ -27,6 +27,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+
 namespace sdb::connector::highlight {
 
 using HitRange = std::pair<uint32_t, uint32_t>;

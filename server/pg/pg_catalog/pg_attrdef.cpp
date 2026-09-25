@@ -43,12 +43,9 @@ MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
         adbin_storage.push_back(col.Generated()
                                   ? col.GeneratedExpression().ToString()
                                   : col.DefaultValue().ToString());
-        values.push_back(PgAttrdef{
-          Oid{col.Oid()},
-          Oid{table.oid},
-          static_cast<int16_t>(col.Logical().index + 1),
-          adbin_storage.back(),
-        });
+        values.emplace_back(Oid{col.Oid()}, Oid{table.oid},
+                            static_cast<int16_t>(col.Logical().index + 1),
+                            adbin_storage.back());
       }
     });
 

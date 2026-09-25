@@ -818,19 +818,17 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
                   "latitude/longitude paths are JSON-only -- use a geojson "
                   "analyzer for GEOMETRY columns"));
       }
-      if (is_geojson) {
-        const auto& geojson =
-          irs::utils::downCast<irs::analysis::GeoJsonTokenizer>(analyzer);
-        using Coding = irs::analysis::GeoJsonTokenizer::Coding;
-        const auto coding = geojson.coding();
-        if (coding != Coding::Source && coding != Coding::S2Point) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-            ERR_MSG("Column '", column_name,
-                    "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                    "not yet supported for GEOMETRY columns -- use S2Point or "
-                    "source coding"));
-        }
+      const auto& geojson =
+        irs::utils::downCast<irs::analysis::GeoJsonTokenizer>(analyzer);
+      using Coding = irs::analysis::GeoJsonTokenizer::Coding;
+      const auto coding = geojson.coding();
+      if (coding != Coding::Source && coding != Coding::S2Point) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("Column '", column_name,
+                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                  "not yet supported for GEOMETRY columns -- use S2Point or "
+                  "source coding"));
       }
     } else if (!col_type.IsJSONType()) {
       THROW_SQL_ERROR(
@@ -1159,7 +1157,7 @@ void DeriveKeys(
       ivf->postings_id = record.field_id;
     }
 
-    config.keys.push_back(std::move(record));
+    config.keys.emplace_back(std::move(record));
   }
   config.fields = std::move(entries);
 }

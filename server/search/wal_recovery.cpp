@@ -71,7 +71,9 @@ void InitInvertedIndexes() {
       const auto transaction = catalog.GetCatalogTransaction(context);
       std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
       catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
-        [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+        [&](duckdb::SchemaCatalogEntry& schema) {
+          schemas.emplace_back(schema);
+        });
       for (auto& schema : schemas) {
         std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
         schema.get().Scan(
@@ -95,13 +97,13 @@ void InitInvertedIndexes() {
             relation && relation->type == duckdb::CatalogType::TABLE_ENTRY &&
             relation->Cast<duckdb::TableCatalogEntry>().IsDuckTable();
           if (!table_backed) {
-            statics.push_back(storage);
+            statics.emplace_back(storage);
             continue;
           }
           storage->StartRecovery();
-          recovering.push_back(storage);
+          recovering.emplace_back(storage);
           if (seen_tables.insert(relation->oid).second) {
-            tables.push_back(&relation->Cast<duckdb::DuckTableEntry>());
+            tables.emplace_back(&relation->Cast<duckdb::DuckTableEntry>());
           }
         }
       }

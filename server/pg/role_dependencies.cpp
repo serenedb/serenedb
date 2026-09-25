@@ -73,7 +73,7 @@ class Emitter {
     for (const auto& item : acl) {
       for (const auto role : {item.grantee, item.grantor}) {
         if (!std::ranges::contains(roles, role)) {
-          roles.push_back(role);
+          roles.emplace_back(role);
         }
       }
     }
@@ -106,7 +106,7 @@ void VisitDatabase(duckdb::ClientContext& context,
                    catalog::SereneDBCatalog& database, Emitter& emitter) {
   std::vector<duckdb::idx_t> schemas;
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema) {
-    schemas.push_back(schema.oid);
+    schemas.emplace_back(schema.oid);
     emitter.Entry(PgNamespace::kId, schema);
     schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY,
                 [&](duckdb::CatalogEntry& entry) {

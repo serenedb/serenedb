@@ -215,8 +215,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
       attached.GetStorageManager().GetDatabaseSize().block_size;
   }
   const auto in_scope = [&](const duckdb::CatalogEntry& entry) {
-    return only_schema.empty() ||
-           entry.ParentSchemaName() == duckdb::Identifier{only_schema};
+    return only_schema.empty() || entry.ParentSchemaName() == only_schema;
   };
   int64_t bytes = 0;
   int64_t blocks = 0;
@@ -875,8 +874,8 @@ const pg::VirtualTable* ResolveSystemRelation(
   const duckdb::QualifiedName& name) {
   const auto& schema = name.Schema();
   const auto& relation = name.Name().GetIdentifierName();
-  if (schema == duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema} ||
-      schema == duckdb::Identifier{irs::StaticStrings::kInformationSchema}) {
+  if (schema == irs::StaticStrings::kPgCatalogSchema ||
+      schema == irs::StaticStrings::kInformationSchema) {
     return pg::GetSystemTable(schema.GetIdentifierName(), relation);
   }
   if (schema.empty()) {
@@ -899,7 +898,7 @@ bool SystemRelationHasColumn(const pg::VirtualTable& sys,
                              std::string_view column) {
   for (const auto& [name, type] :
        duckdb::StructType::GetChildTypes(sys.RowType())) {
-    if (name == duckdb::Identifier{column}) {
+    if (name == column) {
       return true;
     }
   }
@@ -1420,7 +1419,7 @@ duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
                            std::string_view name) {
   const duckdb::Identifier wanted{name};
   for (const auto& [id, node] : roles.nodes) {
-    if (duckdb::Identifier{node.name} == wanted) {
+    if (node.name == wanted) {
       return id;
     }
   }

@@ -234,19 +234,14 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void CloseDeleteLog();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
-    SDB_ASSERT(_writer);
     return _writer->ArmCompactionFloor();
   }
-  const irs::Format::ptr& Codec() const noexcept {
-    SDB_ASSERT(_writer);
-    return _writer->Codec();
-  }
+  const irs::Format::ptr& Codec() const noexcept { return _writer->Codec(); }
   bool ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<const std::string_view> adopted_metas,
                        const irs::Format::ptr& codec,
                        irs::IndexWriter::Transaction* removals = nullptr,
                        uint64_t removals_tick = irs::writer_limits::kMinTick) {
-    SDB_ASSERT(_writer);
     return _writer->ReplaceSegments(replaced, adopted_metas, codec, removals,
                                     removals_tick);
   }

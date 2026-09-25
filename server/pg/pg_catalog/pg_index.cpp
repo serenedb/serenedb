@@ -84,7 +84,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       // An index over a view has no attnums of its own to report.
       if (host) {
         for (auto col_id : column_ids) {
-          indkey.push_back(TableEntryAttnum(*host, col_id));
+          indkey.emplace_back(TableEntryAttnum(*host, col_id));
         }
       }
       const bool is_unique_index = entry.IsUnique();

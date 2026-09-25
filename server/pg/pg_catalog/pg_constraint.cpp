@@ -172,7 +172,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
                             ? PgConstraint::Contype::PrimaryKey
                             : PgConstraint::Contype::Unique;
             row.conindid = KeyIndexOid(relid, position);
-            conkey_storage.push_back(KeyConstraintAttnums(table, unique));
+            conkey_storage.emplace_back(KeyConstraintAttnums(table, unique));
             break;
           }
           case duckdb::ConstraintType::NOT_NULL: {

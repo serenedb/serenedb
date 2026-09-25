@@ -1174,7 +1174,7 @@ ts_offsets
 statement error
 SELECT ts_offsets('standalone_dict', 42, ts_phrase('fox'))
 ----
-db error: ERROR: No function matches the given name and argument types 'ts_offsets(STRING_LITERAL, INTEGER_LITERAL, tsquery)'. You might need to add explicit type casts.<slt:ignore>
+db error: ERROR: No function matches the given name and argument types 'ts_offsets(STRING_LITERAL, INTEGER_LITERAL, TSQUERY)'. You might need to add explicit type casts.<slt:ignore>
 
 
 

@@ -83,13 +83,13 @@ void InitRowSource(duckdb::ClientContext& context,
   source.projections.reserve(target.column_ids.size() + 1);
   duckdb::vector<duckdb::LogicalType> types = target.column_types;
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
-    source.projections.push_back(irs::ColumnstoreProjection{
+    source.projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = i, .column_id = target.column_ids[i]});
   }
   // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
   // by definition), read here so each rebuilt row keeps its identity.
   source.rowid_slot = target.column_ids.size();
-  source.projections.push_back(irs::ColumnstoreProjection{
+  source.projections.emplace_back(irs::ColumnstoreProjection{
     .output_slot = source.rowid_slot, .column_id = term_dict::kPKFieldId});
   types.push_back(duckdb::LogicalType::BIGINT);
   source.chunk.Initialize(duckdb::Allocator::Get(context), types);

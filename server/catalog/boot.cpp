@@ -55,7 +55,7 @@ constexpr const char* kDatabaseDir = "engine_duckdb";
 duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
-  const duckdb::string& name, duckdb::AttachInfo& info,
+  const std::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
   return duckdb::make_uniq<ClusterCatalog>(db);
 }
@@ -134,7 +134,7 @@ void InitCatalog(std::string_view directory) {
   std::vector<duckdb::Identifier> names;
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(cluster.LoginTransaction(),
-          [&](duckdb::CatalogEntry& entry) { names.push_back(entry.name); });
+          [&](duckdb::CatalogEntry& entry) { names.emplace_back(entry.name); });
   for (const auto& name : names) {
     duckdb::AttachInfo info;
     info.name = name;

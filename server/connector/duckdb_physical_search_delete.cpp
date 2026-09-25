@@ -75,8 +75,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   _pk_columns.reserve(expressions.size());
   for (const auto& expr : expressions) {
     const auto& ref = expr->Cast<duckdb::BoundReferenceExpression>();
-    _pk_columns.push_back(
-      {.input_col_idx = ref.Index(), .type = ref.GetReturnType()});
+    _pk_columns.emplace_back(ref.Index(), ref.GetReturnType());
   }
 }
 

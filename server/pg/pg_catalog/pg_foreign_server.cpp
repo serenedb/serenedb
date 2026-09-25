@@ -65,7 +65,7 @@ MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
         const auto& perm = server.permissions;
         auto& bytes = opt_bytes.emplace_back();
         for (const auto& [key, value] : server.Options()) {
-          bytes.push_back(absl::StrCat(key, "=", value));
+          bytes.emplace_back(absl::StrCat(key, "=", value));
         }
         const auto& views = opt_views.emplace_back(bytes.begin(), bytes.end());
         values.push_back(PgForeignServer{

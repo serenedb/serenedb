@@ -245,8 +245,8 @@ class PassConnection {
       }
       auto column =
         duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]);
-      info->expressions.push_back(column->Copy());
-      info->parsed_expressions.push_back(std::move(column));
+      info->expressions.emplace_back(column->Copy());
+      info->parsed_expressions.emplace_back(std::move(column));
     }
     if (const auto predicate = target.index->where_clause.get()) {
       info->where_clause = predicate->Copy();
@@ -281,10 +281,12 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
                        std::vector<std::string>& pks) {
   // Statement object, no SQL text: values travel verbatim.
   auto select = duckdb::make_uniq<duckdb::SelectNode>();
-  select->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
-    duckdb::Identifier{"file_index"}));
-  select->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
-    duckdb::Identifier{"row_number"}));
+  select->select_list.emplace_back(
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{"file_index"}));
+  select->select_list.emplace_back(
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{"row_number"}));
   auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
   table->SetQualifiedName(duckdb::Identifier{target.database},
                           duckdb::Identifier{target.schema},
@@ -295,7 +297,7 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
   statement->node = std::move(select);
   PassConnection pass{context, conn_ctx, target};
   auto result = pass.Query(std::move(statement));
-  const auto failed = [&](const std::string& error) {
+  const auto failed = [&](std::string_view error) {
     // The caller demotes to a full rescan either way; without this the reason
     // is invisible, and a road that cannot be planned looks like one that
     // simply had nothing to remove.
@@ -323,7 +325,7 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
       }
       auto pk = primary_key::PkFilePrefix(file.GetValue<uint64_t>());
       primary_key::AppendSigned(pk, row_number.GetValue<int64_t>());
-      pks.push_back(std::move(pk));
+      pks.emplace_back(std::move(pk));
     }
   }
   return true;
@@ -1159,7 +1161,7 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
     // and every check answers "allowed" until the RBAC phase -- so the name now
     // reaches nothing but notices and the log, while a role that had gone
     // missing failed the whole tick. Restore the lookup when enforcement lands.
-    const std::string user = kReindexStubUser;
+    const std::string_view user = kReindexStubUser;
 
     duckdb::Connection conn{db};
     conn.BeginTransaction();
@@ -1263,8 +1265,8 @@ void AddDeltaFileBase(duckdb::Binder& binder, duckdb::LogicalProjection& proj,
                       uint64_t delta_file_base) {
   auto& slot = proj.expressions[file_index_slot.GetIndex()];
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
-  args.push_back(std::move(slot));
-  args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+  args.emplace_back(std::move(slot));
+  args.emplace_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::UBIGINT(delta_file_base)));
   duckdb::FunctionBinder function_binder{binder};
   duckdb::ErrorData error;

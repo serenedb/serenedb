@@ -112,8 +112,8 @@ duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(
   data->lookup.label = std::move(lookup_label);
   data->search.snapshot = std::move(snapshot);
   for (const auto& column : table.GetColumns().Logical()) {
-    data->columns.ids.push_back(ColumnId{column.Oid()});
-    data->columns.types.push_back(column.Type());
+    data->columns.ids.emplace_back(column.Oid());
+    data->columns.types.emplace_back(column.Type());
   }
   return data;
 }
@@ -140,9 +140,9 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
     data->lookup.label = "view";
   }
   for (duckdb::idx_t i = 0; i < view_base.names.size(); ++i) {
-    data->columns.ids.push_back(ColumnId{i});
-    data->columns.types.push_back(view_base.types[i]);
-    spec.column_names.push_back(view_base.names[i].GetIdentifierName());
+    data->columns.ids.emplace_back(i);
+    data->columns.types.emplace_back(view_base.types[i]);
+    spec.column_names.emplace_back(view_base.names[i].GetIdentifierName());
   }
   return data;
 }
@@ -318,8 +318,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   data->score.prune = search_table ? search_table->Storage()->TopKScorer()
                                    : entry.Config()->top_k_scorer;
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
-    return_types.push_back(type);
-    names.push_back(std::string{data->ColumnNameById(id)});
+    return_types.emplace_back(type);
+    names.emplace_back(data->ColumnNameById(id));
   });
   return data;
 }

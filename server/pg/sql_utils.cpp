@@ -50,7 +50,7 @@ std::vector<int16_t> KeyConstraintAttnums(
   out.reserve(constraint.GetColumnNames().size());
   for (const auto& name : constraint.GetColumnNames()) {
     // Zero is what postgres writes for a key part this relation does not list.
-    out.push_back(
+    out.emplace_back(
       columns.ColumnExists(name)
         ? static_cast<int16_t>(columns.GetColumn(name).Logical().index + 1)
         : 0);

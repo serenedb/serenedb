@@ -221,7 +221,7 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
             if (auto name = roles.NameOf(id); !name.empty()) {
               return name;
             }
-            oid_fallback = std::to_string(id);
+            oid_fallback = absl::StrCat(id);
             return oid_fallback;
           });
         duckdb::FlatVector::GetDataMutable<duckdb::string_t>(

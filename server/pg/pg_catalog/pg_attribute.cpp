@@ -190,7 +190,7 @@ void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
     };
-    values.push_back(std::move(row));
+    values.emplace_back(std::move(row));
   }
 }
 

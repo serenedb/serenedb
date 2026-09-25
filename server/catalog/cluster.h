@@ -35,10 +35,11 @@ namespace sdb::catalog {
 
 class ClusterCatalog final : public duckdb::DuckCatalog {
  public:
-  static constexpr const char* kStorageType = "serenedb_cluster";
-  static constexpr const char* kDatabaseName = "__cluster__";
+  static constexpr const char* kStorageType = "sdb_cluster";
+  static constexpr const char* kDatabaseName = "sdb_cluster";
 
-  explicit ClusterCatalog(duckdb::AttachedDatabase& db);
+  explicit ClusterCatalog(duckdb::AttachedDatabase& db)
+    : duckdb::DuckCatalog{db, true} {}
 
   std::string GetCatalogType() final { return kStorageType; }
 

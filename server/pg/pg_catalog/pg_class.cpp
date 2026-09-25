@@ -217,7 +217,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relhasindex = indexed_relations.contains(table->oid);
           row.reltuples = count_store_rows(*table);
           row.relacl = {table->permissions.acl};
-          values.push_back(std::move(row));
+          values.emplace_back(std::move(row));
           return;
         }
         const auto* view_entry =
@@ -232,7 +232,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                       view_entry->permissions.owner);
         row.relkind = PgClass::Relkind::View;
         row.relacl = {view_entry->permissions.acl};
-        values.push_back(std::move(row));
+        values.emplace_back(std::move(row));
       });
   });
 
@@ -251,7 +251,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       auto& strings = reloptions_storage.emplace_back();
       auto& views = reloptions_views.emplace_back();
       for (const auto name : catalog::kInvertedIndexSettings) {
-        strings.push_back(absl::StrCat(
+        strings.emplace_back(absl::StrCat(
           name, "=", inverted->options.find(name)->second.ToString()));
       }
       for (const auto& option : strings) {
@@ -312,7 +312,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
-        names.push_back(ConstraintName(*table, unique));
+        names.emplace_back(ConstraintName(*table, unique));
         auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
                                names.back(), table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;

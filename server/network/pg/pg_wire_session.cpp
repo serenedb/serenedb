@@ -375,9 +375,9 @@ std::string_view PgWireSession<Kind>::UserName() const {
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
   auto& cluster = catalog::ClusterOf();
-  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                    .GetEntry(cluster.LoginTransaction(),
-                              duckdb::Identifier{std::string{DatabaseName()}});
+  auto database =
+    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{DatabaseName()});
   if (!database) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
@@ -880,10 +880,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     auto& cluster = catalog::ClusterOf();
     const auto transaction = cluster.LoginTransaction();
     auto& roles = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-    auto user_role =
-      roles.GetEntry(transaction, duckdb::Identifier{std::string{user}});
-    auto group_role =
-      roles.GetEntry(transaction, duckdb::Identifier{std::string{group}});
+    auto user_role = roles.GetEntry(transaction, duckdb::Identifier{user});
+    auto group_role = roles.GetEntry(transaction, duckdb::Identifier{group});
     if (!user_role || !group_role) {
       return false;  // missing_ok: unknown login role or target group
     }
@@ -1001,9 +999,9 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   auto& cluster = catalog::ClusterOf();
-  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                 .GetEntry(cluster.LoginTransaction(),
-                           duckdb::Identifier{std::string{UserName()}});
+  auto entry =
+    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{UserName()});
   const auto* login_role =
     entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
   if (login_role && login_role->HasValidUntil() &&
@@ -2182,7 +2180,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   std::vector<int32_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    oids.push_back(
+    oids.emplace_back(
       sdb::pg::Type2Oid(ResolveExpectedType(prepared.data->value_map, i),
                         &_connection_ctx->GetClientContext()));
   }

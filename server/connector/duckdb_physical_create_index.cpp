@@ -278,7 +278,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         backfill.column_types.reserve(table_columns.LogicalColumnCount());
         for (const auto& column : table_columns.Logical()) {
           backfill.column_ids.emplace_back(column.Oid());
-          backfill.column_types.push_back(column.Type());
+          backfill.column_types.emplace_back(column.Type());
         }
         backfill.group_bytes = uint64_t{1} << 30;
         duckdb::Value group_bytes;
@@ -351,11 +351,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->columns.reserve(_info->column_ids.size());
   for (size_t chunk_idx = 0; chunk_idx < _info->column_ids.size();
        ++chunk_idx) {
-    state->columns.push_back(InsertColumnMeta{
-      .id = _info->column_ids[chunk_idx],
-      .duckdb_type = _info->scan_types[chunk_idx],
-      .input_col_idx = chunk_idx,
-    });
+    state->columns.emplace_back(_info->column_ids[chunk_idx],
+                                _info->scan_types[chunk_idx], chunk_idx);
   }
   state->pk_base_col_idx = state->columns.size();
 

@@ -30,6 +30,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "catalog/boot.h"
@@ -48,7 +49,7 @@ std::string ConnectionString(const ServerOptions& options) {
 }  // namespace
 
 void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
-  const std::string type{absl::StripSuffix(_fdw_name, "_fdw")};
+  const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
   duckdb::AttachInfo info;
   info.name = name;
   if (type == "clickhouse") {

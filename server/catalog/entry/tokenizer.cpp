@@ -28,6 +28,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/serializer.hpp>
+#include <string_view>
 #include <utility>
 
 namespace sdb::catalog {
@@ -42,7 +43,7 @@ std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
 
 namespace {
 
-irs::analysis::TokenizerConfig UnpackTokenizerConfig(const std::string& bytes) {
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view bytes) {
   duckdb::MemoryStream stream{
     const_cast<duckdb::data_ptr_t>(
       reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
@@ -92,7 +93,7 @@ Tokenizer::TokenizerWrapper Tokenizer::Acquire(
 void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {
   analyzer->Unbind();
   const absl::MutexLock lock{&_mutex};
-  _pool.push_back(std::move(analyzer));
+  _pool.emplace_back(std::move(analyzer));
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {

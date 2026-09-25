@@ -395,10 +395,10 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
   ParseGeoConstant(*shape_val, options->coding, shape);
   options->shape = std::move(shape);
 
-  if (func.Function().GetName() == duckdb::Identifier{kGeoIntersects}) {
+  if (func.Function().GetName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.Function().GetName() == duckdb::Identifier{kGeoContains});
+    SDB_ASSERT(func.Function().GetName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -437,10 +437,10 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   if (func.GetChildren().size() != 2) {
     return nullptr;
   }
-  if (func.Function().GetName() == duckdb::Identifier{kGeoDistance}) {
+  if (func.Function().GetName() == kGeoDistance) {
     return &func;
   }
-  if (func.Function().GetName() == duckdb::Identifier{kL2DistanceOp}) {
+  if (func.Function().GetName() == kL2DistanceOp) {
     auto is_geo_col = [&ctx](const duckdb::Expression& child) {
       const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
       if (!info) {
@@ -503,12 +503,11 @@ void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,
 bool TryDispatchGeoFunction(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::BoundFunctionExpression& func) {
   const auto& name = func.Function().GetName();
-  if (name == duckdb::Identifier{kGeoInRange}) {
+  if (name == kGeoInRange) {
     FromGeoInRange(filter, ctx, func);
     return true;
   }
-  if (name == duckdb::Identifier{kGeoIntersects} ||
-      name == duckdb::Identifier{kGeoContains}) {
+  if (name == kGeoIntersects || name == kGeoContains) {
     return FromGeoFilter(filter, ctx, func);
   }
   return false;

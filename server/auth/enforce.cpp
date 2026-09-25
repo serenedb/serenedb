@@ -149,7 +149,7 @@ void MergeGrant(duckdb::vector<duckdb::AclItem>& acl,
     return existing.grantee == item.grantee && existing.grantor == item.grantor;
   });
   if (it == acl.end()) {
-    acl.push_back(item);
+    acl.emplace_back(item);
     return;
   }
   it->privs |= item.privs;
@@ -160,7 +160,7 @@ std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
   const duckdb::TableCatalogEntry& table) {
   std::vector<std::span<const duckdb::AclItem>> acls;
   for (const auto& column : table.GetColumns().Logical()) {
-    acls.push_back(column.Acl());
+    acls.emplace_back(column.Acl());
   }
   return acls;
 }
@@ -604,7 +604,7 @@ class Enforcer {
       if (column.IsRowIdColumn() || column.IsVirtualColumn()) {
         return;
       }
-      acls.push_back(
+      acls.emplace_back(
         table->GetColumns()
           .GetColumn(duckdb::LogicalIndex(column.GetPrimaryIndex()))
           .Acl());
@@ -659,7 +659,7 @@ class Enforcer {
     duckdb::idx_t position = 0;
     for (const auto& column : columns.Physical()) {
       if (!per_column || ReferencesColumns(source->expressions[position])) {
-        acls.push_back(column.Acl());
+        acls.emplace_back(column.Acl());
       }
       ++position;
     }
@@ -671,7 +671,7 @@ class Enforcer {
     }
     std::vector<std::span<const duckdb::AclItem>> updated;
     for (const auto index : insert.on_conflict_info.set_columns) {
-      updated.push_back(columns.GetColumn(index).Acl());
+      updated.emplace_back(columns.GetColumn(index).Acl());
     }
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Update,
                                     updated)) {
@@ -687,7 +687,7 @@ class Enforcer {
     }
     std::vector<std::span<const duckdb::AclItem>> acls;
     for (const auto index : update.columns) {
-      acls.push_back(table.GetColumns().GetColumn(index).Acl());
+      acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
     }
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
       Denied(table);
@@ -807,7 +807,8 @@ class Enforcer {
       std::vector<std::span<const duckdb::AclItem>> acls;
       for (const auto column : columns) {
         if (column < list.PhysicalColumnCount()) {
-          acls.push_back(list.GetColumn(duckdb::PhysicalIndex(column)).Acl());
+          acls.emplace_back(
+            list.GetColumn(duckdb::PhysicalIndex(column)).Acl());
         }
       }
       if (!acls.empty() && !_caller_closure.CanColumns(table->permissions,
@@ -844,7 +845,7 @@ class Enforcer {
       std::vector<std::span<const duckdb::AclItem>> acls;
       for (const auto& column : fk.pk_columns) {
         duckdb::Identifier name = column;
-        acls.push_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
+        acls.emplace_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
       }
       if (!_caller_closure.CanColumns(table.permissions, AclMode::References,
                                       acls)) {
@@ -919,7 +920,7 @@ class Enforcer {
 
   void RequireWritableSchema(const duckdb::SchemaCatalogEntry& schema) {
     if (_connection.IsSystemWriter() ||
-        schema.name != duckdb::Identifier{irs::StaticStrings::kDocsSchema}) {
+        schema.name != irs::StaticStrings::kDocsSchema) {
       return;
     }
     THROW_SQL_ERROR(
@@ -1003,7 +1004,7 @@ class Enforcer {
     auto& cluster = catalog::ClusterOf(_context);
     auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
                   .GetEntry(cluster.GetCatalogTransaction(_context),
-                            duckdb::Identifier{std::string{name}});
+                            duckdb::Identifier{name});
     if (!role) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role \"", name, "\" does not exist"));
@@ -1011,7 +1012,7 @@ class Enforcer {
     return role->oid;
   }
 
-  duckdb::idx_t GranteeId(const std::string& name) {
+  duckdb::idx_t GranteeId(std::string_view name) {
     return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
   }
 
@@ -1028,7 +1029,7 @@ class Enforcer {
     return owner;
   }
 
-  duckdb::idx_t RoleSpecId(const std::string& name) {
+  duckdb::idx_t RoleSpecId(std::string_view name) {
     if (absl::EqualsIgnoreCase(name, "CURRENT_USER") ||
         absl::EqualsIgnoreCase(name, "CURRENT_ROLE")) {
       return _caller;
@@ -1102,10 +1103,10 @@ class Enforcer {
       }
       info.grantors = {granted_by};
     } else if (_enforce) {
-      info.grantors.push_back(_caller);
+      info.grantors.emplace_back(_caller);
       for (const auto role : _caller_closure.closure) {
         if (role != _caller) {
-          info.grantors.push_back(role);
+          info.grantors.emplace_back(role);
         }
       }
     }
@@ -1223,7 +1224,7 @@ class Enforcer {
     auto& cluster = catalog::ClusterOf(_context);
     return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
       .GetEntry(cluster.GetCatalogTransaction(_context),
-                duckdb::Identifier{std::string{name}});
+                duckdb::Identifier{name});
   }
 
   void RequireDatabasePrivilege(AclMode need) {
@@ -1247,7 +1248,7 @@ class Enforcer {
                       .Cast<duckdb::DuckCatalog>();
     return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
       .GetEntry(catalog.GetCatalogTransaction(_context),
-                duckdb::Identifier{std::string{name}});
+                duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
     for (const auto& db :
@@ -1298,7 +1299,7 @@ class Enforcer {
     };
     const auto database = DatabaseEntry(
       schema ? schema->ParentCatalog().GetName().GetIdentifierName()
-             : std::string{_connection.GetDatabase()});
+             : _connection.GetDatabase());
     if (database) {
       if (schema) {
         apply(database->permissions, schema->oid);

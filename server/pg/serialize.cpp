@@ -1426,7 +1426,7 @@ const RecordSerializers& GetSerializersCache(
       for (const auto& [_, child_type] : children) {
         cached.functions.push_back(
           GetSerialization(child_type, VarFormat::Binary, context));
-        cached.oids.push_back(Type2Oid(child_type, context.client, false));
+        cached.oids.emplace_back(Type2Oid(child_type, context.client, false));
       }
     }
   }

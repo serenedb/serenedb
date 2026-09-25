@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -51,12 +52,13 @@ class SearchDbWal {
   class PendingChunk {
    public:
     PendingChunk() = default;
-    PendingChunk(uint64_t seg_id, std::filesystem::path path);
+    PendingChunk(uint64_t seg_id, std::filesystem::path path)
+      : _seg_id(seg_id), _path(std::move(path)) {}
     PendingChunk(PendingChunk&&) noexcept;
     PendingChunk& operator=(PendingChunk&&) noexcept;
     PendingChunk(const PendingChunk&) = delete;
     PendingChunk& operator=(const PendingChunk&) = delete;
-    ~PendingChunk();
+    ~PendingChunk() { ReclaimIfUncommitted(); }
 
     uint64_t SegId() const noexcept { return _seg_id; }
 
@@ -199,7 +201,7 @@ class SearchDbWal {
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
   std::filesystem::path ChunkDir(uint64_t table_id) const {
-    return _chunks_root / std::to_string(table_id);
+    return _chunks_root / absl::StrCat(table_id);
   }
   uint64_t MinCommittedTick();
   void RunGc();

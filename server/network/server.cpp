@@ -127,9 +127,9 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
     auto& cluster = catalog::ClusterOf();
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                   .GetEntry(cluster.LoginTransaction(),
-                             duckdb::Identifier{std::string{username}});
+    auto entry =
+      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+        .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{username});
     if (!entry) {
       return std::nullopt;
     }

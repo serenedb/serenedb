@@ -93,7 +93,7 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
   bool named = false;
   if (expression.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION &&
       expression.Cast<duckdb::FunctionExpression>().FunctionName() ==
-        duckdb::Identifier{"nextval"}) {
+        "nextval") {
     duckdb::ParsedExpressionIterator::EnumerateChildren(
       expression, [&](const duckdb::ParsedExpression& argument) {
         if (argument.GetExpressionClass() ==
@@ -118,8 +118,8 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
   const auto emit = [&](Oid classid, duckdb::idx_t objid, int32_t objsubid,
                         Oid refclassid, duckdb::idx_t refobjid,
                         int32_t refobjsubid, PgDepend::Deptype deptype) {
-    rows.push_back({classid, Oid{objid}, objsubid, refclassid, Oid{refobjid},
-                    refobjsubid, deptype});
+    rows.emplace_back(classid, Oid{objid}, objsubid, refclassid, Oid{refobjid},
+                      refobjsubid, deptype);
   };
   const auto in_schema = [&](const duckdb::StandardEntry& entry) {
     emit(CatalogClassOid(entry.type), entry.oid, 0, Oid{PgNamespace::kId},
@@ -132,7 +132,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
   VisitEntries<duckdb::TableCatalogEntry>(
     context, database, [&](const duckdb::TableCatalogEntry& table) {
       in_schema(table);
-      tables.push_back(&table);
+      tables.emplace_back(&table);
       tables_by_name.emplace(
         absl::StrCat(table.ParentSchemaName().GetIdentifierName(), ".",
                      table.name.GetIdentifierName()),
@@ -178,7 +178,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
     manager->Scan(context, [&](duckdb::CatalogEntry& object,
                                duckdb::CatalogEntry& dependent,
                                const duckdb::DependencyDependentFlags& flags) {
-      edges.push_back({&object, &dependent, flags.IsOwnedBy()});
+      edges.emplace_back(&object, &dependent, flags.IsOwnedBy());
     });
   }
   for (const auto& [object, dependent, owned_by] : edges) {
@@ -218,7 +218,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
         if (object->type == TYPE_ENTRY) {
           for (const auto& column : table.GetColumns().Logical()) {
             if (column.Type().HasAlias() &&
-                duckdb::Identifier{column.Type().GetAlias()} == object->name) {
+                column.Type().GetAlias() == object->name) {
               emit(Oid{PgClass::kId}, table.oid,
                    static_cast<int32_t>(column.Logical().index + 1),
                    Oid{PgType::kId}, object->oid, 0, PgDepend::Deptype::Normal);

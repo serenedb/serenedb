@@ -845,13 +845,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);
-    indexed_exprs.push_back({
-      .normalized_expr =
-        DeserializeBoundExpression(key.normalized_expression, context),
-      .field_id = key.field_id,
-      .is_geojson = key.type.IsJSONType() && entry &&
-                    irs::field_limits::valid(entry->synthetic_column),
-    });
+    indexed_exprs.emplace_back(
+      DeserializeBoundExpression(key.normalized_expression, context),
+      key.field_id,
+      key.type.IsJSONType() && entry &&
+        irs::field_limits::valid(entry->synthetic_column));
   }
   auto tokenizers =
     std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
@@ -920,7 +918,7 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     auto& key = row_keys[row];
     key.clear();
     primary_key::AppendGenerated(key, pk_base + row);
-    key_views.push_back(duckdb::string_t{key});
+    key_views.emplace_back(key);
     ids[row] = static_cast<int64_t>(pk_base + row);
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
@@ -951,8 +949,7 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     auto& key = row_keys[row];
     key.clear();
     primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    key_views.push_back(
-      duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())});
+    key_views.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
     ids[row] = rowid;
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);

@@ -111,7 +111,7 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
     for (const auto& edge : node->member_of) {
       if ((!option || edge.*option) && graph.Find(edge.role) &&
           seen.insert(edge.role).second) {
-        work.push_back(edge.role);
+        work.emplace_back(edge.role);
       }
     }
   }
@@ -147,12 +147,12 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
   out.settable = Reachable(graph, role, &duckdb::Membership::set_option);
   for (const auto member : out.members) {
     const auto* node = graph.Find(member);
-    if (node == nullptr) {
+    if (!node) {
       continue;
     }
     for (const auto& edge : node->member_of) {
       if (edge.admin_option) {
-        out.admin.push_back(edge.role);
+        out.admin.emplace_back(edge.role);
       }
     }
   }

@@ -76,7 +76,7 @@ inline std::vector<ColumnId> IndexedColumnIds(
   std::vector<ColumnId> ids;
   for (const auto& [field_id, field] : config.fields) {
     if (field_id < kFirstSyntheticColumnId) {
-      ids.push_back(field_id);
+      ids.emplace_back(field_id);
     }
   }
   return ids;

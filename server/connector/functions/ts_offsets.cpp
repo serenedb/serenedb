@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -58,10 +59,6 @@
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
-
-duckdb::unique_ptr<duckdb::FunctionData> OffsetsBindData::Copy() const {
-  return duckdb::make_uniq<OffsetsBindData>(*this);
-}
 
 bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<OffsetsBindData>();
@@ -371,7 +368,11 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
                     ERR_MSG("ts_offsets(): dict must not be NULL"));
   }
 
-  auto dict = ResolveCatalogTokenizer(context, dict_name);
+  const duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict =
+    duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+      context, duckdb::QualifiedName::Parse(dict_name),
+      duckdb::OnEntryNotFound::RETURN_NULL)
+      .get();
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

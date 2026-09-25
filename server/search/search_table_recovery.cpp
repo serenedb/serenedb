@@ -76,7 +76,7 @@ void ForEachSearchTable(
   const std::function<void(catalog::SearchTableEntry&)>& callback) {
   std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   database.GetCatalog().Cast<catalog::SereneDBCatalog>().ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.push_back(schema); });
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
   std::vector<duckdb::reference<catalog::SearchTableEntry>> tables;
   for (auto& schema : schemas) {
     schema.get().Scan(

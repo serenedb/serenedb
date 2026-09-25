@@ -118,8 +118,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(row_ids <= width);
   state->old_pk_columns.reserve(row_ids);
   for (auto i = width - row_ids; i < width; ++i) {
-    state->old_pk_columns.push_back(
-      {.input_col_idx = i, .type = input_types[i]});
+    state->old_pk_columns.emplace_back(i, input_types[i]);
   }
 
   state->generated_pk_seq = _table.GeneratedPkSequence(context);

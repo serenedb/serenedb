@@ -51,7 +51,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
-  explicit SereneDBCatalog(duckdb::AttachedDatabase& db);
+  explicit SereneDBCatalog(duckdb::AttachedDatabase& db)
+    : duckdb::DuckCatalog{db, true} {}
 
   std::string GetCatalogType() final { return kStorageType; }
 

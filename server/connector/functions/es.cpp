@@ -92,7 +92,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
-  duckdb::ClientContext& context, const std::string& index) {
+  duckdb::ClientContext& context, std::string_view index) {
   return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
     duckdb::QualifiedName{
@@ -326,13 +326,13 @@ void CreateTextIndex(duckdb::ClientContext& context,
     const duckdb::Identifier column{std::string{name}};
     SDB_ASSERT(table.GetColumns().ColumnExists(column));
     const auto& definition = table.GetColumns().GetColumn(column);
-    bound_expressions.push_back(
+    bound_expressions.emplace_back(
       duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
         definition.Type(), duckdb::ColumnBinding{
                              duckdb::TableIndex{0},
                              duckdb::ProjectionIndex{info.column_ids.size()}}));
-    info.column_ids.push_back(definition.Physical().index);
-    info.parsed_expressions.push_back(
+    info.column_ids.emplace_back(definition.Physical().index);
+    info.parsed_expressions.emplace_back(
       duckdb::make_uniq<duckdb::ColumnRefExpression>(column));
     info.column_opclasses.emplace_back(kTextTokenizer);
     info.column_opclass_options.emplace_back(std::nullopt);
@@ -393,7 +393,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   };
 
   add_column(kIdColumn, duckdb::LogicalType::VARCHAR);
-  options->constraints.push_back(duckdb::make_uniq<duckdb::UniqueConstraint>(
+  options->constraints.emplace_back(duckdb::make_uniq<duckdb::UniqueConstraint>(
     duckdb::vector<duckdb::Identifier>{duckdb::Identifier{kIdColumn}},
     /*is_primary_key=*/true));
   for (const auto& [field, mapping] : request.mappings.properties) {

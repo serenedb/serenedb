@@ -47,9 +47,6 @@ constexpr std::string_view kRootRole = "postgres";
 
 }  // namespace
 
-ClusterCatalog::ClusterCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::DuckCatalog{db, true} {}
-
 void ClusterCatalog::FinalizeLoad(
   duckdb::optional_ptr<duckdb::ClientContext> context) {
   duckdb::DuckCatalog::FinalizeLoad(context);

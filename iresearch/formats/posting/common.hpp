@@ -22,6 +22,10 @@
 
 #include <absl/base/internal/endian.h>
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <bit>
 #include <cstdint>
 #include <functional>
@@ -305,28 +309,49 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
 template<size_t W>
 IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
                                     uint32_t value) noexcept {
-  using U32x8 = uint32_t __attribute__((vector_size(32)));
-  using I32x8 = int32_t __attribute__((vector_size(32)));
-  static_assert(W % 8 == 0);
-  const U32x8 target = U32x8{} + value;
-  I32x8 acc{};
-  for (size_t i = 0; i != W; i += 8) {
-    U32x8 v;
-    std::memcpy(&v, begin + i, sizeof(v));
-    acc += (I32x8)(v < target);
+  static_assert(W % 32 == 0);
+  uint32_t count = 0;
+  for (size_t i = 0; i != W; i += 32) {
+#ifdef __AVX2__
+    const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
+    const __m256i target = _mm256_xor_si256(
+      _mm256_set1_epi32(static_cast<int32_t>(value)), bias);
+    const auto less = [&](size_t j) IRS_FORCE_INLINE {
+      return _mm256_cmpgt_epi32(
+        target,
+        _mm256_xor_si256(
+          _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin + j)),
+          bias));
+    };
+    const __m256i low = _mm256_packs_epi32(less(i), less(i + 8));
+    const __m256i high = _mm256_packs_epi32(less(i + 16), less(i + 24));
+    count += std::popcount(static_cast<uint32_t>(
+      _mm256_movemask_epi8(_mm256_packs_epi16(low, high))));
+#else
+    using U32x8 = uint32_t __attribute__((vector_size(32)));
+    using I32x8 = int32_t __attribute__((vector_size(32)));
+    const U32x8 target = U32x8{} + value;
+    I32x8 acc{};
+    for (size_t j = i; j != i + 32; j += 8) {
+      U32x8 v;
+      std::memcpy(&v, begin + j, sizeof(v));
+      acc += (I32x8)(v < target);
+    }
+    int32_t sum = 0;
+    for (size_t lane = 0; lane != 8; ++lane) {
+      sum += acc[lane];
+    }
+    count += static_cast<uint32_t>(-sum);
+#endif
   }
-  int32_t sum = 0;
-  for (size_t lane = 0; lane != 8; ++lane) {
-    sum += acc[lane];
-  }
-  return static_cast<uint32_t>(-sum);
+  return count;
 }
 
 template<size_t N, typename It, typename T, typename Cmp = std::less<>>
 IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
-  constexpr size_t kWindow = 32;
+  constexpr size_t kWindow = 64;
   if constexpr (N > kWindow && std::is_pointer_v<It> &&
                 std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
                                uint32_t> &&

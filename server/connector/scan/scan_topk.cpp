@@ -417,6 +417,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       t.merge_barrier.Release(input);
     } else {
       if (t.merge_barrier.Park(input)) {
+        l.parked_on = &t.merge_barrier;
         return;
       }
       if (!t.merge_barrier.Released()) {

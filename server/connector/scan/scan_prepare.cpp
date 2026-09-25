@@ -84,6 +84,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     }
   }
   if (g.stats_barrier.Park(input)) {
+    l.parked_on = &g.stats_barrier;
     return false;
   }
   g.stats_barrier.Wait();

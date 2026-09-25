@@ -140,12 +140,15 @@ class ScanBarrier {
 
   bool Park(duckdb::TableFunctionInput& input);
 
+  void Resume() const noexcept;
+
   void Wait();
 
  private:
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
   std::atomic_bool _released{false};
+  std::atomic_int64_t _released_at{0};
   absl::Notification _notification;
 };
 
@@ -300,6 +303,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;
   uint32_t finished_segments = 0;
+  const ScanBarrier* parked_on = nullptr;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;

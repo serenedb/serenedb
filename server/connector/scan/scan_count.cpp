@@ -79,7 +79,6 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
   const auto batch = std::min<duckdb::idx_t>(l.local_count - l.local_emitted,
                                              STANDARD_VECTOR_SIZE);
   output.SetChildCardinality(batch);
-  g.produced_rows.fetch_add(batch, std::memory_order_relaxed);
   l.local_emitted += batch;
 }
 

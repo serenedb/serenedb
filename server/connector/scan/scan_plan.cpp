@@ -560,10 +560,8 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   return ScanShape::Stream;
 }
 
-void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                                   duckdb::Vector* scores,
-                                   duckdb::DataChunk& output) {
-  g.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output) {
   if (g.tableoid_output_idx != duckdb::DConstants::INVALID_INDEX) {
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
@@ -682,7 +680,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-  AccountAndWriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }
 

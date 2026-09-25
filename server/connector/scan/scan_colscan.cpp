@@ -75,7 +75,7 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     l.doc_cursor += take;
     if (produced != 0) {
-      AccountAndWriteVirtualColumns(g, produced, nullptr, output);
+      WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }
     output.Reset();

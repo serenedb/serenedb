@@ -59,7 +59,7 @@ struct TsDictLocalState final : public ScanLocalState {
 
   void StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                     ScanGlobalState& g);
-  duckdb::idx_t EmitChunk(ScanGlobalState& g, duckdb::DataChunk& output,
+  duckdb::idx_t EmitChunk(duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
@@ -723,13 +723,11 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
   return 1;
 }
 
-duckdb::idx_t TsDictLocalState::EmitChunk(ScanGlobalState& g,
-                                          duckdb::DataChunk& output,
+duckdb::idx_t TsDictLocalState::EmitChunk(duckdb::DataChunk& output,
                                           duckdb::idx_t output_start) {
   const auto capacity = STANDARD_VECTOR_SIZE - output_start;
   do {
     if (const auto n = EmitField(output, output_start, capacity); n != 0) {
-      g.produced_rows.fetch_add(n, std::memory_order_relaxed);
       return n;
     }
   } while (NextField());
@@ -778,7 +776,7 @@ void RunTsDictScan(duckdb::ClientContext&, ScanGlobalState& g,
     duckdb::idx_t collected = 0;
     bool exhausted = false;
     while (collected < STANDARD_VECTOR_SIZE) {
-      const auto added = l.EmitChunk(g, output, collected);
+      const auto added = l.EmitChunk(output, collected);
       SDB_ASSERT(collected + added <= STANDARD_VECTOR_SIZE);
       collected += added;
       if (added != 0) {

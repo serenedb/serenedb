@@ -207,18 +207,12 @@ void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.unit = unit;
   l.has_unit = true;
   l.current_seg = unit.seg;
-  if (unit.whole) {
-    ++l.whole_units;
-  } else {
+  if (!unit.whole) {
     ++l.rg_units;
   }
 }
 
-void Exhaust(ScanGlobalState& g, ScanLocalState& l) {
-  l.units_exhausted = true;
-  g.metrics.whole_units.fetch_add(l.whole_units, std::memory_order_relaxed);
-  g.metrics.rg_units.fetch_add(l.rg_units, std::memory_order_relaxed);
-}
+void Exhaust(ScanLocalState& l) { l.units_exhausted = true; }
 
 bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
   auto& work = g.Segment(seg);
@@ -382,7 +376,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
     if (ClaimOrderedUnit(g, l)) {
       return true;
     }
-    Exhaust(g, l);
+    Exhaust(l);
     return false;
   }
   if (g.split == SplitMode::Always) {
@@ -412,7 +406,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
                                              std::memory_order_relaxed,
                                              std::memory_order_relaxed);
     }
-    Exhaust(g, l);
+    Exhaust(l);
     return false;
   }
   if (l.current_seg != std::numeric_limits<uint32_t>::max() &&
@@ -440,7 +434,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
   if (Join(g, l)) {
     return true;
   }
-  Exhaust(g, l);
+  Exhaust(l);
   return false;
 }
 

@@ -141,8 +141,6 @@ class ScanBarrier {
 };
 
 struct ScanMetrics {
-  std::atomic<uint64_t> whole_units{0};
-  std::atomic<uint64_t> rg_units{0};
   std::atomic<uint64_t> docs_visited{0};
   std::atomic<uint64_t> rows_fetched{0};
   std::atomic<uint64_t> rows_looked_up{0};
@@ -277,7 +275,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   };
   TopKState topk;
 
-  std::atomic<duckdb::idx_t> produced_rows{0};
   ScanMetrics metrics;
 
   duckdb::idx_t MaxThreads() const final { return workers; }
@@ -298,8 +295,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
-  uint64_t whole_units = 0;
   uint64_t rg_units = 0;
+  uint64_t produced_rows = 0;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };
@@ -386,9 +383,8 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,
                                       ScanGlobalState& g, ScanLocalState& l);
 
-void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                                   duckdb::Vector* scores,
-                                   duckdb::DataChunk& output);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output);
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

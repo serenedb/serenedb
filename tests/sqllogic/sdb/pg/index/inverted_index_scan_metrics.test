@@ -1,0 +1,84 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sm_en AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sm (id INT PRIMARY KEY, body TEXT)
+
+
+statement ok
+CREATE INDEX sm_idx ON sm USING inverted (id, body sm_en)
+  WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sm
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(1, 300000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sm
+
+
+statement ok
+INSERT INTO sm
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(300001, 305000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sm
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/scan_metrics_count.json'
+
+
+query
+SELECT count(*) FROM sm_idx WHERE body @@ 'dog';
+----
+count
+101666
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/scan_metrics_stream.json'
+
+
+query
+SELECT max(id) FROM sm_idx WHERE body @@ 'dog';
+----
+max
+304998
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].rows_scanned') AS rows_scanned
+FROM read_text('${__TEST_DIR__}/scan_metrics_count.json');
+----
+rows_scanned
+101666
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].rows_scanned') AS rows_scanned
+FROM read_text('${__TEST_DIR__}/scan_metrics_stream.json');
+----
+rows_scanned
+101666

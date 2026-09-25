@@ -330,7 +330,7 @@ TEST_F(AIFunctionsTest, JevPackingSplitsOn422) {
   Start();
   auto result = Run(
     "SELECT count(*) FILTER (WHERE r.choice = 'billing' AND "
-    "r.probabilities[2].value = 'sales') FROM (SELECT prompt_jev(body, "
+    "r.probabilities[2].value = 'sales') FROM (SELECT ai_system1(body, "
     "'Which team?', choice := [{label: 'billing', description: 'Invoices'}, "
     "{label: 'sales', description: NULL}], batch_size := 3, secret_name := "
     "'jev') AS r FROM (VALUES ('a'), ('b'), ('c')) v(body)) sub");
@@ -367,7 +367,7 @@ TEST_F(AIFunctionsTest, JevUnprocessableRowFailsQuery) {
   Start();
   Run("SET sdb_ai_throw_on_error = false");
   ExpectError(
-    "SELECT prompt_jev('x', questions := {a: {type: 'noul', instructions: "
+    "SELECT ai_system1('x', questions := {a: {type: 'noul', instructions: "
     "'q'}}, secret_name := 'jev')",
     "returned HTTP 422");
 }
@@ -403,6 +403,38 @@ TEST_F(AIFunctionsTest, RequestsSpreadOverThreads) {
   Run("SET sdb_ai_max_concurrent_requests = 1");
   EXPECT_EQ(Run(sql)->RowCount(), 4);
   EXPECT_EQ(peak.load(), 1);
+}
+
+TEST_F(AIFunctionsTest, ParallelSourcesKeepConcurrency) {
+  std::atomic_int in_flight = 0;
+  std::atomic_int peak = 0;
+  std::atomic_int busy = 0;
+  std::atomic_int total = 0;
+  Mock(kChat, [&](std::string_view) {
+    const auto now = ++in_flight;
+    for (auto seen = peak.load(); now > seen;) {
+      if (peak.compare_exchange_weak(seen, now)) {
+        break;
+      }
+    }
+    ++total;
+    if (now >= 2) {
+      ++busy;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    --in_flight;
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET threads = 2");
+  Run("SET sdb_ai_max_concurrent_requests = 4");
+  auto result = Run(
+    "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+    "range(4096)");
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096);
+  EXPECT_LE(peak.load(), 4);
+  EXPECT_GE(busy.load() * 4, total.load() * 3)
+    << busy.load() << " of " << total.load();
 }
 
 TEST_F(AIFunctionsTest, EvaluateOperatorPlacement) {

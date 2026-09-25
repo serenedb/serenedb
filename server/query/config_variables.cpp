@@ -409,10 +409,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ai_jev_default_secret",
+      "sdb_ai_system1_default_secret",
       {
         LogicalTypeId::VARCHAR,
-        "Name of the typesafe secret used by prompt_jev when the call does "
+        "Name of the typesafe secret used by ai_system1 when the call does "
         "not pass secret_name. Default: '' (no default).",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},

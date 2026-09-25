@@ -72,36 +72,34 @@ class EvaluateLocalState final : public duckdb::LocalSinkState {
 
 class EvaluateSourceState final : public duckdb::GlobalSourceState {
  public:
+  explicit EvaluateSourceState(size_t workers)
+    : workers{workers}, permits{static_cast<std::ptrdiff_t>(workers)} {}
+
   duckdb::idx_t MaxThreads() final { return max_threads; }
 
   duckdb::idx_t chunks = 0;
   std::atomic_size_t next = 0;
   duckdb::idx_t max_threads = 1;
-  size_t free_slots = 0;
+  size_t workers;
+  std::counting_semaphore<> permits;
 };
 
 class FetchAsyncTask final : public duckdb::AsyncTask {
  public:
-  FetchAsyncTask(std::shared_ptr<Fetch> fetch, EvaluateSourceState& source)
-    : _fetch{std::move(fetch)}, _source{source} {}
+  explicit FetchAsyncTask(std::shared_ptr<Fetch> fetch)
+    : _fetch{std::move(fetch)} {}
 
-  void Execute() final {
-    _fetch->Run();
-    duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{_source.lock};
-    ++_source.free_slots;
-    _source.UnblockTasks();
-  }
+  void Execute() final { _fetch->Run(); }
 
  private:
   std::shared_ptr<Fetch> _fetch;
-  EvaluateSourceState& _source;
 };
 
 struct Call {
   Call(duckdb::ExecutionContext& context,
        const duckdb::BoundFunctionExpression& expr)
     : bind{expr.BindInfo()->Cast<AIFunctionData>()},
-      requester{context.client, bind.GetEndpoint()},
+      requester{context.client, bind.endpoint},
       executor{context.client, expr.GetChildren()} {
     duckdb::vector<duckdb::LogicalType> types;
     for (const auto& child : expr.GetChildren()) {
@@ -285,8 +283,8 @@ duckdb::SinkFinalizeType PhysicalAIEvaluate::Finalize(
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 PhysicalAIEvaluate::GetGlobalSourceState(duckdb::ClientContext& context) const {
-  auto state = duckdb::make_uniq<EvaluateSourceState>();
-  state->free_slots = MaxConcurrentRequests(context);
+  auto state =
+    duckdb::make_uniq<EvaluateSourceState>(MaxConcurrentRequests(context));
   const auto& rows = sink_state->Cast<EvaluateGlobalState>().rows;
   if (!rows || rows->Count() == 0) {
     return state;
@@ -339,32 +337,28 @@ duckdb::SourceResultType PhysicalAIEvaluate::GetDataInternal(
     state.active = true;
   }
 
-  std::vector<Endpoint> endpoints;
+  std::vector<const Endpoint*> endpoints;
   for (const auto& call : state.calls) {
-    endpoints.push_back(call->bind.GetEndpoint());
+    endpoints.push_back(&call->bind.endpoint);
   }
-  auto fetch = std::make_shared<Fetch>(context.client, std::move(endpoints));
+  auto fetch = std::make_shared<Fetch>(context.client, std::move(endpoints),
+                                       source.permits);
   for (size_t c = 0; c != state.calls.size(); ++c) {
     for (auto& request : state.calls[c]->work->requests) {
       fetch->Add(request, c);
     }
   }
   if (fetch->Size() != 0) {
-    size_t slots = 0;
     {
       duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{source.lock};
-      if (source.free_slots == 0) {
-        return source.BlockSource(input.interrupt_state);
-      }
       if (!source.CanBlock()) {
         return duckdb::SourceResultType::FINISHED;
       }
-      slots = std::min(source.free_slots, fetch->Size());
-      source.free_slots -= slots;
     }
     duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
-    for (size_t i = 0; i != slots; ++i) {
-      tasks.push_back(duckdb::make_uniq<FetchAsyncTask>(fetch, source));
+    for (size_t i = 0, n = std::min(source.workers, fetch->Size()); i != n;
+         ++i) {
+      tasks.push_back(duckdb::make_uniq<FetchAsyncTask>(fetch));
     }
     state.fetch = std::move(fetch);
     duckdb::AsyncResult{std::move(tasks), duckdb::TaskSchedulerType::ASYNC}

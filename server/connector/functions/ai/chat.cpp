@@ -31,12 +31,10 @@
 #include <tuple>
 
 #include "connector/functions/ai/common.h"
-#include "connector/functions/ai/provider_openai.h"
 
 namespace sdb::connector::ai {
 namespace {
 
-constexpr std::string_view kChatPath = "/v1/chat/completions";
 constexpr int32_t kDefaultMaxTokens = 1024;
 
 }  // namespace
@@ -50,30 +48,28 @@ void AddChatOptions(duckdb::FunctionSignature& signature) {
 
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
-                    double default_temperature) {
+                    double default_temperature, Endpoint& endpoint) {
   const auto model = FoldString(context, *options[0], fn, "model");
   const auto secret_name = FoldString(context, *options[1], fn, "secret_name");
   const auto temperature =
     FoldArgument(context, *options[2], fn, "temperature");
   const auto max_tokens = FoldArgument(context, *options[3], fn, "max_tokens");
-  const auto secret = LoadSecret(context, fn, secret_name,
-                                 kTextDefaultSecretSetting, kOpenAISecretType);
-  ChatConfig chat{
-    .url = JoinUrl(secret.base_url, kOpenAIDefaultBaseUrl,
-                   secret.chat_path.empty() ? kChatPath : secret.chat_path),
-    .api_key = secret.api_key,
-    .model = model ? *model : secret.model,
-    .temperature =
-      temperature ? temperature->GetValue<double>() : default_temperature,
-    .max_tokens =
-      max_tokens ? max_tokens->GetValue<int32_t>() : kDefaultMaxTokens,
-  };
-  if (chat.model.empty()) {
+  endpoint = LoadEndpoint(context, fn, secret_name, kChatApi);
+  if (model) {
+    endpoint.model = *model;
+  }
+  if (endpoint.model.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, ": no model given"),
                     ERR_HINT("Pass model := '<name>' or set the secret's "
                              "model option."));
   }
+  ChatConfig chat{
+    .temperature =
+      temperature ? temperature->GetValue<double>() : default_temperature,
+    .max_tokens =
+      max_tokens ? max_tokens->GetValue<int32_t>() : kDefaultMaxTokens,
+  };
   if (chat.max_tokens <= 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, ": \"max_tokens\" must be a positive integer"));
@@ -83,29 +79,25 @@ ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
 
 std::string StrictJsonSchema(std::string_view name, std::string_view properties,
                              std::span<const std::string> required) {
-  simdjson::builder::string_builder builder(128 + name.size() +
-                                            properties.size());
-  builder.append_raw(R"({"type":"json_schema","json_schema":{"name":)");
-  builder.escape_and_append_with_quotes(name);
-  builder.append_raw(
-    R"(,"strict":true,"schema":{"type":"object","properties":)");
-  builder.append_raw(properties);
-  builder.append_raw(R"(,"required":[)");
-  for (size_t i = 0; i != required.size(); ++i) {
-    if (i != 0) {
-      builder.append_comma();
-    }
-    builder.escape_and_append_with_quotes(required[i]);
-  }
-  builder.append_raw(R"(],"additionalProperties":false}}})");
-  return std::string{builder.view().value()};
+  return absl::StrCat(
+    R"({"type":"json_schema","json_schema":{"name":)", ToJson(name),
+    R"(,"strict":true,"schema":{"type":"object","properties":)", properties,
+    R"(,"required":)", JsonArray(required),
+    R"(,"additionalProperties":false}}})");
 }
 
-ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system) {
-  simdjson::builder::string_builder prefix(128 + cfg.model.size() +
-                                           system.size());
+std::string StrictJsonSchema(std::string_view name, std::string_view key,
+                             std::string_view type) {
+  const std::string required[] = {std::string{key}};
+  return StrictJsonSchema(name, absl::StrCat("{", ToJson(key), ":", type, "}"),
+                          required);
+}
+
+ChatTemplate MakeChatTemplate(std::string_view model, const ChatConfig& cfg,
+                              std::string_view system) {
+  simdjson::builder::string_builder prefix(128 + model.size() + system.size());
   prefix.append_raw(R"({"model":)");
-  prefix.escape_and_append_with_quotes(cfg.model);
+  prefix.escape_and_append_with_quotes(model);
   prefix.append_raw(R"(,"messages":[{"role":"system","content":)");
   prefix.escape_and_append_with_quotes(system);
   prefix.append_raw(R"(},{"role":"user","content":)");
@@ -135,16 +127,6 @@ std::string BuildChatBody(const ChatTemplate& chat, std::string_view user) {
   return std::string{builder.view().value()};
 }
 
-uint64_t ChatOutputTokens(std::string_view body) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  uint64_t tokens = 0;
-  if (parser.parse(body.data(), body.size()).get(doc) == simdjson::SUCCESS) {
-    std::ignore = doc["usage"]["completion_tokens"].get(tokens);
-  }
-  return tokens;
-}
-
 std::optional<std::string> Chat(Requester& requester, std::string_view fn,
                                 Response response, int32_t max_tokens) {
   const auto body = requester.Accept(std::move(response));
@@ -154,13 +136,11 @@ std::optional<std::string> Chat(Requester& requester, std::string_view fn,
   simdjson::dom::parser parser;
   simdjson::dom::element doc;
   if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(
-      fn, ": chat completion response is not valid JSON: ", *body));
+    ThrowBadReply(fn, "chat completion response is not valid JSON", *body);
   }
   simdjson::dom::element choice;
   if (doc["choices"].at(0).get(choice) != simdjson::SUCCESS) {
-    ThrowRowError(
-      absl::StrCat(fn, ": chat completion response has no 'choices': ", *body));
+    ThrowBadReply(fn, "chat completion response has no 'choices'", *body);
   }
   std::string_view content;
   std::ignore = choice["message"]["content"].get(content);

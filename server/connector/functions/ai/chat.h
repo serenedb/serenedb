@@ -37,12 +37,10 @@ class FunctionSignature;
 namespace sdb::connector::ai {
 
 class Requester;
+struct Endpoint;
 struct Response;
 
 struct ChatConfig {
-  std::string url;
-  std::string api_key;
-  std::string model;
   double temperature = 0;
   int32_t max_tokens = 0;
   std::string response_format;
@@ -61,16 +59,18 @@ void AddChatOptions(duckdb::FunctionSignature& signature);
 
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
-                    double default_temperature);
+                    double default_temperature, Endpoint& endpoint);
 
 std::string StrictJsonSchema(std::string_view name, std::string_view properties,
                              std::span<const std::string> required);
 
-ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system);
+std::string StrictJsonSchema(std::string_view name, std::string_view key,
+                             std::string_view type);
+
+ChatTemplate MakeChatTemplate(std::string_view model, const ChatConfig& cfg,
+                              std::string_view system);
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user);
-
-uint64_t ChatOutputTokens(std::string_view body);
 
 std::optional<std::string> Chat(Requester& requester, std::string_view fn,
                                 Response response, int32_t max_tokens);

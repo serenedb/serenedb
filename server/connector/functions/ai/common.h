@@ -22,6 +22,7 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -35,9 +36,11 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <semaphore>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace duckdb {
@@ -55,20 +58,51 @@ namespace sdb::connector::ai {
 inline constexpr std::string_view kOpenAISecretType = "openai";
 inline constexpr std::string_view kTypeSafeSecretType = "typesafe";
 
-inline constexpr std::string_view kTextDefaultSecretSetting =
-  "sdb_ai_text_default_secret";
-inline constexpr std::string_view kEmbeddingDefaultSecretSetting =
-  "sdb_ai_embedding_default_secret";
-inline constexpr std::string_view kJevDefaultSecretSetting =
-  "sdb_ai_jev_default_secret";
+struct Api {
+  std::string_view secret_type;
+  std::string_view default_secret;
+  std::string_view base_url;
+  std::string_view path_key;
+  std::string_view path;
+  std::string_view default_model;
+  std::string_view usage_key;
+};
 
-struct SecretConfig {
+inline constexpr Api kChatApi{
+  .secret_type = kOpenAISecretType,
+  .default_secret = "sdb_ai_text_default_secret",
+  .base_url = "https://api.openai.com",
+  .path_key = "chat_path",
+  .path = "/v1/chat/completions",
+  .usage_key = "completion_tokens",
+};
+
+inline constexpr Api kEmbeddingApi{
+  .secret_type = kOpenAISecretType,
+  .default_secret = "sdb_ai_embedding_default_secret",
+  .base_url = "https://api.openai.com",
+  .path_key = "embeddings_path",
+  .path = "/v1/embeddings",
+};
+
+inline constexpr Api kJevApi{
+  .secret_type = kTypeSafeSecretType,
+  .default_secret = "sdb_ai_system1_default_secret",
+  .base_url = "https://api.typesafe.ai",
+  .path_key = "path",
+  .path = "/v1/systemone",
+  .default_model = "jev-latest",
+  .usage_key = "output_tokens",
+};
+
+struct Endpoint {
+  std::string fn;
+  std::string url;
   std::string api_key;
-  std::string base_url;
   std::string model;
-  std::string chat_path;
-  std::string embeddings_path;
-  std::string path;
+  std::string_view usage_key;
+
+  bool operator==(const Endpoint&) const = default;
 };
 
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
@@ -81,17 +115,27 @@ std::optional<std::string> FoldString(duckdb::ClientContext& context,
                                       std::string_view fn,
                                       std::string_view arg);
 
-SecretConfig LoadSecret(duckdb::ClientContext& context, std::string_view fn,
-                        const std::optional<std::string>& secret_name,
-                        std::string_view default_setting,
-                        std::string_view type);
-
-std::string JoinUrl(std::string_view base_url, std::string_view default_base,
-                    std::string_view path);
+Endpoint LoadEndpoint(duckdb::ClientContext& context, std::string_view fn,
+                      const std::optional<std::string>& secret_name,
+                      const Api& api);
 
 [[noreturn]] void ThrowRowError(std::string message);
 
+[[noreturn]] void ThrowBadReply(std::string_view fn, std::string_view problem,
+                                std::string_view reply);
+
 std::string ToJson(std::string_view text);
+
+template<typename Range>
+std::string JsonArray(const Range& values) {
+  std::string out = "[";
+  std::string_view comma;
+  for (const auto& value : values) {
+    absl::StrAppend(&out, std::exchange(comma, ","), ToJson(value));
+  }
+  out += "]";
+  return out;
+}
 
 struct Criterion {
   std::string label;
@@ -101,6 +145,8 @@ struct Criterion {
 std::vector<Criterion> ParseCriteria(const duckdb::Value& value,
                                      std::string_view fn,
                                      std::string_view param);
+
+std::string CriteriaObject(std::span<const Criterion> criteria);
 
 struct Inputs {
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
@@ -129,16 +175,11 @@ class AIQueryUsage final : public duckdb::ClientContextState {
   std::atomic_uint64_t output_tokens = 0;
 };
 
-struct Endpoint {
-  std::string_view fn;
-  std::string_view url;
-  std::string_view api_key;
-  uint64_t (*output_tokens)(std::string_view body) = nullptr;
-};
-
 class Requester {
  public:
   Requester(duckdb::ClientContext& context, const Endpoint& endpoint);
+
+  ~Requester();
 
   Response Send(std::string_view body);
 
@@ -153,10 +194,8 @@ class Requester {
   void Sleep(uint64_t ms) const;
 
   duckdb::ClientContext& _context;
-  std::string _fn;
-  std::string _url;
+  const Endpoint& _endpoint;
   duckdb::HTTPHeaders _headers;
-  uint64_t (*_output_tokens)(std::string_view body);
   duckdb::shared_ptr<AIQueryUsage> _usage;
   duckdb::unique_ptr<duckdb::HTTPParams> _params;
   duckdb::unique_ptr<duckdb::HTTPClient> _client;
@@ -187,15 +226,16 @@ class AIWork {
 
 class AIFunctionData : public duckdb::FunctionData {
  public:
-  virtual Endpoint GetEndpoint() const = 0;
-
   virtual std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const = 0;
+
+  Endpoint endpoint;
 };
 
 class Fetch {
  public:
-  Fetch(duckdb::ClientContext& context, std::vector<Endpoint> endpoints)
-    : _context{context}, _endpoints{std::move(endpoints)} {}
+  Fetch(duckdb::ClientContext& context, std::vector<const Endpoint*> endpoints,
+        std::counting_semaphore<>& permits)
+    : _context{context}, _endpoints{std::move(endpoints)}, _permits{permits} {}
 
   void Add(AIRequest& request, size_t endpoint) {
     _requests.emplace_back(&request, endpoint);
@@ -209,7 +249,8 @@ class Fetch {
 
  private:
   duckdb::ClientContext& _context;
-  std::vector<Endpoint> _endpoints;
+  std::vector<const Endpoint*> _endpoints;
+  std::counting_semaphore<>& _permits;
   std::vector<std::pair<AIRequest*, size_t>> _requests;
   std::atomic_size_t _next = 0;
   std::atomic_bool _stop = false;
@@ -240,6 +281,8 @@ bool IsAIAggregate(const duckdb::BoundAggregateExpression& aggregate);
 duckdb::unique_ptr<duckdb::Expression> MakeAggregateReducer(
   const duckdb::BoundAggregateExpression& aggregate,
   duckdb::unique_ptr<duckdb::Expression> list);
+
+void RegisterEmbeddingFunctions(duckdb::ExtensionLoader& loader);
 
 void RegisterTextFunctions(duckdb::ExtensionLoader& loader);
 

@@ -22,7 +22,7 @@ CREATE OR REPLACE SECRET local_jev_${__DATABASE__} (
 # DOCS_TEST: noul
 
 # DOCS_TEST_RAW
-#| SELECT prompt_jev(
+#| SELECT ai_system1(
 #|     'Please refund my order, it never arrived.',
 #|     'Does this request a refund?',
 #|     secret_name := 'local_jev'
@@ -36,7 +36,7 @@ CREATE OR REPLACE SECRET local_jev_${__DATABASE__} (
 query
 SELECT refund_probability BETWEEN 0 AND 1 AS in_range
 FROM (
-    SELECT prompt_jev(
+    SELECT ai_system1(
         'Please refund my order, it never arrived.',
         'Does this request a refund?',
         secret_name := 'local_jev_${__DATABASE__}'
@@ -51,7 +51,7 @@ t
 # DOCS_TEST_RAW
 #| SELECT (routing).choice, (routing).confidence, (routing).probabilities
 #| FROM (
-#|     SELECT prompt_jev(
+#|     SELECT ai_system1(
 #|         'I was charged twice for last month and the invoice does not match.',
 #|         'Which team should handle this?',
 #|         choice := ['billing', 'technical', 'sales'],
@@ -70,7 +70,7 @@ SELECT (routing).choice AS choice,
        abs(list_sum(list_transform((routing).probabilities, lambda p: p.probability)) - 1) < 0.01 AS sums_to_one,
        (routing).confidence BETWEEN 0 AND 1 AS confidence_in_range
 FROM (
-    SELECT prompt_jev(
+    SELECT ai_system1(
         'I was charged twice for last month and the invoice does not match.',
         'Which team should handle this?',
         choice := ['billing', 'technical', 'sales'],
@@ -84,7 +84,7 @@ billing	3	t	t
 # DOCS_TEST: choice_descriptions
 
 # DOCS_TEST_RAW
-#| SELECT (prompt_jev(
+#| SELECT (ai_system1(
 #|     'My invoice shows the wrong VAT number.',
 #|     'Which team should handle this?',
 #|     choice := [
@@ -101,7 +101,7 @@ billing	3	t	t
 # DOCS_TEST_BODY
 
 query
-SELECT (prompt_jev(
+SELECT (ai_system1(
     'My invoice shows the wrong VAT number.',
     'Which team should handle this?',
     choice := [
@@ -120,7 +120,7 @@ t
 # DOCS_TEST_RAW
 #| SELECT (severity).score, (severity).confidence, (severity).probabilities
 #| FROM (
-#|     SELECT prompt_jev(
+#|     SELECT ai_system1(
 #|         'The product is unusable and we are considering cancelling.',
 #|         'Rate the severity of this message.',
 #|         score := ['low', 'medium', 'high'],
@@ -138,7 +138,7 @@ SELECT (severity).score BETWEEN 0 AND 2 AS score_in_range,
        list_transform((severity).probabilities, lambda p: p.index) AS indexes,
        list_transform((severity).probabilities, lambda p: p.value) AS levels
 FROM (
-    SELECT prompt_jev(
+    SELECT ai_system1(
         'The product is unusable and we are considering cancelling.',
         'Rate the severity of this message.',
         score := ['low', 'medium', 'high'],
@@ -157,7 +157,7 @@ t	{0,1,2}	{low,medium,high}
 #|     (answer).category.choice AS category,
 #|     (answer).urgency.score AS urgency
 #| FROM (
-#|     SELECT prompt_jev(
+#|     SELECT ai_system1(
 #|         'Please refund my order, it never arrived. The app keeps crashing too.',
 #|         questions := {
 #|             refund: {type: 'noul', instructions: 'Does this request a refund?'},
@@ -180,7 +180,7 @@ SELECT (answer).refund BETWEEN 0 AND 1 AS refund_ok,
        (answer).category.choice IN ('billing', 'technical', 'other') AS category_ok,
        (answer).urgency.score BETWEEN 0 AND 2 AS urgency_ok
 FROM (
-    SELECT prompt_jev(
+    SELECT ai_system1(
         'Please refund my order, it never arrived. The app keeps crashing too.',
         questions := {
             refund: {type: 'noul', instructions: 'Does this request a refund?'},
@@ -199,7 +199,7 @@ t	t	t
 # DOCS_TEST: questions_json
 
 # DOCS_TEST_RAW
-#| SELECT (prompt_jev(
+#| SELECT (ai_system1(
 #|     'My invoice shows a duplicate charge.',
 #|     questions := '{
 #|       "category": {
@@ -220,7 +220,7 @@ t	t	t
 # DOCS_TEST_BODY
 
 query
-SELECT (prompt_jev(
+SELECT (ai_system1(
     'My invoice shows a duplicate charge.',
     questions := '{
       "category": {
@@ -251,7 +251,7 @@ INSERT INTO support_messages VALUES
 # DOCS_TEST: table
 
 # DOCS_TEST_RAW
-#| SELECT id, (prompt_jev(body, 'Which team should handle this?',
+#| SELECT id, (ai_system1(body, 'Which team should handle this?',
 #|                        choice := ['billing', 'technical', 'sales'],
 #|                        secret_name := 'local_jev')).choice AS team
 #| FROM support_messages
@@ -269,7 +269,7 @@ query
 SELECT count(*) FILTER (WHERE team IN ('billing', 'technical', 'sales')) AS routed,
        count(*) FILTER (WHERE team IS NULL) AS skipped
 FROM (
-    SELECT (prompt_jev(body, 'Which team should handle this?',
+    SELECT (ai_system1(body, 'Which team should handle this?',
                        choice := ['billing', 'technical', 'sales'],
                        secret_name := 'local_jev_${__DATABASE__}')).choice AS team
     FROM support_messages
@@ -281,7 +281,7 @@ routed	skipped
 # DOCS_TEST: batch_size
 
 # DOCS_TEST_RAW
-#| SELECT id, prompt_jev(body, 'Does this message report a problem?',
+#| SELECT id, ai_system1(body, 'Does this message report a problem?',
 #|                       batch_size := 1, secret_name := 'local_jev') AS problem
 #| FROM support_messages
 #| ORDER BY id;
@@ -292,7 +292,7 @@ query
 SELECT count(*) FILTER (WHERE problem BETWEEN 0 AND 1) AS answered,
        count(*) FILTER (WHERE problem IS NULL) AS skipped
 FROM (
-    SELECT prompt_jev(body, 'Does this message report a problem?',
+    SELECT ai_system1(body, 'Does this message report a problem?',
                       batch_size := 1, secret_name := 'local_jev_${__DATABASE__}') AS problem
     FROM support_messages
 ) t;
@@ -300,5 +300,103 @@ FROM (
 answered	skipped
 3	1
 
-statement error prompt_jev: requires at least two criteria for type "choice"
-SELECT prompt_jev('x', 'q', choice := ['only'], secret_name := 'local_jev_${__DATABASE__}');
+statement error ai_system1: requires at least two criteria for type "choice"
+SELECT ai_system1('x', 'q', choice := ['only'], secret_name := 'local_jev_${__DATABASE__}');
+
+# DOCS_TEST: generated_column
+
+# DOCS_TEST_RAW
+#| CREATE TABLE tickets (
+#|     id INTEGER PRIMARY KEY,
+#|     body VARCHAR,
+#|     team GENERATED ALWAYS AS ((ai_system1(body, 'Which team should handle this?',
+#|                                           choice := ['billing', 'technical', 'sales'],
+#|                                           secret_name := 'local_jev')).choice) STORED
+#| );
+#|
+#| INSERT INTO tickets (id, body) VALUES
+#|     (1, 'I was double charged on my card.'),
+#|     (2, 'The API returns 500 errors since this morning.'),
+#|     (3, NULL);
+#|
+#| UPDATE tickets SET body = 'Can I get a discount for 50 seats?' WHERE id = 2;
+#|
+#| SELECT id, team FROM tickets ORDER BY id;
+#| ----
+#| id	team
+#| 1	billing
+#| 2	sales
+#| 3	NULL
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tickets (
+    id INTEGER PRIMARY KEY,
+    body VARCHAR,
+    team GENERATED ALWAYS AS ((ai_system1(body, 'Which team should handle this?',
+                                          choice := ['billing', 'technical', 'sales'],
+                                          secret_name := 'local_jev_${__DATABASE__}')).choice) STORED
+);
+
+statement ok
+INSERT INTO tickets (id, body) VALUES
+    (1, 'I was double charged on my card.'),
+    (2, 'The API returns 500 errors since this morning.'),
+    (3, NULL);
+
+query
+SELECT count(*) FILTER (WHERE team IN ('billing', 'technical', 'sales')) AS routed,
+       count(*) FILTER (WHERE team IS NULL) AS skipped
+FROM tickets;
+----
+routed	skipped
+2	1
+
+statement ok
+UPDATE tickets SET body = NULL WHERE id = 2;
+
+query
+SELECT id, team IS NULL AS skipped FROM tickets ORDER BY id;
+----
+id	skipped
+1	f
+2	t
+3	t
+
+# DOCS_TEST: update_in_place
+
+# DOCS_TEST_RAW
+#| ALTER TABLE support_messages ADD COLUMN problem DOUBLE;
+#|
+#| UPDATE support_messages
+#| SET problem = ai_system1(body, 'Does this message report a problem?', secret_name := 'local_jev')
+#| WHERE id <= 2;
+#|
+#| SELECT id, round(problem, 2) AS problem FROM support_messages ORDER BY id;
+#| ----
+#| id	problem
+#| 1	0.72
+#| 2	0.74
+#| 3	NULL
+#| 4	NULL
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE support_messages ADD COLUMN problem DOUBLE;
+
+statement ok
+UPDATE support_messages
+SET problem = ai_system1(body, 'Does this message report a problem?',
+                         secret_name := 'local_jev_${__DATABASE__}')
+WHERE id <= 2;
+
+query
+SELECT id, problem BETWEEN 0 AND 1 AS answered FROM support_messages ORDER BY id;
+----
+id	answered
+1	t
+2	t
+3	NULL
+4	NULL

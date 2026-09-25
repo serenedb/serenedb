@@ -30,7 +30,7 @@ SELECT
   ai_embed(NULL, 'm', 'ai_dead_${__DATABASE__}') IS NULL AS em,
   ai_similarity('a', NULL, 'm', 'ai_dead_${__DATABASE__}') IS NULL AS s1,
   ai_similarity('', 'b', 'm', 'ai_dead_${__DATABASE__}') IS NULL AS s2,
-  prompt_jev(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}') IS NULL AS j;
+  ai_system1(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}') IS NULL AS j;
 ----
 g	c	e	f	t	r	em	s1	s2	j
 t	t	t	t	t	t	t	t	t	t
@@ -50,15 +50,15 @@ VARCHAR	VARCHAR	VARCHAR	JSON	BOOLEAN	FLOAT[]	DOUBLE
 
 query
 SELECT
-  typeof(prompt_jev(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}')) AS noul,
-  typeof(prompt_jev(NULL, 'q', choice := ['a', 'b'], secret_name := 'jev_dead_${__DATABASE__}')) AS choice,
-  typeof(prompt_jev(NULL, 'q', score := ['low', 'high'], secret_name := 'jev_dead_${__DATABASE__}')) AS score;
+  typeof(ai_system1(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}')) AS noul,
+  typeof(ai_system1(NULL, 'q', choice := ['a', 'b'], secret_name := 'jev_dead_${__DATABASE__}')) AS choice,
+  typeof(ai_system1(NULL, 'q', score := ['low', 'high'], secret_name := 'jev_dead_${__DATABASE__}')) AS score;
 ----
 noul	choice	score
 DOUBLE	STRUCT(choice VARCHAR, probabilities STRUCT("value" VARCHAR, probability DOUBLE)[], confidence DOUBLE)	STRUCT(score DOUBLE, probabilities STRUCT("index" INTEGER, "value" VARCHAR, probability DOUBLE)[], confidence DOUBLE)
 
 query
-SELECT typeof(prompt_jev(
+SELECT typeof(ai_system1(
   NULL,
   questions := {
     refund: {type: 'noul', instructions: 'Does this request a refund?'},
@@ -71,7 +71,7 @@ t
 STRUCT(refund DOUBLE, category STRUCT(choice VARCHAR, probabilities STRUCT("value" VARCHAR, probability DOUBLE)[], confidence DOUBLE))
 
 query
-SELECT typeof(prompt_jev(
+SELECT typeof(ai_system1(
   NULL,
   questions := '{"urgency": {"type": "score", "instructions": {"question": "How urgent?"}, "criteria": ["low", {"label": "high", "why": "outage"}]}}'::JSON,
   secret_name := 'jev_dead_${__DATABASE__}'
@@ -80,47 +80,47 @@ SELECT typeof(prompt_jev(
 t
 STRUCT(urgency STRUCT(score DOUBLE, probabilities STRUCT("index" INTEGER, "value" VARCHAR, probability DOUBLE)[], confidence DOUBLE))
 
-statement error prompt_jev: requires instructions
-SELECT prompt_jev('x', secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: requires instructions
+SELECT ai_system1('x', secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "choice", "score", and "noul" cannot be combined
-SELECT prompt_jev('x', 'q', choice := ['a', 'b'], score := ['c', 'd'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: "choice", "score", and "noul" cannot be combined
+SELECT ai_system1('x', 'q', choice := ['a', 'b'], score := ['c', 'd'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: requires at least two criteria for type "choice"
-SELECT prompt_jev('x', 'q', choice := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: requires at least two criteria for type "choice"
+SELECT ai_system1('x', 'q', choice := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: requires at least two criteria for type "score"
-SELECT prompt_jev('x', 'q', score := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: requires at least two criteria for type "score"
+SELECT ai_system1('x', 'q', score := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: supports at most 10 criteria for type "score"
-SELECT prompt_jev('x', 'q', score := ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: supports at most 10 criteria for type "score"
+SELECT ai_system1('x', 'q', score := ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: Noul criteria require exactly the labels "true" and "false"
-SELECT prompt_jev('x', 'q', noul := ['yes', 'no'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: Noul criteria require exactly the labels "true" and "false"
+SELECT ai_system1('x', 'q', noul := ['yes', 'no'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: criteria labels must be unique
-SELECT prompt_jev('x', 'q', choice := ['a', 'a'], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: criteria labels must be unique
+SELECT ai_system1('x', 'q', choice := ['a', 'a'], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: criteria labels must not be empty
-SELECT prompt_jev('x', 'q', choice := [{label: '', description: 'd'}, {label: 'b', description: NULL}], secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: criteria labels must not be empty
+SELECT ai_system1('x', 'q', choice := [{label: '', description: 'd'}, {label: 'b', description: NULL}], secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "questions" cannot be combined
-SELECT prompt_jev('x', 'q', questions := {a: {type: 'noul', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: "questions" cannot be combined
+SELECT ai_system1('x', 'q', questions := {a: {type: 'noul', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "batch_size" cannot be combined with "questions"
-SELECT prompt_jev('x', questions := {a: {type: 'noul', instructions: 'q'}}, batch_size := 2, secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: "batch_size" cannot be combined with "questions"
+SELECT ai_system1('x', questions := {a: {type: 'noul', instructions: 'q'}}, batch_size := 2, secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "batch_size" must be between 1 and 64
-SELECT prompt_jev('x', 'q', batch_size := 65, secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: "batch_size" must be between 1 and 64
+SELECT ai_system1('x', 'q', batch_size := 65, secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: unknown question type "maybe"
-SELECT prompt_jev('x', questions := {a: {type: 'maybe', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: unknown question type "maybe"
+SELECT ai_system1('x', questions := {a: {type: 'maybe', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "questions" must be a STRUCT or a JSON object
-SELECT prompt_jev('x', questions := '[1, 2]', secret_name := 'jev_dead_${__DATABASE__}');
+statement error ai_system1: "questions" must be a STRUCT or a JSON object
+SELECT ai_system1('x', questions := '[1, 2]', secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: "instructions" parameter must be a constant value
-SELECT prompt_jev('x', v, secret_name := 'jev_dead_${__DATABASE__}') FROM (VALUES ('q')) t(v);
+statement error ai_system1: "instructions" parameter must be a constant value
+SELECT ai_system1('x', v, secret_name := 'jev_dead_${__DATABASE__}') FROM (VALUES ('q')) t(v);
 
 statement error ai_classify: "categories" parameter must be a constant value
 SELECT ai_classify('x', [v], secret_name := 'ai_dead_${__DATABASE__}') FROM (VALUES ('q')) t(v);
@@ -146,8 +146,8 @@ SELECT ai_generate('x', secret_name := 'ai_missing');
 statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
 SELECT ai_generate('x', secret_name := 'jev_dead_${__DATABASE__}');
 
-statement error prompt_jev: secret '.*' has type 'openai', expected 'typesafe'
-SELECT prompt_jev('x', 'q', secret_name := 'ai_dead_${__DATABASE__}');
+statement error ai_system1: secret '.*' has type 'openai', expected 'typesafe'
+SELECT ai_system1('x', 'q', secret_name := 'ai_dead_${__DATABASE__}');
 
 statement error ai_generate: no model given
 SELECT ai_generate('x', secret_name := 'ai_dead_no_model_${__DATABASE__}');
@@ -159,13 +159,13 @@ statement ok
 SET sdb_ai_embedding_default_secret = 'ai_dead_${__DATABASE__}';
 
 statement ok
-SET sdb_ai_jev_default_secret = 'jev_dead_${__DATABASE__}';
+SET sdb_ai_system1_default_secret = 'jev_dead_${__DATABASE__}';
 
 query
 SELECT
   ai_generate(NULL) IS NULL AS g,
   ai_embed(NULL, 'm') IS NULL AS e,
-  prompt_jev(NULL, 'q') IS NULL AS j;
+  ai_system1(NULL, 'q') IS NULL AS j;
 ----
 g	e	j
 t	t	t
@@ -176,8 +176,8 @@ SET sdb_ai_max_retries = 0;
 statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
 SELECT ai_generate('x');
 
-statement error prompt_jev: request to 'http://127.0.0.1:9/v1/systemone' failed
-SELECT prompt_jev('x', 'q');
+statement error ai_system1: request to 'http://127.0.0.1:9/v1/systemone' failed
+SELECT ai_system1('x', 'q');
 
 statement ok
 CREATE OR REPLACE SECRET ai_dead_path_${__DATABASE__} (
@@ -216,8 +216,8 @@ CREATE OR REPLACE SECRET jev_dead_path_${__DATABASE__} (
   path '/typesafe/v1/systemone'
 );
 
-statement error prompt_jev: request to 'http://127.0.0.1:9/gateway/typesafe/v1/systemone' failed
-SELECT prompt_jev('x', 'q', secret_name := 'jev_dead_path_${__DATABASE__}');
+statement error ai_system1: request to 'http://127.0.0.1:9/gateway/typesafe/v1/systemone' failed
+SELECT ai_system1('x', 'q', secret_name := 'jev_dead_path_${__DATABASE__}');
 
 statement ok
 CREATE OR REPLACE SECRET jev_dead_full_${__DATABASE__} (
@@ -225,8 +225,8 @@ CREATE OR REPLACE SECRET jev_dead_full_${__DATABASE__} (
   base_url 'http://127.0.0.1:9/proxy/systemone'
 );
 
-statement error prompt_jev: request to 'http://127.0.0.1:9/proxy/systemone' failed
-SELECT prompt_jev('x', 'q', secret_name := 'jev_dead_full_${__DATABASE__}');
+statement error ai_system1: request to 'http://127.0.0.1:9/proxy/systemone' failed
+SELECT ai_system1('x', 'q', secret_name := 'jev_dead_full_${__DATABASE__}');
 
 statement ok
 SET sdb_ai_throw_on_error = false;
@@ -243,7 +243,7 @@ SELECT
   count(*) FILTER (WHERE e IS NULL) AS e_null,
   count(*) FILTER (WHERE j IS NULL) AS j_null
 FROM (
-  SELECT ai_generate(body) AS g, ai_embed(body, 'm') AS e, prompt_jev(body, 'q') AS j
+  SELECT ai_generate(body) AS g, ai_embed(body, 'm') AS e, ai_system1(body, 'q') AS j
   FROM ai_rows
 ) t;
 ----

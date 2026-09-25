@@ -33,12 +33,13 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/system_compiler.hpp>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "connector/functions/ai/common.h"
@@ -46,10 +47,7 @@
 namespace sdb::connector::ai {
 namespace {
 
-constexpr std::string_view kFn = "prompt_jev";
-constexpr std::string_view kDefaultBaseUrl = "https://api.typesafe.ai";
-constexpr std::string_view kPath = "/v1/systemone";
-constexpr std::string_view kDefaultModel = "jev-latest";
+constexpr std::string_view kFn = "ai_system1";
 constexpr std::string_view kSingleKey = "answer";
 constexpr int32_t kDefaultBatchSize = 32;
 constexpr int32_t kMaxBatchSize = 64;
@@ -62,6 +60,8 @@ enum class JevType : uint8_t {
   Choice,
   Score,
 };
+
+constexpr std::string_view kTypeNames[] = {"noul", "choice", "score"};
 
 struct Question {
   std::string key;
@@ -79,47 +79,41 @@ struct Question {
 }
 
 std::string_view TypeName(JevType type) {
-  switch (type) {
-    case JevType::Noul:
-      return "noul";
-    case JevType::Choice:
-      return "choice";
-    case JevType::Score:
-      return "score";
-  }
-  SDB_UNREACHABLE();
+  return kTypeNames[static_cast<size_t>(type)];
 }
 
 JevType ParseType(std::string_view name) {
-  if (absl::EqualsIgnoreCase(name, "noul")) {
-    return JevType::Noul;
-  }
-  if (absl::EqualsIgnoreCase(name, "choice")) {
-    return JevType::Choice;
-  }
-  if (absl::EqualsIgnoreCase(name, "score")) {
-    return JevType::Score;
+  for (size_t i = 0; i != std::size(kTypeNames); ++i) {
+    if (absl::EqualsIgnoreCase(name, kTypeNames[i])) {
+      return static_cast<JevType>(i);
+    }
   }
   Fail(absl::StrCat("unknown question type \"", name,
                     "\" (noul, choice or score)"));
 }
 
-duckdb::LogicalType ChoiceProbabilityType() {
-  duckdb::child_list_t<duckdb::LogicalType> children;
-  children.emplace_back("value", duckdb::LogicalType::VARCHAR);
-  children.emplace_back("probability", duckdb::LogicalType::DOUBLE);
-  return duckdb::LogicalType::STRUCT(std::move(children));
+const duckdb::LogicalType& ChoiceProbabilityType() {
+  static const auto kType = [] {
+    duckdb::child_list_t<duckdb::LogicalType> children;
+    children.emplace_back("value", duckdb::LogicalType::VARCHAR);
+    children.emplace_back("probability", duckdb::LogicalType::DOUBLE);
+    return duckdb::LogicalType::STRUCT(std::move(children));
+  }();
+  return kType;
 }
 
-duckdb::LogicalType ScoreProbabilityType() {
-  duckdb::child_list_t<duckdb::LogicalType> children;
-  children.emplace_back("index", duckdb::LogicalType::INTEGER);
-  children.emplace_back("value", duckdb::LogicalType::VARCHAR);
-  children.emplace_back("probability", duckdb::LogicalType::DOUBLE);
-  return duckdb::LogicalType::STRUCT(std::move(children));
+const duckdb::LogicalType& ScoreProbabilityType() {
+  static const auto kType = [] {
+    duckdb::child_list_t<duckdb::LogicalType> children;
+    children.emplace_back("index", duckdb::LogicalType::INTEGER);
+    children.emplace_back("value", duckdb::LogicalType::VARCHAR);
+    children.emplace_back("probability", duckdb::LogicalType::DOUBLE);
+    return duckdb::LogicalType::STRUCT(std::move(children));
+  }();
+  return kType;
 }
 
-duckdb::LogicalType AnswerType(JevType type) {
+duckdb::LogicalType MakeAnswerType(JevType type) {
   duckdb::child_list_t<duckdb::LogicalType> children;
   switch (type) {
     case JevType::Noul:
@@ -139,6 +133,15 @@ duckdb::LogicalType AnswerType(JevType type) {
   return duckdb::LogicalType::STRUCT(std::move(children));
 }
 
+const duckdb::LogicalType& AnswerType(JevType type) {
+  static const duckdb::LogicalType kTypes[] = {
+    MakeAnswerType(JevType::Noul),
+    MakeAnswerType(JevType::Choice),
+    MakeAnswerType(JevType::Score),
+  };
+  return kTypes[static_cast<size_t>(type)];
+}
+
 void ValidateLabels(JevType type, const std::vector<std::string>& labels) {
   absl::flat_hash_set<std::string_view> seen;
   for (const auto& label : labels) {
@@ -149,60 +152,40 @@ void ValidateLabels(JevType type, const std::vector<std::string>& labels) {
       Fail("criteria labels must be unique");
     }
   }
-  switch (type) {
-    case JevType::Noul:
-      if (!labels.empty() && (labels.size() != 2 || !seen.contains("true") ||
-                              !seen.contains("false"))) {
-        Fail("Noul criteria require exactly the labels \"true\" and \"false\"");
-      }
-      break;
-    case JevType::Choice:
-      if (labels.size() < 2) {
-        Fail("requires at least two criteria for type \"choice\"");
-      }
-      if (labels.size() > 255) {
-        Fail("supports at most 255 criteria for type \"choice\"");
-      }
-      break;
-    case JevType::Score:
-      if (labels.size() < 2) {
-        Fail("requires at least two criteria for type \"score\"");
-      }
-      if (labels.size() > 10) {
-        Fail("supports at most 10 criteria for type \"score\"");
-      }
-      break;
+  if (type == JevType::Noul) {
+    if (!labels.empty() && (labels.size() != 2 || !seen.contains("true") ||
+                            !seen.contains("false"))) {
+      Fail("Noul criteria require exactly the labels \"true\" and \"false\"");
+    }
+    return;
+  }
+  const size_t max = type == JevType::Choice ? 255 : 10;
+  if (labels.size() < 2) {
+    Fail(absl::StrCat("requires at least two criteria for type \"",
+                      TypeName(type), "\""));
+  }
+  if (labels.size() > max) {
+    Fail(absl::StrCat("supports at most ", max, " criteria for type \"",
+                      TypeName(type), "\""));
   }
 }
 
 std::string CriteriaJson(JevType type, const std::vector<Criterion>& criteria) {
-  std::string json;
-  if (type == JevType::Score) {
-    json = "[";
-    for (size_t i = 0; i != criteria.size(); ++i) {
-      if (i != 0) {
-        json += ",";
-      }
-      const auto& c = criteria[i];
-      if (c.description) {
-        absl::StrAppend(&json, R"({"label":)", ToJson(c.label),
-                        R"(,"description":)", ToJson(*c.description), "}");
-      } else {
-        json += ToJson(c.label);
-      }
-    }
-    return json + "]";
+  if (type != JevType::Score) {
+    return CriteriaObject(criteria);
   }
-  json = "{";
-  for (size_t i = 0; i != criteria.size(); ++i) {
-    if (i != 0) {
-      json += ",";
+  std::string json = "[";
+  std::string_view comma;
+  for (const auto& c : criteria) {
+    json += std::exchange(comma, ",");
+    if (c.description) {
+      absl::StrAppend(&json, R"({"label":)", ToJson(c.label),
+                      R"(,"description":)", ToJson(*c.description), "}");
+    } else {
+      json += ToJson(c.label);
     }
-    absl::StrAppend(
-      &json, ToJson(criteria[i].label), ":",
-      criteria[i].description ? ToJson(*criteria[i].description) : "null");
   }
-  return json + "}";
+  return json + "]";
 }
 
 Question MakeQuestion(std::string key, JevType type,
@@ -289,8 +272,11 @@ std::vector<Question> ParseJsonQuestions(std::string_view json) {
     }
     question.type = ParseType(type);
     simdjson::dom::element instructions;
+    std::string_view text;
     if (object["instructions"].get(instructions) != simdjson::SUCCESS ||
-        instructions.is_null()) {
+        instructions.is_null() ||
+        (instructions.get_string().get(text) == simdjson::SUCCESS &&
+         absl::StripAsciiWhitespace(text).empty())) {
       Fail("requires instructions");
     }
     question.instructions = simdjson::minify(instructions);
@@ -334,31 +320,11 @@ std::vector<Question> ParseJsonQuestions(std::string_view json) {
   return questions;
 }
 
-uint64_t JevOutputTokens(std::string_view body) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  uint64_t tokens = 0;
-  if (parser.parse(body.data(), body.size()).get(doc) == simdjson::SUCCESS) {
-    std::ignore = doc["usage"]["output_tokens"].get(tokens);
-  }
-  return tokens;
-}
-
 struct JevBindData final : public AIFunctionData {
-  std::string url;
-  std::string api_key;
-  std::string model;
   std::vector<Question> questions;
   duckdb::LogicalType type;
   bool multi = false;
   size_t batch_size = 1;
-
-  Endpoint GetEndpoint() const final {
-    return {.fn = kFn,
-            .url = url,
-            .api_key = api_key,
-            .output_tokens = JevOutputTokens};
-  }
 
   std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
@@ -368,9 +334,8 @@ struct JevBindData final : public AIFunctionData {
 
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<JevBindData>();
-    return url == o.url && api_key == o.api_key && model == o.model &&
-           questions == o.questions && multi == o.multi &&
-           batch_size == o.batch_size;
+    return endpoint == o.endpoint && questions == o.questions &&
+           multi == o.multi && batch_size == o.batch_size;
   }
 };
 
@@ -423,20 +388,17 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
     const auto size =
       batch_size ? batch_size->GetValue<int32_t>() : kDefaultBatchSize;
     if (size < 1 || size > kMaxBatchSize) {
-      Fail("\"batch_size\" must be between 1 and 64");
+      Fail(
+        absl::StrCat("\"batch_size\" must be between 1 and ", kMaxBatchSize));
     }
     bind->batch_size = static_cast<size_t>(size);
     bind->type = AnswerType(type);
   }
 
-  const auto secret = LoadSecret(context, kFn, secret_name,
-                                 kJevDefaultSecretSetting, kTypeSafeSecretType);
-  bind->url = JoinUrl(secret.base_url, kDefaultBaseUrl,
-                      secret.path.empty() ? kPath : secret.path);
-  bind->api_key = secret.api_key;
-  bind->model = model                   ? *model
-                : !secret.model.empty() ? secret.model
-                                        : std::string{kDefaultModel};
+  bind->endpoint = LoadEndpoint(context, kFn, secret_name, kJevApi);
+  if (model) {
+    bind->endpoint.model = *model;
+  }
   input.GetBoundFunction().SetReturnType(bind->type);
   return bind;
 }
@@ -461,14 +423,14 @@ void AppendQuestion(simdjson::builder::string_builder& builder,
 
 std::string BuildBody(const JevBindData& bind,
                       std::span<const std::string_view> states) {
-  size_t total = 256 + bind.model.size();
+  size_t total = 256 + bind.endpoint.model.size();
   for (const auto state : states) {
     total += state.size() + 256;
   }
   simdjson::builder::string_builder builder(total);
   builder.start_object();
   builder.append_raw("\"model\":");
-  builder.escape_and_append_with_quotes(bind.model);
+  builder.escape_and_append_with_quotes(bind.endpoint.model);
   builder.append_comma();
   builder.append_raw("\"state\":");
   if (states.size() == 1) {
@@ -488,7 +450,7 @@ std::string BuildBody(const JevBindData& bind,
   builder.append_comma();
   builder.append_raw("\"questions\":");
   builder.start_object();
-  if (bind.multi || states.size() == 1) {
+  if (states.size() == 1) {
     for (size_t i = 0; i != bind.questions.size(); ++i) {
       if (i != 0) {
         builder.append_comma();
@@ -522,8 +484,9 @@ double Number(simdjson::dom::object object, std::string_view field,
               std::string_view key, std::string_view body) {
   double value = 0;
   if (object[field].get_double().get(value) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(kFn, ": answer \"", key, "\" has no numeric \"",
-                               field, "\": ", body));
+    ThrowBadReply(
+      kFn, absl::StrCat("answer \"", key, "\" has no numeric \"", field, "\""),
+      body);
   }
   return value;
 }
@@ -533,13 +496,15 @@ duckdb::Value ParseAnswer(const Question& question,
                           std::string_view body) {
   simdjson::dom::object answer;
   if (answers[key].get_object().get(answer) != simdjson::SUCCESS) {
-    ThrowRowError(
-      absl::StrCat(kFn, ": response has no answer \"", key, "\": ", body));
+    ThrowBadReply(kFn, absl::StrCat("response has no answer \"", key, "\""),
+                  body);
   }
   auto check = [&](double value, double max, std::string_view field) {
     if (!(value >= 0 && value <= max)) {
-      ThrowRowError(absl::StrCat(kFn, ": answer \"", key, "\" has ", field, " ",
-                                 value, " outside [0, ", max, "]: ", body));
+      ThrowBadReply(kFn,
+                    absl::StrCat("answer \"", key, "\" has ", field, " ", value,
+                                 " outside [0, ", max, "]"),
+                    body);
     }
   };
   if (question.type == JevType::Noul) {
@@ -550,8 +515,8 @@ duckdb::Value ParseAnswer(const Question& question,
   simdjson::dom::object probabilities;
   if (answer["probabilities"].get_object().get(probabilities) !=
       simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(kFn, ": answer \"", key,
-                               "\" has no \"probabilities\": ", body));
+    ThrowBadReply(
+      kFn, absl::StrCat("answer \"", key, "\" has no \"probabilities\""), body);
   }
   const auto confidence = Number(answer, "confidence", key, body);
   std::vector<duckdb::Value> list;
@@ -559,13 +524,14 @@ duckdb::Value ParseAnswer(const Question& question,
   if (question.type == JevType::Choice) {
     std::string_view choice;
     if (answer["choice"].get_string().get(choice) != simdjson::SUCCESS) {
-      ThrowRowError(
-        absl::StrCat(kFn, ": answer \"", key, "\" has no \"choice\": ", body));
+      ThrowBadReply(kFn, absl::StrCat("answer \"", key, "\" has no \"choice\""),
+                    body);
     }
-    if (!question.labels.empty() &&
-        !absl::c_linear_search(question.labels, choice)) {
-      ThrowRowError(absl::StrCat(kFn, ": answer \"", key, "\" chose \"", choice,
-                                 "\", which is not a criterion: ", body));
+    if (!absl::c_linear_search(question.labels, choice)) {
+      ThrowBadReply(kFn,
+                    absl::StrCat("answer \"", key, "\" chose \"", choice,
+                                 "\", which is not a criterion"),
+                    body);
     }
     for (const auto& label : question.labels) {
       double p = 0;
@@ -581,9 +547,7 @@ duckdb::Value ParseAnswer(const Question& question,
        duckdb::Value::DOUBLE(confidence)});
   }
   const auto score = Number(answer, "score", key, body);
-  if (!question.labels.empty()) {
-    check(score, static_cast<double>(question.labels.size() - 1), "score");
-  }
+  check(score, static_cast<double>(question.labels.size() - 1), "score");
   for (size_t i = 0; i != question.labels.size(); ++i) {
     double p = 0;
     std::ignore = probabilities[absl::StrCat(i)].get_double().get(p);
@@ -609,11 +573,11 @@ void ParseBatch(const JevBindData& bind, Requester& requester,
   simdjson::dom::parser parser;
   simdjson::dom::element doc;
   if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(kFn, ": response is not valid JSON: ", *body));
+    ThrowBadReply(kFn, "response is not valid JSON", *body);
   }
   simdjson::dom::element answers;
   if (doc["answers"].get(answers) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(kFn, ": response has no \"answers\": ", *body));
+    ThrowBadReply(kFn, "response has no \"answers\"", *body);
   }
   for (size_t k = 0; k != states.size(); ++k) {
     if (bind.multi) {

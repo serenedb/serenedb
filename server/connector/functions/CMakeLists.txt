@@ -39,8 +39,7 @@ target_sources(
         ai/ai_optimizer.cpp
         ai/chat.cpp
         ai/common.cpp
+        ai/embedding.cpp
         ai/jev.cpp
-        ai/provider.cpp
-        ai/provider_openai.cpp
         ai/text_functions.cpp
 )

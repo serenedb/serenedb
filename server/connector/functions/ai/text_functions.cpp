@@ -168,13 +168,6 @@ struct TextBindData final : public AIFunctionData {
   std::vector<std::string> labels;
   std::vector<std::string> keys;
 
-  Endpoint GetEndpoint() const final {
-    return {.fn = spec->name,
-            .url = chat.url,
-            .api_key = chat.api_key,
-            .output_tokens = ChatOutputTokens};
-  }
-
   std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
@@ -183,18 +176,10 @@ struct TextBindData final : public AIFunctionData {
 
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<TextBindData>();
-    return spec == o.spec && chat == o.chat && body == o.body &&
-           labels == o.labels && keys == o.keys;
+    return spec == o.spec && endpoint == o.endpoint && chat == o.chat &&
+           body == o.body && labels == o.labels && keys == o.keys;
   }
 };
-
-std::string JsonStrings(std::span<const std::string> values) {
-  std::string out = "[";
-  for (size_t i = 0; i != values.size(); ++i) {
-    absl::StrAppend(&out, i == 0 ? "" : ",", ToJson(values[i]));
-  }
-  return out + "]";
-}
 
 std::vector<Criterion> ParseLabels(const duckdb::Value& value,
                                    const TextSpec& spec, bool allow_empty) {
@@ -221,23 +206,14 @@ std::vector<Criterion> ParseLabels(const duckdb::Value& value,
   return criteria;
 }
 
-std::string CategoriesPrompt(const std::vector<Criterion>& criteria,
-                             TextBindData& bind) {
-  for (const auto& criterion : criteria) {
-    bind.labels.push_back(criterion.label);
-  }
+std::string CategoriesPrompt(std::span<const Criterion> criteria,
+                             std::span<const std::string> labels) {
   if (absl::c_none_of(criteria, [](const Criterion& c) {
         return c.description.has_value();
       })) {
-    return absl::Substitute(kCategoriesPrompt, JsonStrings(bind.labels));
+    return absl::Substitute(kCategoriesPrompt, JsonArray(labels));
   }
-  std::string json = "{";
-  for (size_t i = 0; i != criteria.size(); ++i) {
-    absl::StrAppend(
-      &json, i == 0 ? "" : ",", ToJson(criteria[i].label), ":",
-      criteria[i].description ? ToJson(*criteria[i].description) : "null");
-  }
-  return absl::Substitute(kDescribedCategoriesPrompt, json + "}");
+  return absl::Substitute(kDescribedCategoriesPrompt, CriteriaObject(criteria));
 }
 
 void BindExtract(TextBindData& bind, duckdb::BoundScalarFunction& fn,
@@ -261,14 +237,13 @@ void BindExtract(TextBindData& bind, duckdb::BoundScalarFunction& fn,
     }
     bind.chat.response_format =
       StrictJsonSchema("extraction", absl::StrCat(properties, "}"), bind.keys);
-    system = absl::Substitute(kExtractSchemaPrompt, JsonStrings(bind.keys),
+    system = absl::Substitute(kExtractSchemaPrompt, JsonArray(bind.keys),
                               simdjson::minify(schema));
     fn.SetReturnType(duckdb::LogicalType::JSON());
     return;
   }
-  const std::string result[] = {"result"};
-  bind.chat.response_format = StrictJsonSchema(
-    "extraction", R"({"result":{"type":["string","null"]}})", result);
+  bind.chat.response_format =
+    StrictJsonSchema("extraction", "result", R"({"type":["string","null"]})");
   system = absl::Substitute(kExtractPrompt, instruction);
 }
 
@@ -298,49 +273,39 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   auto bind = duckdb::make_uniq<TextBindData>();
   bind->spec = &spec;
   bind->chat = BindChat(context, spec.name, std::span{args}.subspan(index),
-                        spec.temperature);
+                        spec.temperature, bind->endpoint);
 
   std::string system;
   switch (spec.kind) {
     case TextKind::Generate:
       system = option.value_or(std::string{kDefaultSystemPrompt});
       break;
-    case TextKind::Classify: {
-      const auto categories =
-        CategoriesPrompt(ParseLabels(*second, spec, false), *bind);
-      const std::string required[] = {"category"};
-      bind->chat.response_format =
-        StrictJsonSchema("classification",
-                         absl::StrCat(R"({"category":{"type":"string","enum":)",
-                                      JsonStrings(bind->labels), "}}"),
-                         required);
-      system = absl::Substitute(kClassifyPrompt, categories);
-      break;
-    }
+    case TextKind::Classify:
     case TextKind::ClassifyLabels: {
-      const auto categories =
-        CategoriesPrompt(ParseLabels(*second, spec, false), *bind);
-      const std::string required[] = {"categories"};
-      bind->chat.response_format = StrictJsonSchema(
-        "classification",
-        absl::StrCat(
-          R"({"categories":{"type":"array","items":{"type":"string","enum":)",
-          JsonStrings(bind->labels), "}}}"),
-        required);
-      system = absl::Substitute(kClassifyLabelsPrompt, categories);
-      fn.SetReturnType(duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
+      const auto criteria = ParseLabels(*second, spec, false);
+      for (const auto& criterion : criteria) {
+        bind->labels.push_back(criterion.label);
+      }
+      const auto label = absl::StrCat(R"({"type":"string","enum":)",
+                                      JsonArray(bind->labels), "}");
+      const bool multi = spec.kind == TextKind::ClassifyLabels;
+      bind->chat.response_format =
+        multi ? StrictJsonSchema(
+                  "classification", "categories",
+                  absl::StrCat(R"({"type":"array","items":)", label, "}"))
+              : StrictJsonSchema("classification", "category", label);
+      system = absl::Substitute(multi ? kClassifyLabelsPrompt : kClassifyPrompt,
+                                CategoriesPrompt(criteria, bind->labels));
       break;
     }
     case TextKind::Extract:
       BindExtract(*bind, fn, second->ToString(), system);
       break;
-    case TextKind::Filter: {
-      const std::string required[] = {"match"};
+    case TextKind::Filter:
       bind->chat.response_format =
-        StrictJsonSchema("filter", R"({"match":{"type":"boolean"}})", required);
+        StrictJsonSchema("filter", "match", R"({"type":"boolean"})");
       system = absl::Substitute(kFilterPrompt, second->ToString());
       break;
-    }
     case TextKind::Translate:
       system = absl::Substitute(kTranslatePrompt, second->ToString(),
                                 option ? absl::StrCat(" ", *option) : "");
@@ -360,21 +325,18 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
       break;
     }
     case TextKind::Score:
-    case TextKind::Rerank: {
-      const std::string required[] = {"score"};
+    case TextKind::Rerank:
       bind->chat.response_format = StrictJsonSchema(
-        "score", R"({"score":{"type":"number","minimum":0,"maximum":1}})",
-        required);
+        "score", "score", R"({"type":"number","minimum":0,"maximum":1})");
       system = spec.kind == TextKind::Score
                  ? absl::Substitute(kScorePrompt, second->ToString())
                  : absl::Substitute(kRerankPrompt, ToJson(second->ToString()));
       break;
-    }
   }
   if (spec.kind != TextKind::Generate) {
     absl::StrAppend(&system, kDataRule);
   }
-  bind->body = MakeChatTemplate(bind->chat, system);
+  bind->body = MakeChatTemplate(bind->endpoint.model, bind->chat, system);
   return bind;
 }
 
@@ -440,8 +402,7 @@ duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
         element.get_array().get(array) == simdjson::SUCCESS) &&
       !(ParseEnclosed(parser, text, '[', ']', element) &&
         element.get_array().get(array) == simdjson::SUCCESS)) {
-    ThrowRowError(absl::StrCat(
-      name, ": model reply is not a JSON array of categories: ", text));
+    ThrowBadReply(name, "model reply is not a JSON array of categories", text);
   }
   std::vector<duckdb::Value> values;
   absl::flat_hash_set<const std::string*> seen;
@@ -452,9 +413,8 @@ duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
       label = MatchLabel(bind, absl::StripAsciiWhitespace(category));
     }
     if (label == nullptr) {
-      ThrowRowError(absl::StrCat(
-        name, ": model returned a category outside the allowed set: ",
-        simdjson::minify(item)));
+      ThrowBadReply(name, "model returned a category outside the allowed set",
+                    simdjson::minify(item));
     }
     if (!seen.insert(label).second) {
       ThrowRowError(
@@ -472,8 +432,7 @@ duckdb::Value ExtractSchemaReply(const TextBindData& bind,
   simdjson::dom::object object;
   if (!ParseEnclosed(parser, reply, '{', '}', doc) ||
       doc.get_object().get(object) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(bind.spec->name,
-                               ": model reply is not a JSON object: ", reply));
+    ThrowBadReply(bind.spec->name, "model reply is not a JSON object", reply);
   }
   simdjson::builder::string_builder builder;
   builder.start_object();
@@ -535,8 +494,7 @@ duckdb::Value ScoreReply(const TextBindData& bind, std::string_view text) {
   if (!(Unwrap(parser, text, "score", element) &&
         element.get_double().get(score) == simdjson::SUCCESS) &&
       !absl::SimpleAtod(Unquote(text), &score)) {
-    ThrowRowError(
-      absl::StrCat(bind.spec->name, ": model reply is not a score: ", text));
+    ThrowBadReply(bind.spec->name, "model reply is not a score", text);
   }
   if (!(score >= 0 && score <= 1)) {
     ThrowRowError(absl::StrCat(bind.spec->name, ": model returned the score ",
@@ -605,6 +563,25 @@ std::unique_ptr<AIWork> TextBindData::Start(duckdb::DataChunk& args) const {
   return std::make_unique<TextWork>(*this, args);
 }
 
+duckdb::LogicalType ResultType(TextKind kind) {
+  switch (kind) {
+    case TextKind::Generate:
+    case TextKind::Classify:
+    case TextKind::Extract:
+    case TextKind::Translate:
+    case TextKind::Redact:
+      return duckdb::LogicalType::VARCHAR;
+    case TextKind::ClassifyLabels:
+      return duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+    case TextKind::Filter:
+      return duckdb::LogicalType::BOOLEAN;
+    case TextKind::Score:
+    case TextKind::Rerank:
+      return duckdb::LogicalType::DOUBLE;
+  }
+  SDB_UNREACHABLE();
+}
+
 duckdb::LogicalType SecondType(Second type) {
   switch (type) {
     case Second::None:
@@ -627,13 +604,7 @@ duckdb::LogicalType DescribedCategories() {
 
 duckdb::ScalarFunction MakeTextFunction(const TextSpec& spec,
                                         const duckdb::LogicalType& second) {
-  auto fn = MakeAIFunction(
-    spec.name,
-    spec.kind == TextKind::Filter ? duckdb::LogicalType::BOOLEAN
-    : spec.kind == TextKind::Score || spec.kind == TextKind::Rerank
-      ? duckdb::LogicalType::DOUBLE
-      : duckdb::LogicalType::VARCHAR,
-    TextBind);
+  auto fn = MakeAIFunction(spec.name, ResultType(spec.kind), TextBind);
   auto& signature = fn.GetSignature();
   if (spec.second_type == Second::None) {
     signature.AddParameter(duckdb::Identifier{spec.input},

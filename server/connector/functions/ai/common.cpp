@@ -45,6 +45,7 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #include "query/config.h"
@@ -138,6 +139,20 @@ bool IsInsecureEndpoint(std::string_view base_url) {
          !IsLoopbackHost(UrlHost(base_url));
 }
 
+std::string JoinUrl(std::string url, std::string_view path) {
+  while (!url.empty() && url.back() == '/') {
+    url.pop_back();
+  }
+  if (url.ends_with(absl::StrCat("/", path.substr(path.rfind('/') + 1)))) {
+    return url;
+  }
+  if (!path.empty() && path.front() != '/') {
+    url.push_back('/');
+  }
+  url.append(path);
+  return url;
+}
+
 std::string ReadableText(std::string_view text) {
   std::string out{text.substr(0, kMaxErrorBody)};
   for (auto& c : out) {
@@ -167,6 +182,16 @@ std::string ProviderError(std::string_view body) {
     }
   }
   return ReadableText(body);
+}
+
+uint64_t OutputTokens(std::string_view body, std::string_view key) {
+  simdjson::dom::parser parser;
+  simdjson::dom::element doc;
+  uint64_t tokens = 0;
+  if (parser.parse(body.data(), body.size()).get(doc) == simdjson::SUCCESS) {
+    std::ignore = doc["usage"][key].get(tokens);
+  }
+  return tokens;
 }
 
 uint64_t RetryDelayMs(uint32_t initial_ms, uint32_t attempt,
@@ -199,7 +224,7 @@ void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
           duckdb::ExecuteFunctionState::GetFunctionState(state)
             ->Cast<AILocalState>()
             .requester,
-          bind.GetEndpoint(), *work);
+          bind.endpoint, *work);
   work->Finish(result);
 }
 
@@ -217,6 +242,11 @@ void ThrowRowError(std::string message) {
     ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION), ERR_MSG(message),
     ERR_HINT("SET sdb_ai_throw_on_error = false to return NULL for rows "
              "that fail."));
+}
+
+void ThrowBadReply(std::string_view fn, std::string_view problem,
+                   std::string_view reply) {
+  ThrowRowError(absl::StrCat(fn, ": ", problem, ": ", ReadableText(reply)));
 }
 
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
@@ -246,17 +276,16 @@ std::optional<std::string> FoldString(duckdb::ClientContext& context,
   return value->ToString();
 }
 
-SecretConfig LoadSecret(duckdb::ClientContext& context, std::string_view fn,
-                        const std::optional<std::string>& secret_name,
-                        std::string_view default_setting,
-                        std::string_view type) {
+Endpoint LoadEndpoint(duckdb::ClientContext& context, std::string_view fn,
+                      const std::optional<std::string>& secret_name,
+                      const Api& api) {
   const auto name =
-    secret_name ? *secret_name : ReadStringSetting(context, default_setting);
+    secret_name ? *secret_name : ReadStringSetting(context, api.default_secret);
   if (name.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, ": no secret given"),
                     ERR_HINT("Pass secret_name := '<name>' or SET ",
-                             default_setting, " = '<name>'."));
+                             api.default_secret, " = '<name>'."));
   }
   auto& secret_manager = duckdb::SecretManager::Get(context);
   auto txn = duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
@@ -266,56 +295,40 @@ SecretConfig LoadSecret(duckdb::ClientContext& context, std::string_view fn,
                     ERR_MSG(fn, ": secret '", name, "' not found"));
   }
   const auto actual = entry->secret->GetType().GetIdentifierName();
-  if (actual != type) {
+  if (actual != api.secret_type) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                     ERR_MSG(fn, ": secret '", name, "' has type '", actual,
-                            "', expected '", type, "'"));
+                            "', expected '", api.secret_type, "'"));
   }
   const auto& kv =
     irs::utils::downCast<const duckdb::KeyValueSecret>(*entry->secret);
-  auto get = [&](const char* key) {
+  auto get = [&](std::string_view key, std::string_view fallback) {
     duckdb::Value v;
     if (kv.TryGetValue(duckdb::Identifier{key}, v) && !v.IsNull()) {
-      return v.ToString();
+      if (auto value = v.ToString(); !value.empty()) {
+        return value;
+      }
     }
-    return std::string{};
+    return std::string{fallback};
   };
-  SecretConfig config{
-    .api_key = get("api_key"),
-    .base_url = get("base_url"),
-    .model = get("model"),
-    .chat_path = get("chat_path"),
-    .embeddings_path = get("embeddings_path"),
-    .path = get("path"),
-  };
-  if (!config.base_url.empty() && IsInsecureEndpoint(config.base_url) &&
-      !gAllowInsecure.Bool(context)) {
+  auto base_url = get("base_url", api.base_url);
+  if (IsInsecureEndpoint(base_url) && !gAllowInsecure.Bool(context)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(fn, ": secret '", name, "' uses the insecure endpoint '",
-              config.base_url, "'"),
+              base_url, "'"),
       ERR_HINT("Use an https:// base_url, or SET "
                "sdb_ai_allow_insecure_endpoint = true to send requests over "
                "plain HTTP to hosts other than localhost."));
   }
   duckdb::ExtensionHelper::TryAutoLoadExtension(*context.db, "httpfs");
-  return config;
-}
-
-std::string JoinUrl(std::string_view base_url, std::string_view default_base,
-                    std::string_view path) {
-  std::string url{base_url.empty() ? default_base : base_url};
-  while (!url.empty() && url.back() == '/') {
-    url.pop_back();
-  }
-  if (url.ends_with(absl::StrCat("/", path.substr(path.rfind('/') + 1)))) {
-    return url;
-  }
-  if (!path.empty() && path.front() != '/') {
-    url.push_back('/');
-  }
-  url.append(path);
-  return url;
+  return {
+    .fn = std::string{fn},
+    .url = JoinUrl(std::move(base_url), get(api.path_key, api.path)),
+    .api_key = get("api_key", ""),
+    .model = get("model", api.default_model),
+    .usage_key = api.usage_key,
+  };
 }
 
 std::string ToJson(std::string_view text) {
@@ -369,6 +382,18 @@ std::vector<Criterion> ParseCriteria(const duckdb::Value& value,
   return criteria;
 }
 
+std::string CriteriaObject(std::span<const Criterion> criteria) {
+  std::string out = "{";
+  std::string_view comma;
+  for (const auto& criterion : criteria) {
+    absl::StrAppend(
+      &out, std::exchange(comma, ","), ToJson(criterion.label), ":",
+      criterion.description ? ToJson(*criterion.description) : "null");
+  }
+  out += "}";
+  return out;
+}
+
 Inputs CollectInputs(duckdb::Vector& input, duckdb::idx_t count, bool dedup,
                      bool skip_empty) {
   Inputs inputs;
@@ -417,9 +442,7 @@ void AIQueryUsage::QueryBegin(duckdb::ClientContext&) {
 
 Requester::Requester(duckdb::ClientContext& context, const Endpoint& endpoint)
   : _context{context},
-    _fn{endpoint.fn},
-    _url{endpoint.url},
-    _output_tokens{endpoint.output_tokens},
+    _endpoint{endpoint},
     _usage{context.registered_state->GetOrCreate<AIQueryUsage>("sdb_ai_usage")},
     _max_calls{gMaxCalls.Int(context)},
     _max_output_tokens{gMaxOutputTokens.Int(context)},
@@ -429,9 +452,16 @@ Requester::Requester(duckdb::ClientContext& context, const Endpoint& endpoint)
     _throw_on_error{gThrowOnError.Bool(context)},
     _throw_on_quota{gThrowOnQuota.Bool(context)} {
   _headers.Insert("Content-Type", "application/json");
-  _headers.Insert("X-SereneDB-AI-Function", _fn);
-  if (!endpoint.api_key.empty()) {
-    _headers.Insert("Authorization", absl::StrCat("Bearer ", endpoint.api_key));
+  _headers.Insert("X-SereneDB-AI-Function", _endpoint.fn);
+  if (!_endpoint.api_key.empty()) {
+    _headers.Insert("Authorization",
+                    absl::StrCat("Bearer ", _endpoint.api_key));
+  }
+}
+
+Requester::~Requester() {
+  if (_client) {
+    duckdb::HTTPUtil::Get(*_context.db).CloseClient(std::move(_client));
   }
 }
 
@@ -454,7 +484,7 @@ bool Requester::ReserveCall() {
   if (_throw_on_quota) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
-      ERR_MSG(_fn, ": query exceeded ", setting, " (", limit, ")"),
+      ERR_MSG(_endpoint.fn, ": query exceeded ", setting, " (", limit, ")"),
       ERR_HINT("Raise ", setting,
                " or SET sdb_ai_throw_on_quota_exceeded = "
                "false to return NULL for the remaining "
@@ -479,7 +509,7 @@ void Requester::Sleep(uint64_t ms) const {
 Response Requester::Send(std::string_view body) {
   auto& http = duckdb::HTTPUtil::Get(*_context.db);
   if (!_params) {
-    _params = http.InitializeParameters(_context, _url);
+    _params = http.InitializeParameters(_context, _endpoint.url);
     _params->retries = 0;
     _params->timeout = _timeout;
     _params->timeout_usec = 0;
@@ -493,7 +523,7 @@ Response Requester::Send(std::string_view body) {
       return {.skipped = true};
     }
     duckdb::PostRequestInfo request{
-      _url, _headers, *_params,
+      _endpoint.url, _headers, *_params,
       reinterpret_cast<duckdb::const_data_ptr_t>(body.data()), body.size()};
     request.try_request = true;
     auto result = http.Request(request, _client);
@@ -513,9 +543,10 @@ Response Requester::Send(std::string_view body) {
       }
     }
     if (IsSuccess(response.status)) {
-      if (_output_tokens) {
-        _usage->output_tokens.fetch_add(_output_tokens(response.body),
-                                        std::memory_order_relaxed);
+      if (!_endpoint.usage_key.empty()) {
+        _usage->output_tokens.fetch_add(
+          OutputTokens(response.body, _endpoint.usage_key),
+          std::memory_order_relaxed);
       }
       return response;
     }
@@ -534,12 +565,12 @@ std::optional<std::string> Requester::Accept(Response response) const {
     return std::move(response.body);
   }
   if (response.status == 0) {
-    ThrowRowError(absl::StrCat(_fn, ": request to '", _url,
+    ThrowRowError(absl::StrCat(_endpoint.fn, ": request to '", _endpoint.url,
                                "' failed: ", ReadableText(response.body)));
   }
   auto message =
-    absl::StrCat(_fn, ": '", _url, "' returned HTTP ", response.status, ": ",
-                 ProviderError(response.body));
+    absl::StrCat(_endpoint.fn, ": '", _endpoint.url, "' returned HTTP ",
+                 response.status, ": ", ProviderError(response.body));
   if (const auto code = FatalErrorCode(response.status); code != 0) {
     THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(message));
   }
@@ -568,9 +599,10 @@ void Fetch::Run() {
     }
     auto& [request, endpoint] = _requests[k];
     auto& requester = requesters[endpoint];
+    _permits.acquire();
     try {
       if (!requester) {
-        requester.emplace(_context, _endpoints[endpoint]);
+        requester.emplace(_context, *_endpoints[endpoint]);
       }
       request->response = requester->Send(request->body);
     } catch (...) {
@@ -580,6 +612,7 @@ void Fetch::Run() {
       }
       _stop.store(true, std::memory_order_relaxed);
     }
+    _permits.release();
   }
 }
 
@@ -591,14 +624,15 @@ void Fetch::Rethrow() {
 }
 
 size_t MaxConcurrentRequests(duckdb::ClientContext& context) {
-  return std::max<size_t>(1, gConcurrency.Int(context));
+  return gConcurrency.Int(context);
 }
 
 void RunWork(duckdb::ClientContext& context, Requester& requester,
              const Endpoint& endpoint, AIWork& work) {
   const auto workers = MaxConcurrentRequests(context);
+  std::counting_semaphore<> permits{static_cast<std::ptrdiff_t>(workers)};
   while (!work.requests.empty()) {
-    Fetch fetch{context, {endpoint}};
+    Fetch fetch{context, {&endpoint}, permits};
     for (auto& request : work.requests) {
       fetch.Add(request, 0);
     }
@@ -614,7 +648,7 @@ void RunWork(duckdb::ClientContext& context, Requester& requester,
 
 AILocalState::AILocalState(duckdb::ClientContext& context,
                            const AIFunctionData& bind)
-  : requester{context, bind.GetEndpoint()} {}
+  : requester{context, bind.endpoint} {}
 
 duckdb::ScalarFunction MakeAIFunction(std::string_view name,
                                       duckdb::LogicalType type,

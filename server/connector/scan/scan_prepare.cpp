@@ -84,7 +84,6 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     }
   }
   if (g.stats_barrier.Park(input)) {
-    g.metrics.parked.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
   g.stats_barrier.Wait();

@@ -699,7 +699,6 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   SDB_ASSERT(f.pk_column);
   const auto rows =
     f.index_source->Materialize(ctx, *f.pk_column, collected, output);
-  g.metrics.rows_looked_up.fetch_add(collected, std::memory_order_relaxed);
   return rows;
 }
 

@@ -140,13 +140,6 @@ class ScanBarrier {
   absl::Notification _notification;
 };
 
-struct ScanMetrics {
-  std::atomic<uint64_t> docs_visited{0};
-  std::atomic<uint64_t> rows_fetched{0};
-  std::atomic<uint64_t> rows_looked_up{0};
-  std::atomic<uint64_t> parked{0};
-};
-
 struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
@@ -276,8 +269,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     duckdb::idx_t limit = 0;
   };
   TopKState topk;
-
-  ScanMetrics metrics;
 
   duckdb::idx_t MaxThreads() const final { return workers; }
 

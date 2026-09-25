@@ -279,9 +279,7 @@ void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.unit = unit;
   l.has_unit = true;
   l.current_seg = unit.seg;
-  if (!unit.whole) {
-    ++l.rg_units;
-  }
+  l.rg_units += unit.rg_end - unit.rg_begin;
 }
 
 void Exhaust(ScanLocalState& l) { l.units_exhausted = true; }

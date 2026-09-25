@@ -201,7 +201,6 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     duckdb::VectorOperations::Copy(*l.pk_column, *pk, count, 0, appended);
   }
   appended += count;
-  g.metrics.rows_fetched.fetch_add(count, std::memory_order_relaxed);
   tmp.Reset();
 }
 
@@ -313,7 +312,6 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
       batch.Reset();
       CopyFetched(g, fetched, batch, fu.count, 0);
       const auto rows = l.index_source->Materialize(ctx, pk, fu.count, batch);
-      g.metrics.rows_looked_up.fetch_add(fu.count, std::memory_order_relaxed);
       const auto survivors = l.index_source->Survivors();
       for (duckdb::idx_t i = 0; i < rows; ++i) {
         row_answer.push_back(fu.first + static_cast<uint32_t>(survivors[i]));
@@ -423,7 +421,6 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       t.merge_barrier.Release(input);
     } else {
       if (t.merge_barrier.Park(input)) {
-        g.metrics.parked.fetch_add(1, std::memory_order_relaxed);
         return;
       }
       if (!t.merge_barrier.Released()) {

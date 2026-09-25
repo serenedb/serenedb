@@ -111,6 +111,7 @@ VACUUM (REFRESH_TABLE, ANALYZE) my_table;
 ----
 db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
 
+
 # DOCS_TEST: example_011
 statement ok
 DROP TABLE IF EXISTS docs_store;

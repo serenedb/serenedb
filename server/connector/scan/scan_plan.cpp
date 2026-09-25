@@ -40,6 +40,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -447,6 +448,20 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
+  }
+  if (bind_data.IsHnswScored()) {
+    if (state.has_lookup_filter ||
+        absl::c_any_of(state.col_filters,
+                       [](const auto& cf) { return !cf.is_score; })) {
+      irs::HnswRefuseFiltered();
+    }
+    if (!bind_data.score.top_k &&
+        bind_data.score.vector->radius == std::numeric_limits<float>::max()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("an hnsw vector index answers ORDER BY <distance> LIMIT k and "
+                "distance ranges, not a distance for every row"));
+    }
   }
 }
 

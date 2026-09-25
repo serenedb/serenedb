@@ -36,17 +36,16 @@ EXPLAIN SELECT id FROM h_idx
 ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: h_idx                           │
-│ Lookup: search                         │
-│ Score: l2_distance(vec, FLOAT[3])      │
-│ Top: 2                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: h_idx                      │
+│ Lookup: search                    │
+│ Score: l2_distance(vec, FLOAT[3]) │
+│ Top: 2                            │
+│ Projections: id                   │
+│ ~4 rows                           │
+╰───────────────────────────────────╯
+
+
+query error an hnsw vector index does not support filtered search
+SELECT id FROM h WHERE id > 1
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;

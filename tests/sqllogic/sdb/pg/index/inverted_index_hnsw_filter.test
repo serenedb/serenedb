@@ -63,14 +63,59 @@ count
 150
 
 
-# Inherited limitation, pinned deliberately: the qualifying rows (pk >= 250)
-# lie far outside the neighbourhood the graph walks for a query at 100.4, so
-# the over-fetched pool holds none of them and the answer is short of k. IVF
-# answers this exactly because it intersects postings; HNSW cannot, and
-# returning fewer rows is preferred over silently dropping the predicate.
-query
+query error an hnsw vector index does not support filtered search
 SELECT pk FROM hnsw_f_idx
   WHERE pk >= 250
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+
+
+query error an hnsw vector index does not support filtered search
+SELECT pk FROM hnsw_f_idx
+  WHERE pk IN (1, 2, 3)
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+
+
+query error an hnsw vector index does not support filtered search
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+
+
+statement ok
+CREATE TABLE hnsw_l (pk INTEGER PRIMARY KEY, emb FLOAT[8], tag INTEGER);
+
+
+statement ok
+CREATE INDEX hnsw_l_idx ON hnsw_l
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_l SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10
+  FROM range(300) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_l;
+
+
+query
+SELECT pk FROM hnsw_l_idx
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
 ----
 pk
+100
+101
+99
+
+
+query error an hnsw vector index does not support filtered search
+SELECT pk FROM hnsw_l_idx
+  WHERE tag = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+
+
+query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
+SELECT count(*) FROM (
+  SELECT pk, emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM hnsw_l_idx
+) s;

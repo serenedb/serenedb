@@ -17,7 +17,8 @@ app.kubernetes.io/name: {{ include "serenedb.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+{{- /* Only hotfix/patch versions (X.Y.Z.W) carry SemVer build metadata (X.Y.Z+W); the '+' is illegal in a k8s label, so replace it with '_'. No-op for normal versions. */ -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end -}}
 
 {{- define "serenedb.selectorLabels" -}}

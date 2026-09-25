@@ -163,8 +163,8 @@ IRS_FORCE_INLINE inline bool BytesEqual(const byte_type* a, const byte_type* b,
 }
 
 template<typename OnDelim>
-IRS_NO_INLINE size_t FindSparse(bytes_view data, bytes_view needle,
-                                size_t from, size_t since, OnDelim& on_delim) {
+IRS_NO_INLINE size_t FindSparse(bytes_view data, bytes_view needle, size_t from,
+                                size_t since, OnDelim& on_delim) {
   for (;;) {
     const size_t hit = data.find(needle, from);
     if (hit == bytes_view::npos) {

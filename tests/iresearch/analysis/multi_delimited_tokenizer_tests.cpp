@@ -609,8 +609,8 @@ TEST_F(MultiDelimitedTokenizerTests, many_single_char_delimiters_oracle) {
       delimiters.emplace_back(1, b);
     }
     auto stream = MultiDelimitedTokenizer::Make({.delimiters = delimiters});
-    const auto filler = static_cast<char>(
-      std::ranges::find(is_delim, false) - std::begin(is_delim));
+    const auto filler = static_cast<char>(std::ranges::find(is_delim, false) -
+                                          std::begin(is_delim));
     for (size_t iter = 0; iter < 40; ++iter) {
       std::string v;
       const size_t len = next() % 200;

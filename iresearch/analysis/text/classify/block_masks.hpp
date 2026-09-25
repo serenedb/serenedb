@@ -348,9 +348,8 @@ IRS_FORCE_INLINE inline Block LoadPadded(const byte_type* data,
                                          size_t size) noexcept {
   SDB_ASSERT(size < kClassifyBlock);
   if constexpr (kPageOverRead) {
-    if (size > 16 &&
-        (reinterpret_cast<uintptr_t>(data) & (kOverReadPage - 1)) <=
-          kOverReadPage - kClassifyBlock) {
+    if (size > 16 && (reinterpret_cast<uintptr_t>(data) &
+                      (kOverReadPage - 1)) <= kOverReadPage - kClassifyBlock) {
       return Load(data) &
              std::bit_cast<Block>(kLaneIndex < static_cast<uint8_t>(size));
     }

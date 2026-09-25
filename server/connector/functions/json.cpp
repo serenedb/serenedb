@@ -27,9 +27,11 @@
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -723,6 +725,23 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
       extract_string_set.AddFunction(f);
     }
     loader.RegisterFunction(extract_string_set);
+  }
+
+  for (const auto& [source_name, alias] :
+       {std::pair{"json_array", "json_build_array"},
+        std::pair{"json_object", "json_build_object"}}) {
+    auto entry = loader.TryGetFunction(duckdb::Identifier{source_name});
+    if (!entry) {
+      continue;
+    }
+    auto& source = entry->Cast<duckdb::ScalarFunctionCatalogEntry>();
+    auto functions = source.functions;
+    functions.SetName(duckdb::Identifier{alias});
+    duckdb::CreateScalarFunctionInfo info{std::move(functions)};
+    info.descriptions = source.descriptions;
+    info.alias_of = source.name;
+    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 }
 

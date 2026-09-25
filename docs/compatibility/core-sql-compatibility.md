@@ -621,9 +621,9 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_to_json | Yes |  |
 | json_array | Yes |  |
 | row_to_json | Yes |  |
-| json_build_array | No | Use `json_array()` |
+| json_build_array | Yes | Same as `json_array()` |
 | jsonb_build_array | No |  |
-| json_build_object | No | Use `json_object(key, value)` |
+| json_build_object | Yes | Same as `json_object(key, value)` |
 | jsonb_build_object | No |  |
 | json_object | Partial | Requires even arg count; SereneDB `json_object(key, value)` |
 | jsonb_object | No |  |

@@ -18,6 +18,8 @@ The following functions are used to create JSON.
 | `row_to_json(list)`            | Alias for `to_json` that only accepts `STRUCT`.                                                                                               |
 | `json_array(any, ...)`         | Create a JSON array from the values in the argument lists.                                                                                    |
 | `json_object(key, value, ...)` | Create a JSON object from `key`, `value` pairs in the argument list. Requires an even number of arguments.                                    |
+| `json_build_array(any, ...)` | Alias for `json_array`, under its PostgreSQL name. |
+| `json_build_object(key, value, ...)` | Alias for `json_object`, under its PostgreSQL name. |
 | `json_merge_patch(json, json)` | Merge two JSON documents together.                                                                                                            |
 
 Examples:

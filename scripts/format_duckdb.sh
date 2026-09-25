@@ -9,8 +9,9 @@
 # its changed-file discovery and status use the main repo's git.
 #
 # Usage:
-#   scripts/format_duckdb.sh                # format files changed vs each
-#                                             submodule's origin/HEAD
+#   scripts/format_duckdb.sh                # format files changed vs the
+#                                             commit origin/main pins for
+#                                             each submodule
 #   scripts/format_duckdb.sh --base <ref>   # format files changed vs <ref>
 #                                             (applied to every submodule)
 #   scripts/format_duckdb.sh --files f1 f2  # format an explicit list (paths
@@ -66,8 +67,9 @@ for sm in "${INTREE[@]}"; do
 	fi
 done
 
-# Empty default means "use each submodule's origin/HEAD" (duckdb_iceberg's
-# default branch is not 'main', so a single hardcoded ref wouldn't work).
+# Empty default means "the commit origin/main pins for each submodule", taken
+# from the superproject's merge base: submodules are shallow clones whose
+# origin/HEAD shares no history with the pinned commit.
 BASE_REF=""
 CHECK_ONLY=0
 STAGED=0
@@ -136,6 +138,10 @@ LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp|src/main/config
 
 # --- collect candidates per submodule, into one consolidated list ----------
 # Output paths in $FILES_TO_FORMAT are relative to $THIRD_PARTY (e.g. duckdb/src/foo.cpp)
+SUPER_BASE=""
+if [[ -z "$BASE_REF" && ${#EXPLICIT_FILES[@]} -eq 0 && "$STAGED" -eq 0 ]]; then
+	SUPER_BASE="$(git -C "$REPO_ROOT" merge-base HEAD origin/main)"
+fi
 : >"$FILES_TO_FORMAT"
 TOTAL=0
 for sm in "${ALL_DIRS[@]}"; do
@@ -160,8 +166,15 @@ for sm in "${ALL_DIRS[@]}"; do
 		fi
 	elif [[ "$STAGED" -eq 1 ]]; then
 		git -C "$sm_dir" diff --cached --name-only >"$raw"
+	elif [[ -n "$SUPER_BASE" ]]; then
+		sm_base="$(git -C "$REPO_ROOT" ls-tree "$SUPER_BASE" "third_party/$sm" | awk '{print $3}')"
+		if [[ -z "$sm_base" ]]; then
+			echo "error: origin/main's merge base does not pin third_party/$sm; pass --base" >&2
+			exit 1
+		fi
+		git -C "$sm_dir" diff --name-only "$sm_base" HEAD >"$raw"
 	else
-		git -C "$sm_dir" diff --name-only "${BASE_REF:-origin/HEAD}...HEAD" >"$raw"
+		git -C "$sm_dir" diff --name-only "${BASE_REF}...HEAD" >"$raw"
 	fi
 
 	grep -E "$EXT_RE" "$raw" 2>/dev/null |
@@ -203,7 +216,7 @@ for sm in "${ALL_DIRS[@]}"; do
 done
 
 if [[ "$TOTAL" -eq 0 ]]; then
-	echo "no files to format (base=${BASE_REF:-origin/HEAD})"
+	echo "no files to format (base=${BASE_REF:-origin/main pins})"
 	exit 0
 fi
 echo "total scope: $TOTAL file(s)"

@@ -4,8 +4,8 @@ control substitution on
 # Repeatable Read recovery tests
 #
 # 1. Crash recovery: committed vs uncommitted data (single crash)
-# 2. Crash before RocksDB commit: data must NOT survive
-# 3. Crash after RocksDB commit: data MUST survive
+# 2. Crash before the commit: data must NOT survive
+# 3. Crash after the commit: data MUST survive
 ###############################################################################
 
 
@@ -95,8 +95,8 @@ DROP TABLE IF EXISTS t_rr;
 
 
 ###############################################################################
-# 2. Crash before RocksDB commit (crash_before_search_commit)
-#    Server crashes during COMMIT, before RocksDB persists.
+# 2. Crash before the commit (crash_before_commit)
+#    Server crashes during COMMIT, before the commit is durable.
 #    Data must NOT survive recovery.
 ###############################################################################
 
@@ -112,10 +112,10 @@ connection rr_after
 statement ok
 INSERT INTO t_pre_commit VALUES (1, 10);
 
-# Arm: crash right before rocksdb commit
+# Arm: crash right before the commit
 connection rr_after
 statement ok
-SET sdb_faults = 'crash_before_search_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection rr_after
 statement ok
@@ -125,7 +125,7 @@ connection rr_after
 statement ok
 INSERT INTO t_pre_commit VALUES (2, 20);
 
-# COMMIT triggers exit(1) before RocksDB commit
+# COMMIT triggers exit(1) before the commit
 connection rr_after
 statement error connection closed
 COMMIT;
@@ -144,8 +144,8 @@ DROP TABLE t_pre_commit;
 
 
 ###############################################################################
-# 3. Crash after RocksDB commit (crash_after_search_commit)
-#    Server crashes during COMMIT, after RocksDB persists.
+# 3. Crash after the commit (crash_after_commit)
+#    Server crashes during COMMIT, after the commit is durable.
 #    Data MUST survive recovery.
 ###############################################################################
 
@@ -161,10 +161,10 @@ connection rr_pre
 statement ok
 INSERT INTO t_post_commit VALUES (1, 10);
 
-# Arm: crash right after rocksdb commit
+# Arm: crash right after the commit
 connection rr_pre
 statement ok
-SET sdb_faults = 'crash_after_search_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection rr_pre
 statement ok
@@ -174,12 +174,12 @@ connection rr_pre
 statement ok
 INSERT INTO t_post_commit VALUES (2, 20);
 
-# COMMIT triggers exit(1) after RocksDB commit
+# COMMIT triggers exit(1) after the commit
 connection rr_pre
 statement error connection closed
 COMMIT;
 
-# Reconnect and verify: key=2 MUST be present (RocksDB committed it)
+# Reconnect and verify: key=2 MUST be present (the commit was durable)
 connection rr_post
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM t_post_commit ORDER BY key;

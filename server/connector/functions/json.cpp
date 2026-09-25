@@ -374,10 +374,7 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
   auto count = args.size();
   auto ncols = args.ColumnCount();
 
-  std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
-  for (duckdb::idx_t c = 0; c < ncols; c++) {
-    args.data[c].ToUnifiedFormat(count, vdata[c]);
-  }
+  auto vdata = args.ToUnifiedFormat();
 
   auto result_data =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);

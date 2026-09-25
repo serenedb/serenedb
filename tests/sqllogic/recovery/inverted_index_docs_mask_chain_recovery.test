@@ -1,0 +1,183 @@
+control substitution on
+
+# A docs mask spanning several `.sm` files must survive a restart.
+#
+# Once a mask clears kMinChainBytes the writer stops rewriting it: the new `.sm`
+# carries only that round's patch plus an absolute `parent` link to the previous
+# one, and nothing caps how deep that goes -- only a compaction folds it back.
+# Reading the segment back walks the chain and unions the patches, and a restart
+# is the only place the walk runs against files the writer did not just produce:
+# its in-memory state is gone.
+#
+# Reaching a chain at all takes a deliberate setup. kMinChainBytes is 4096 and
+# roaring holds scattered doc ids at two bytes each, so a segment needs upwards
+# of 2048 deleted documents *and* live ones left over. Flush-sized segments are
+# far smaller than that, so every write would rebase instead of appending:
+#   - compaction_interval = 0 keeps a background compaction from folding the
+#     mask away and resetting the segment,
+#   - COMPACT_INDEX merges the flush-sized segments into one big one,
+#   - the first round deletes well over half of it, in scattered ids so roaring
+#     cannot collapse them into run containers.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dmc_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE dmc(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT);
+
+statement ok
+CREATE INDEX dmc_idx ON dmc USING inverted(id, grp, txt dmc_dict)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO dmc
+SELECT g, (g * 7919) % 100, 'row ' || g || ' alpha'
+FROM generate_series(1, 20000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+statement ok
+VACUUM (COMPACT_INDEX) dmc_idx;
+
+query
+SELECT count(*) FROM dmc_idx WHERE txt @@ ts_like('alpha');
+----
+count
+20000
+
+# Guard the setup, not just the outcome. If COMPACT_INDEX stops collapsing the
+# flush-sized segments, every later round rebases instead of appending and the
+# chain this test exists for never forms -- silently, while every count below
+# still matches.
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmc_idx')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_docs	20000
+num_live_docs	20000
+num_segments	1
+
+# 12000 deletions -- about 24KB of mask, well past kMinChainBytes -- so the
+# rounds after this one append a patch instead of rewriting the whole mask.
+statement ok
+DELETE FROM dmc WHERE grp < 60;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+statement ok
+DELETE FROM dmc WHERE grp = 60;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+statement ok
+DELETE FROM dmc WHERE grp = 61;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+statement ok
+DELETE FROM dmc WHERE grp = 62;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+query
+SELECT count(*) FROM dmc_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7400
+
+# 12600 masked docs in one segment is ~25KB of roaring, far past the 4096-byte
+# kMinChainBytes, so the rounds above appended rather than rewrote.
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmc_idx')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_docs	20000
+num_live_docs	7400
+num_segments	1
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+# Every link has to be found and unioned. A lost ancestor leaves too many live
+# docs, a mis-walked one too few.
+connection after_crash
+query ok retry 60 backoff $BACKOFF_DURATION
+SELECT count(*) FROM dmc_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7400
+
+connection after_crash
+query
+SELECT count(*) FROM dmc;
+----
+count
+7400
+
+# Index and table must agree on exactly which ids survived, both directions.
+# A lost ancestor shows up here as ids the index still reports, a mis-walked
+# one as ids it has dropped.
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dmc_idx WHERE txt @@ ts_like('alpha')
+  EXCEPT
+  SELECT id FROM dmc
+) t;
+----
+count
+0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dmc
+  EXCEPT
+  SELECT id FROM dmc_idx WHERE txt @@ ts_like('alpha')
+) t;
+----
+count
+0
+
+# Nothing any round deleted may still be live.
+connection after_crash
+query
+SELECT count(*) FROM dmc WHERE grp < 63;
+----
+count
+0
+
+# A further round lands on the chain that recovery rebuilt.
+connection after_crash
+statement ok
+DELETE FROM dmc WHERE grp = 63;
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) dmc;
+
+connection after_crash
+query
+SELECT count(*) FROM dmc_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7200

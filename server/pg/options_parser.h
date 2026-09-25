@@ -30,6 +30,7 @@
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <type_traits>
@@ -215,19 +216,6 @@ class OptionsParser {
     }
   }
 
-  void MakeOptions(const duckdb::named_parameter_map_t& options) {
-    _options.reserve(options.size());
-    for (const auto& option : options) {
-      std::string_view option_name = option.first.GetIdentifierName();
-      auto [_, emplaced] = _options.try_emplace(
-        option_name, std::make_unique<duckdb::Value>(option.second));
-      if (!emplaced) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    }
-  }
-
   void HandleHelp() {
     auto it = _options.find("help");
     if (it == _options.end()) {
@@ -266,12 +254,6 @@ class OptionsParser {
   }
 
  protected:
-  void WriteNotice(std::string msg) {
-    if (_notice) {
-      _notice(std::move(msg));
-    }
-  }
-
   std::string _operation;
   std::string _help_hint;
   std::function<void(std::string)> _notice;

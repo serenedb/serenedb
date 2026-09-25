@@ -8,11 +8,11 @@ control substitution on
 #      `.cs` (otherwise the next VACUUM would reject the segment list), and
 #      subsequent INSERTs into the same indexed table succeed.
 #
-#   2. Crash before RocksDB commit: server dies mid-COMMIT. The columnstore
+#   2. Crash before the commit: server dies mid-COMMIT. The columnstore
 #      Writer never publishes its `.cs`; recovery sees row counts == pre-INSERT
 #      and the index is queryable.
 #
-#   3. Crash after RocksDB commit: data survives, the cs file is present and
+#   3. Crash after the commit: data survives, the cs file is present and
 #      the index serves queries (including the INCLUDE'd cs columns).
 ###############################################################################
 
@@ -105,8 +105,8 @@ DROP TABLE doc_rb;
 
 
 ###############################################################################
-# 2. Crash before RocksDB commit on indexed table
-#    Server crashes during COMMIT, before RocksDB persists. Indexed data must
+# 2. Crash before the commit on indexed table
+#    Server crashes during COMMIT, before the commit is durable. Indexed data must
 #    NOT survive recovery; the index must still serve queries afterward.
 ###############################################################################
 
@@ -133,9 +133,9 @@ statement ok
 VACUUM (REFRESH_TABLE) doc_pre
 
 
-# Arm the crash: serened will exit(1) before RocksDB persists the next COMMIT.
+# Arm the crash: serened will exit(1) before the commit is durable the next COMMIT.
 statement ok
-SET sdb_faults = 'crash_before_search_commit';
+SET sdb_faults = 'crash_before_commit';
 
 
 statement ok
@@ -205,8 +205,8 @@ DROP TABLE doc_pre;
 
 
 ###############################################################################
-# 3. Crash after RocksDB commit on indexed table
-#    Server crashes during COMMIT, after RocksDB persists. Indexed data MUST
+# 3. Crash after the commit on indexed table
+#    Server crashes during COMMIT, after the commit is durable. Indexed data MUST
 #    survive recovery and remain queryable through the index.
 ###############################################################################
 
@@ -240,10 +240,10 @@ statement ok
 VACUUM (REFRESH_TABLE) doc_post
 
 
-# Arm: crash *after* RocksDB commit -- the next COMMIT persists then dies.
+# Arm: crash *after* the commit -- the next COMMIT persists then dies.
 connection pre_after
 statement ok
-SET sdb_faults = 'crash_after_search_commit';
+SET sdb_faults = 'crash_after_commit';
 
 
 connection pre_after
@@ -261,7 +261,7 @@ statement error connection closed
 COMMIT;
 
 
-# Reconnect: pk=2 MUST be present (RocksDB committed before the crash).
+# Reconnect: pk=2 MUST be present (the commit was durable before the crash).
 connection post_after
 query ok retry 20 backoff 500ms
 SELECT pk, body, label, tag FROM doc_post ORDER BY pk

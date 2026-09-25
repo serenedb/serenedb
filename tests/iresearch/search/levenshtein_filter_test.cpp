@@ -535,7 +535,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto opts = irs::tests::DefaultWriterOptions();
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   std::array<irs::Scorer::ptr, 1> order{irs::BM25::Make(irs::BM25::Options{})};

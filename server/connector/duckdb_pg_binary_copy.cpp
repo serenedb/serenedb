@@ -62,10 +62,10 @@ struct PgBinaryCopyBindData final : public duckdb::FunctionData {
   explicit PgBinaryCopyBindData(duckdb::vector<duckdb::LogicalType> types)
     : sql_types{std::move(types)} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<PgBinaryCopyBindData>(sql_types);
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     return sql_types == other.Cast<PgBinaryCopyBindData>().sql_types;
   }
 
@@ -85,19 +85,6 @@ struct PgBinaryCopyGlobalState final : public duckdb::GlobalFunctionData {
   // Committed-but-undrained bytes; drained to the handle once past a block.
   size_t pending = 0;
 };
-
-// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
-// the buffer empty for the next chunk.
-void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
-  auto chain = buffer.ReleaseChain();
-  for (auto* chunk = chain.head; chunk != nullptr; chunk = chunk->Next()) {
-    const auto data = chunk->Data(chunk->GetEnd());
-    if (!data.empty()) {
-      handle.Write(const_cast<uint8_t*>(data.data()),
-                   static_cast<duckdb::idx_t>(data.size()));
-    }
-  }
-}
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput&,
@@ -138,10 +125,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  if (auto* state = context.registered_state
-                      ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                      .get()) {
-    sdb::pg::FillContext(state->GetConnectionContext(), result->ctx);
+  if (auto* connection = GetSereneDBContextPtr(context)) {
+    sdb::pg::FillContext(*connection, result->ctx);
   }
   result->serializers.reserve(bdata.sql_types.size());
   for (const auto& type : bdata.sql_types) {

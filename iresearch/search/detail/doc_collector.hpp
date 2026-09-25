@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/queries/docs_mask_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
@@ -56,7 +57,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   queries.reserve(reader.size());
   for (auto& segment : reader) {
     queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = collector_tree.Get()}));
+      PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
   }
   collector_tree.Finish();
 

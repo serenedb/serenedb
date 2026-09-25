@@ -1,0 +1,210 @@
+# One relation namespace per schema.
+#
+# Tables and views, indexes and sequences each live in their own CatalogSet,
+# and a POSTGRES catalog links the three sets of a schema so that a name held
+# in one of them is refused in the others. The refusal is the same check
+# duckdb runs inside one set: the newest version of the name is read under the
+# catalog write lock, an uncommitted holder from another transaction is a
+# write-write conflict, a committed holder is an already-exists error.
+
+
+statement ok
+CREATE TABLE crn_t(a INTEGER)
+
+statement ok
+CREATE SEQUENCE crn_s
+
+statement ok
+CREATE INDEX crn_i ON crn_t(a)
+
+
+statement error
+CREATE INDEX crn_t ON crn_t(a)
+----
+db error: ERROR: Table with name "crn_t" already exists!
+
+
+statement error
+CREATE SEQUENCE crn_t
+----
+db error: ERROR: Table with name "crn_t" already exists!
+
+
+statement error
+CREATE TABLE crn_s(a INTEGER)
+----
+db error: ERROR: Sequence with name "crn_s" already exists!
+
+
+statement error
+CREATE VIEW crn_s AS SELECT 1 AS x
+----
+db error: ERROR: Sequence with name "crn_s" already exists!
+
+
+statement error
+CREATE TABLE crn_i(a INTEGER)
+----
+db error: ERROR: Index with name "crn_i" already exists!
+
+
+# IF NOT EXISTS skips over a holder of another kind and leaves it in place.
+statement ok
+CREATE TABLE IF NOT EXISTS crn_i(a INTEGER)
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS crn_t
+
+
+statement error
+CREATE OR REPLACE VIEW crn_i AS SELECT 1 AS x
+----
+db error: ERROR: Existing object crn_i is of type Index, trying to replace with type View
+
+
+statement error
+ALTER TABLE crn_t RENAME TO crn_s
+----
+db error: ERROR: Could not rename "crn_t" to "crn_s": another entry with this name already exists!
+
+
+statement error
+ALTER INDEX crn_i RENAME TO crn_t
+----
+db error: ERROR: Could not rename "crn_i" to "crn_t": another entry with this name already exists!
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'crn\_%' ORDER BY 1
+----
+relname	relkind
+crn_i	i
+crn_s	S
+crn_t	r
+
+
+# An uncommitted table in one transaction holds the name against an index
+# from another transaction until it ends.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TABLE crn_x(a INTEGER)
+
+
+connection s2
+statement error
+CREATE INDEX crn_x ON crn_t(a)
+----
+db error: ERROR: Catalog write-write conflict on create with "crn_x"
+
+
+# The refusal ended the statement, not the connection.
+connection s2
+query
+SELECT 1 AS ok
+----
+ok
+1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement error
+CREATE INDEX crn_x ON crn_t(a)
+----
+db error: ERROR: Table with name "crn_x" already exists!
+
+
+# A rolled back holder frees the name.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SEQUENCE crn_y
+
+
+connection s2
+statement error
+CREATE TABLE crn_y(a INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on create with "crn_y"
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+CREATE TABLE crn_y(a INTEGER)
+
+
+# A rename runs into the same holder.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SEQUENCE crn_z
+
+
+connection s2
+statement error
+ALTER TABLE crn_y RENAME TO crn_z
+----
+db error: ERROR: Catalog write-write conflict on create with "crn_z"
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement error
+ALTER TABLE crn_y RENAME TO crn_z
+----
+db error: ERROR: Could not rename "crn_y" to "crn_z": another entry with this name already exists!
+
+
+connection s2
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'crn\_%' ORDER BY 1
+----
+relname	relkind
+crn_i	i
+crn_s	S
+crn_t	r
+crn_x	r
+crn_y	r
+crn_z	S
+
+
+statement ok
+DROP TABLE crn_t CASCADE
+
+statement ok
+DROP TABLE crn_x
+
+statement ok
+DROP TABLE crn_y
+
+statement ok
+DROP SEQUENCE crn_s
+
+statement ok
+DROP SEQUENCE crn_z

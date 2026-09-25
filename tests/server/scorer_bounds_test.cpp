@@ -25,11 +25,11 @@
 #include <utility>
 #include <variant>
 
-#include "catalog/scorer_options.h"
+#include "search/scorer_options.h"
 
 namespace {
 
-using Params = sdb::catalog::ScorerOptions::Params;
+using Params = irs::ScorerOptions::Params;
 using BoundType = irs::Scorer::ScoreBoundType;
 
 // A scorer that persists per-block bounds has to agree with itself in three
@@ -40,10 +40,10 @@ using BoundType = irs::Scorer::ScoreBoundType;
 // argmax and prune away qualifying rows.
 template<typename P>
 void CheckAlternative() {
-  const sdb::catalog::ScorerOptions own{P{}};
+  const irs::ScorerOptions own{P{}};
   SCOPED_TRACE(own.Name());
 
-  auto scorer = sdb::catalog::MakeScorer(own);
+  auto scorer = sdb::search::MakeScorer(own);
   ASSERT_TRUE(scorer);
 
   const bool bounded = irs::BoundTypeOf(own) != BoundType::None;
@@ -56,7 +56,7 @@ void CheckAlternative() {
   // so nobody else may read it. Every alternative added to the variant is
   // checked here, which is the point: a new scorer cannot skip this.
   if constexpr (!std::is_same_v<P, irs::BM25::Options>) {
-    const sdb::catalog::ScorerOptions bm25_min_norm{
+    const irs::ScorerOptions bm25_min_norm{
       irs::BM25::Options{.k1 = 1.2f, .b = 0.75f}};
     ASSERT_EQ(BoundType::MinNorm, irs::BoundTypeOf(bm25_min_norm));
     EXPECT_FALSE(scorer->Compatible(bm25_min_norm));

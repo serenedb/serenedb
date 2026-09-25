@@ -30,8 +30,6 @@
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,11 +42,6 @@ class DatabaseInstance;
 namespace irs {
 
 struct SegmentMeta;
-
-struct DocsMask final {
-  ManagedBitset set;
-  uint32_t count{0};
-};
 
 class SegmentWriter final : public NormProvider, util::Noncopyable {
  private:
@@ -121,15 +114,15 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void rollback() noexcept {
     const auto batch_last_doc_id = LastDocId();
-    for (auto id = _batch_first_doc_id; id <= batch_last_doc_id; ++id) {
-      remove(id);
+    if (_batch_first_doc_id <= batch_last_doc_id) {
+      _docs_mask.AddRange(_batch_first_doc_id, batch_last_doc_id + 1);
     }
     _valid = false;
   }
 
   DocContexts& docs_context() noexcept { return _docs_context; }
 
-  [[nodiscard]] DocMap flush(IndexSegment& segment, DocsMask& docs_mask);
+  void flush(IndexSegment& segment, DocumentMask& docs_mask);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
@@ -226,7 +219,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   DocContexts _docs_context;
-  DocsMask _docs_mask;
+  DocumentMask _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;

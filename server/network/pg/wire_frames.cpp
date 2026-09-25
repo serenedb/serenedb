@@ -399,7 +399,7 @@ void WriteParameterStatus(message::Buffer& out, std::string_view name,
   w.Commit(false);
 }
 
-void WriteRowDescription(message::Buffer& out,
+void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
                          std::span<const duckdb::LogicalType> types,
                          std::span<const duckdb::Identifier> names,
                          std::span<const sdb::pg::VarFormat> formats) {
@@ -416,7 +416,7 @@ void WriteRowDescription(message::Buffer& out,
     w.Write(kNull);
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);
-    const auto type_info = sdb::pg::Logical2Pg(types[i]);
+    const auto type_info = sdb::pg::Logical2Pg(types[i], &context);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.oid);
     absl::big_endian::Store16(w.Alloc(kInt16), type_info.typlen);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.typmod);

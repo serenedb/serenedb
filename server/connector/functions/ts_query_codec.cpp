@@ -49,6 +49,18 @@
 #include "connector/functions/ts_common.hpp"
 
 namespace sdb::connector {
+
+bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
+  if (v.IsNull() || !v.type().IsNumeric() ||
+      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                          /*error_message=*/nullptr, /*strict=*/true)) {
+    return false;
+  }
+  duckdb::Value back;
+  return out.DefaultTryCastAs(v.type(), back,
+                              /*error_message=*/nullptr, /*strict=*/false) &&
+         duckdb::Value::NotDistinctFrom(back, v);
+}
 namespace {
 
 constexpr size_t kMaxStructuredNodes = 4096;
@@ -290,8 +302,6 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   return out;
 }
 
-namespace {}  // namespace
-
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
   if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
       parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {
@@ -512,8 +522,7 @@ std::optional<std::string> RenderTSQueryCall(
         if (i != 0) {
           out += ", ";
         }
-        if (absl::EqualsIgnoreCase(children[i]->GetAlias().GetIdentifierName(),
-                                   "slop")) {
+        if (children[i]->GetAlias() == "slop") {
           out += "slop := ";
         }
         out += std::move(*rendered);

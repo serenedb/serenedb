@@ -78,7 +78,7 @@ query
 SELECT nextval('clickclack_iceberg_review_no');
 ----
 nextval
-40
+8
 
 
 connection after_crash
@@ -108,7 +108,8 @@ count
 1500
 
 
-# Inserts post-recovery -- each sequence advances from where it left off.
+# Inserts post-recovery -- after a crash a sequence resumes at the last
+# persisted value plus one, so there is no gap.
 connection after_crash
 statement count 1
 INSERT INTO konstantin_iceberg_meetings (topic) VALUES ('mop_internal_referral');
@@ -119,7 +120,7 @@ query
 SELECT id FROM konstantin_iceberg_meetings WHERE topic = 'mop_internal_referral';
 ----
 id
-35
+3
 
 
 connection after_crash
@@ -134,7 +135,7 @@ SELECT id FROM vedernikoff_iceberg_proposals
   WHERE proposal = 'extended_vacation_request_to_interview_at_mop';
 ----
 id
-36
+4
 
 
 # Auto-PK table also advances cleanly.

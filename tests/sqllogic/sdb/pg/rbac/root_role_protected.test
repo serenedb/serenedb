@@ -1,0 +1,37 @@
+# The root role (postgres) is required by the database system: it owns the
+# default database and the bootstrap objects, and boot recreates a role named
+# postgres under oid kRootUser whenever none exists. A second superuser -- for
+# which postgres is neither the session nor the login role, so the usual
+# current-user guard does not apply -- is still refused when it drops or
+# renames postgres. Otherwise a rename plus a restart leaves two roles sharing
+# kRootUser, and a drop strands the owner of the postgres database until boot.
+#
+# serenedb-only: needs a real per-role password login, which the shared PG test
+# container (HBA trust) does not enforce.
+
+
+statement ok
+DROP ROLE IF EXISTS rrp_su2;
+
+
+statement ok
+CREATE ROLE rrp_su2 SUPERUSER LOGIN PASSWORD 'rrp_secret';
+
+
+connection su2 user=rrp_su2 password=rrp_secret
+statement error
+DROP ROLE postgres;
+----
+db error: ERROR: cannot drop role "postgres" because it is required by the database system
+
+
+connection su2 user=rrp_su2 password=rrp_secret
+statement error
+ALTER ROLE postgres RENAME TO admin0;
+----
+db error: ERROR: cannot rename role "postgres" because it is required by the database system
+
+
+connection default
+statement ok
+DROP ROLE rrp_su2;

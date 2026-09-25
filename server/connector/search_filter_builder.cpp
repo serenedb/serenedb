@@ -74,12 +74,14 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
 #include "query/config.h"
+#include "search/scorer_options.h"
 
 namespace magic_enum {
 
@@ -257,79 +259,68 @@ std::vector<duckdb::unique_ptr<duckdb::Expression>> MakeChildren(
   return v;
 }
 
+const duckdb::Value* TryGetModifier(const duckdb::LogicalType& type,
+                                    duckdb::LogicalTypeId modifier_type) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+    return nullptr;
+  }
+  const auto& mods = type.GetExtensionInfo()->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != modifier_type) {
+    return nullptr;
+  }
+  return &mods[0].value;
+}
+
 }  // namespace
 
 // Bind does NOT pre-resolve the tokenizer name to a live analyzer
 // because the analyzer is stateful (one tokenization stream per use)
 // and can't be shared across queries.
 std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
-  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::VARCHAR);
+  if (!mod) {
     return {};
   }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {};
-  }
-  return duckdb::StringValue::Get(mods[0].value);
+  return duckdb::StringValue::Get(*mod);
 }
 
 // Boost and tokenizer modifiers are distinguished by value type
 // (DOUBLE vs VARCHAR) so the two never alias each other.
 std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
-  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::DOUBLE);
+  if (!mod) {
     return {};
   }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::DOUBLE) {
-    return {};
-  }
-  return mods[0].value.GetValue<double>();
+  return mod->GetValue<double>();
 }
 
 // Slop modifier is an INTEGER (stored as BIGINT by the bind callback),
 // so it never aliases the DOUBLE boost or VARCHAR tokenizer modifier.
 std::optional<TSQueryMerge> TryGetMergeModifier(
   const duckdb::LogicalType& type) {
-  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::UTINYINT);
+  if (!mod) {
     return {};
   }
-  const auto& mods = type.GetExtensionInfo()->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::UTINYINT) {
-    return {};
-  }
-  return static_cast<TSQueryMerge>(mods[0].value.GetValue<uint8_t>());
+  return static_cast<TSQueryMerge>(mod->GetValue<uint8_t>());
 }
 
 std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type) {
-  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::BIGINT);
+  if (!mod) {
     return {};
   }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::BIGINT) {
-    return {};
-  }
-  return mods[0].value.GetValue<int64_t>();
+  return mod->GetValue<int64_t>();
 }
 
 std::optional<std::string> TryGetScoreModifier(
   const duckdb::LogicalType& type) {
-  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::BLOB);
+  if (!mod) {
     return {};
   }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::BLOB) {
-    return {};
-  }
-  return std::string{duckdb::StringValue::Get(mods[0].value)};
+  return std::string{duckdb::StringValue::Get(*mod)};
 }
 
 namespace {
@@ -1130,7 +1121,6 @@ absl::Status FromFunctionExpression(
     auto builtin = kBuiltinBuilder.find(name);
     if (auto builder =
           builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
-      SDB_ASSERT(args.size() == 2);
       if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
         return absl::UnimplementedError(
           absl::StrCat(func.Function().GetName().GetIdentifierName(),
@@ -1320,7 +1310,7 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
       ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
                "index."));
   }
-  auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
+  auto owned = search::MakeScorer(search::ParseScorerExpression(
     &ctx.client_context, std::string{expr}, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1342,7 +1332,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
   const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
-  if (node.GetScorer() != nullptr) {
+  if (node.GetScorer()) {
     return !irs::IsConstScoreSingleton(node.GetScorer());
   }
   for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
@@ -1732,6 +1722,14 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   return &cur->Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
+void UnwrapElementType(SearchColumnInfo& info) {
+  if (info.logical_type.id() == duckdb::LogicalTypeId::LIST) {
+    info.logical_type = duckdb::ListType::GetChildType(info.logical_type);
+  } else if (info.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    info.logical_type = duckdb::ArrayType::GetChildType(info.logical_type);
+  }
+}
+
 const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
   auto cache_it = ctx.column_cache.find(ref.Binding());
@@ -1745,11 +1743,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   if (!info) {
     return nullptr;
   }
-  if (info->logical_type.id() == duckdb::LogicalTypeId::LIST) {
-    info->logical_type = duckdb::ListType::GetChildType(info->logical_type);
-  } else if (info->logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
-    info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
-  }
+  UnwrapElementType(*info);
   return &ctx.column_cache.emplace(ref.Binding(), std::move(info.value()))
             .first->second;
 }
@@ -1763,7 +1757,7 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id));
+  return term_dict::IsNumeric(term_dict::Classify(id));
 }
 
 struct UnwrappedField {
@@ -1819,8 +1813,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  if (!catalog::term_dict::IsSupported(
-        catalog::term_dict::Classify(info->logical_type.id()))) {
+  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type.id()))) {
     return nullptr;
   }
   info->field_id = PickPerKindFieldId(*info, info->logical_type.id());
@@ -1834,7 +1827,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 bool IsFilterableType(duckdb::LogicalTypeId type_id) {
-  return catalog::term_dict::IsSupported(catalog::term_dict::Classify(type_id));
+  return term_dict::IsSupported(term_dict::Classify(type_id));
 }
 
 void ValidateFilterType(duckdb::LogicalTypeId type_id) {
@@ -1847,7 +1840,7 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
 }
 
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
+  return term_dict::IsNumeric(term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
 }
 

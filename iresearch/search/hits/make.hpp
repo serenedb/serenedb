@@ -31,6 +31,7 @@
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 namespace hits {

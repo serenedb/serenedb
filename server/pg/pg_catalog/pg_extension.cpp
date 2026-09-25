@@ -23,7 +23,7 @@
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgExtension>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgExtension>::GetTableData() {
   return {CreateColumns<PgExtension>(0), 0};
 }
 

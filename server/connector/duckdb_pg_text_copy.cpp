@@ -100,10 +100,10 @@ struct PgTextCopyBindData final : public duckdb::FunctionData {
       delim{delim},
       null_str{std::move(null_str)} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<PgTextCopyBindData>(sql_types, delim, null_str);
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<PgTextCopyBindData>();
     return sql_types == o.sql_types && delim == o.delim &&
            null_str == o.null_str;
@@ -128,19 +128,6 @@ struct PgTextCopyGlobalState final : public duckdb::GlobalFunctionData {
   // Committed-but-undrained bytes; drained to the handle once past a block.
   size_t pending = 0;
 };
-
-// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
-// the buffer empty for the next chunk.
-void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
-  auto chain = buffer.ReleaseChain();
-  for (auto* chunk = chain.head; chunk != nullptr; chunk = chunk->Next()) {
-    const auto data = chunk->Data(chunk->GetEnd());
-    if (!data.empty()) {
-      handle.Write(const_cast<uint8_t*>(data.data()),
-                   static_cast<duckdb::idx_t>(data.size()));
-    }
-  }
-}
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
@@ -554,7 +541,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     // PG accepts a missing trailing newline: a non-empty leftover partial is
     // the final row. Then keep the bridge in lock-step until the feeder's
     // CopyDone.
-    if (!g.partial.empty() && row < STANDARD_VECTOR_SIZE) {
+    if (!g.partial.empty()) {
       if (g.header_pending) {
         g.header_pending = false;  // header-only input with no trailing newline
       } else {
@@ -564,10 +551,8 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
       }
       g.partial.clear();
     }
-    if (g.partial.empty()) {
-      source.DrainToEof();
-      g.finished = true;
-    }
+    source.DrainToEof();
+    g.finished = true;
   }
 
   // SetChildCardinality (not SetCardinality): fork vectors carry their own

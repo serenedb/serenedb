@@ -156,9 +156,6 @@ Table macros as well as scalar macros defined using scalar subqueries cannot be 
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_035" />
 
-### Overloads
-
-Overloads for macro functions have to be set at creation, it is not possible to define a macro by the same name twice without first removing the first definition.
 
 ### Recursive Functions
 

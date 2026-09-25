@@ -1,0 +1,194 @@
+# Shared state moves with the head version, never with an attempt.
+#
+# A rename makes a new catalog version and, once that version is the head of
+# its chain, mutates what the versions share: a table's storage name and its
+# dependent indexes' text and dependency lists, an index's physical name, a
+# schema's shared name. A rename that loses the write-write conflict never
+# reaches that point, and a rolled-back rename hands the shared state back to
+# the restored version. A dependency created against the old name while the
+# rename is pending fails at whichever commit comes second, the way it does for
+# a DROP.
+
+
+statement ok
+CREATE SCHEMA crs;
+
+statement ok
+CREATE TABLE crs.t (id INTEGER PRIMARY KEY, v INTEGER);
+
+statement ok
+CREATE INDEX crs_t_v ON crs.t (v);
+
+statement ok
+INSERT INTO crs.t VALUES (1, 10), (2, 20);
+
+
+# A table rename that loses the conflict leaves the index on the winner's name.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER TABLE crs.t RENAME TO t2;
+
+connection s2
+statement error
+ALTER TABLE crs.t RENAME TO t3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "t"
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+query
+SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+----
+table_name	sql
+t2	CREATE INDEX crs_t_v ON crs.t2(v);
+
+connection s2
+statement ok
+INSERT INTO crs.t2 VALUES (3, 30);
+
+connection s2
+query
+SELECT id FROM crs.t2 WHERE v = 30;
+----
+id
+3
+
+
+# A rolled-back table rename hands the storage and the index back.
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE crs.t2 RENAME TO t9;
+
+query
+SELECT table_name FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+----
+table_name
+t9
+
+statement ok
+ROLLBACK;
+
+query
+SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+----
+table_name	sql
+t2	CREATE INDEX crs_t_v ON crs.t2(v);
+
+statement ok
+DROP INDEX crs.crs_t_v;
+
+statement ok
+CREATE INDEX i ON crs.t2 (v);
+
+
+# An index rename that loses the conflict leaves the physical index under the
+# winner's name; a rolled-back one hands it back.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER INDEX crs.i RENAME TO i2;
+
+connection s2
+statement error
+ALTER INDEX crs.i RENAME TO i3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "i"
+
+
+connection s1
+statement ok
+COMMIT;
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER INDEX crs.i2 RENAME TO i9;
+
+statement ok
+ROLLBACK;
+
+query
+SELECT index_name FROM duckdb_indexes() WHERE table_name = 't2';
+----
+index_name
+i2
+
+statement ok
+DROP INDEX crs.i2;
+
+statement ok
+CREATE INDEX i ON crs.t2 (v);
+
+
+# A dependency created against the old name while a rename is pending fails at
+# the second commit, in either order.
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+CREATE INDEX i4 ON crs.t2 (id, v);
+
+connection s1
+statement ok
+ALTER TABLE crs.t2 RENAME TO t5;
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "i4" has been deleted
+
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+CREATE INDEX i4 ON crs.t5 (id, v);
+
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER TABLE crs.t5 RENAME TO t6;
+
+connection s2
+statement ok
+COMMIT;
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "t5" because a dependency was created after the transaction started
+
+
+query
+SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' ORDER BY 1;
+----
+index_name
+i
+i4
+
+
+statement ok
+DROP SCHEMA crs CASCADE;

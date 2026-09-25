@@ -40,6 +40,7 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/root.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -171,7 +172,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
   }
 
   size_t count = 0;
@@ -199,7 +200,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
   }
 
   EmitResult result;
@@ -247,7 +248,7 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
     queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.Get()}));
+      irs::PrepareMasked(*filter, segment, {.collector = collector.Get()}));
   }
   collector.Finish();
 

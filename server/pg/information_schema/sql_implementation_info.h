@@ -39,7 +39,6 @@ struct SqlImplementationInfo {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData
-SystemTableSnapshot<SqlImplementationInfo>::GetTableData();
+MaterializedData SystemTableSnapshot<SqlImplementationInfo>::GetTableData();
 
 }  // namespace sdb::pg

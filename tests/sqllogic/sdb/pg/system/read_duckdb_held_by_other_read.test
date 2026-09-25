@@ -1,0 +1,46 @@
+# Two connections read the same file with read_duckdb. The first reads it
+# inside an open transaction, which keeps read_duckdb's own copy of the file
+# open after its statement; the second read must still return the rows.
+
+control substitution on
+
+statement ok
+DETACH IF EXISTS rdh;
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdh.db' AS rdh;
+
+statement ok
+CREATE OR REPLACE TABLE rdh.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO rdh.main.docs VALUES (1), (2);
+
+statement ok
+DETACH rdh;
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh.db', table_name='docs');
+----
+n
+2
+
+
+connection default
+query
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh.db', table_name='docs');
+----
+n
+2
+
+
+connection holder
+statement ok
+COMMIT;

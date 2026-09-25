@@ -1,0 +1,35 @@
+# pg_attribute lists a composite type's fields by resolving each field's type
+# oid. That resolution must not re-enter the type catalog set while the
+# pg_attribute scan is still holding it: a composite whose field is an enum
+# used to deadlock the scan, hanging every driver's \d and blocking type
+# lookups in the same schema for other sessions.
+
+
+statement ok
+CREATE TYPE pace_mood AS ENUM ('sad', 'ok', 'good');
+
+
+statement ok
+CREATE TYPE pace_person AS (name TEXT, m pace_mood);
+
+
+# The scan returns rather than hanging, and the composite's fields are listed
+# with the enum field carrying the enum type's oid.
+query
+SELECT a.attname, a.attnum,
+       a.atttypid = (SELECT oid FROM pg_type WHERE typname = 'pace_mood') AS is_mood
+FROM pg_attribute a
+WHERE a.attrelid = (SELECT oid FROM pg_type WHERE typname = 'pace_person')
+ORDER BY a.attnum;
+----
+attname	attnum	is_mood
+name	1	f
+m	2	t
+
+
+statement ok
+DROP TYPE pace_person;
+
+
+statement ok
+DROP TYPE pace_mood;

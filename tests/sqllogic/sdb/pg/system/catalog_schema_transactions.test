@@ -1,0 +1,650 @@
+# The life of a schema inside transactions, seen from more than one connection.
+#
+# CREATE SCHEMA and DROP SCHEMA are entries in the schemas CatalogSet on the
+# writer's own transaction, and the schema's contents (tables, indexes, views,
+# sequences, macros) are entries in the sets that schema owns. So a schema built
+# and filled in one transaction shows up for everybody else in one piece at
+# COMMIT, disappears without a trace at ROLLBACK, and a pending DROP keeps the
+# schema and everything in it readable for the other sessions until it commits.
+
+
+# ---------------------------------------------------------------------------
+# Build a schema with every kind of child, then roll it all back.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_a
+
+
+connection s1
+statement ok
+CREATE TABLE cst_a.t(a INTEGER PRIMARY KEY, b TEXT)
+
+
+connection s1
+statement ok
+CREATE INDEX cst_a_i ON cst_a.t(b)
+
+
+connection s1
+statement ok
+CREATE VIEW cst_a.v AS SELECT a FROM cst_a.t
+
+
+connection s1
+statement ok
+CREATE SEQUENCE cst_a.sq
+
+
+connection s1
+statement ok
+CREATE MACRO cst_a.f() AS 42
+
+
+connection s1
+statement ok
+INSERT INTO cst_a.t VALUES (1, 'x'), (2, 'y')
+
+
+connection s1
+query
+SELECT (SELECT count(*) FROM cst_a.v) AS via_view,
+       cst_a.f() AS via_macro,
+       nextval('cst_a.sq') AS via_sequence
+----
+via_view	via_macro	via_sequence
+2	42	1
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
+       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences
+----
+schemas	tables	indexes	sequences
+0	0	0	0
+
+
+connection s2
+statement error
+SELECT * FROM cst_a.t
+----
+db error: ERROR: Table with name "cst_a.t" does not exist because schema "cst_a" does not exist.
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
+       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences,
+       (SELECT count(*) FROM duckdb_functions() WHERE schema_name = 'cst_a') AS functions
+----
+schemas	tables	indexes	sequences	functions
+0	0	0	0	0
+
+
+# The rolled-back names are free again, for the schema and for its children.
+connection s1
+statement ok
+CREATE SCHEMA cst_a
+
+
+connection s1
+statement ok
+CREATE TABLE cst_a.t(a INTEGER)
+
+
+connection s1
+statement ok
+CREATE INDEX cst_a_i ON cst_a.t(a)
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_a CASCADE
+
+
+# ---------------------------------------------------------------------------
+# The same build, committed: the other session gets the whole schema at once.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_b
+
+
+connection s1
+statement ok
+CREATE TABLE cst_b.t(a INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cst_b.t VALUES (1), (2)
+
+
+connection s1
+statement ok
+CREATE VIEW cst_b.v AS SELECT a FROM cst_b.t
+
+
+connection s1
+statement ok
+CREATE SEQUENCE cst_b.sq
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_b'
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM cst_b.v) AS via_view, nextval('cst_b.sq') AS via_sequence
+----
+via_view	via_sequence
+2	1
+
+
+connection s2
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'cst_b' ORDER BY 1
+----
+table_name
+t
+v
+
+
+statement ok
+DROP SCHEMA cst_b CASCADE
+
+
+# ---------------------------------------------------------------------------
+# Created and dropped in one transaction: nobody ever sees it, and the name is
+# free right after COMMIT.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_c
+
+
+connection s1
+statement ok
+CREATE TABLE cst_c.t(a INTEGER)
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_c CASCADE
+
+
+connection s1
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_c'
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_c'
+----
+n
+0
+
+
+connection s2
+statement ok
+CREATE SCHEMA cst_c
+
+
+connection s2
+statement ok
+DROP SCHEMA cst_c
+
+
+# ---------------------------------------------------------------------------
+# A pending DROP SCHEMA CASCADE: the other session still reads and writes the
+# schema's tables, and a ROLLBACK hands everything back, index, view and
+# sequence included.
+
+
+statement ok
+CREATE SCHEMA cst_d
+
+
+statement ok
+CREATE TABLE cst_d.t(a INTEGER PRIMARY KEY, b TEXT)
+
+
+statement ok
+CREATE INDEX cst_d_i ON cst_d.t(b)
+
+
+statement ok
+CREATE VIEW cst_d.v AS SELECT a FROM cst_d.t
+
+
+statement ok
+CREATE SEQUENCE cst_d.sq
+
+
+statement ok
+INSERT INTO cst_d.t VALUES (1, 'x'), (2, 'y')
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_d CASCADE
+
+
+connection s1
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_d'
+----
+n
+0
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
+       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+----
+via_view	indexes
+2	1
+
+
+# A write into a table whose schema another transaction is dropping is refused
+# at its own commit, the way a write into a table under a pending DROP TABLE is.
+connection s2
+statement error
+INSERT INTO cst_d.t VALUES (3, 'z')
+----
+db error: ERROR: Failed to commit: Attempting to modify table t but another transaction has no changes this table
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT a FROM cst_d.t ORDER BY 1
+----
+a
+1
+2
+
+
+connection s2
+statement ok
+INSERT INTO cst_d.t VALUES (3, 'z')
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
+       nextval('cst_d.sq') AS via_sequence,
+       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+----
+via_view	via_sequence	indexes
+3	1	1
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_d CASCADE
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_d') AS schemas,
+       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_d') AS tables,
+       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes,
+       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_d') AS sequences
+----
+schemas	tables	indexes	sequences
+0	0	0	0
+
+
+# ---------------------------------------------------------------------------
+# Two sessions creating the same schema name: the second is refused while the
+# first is pending, and lands (or hits the committed schema) afterwards.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_dup
+
+
+connection s2
+statement error
+CREATE SCHEMA cst_dup
+----
+db error: ERROR: Catalog write-write conflict on create with "cst_dup"
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+CREATE SCHEMA cst_dup
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_dup2
+
+
+connection s2
+statement error
+CREATE SCHEMA cst_dup2
+----
+db error: ERROR: Catalog write-write conflict on create with "cst_dup2"
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement error
+CREATE SCHEMA cst_dup2
+----
+db error: ERROR: Schema with name "cst_dup2" already exists!
+
+
+connection s2
+statement ok
+CREATE SCHEMA IF NOT EXISTS cst_dup2
+
+
+statement ok
+DROP SCHEMA cst_dup
+
+
+statement ok
+DROP SCHEMA cst_dup2
+
+
+# ---------------------------------------------------------------------------
+# RESTRICT is judged inside the transaction: drop the table first and the
+# schema goes in the same transaction, while the other session still sees both
+# until COMMIT.
+
+
+statement ok
+CREATE SCHEMA cst_f
+
+
+statement ok
+CREATE TABLE cst_f.t(a INTEGER)
+
+
+statement error
+DROP SCHEMA cst_f
+----
+db error: ERROR: Cannot drop entry "cst_f" because there are entries that depend on it.
+table "t" depends on schema "cst_f".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TABLE cst_f.t
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_f
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM cst_f.t) AS rows_in_t,
+       (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_f') AS schemas
+----
+rows_in_t	schemas
+0	1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_f'
+----
+n
+0
+
+
+# ---------------------------------------------------------------------------
+# Drop and recreate under the same name in one transaction: the writer sees the
+# new schema, the other session the old one, and COMMIT swaps them whole.
+
+
+statement ok
+CREATE SCHEMA cst_g
+
+
+statement ok
+CREATE TABLE cst_g.old(a INTEGER)
+
+
+statement ok
+INSERT INTO cst_g.old VALUES (1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_g CASCADE
+
+
+connection s1
+statement ok
+CREATE SCHEMA cst_g
+
+
+connection s1
+statement ok
+CREATE TABLE cst_g.new(a INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cst_g.new VALUES (2)
+
+
+connection s1
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'cst_g'
+----
+table_name
+new
+
+
+connection s2
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'cst_g'
+----
+table_name
+old
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'cst_g'
+----
+table_name
+new
+
+
+connection s2
+query
+SELECT a FROM cst_g.new
+----
+a
+2
+
+
+connection s2
+statement error
+SELECT a FROM cst_g.old
+----
+db error: ERROR: Table with name old does not exist!<slt:ignore>
+
+
+statement ok
+DROP SCHEMA cst_g CASCADE
+
+
+# ---------------------------------------------------------------------------
+# A recreated schema is a new object: a new oid, not the dropped one's.
+
+
+statement ok
+CREATE SCHEMA cst_h
+
+
+statement ok
+CREATE TABLE cst_h_oid AS SELECT oid FROM pg_namespace WHERE nspname = 'cst_h'
+
+
+statement ok
+DROP SCHEMA cst_h
+
+
+statement ok
+CREATE SCHEMA cst_h
+
+
+query
+SELECT (n.oid = o.oid) AS same_oid FROM pg_namespace n, cst_h_oid o WHERE n.nspname = 'cst_h'
+----
+same_oid
+f
+
+
+statement ok
+DROP SCHEMA cst_h
+
+
+statement ok
+DROP TABLE cst_h_oid
+
+
+# ---------------------------------------------------------------------------
+# A table created in a schema whose DROP commits underneath it cannot commit:
+# the dependency on the schema is verified at COMMIT.
+
+
+statement ok
+CREATE SCHEMA cst_j
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE TABLE cst_j.t2(a INTEGER)
+
+
+connection s1
+statement ok
+DROP SCHEMA cst_j CASCADE
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "t2" has been deleted
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cst_j'
+----
+n
+0

@@ -1,0 +1,32 @@
+control substitution on
+
+# ALTER TABLE ... RENAME TO on a table of an attached ClickHouse database
+# renames the remote table.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chrnt (TYPE clickhouse);
+
+statement ok
+CREATE TABLE chrnt.default.rnt_pudge (id BIGINT PRIMARY KEY, handle VARCHAR);
+
+statement ok
+INSERT INTO chrnt.default.rnt_pudge VALUES (1, 'clickclack'), (2, 'deadinside');
+
+statement ok
+ALTER TABLE chrnt.default.rnt_pudge RENAME TO rnt_pudge_mid;
+
+query
+SELECT id, handle FROM chrnt.default.rnt_pudge_mid ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+
+statement error
+SELECT id FROM chrnt.default.rnt_pudge;
+
+statement ok
+DROP TABLE chrnt.default.rnt_pudge_mid;
+
+statement ok
+DETACH DATABASE chrnt;

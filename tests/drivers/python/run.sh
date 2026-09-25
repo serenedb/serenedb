@@ -16,7 +16,7 @@ fi
 #   1. a venv (if python3-venv is available), or
 #   2. a system-wide pip install with --break-system-packages (last resort).
 missing_module() {
-	for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf; do
+	for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf sqlalchemy; do
 		if ! python3 -c "import $mod" 2>/dev/null; then
 			echo "$mod"
 			return 0
@@ -80,7 +80,7 @@ if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
 else
 	pytest_args=(-q)
 fi
-for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api; do
+for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api test_sqlalchemy; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"

@@ -1003,8 +1003,9 @@ inline constexpr SystemMacro kExternalMacros[] = {
         (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
         ('unknown (OID=' || role_oid || ')')))"},
   {"pg_catalog", "pg_get_function_result",
-   "(function_oid) AS (SELECT format_type(prorettype, NULL) "
-   "FROM pg_catalog.pg_proc WHERE oid = function_oid)"},
+   "(function_oid) AS (SELECT format_type(__sdb_proc.prorettype, NULL) "
+   "FROM (SELECT oid AS __sdb_oid, prorettype FROM pg_catalog.pg_proc) "
+   "__sdb_proc WHERE __sdb_proc.__sdb_oid = function_oid)"},
   {"pg_catalog", "pg_get_function_arguments",
    "(function_oid) AS (SELECT string_agg("
    "  CASE WHEN proargnames IS NOT NULL "
@@ -1013,13 +1014,16 @@ inline constexpr SystemMacro kExternalMacros[] = {
    "         AND proargnames[i] <> '' "
    "       THEN proargnames[i] || ' ' ELSE '' END "
    "  || format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
-   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
-   "WHERE oid = function_oid GROUP BY proargnames)"},
+   "FROM (SELECT oid AS __sdb_oid, proargnames, proargtypes "
+   "FROM pg_catalog.pg_proc) __sdb_proc, "
+   "unnest(__sdb_proc.proargtypes) WITH ORDINALITY AS u(t, i) "
+   "WHERE __sdb_proc.__sdb_oid = function_oid GROUP BY proargnames)"},
   {"pg_catalog", "pg_get_function_arg_default", "(oid, n) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_function_identity_arguments",
    "(function_oid) AS (SELECT string_agg(format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
-   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
-   "WHERE oid = function_oid)"},
+   "FROM (SELECT oid AS __sdb_oid, proargtypes FROM pg_catalog.pg_proc) "
+   "__sdb_proc, unnest(__sdb_proc.proargtypes) WITH ORDINALITY AS u(t, i) "
+   "WHERE __sdb_proc.__sdb_oid = function_oid)"},
   {"pg_catalog", "pg_get_functiondef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_statisticsobjdef_expressions", "(oid) AS CAST(NULL AS TEXT[])"},
   {"pg_catalog", "pg_get_statisticsobjdef_columns", "(oid) AS CAST(NULL AS TEXT)"},
@@ -1048,17 +1052,23 @@ inline constexpr SystemMacro kExternalMacros[] = {
    "(oid, col) AS (SELECT d.description FROM pg_catalog.pg_description d "
    "WHERE d.objoid = oid AND d.objsubid = col)"},
   {"pg_catalog", "pg_function_is_visible",
-   "(function_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT pronamespace FROM pg_catalog.pg_proc WHERE oid = function_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(function_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_proc.pronamespace FROM "
+   "(SELECT oid AS __sdb_oid, pronamespace FROM pg_catalog.pg_proc) __sdb_proc "
+   "WHERE __sdb_proc.__sdb_oid = function_oid)) = ANY(current_schemas(true)))"},
   {"pg_catalog", "pg_table_is_visible",
-   "(table_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT relnamespace FROM pg_catalog.pg_class WHERE oid = table_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(table_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_rel.relnamespace FROM "
+   "(SELECT oid AS __sdb_oid, relnamespace FROM pg_catalog.pg_class) __sdb_rel "
+   "WHERE __sdb_rel.__sdb_oid = table_oid)) = ANY(current_schemas(true)))"},
   {"pg_catalog", "pg_type_is_visible",
-   "(type_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT typnamespace FROM pg_catalog.pg_type WHERE oid = type_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(type_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_typ.typnamespace FROM "
+   "(SELECT oid AS __sdb_oid, typnamespace FROM pg_catalog.pg_type) __sdb_typ "
+   "WHERE __sdb_typ.__sdb_oid = type_oid)) = ANY(current_schemas(true)))"},
 
   // Stub scalar functions returning 0/NULL -- PG C built-ins not yet implemented.
   // TODO(mbkkt): implement properly.

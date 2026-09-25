@@ -5,3 +5,4 @@ psycopg2-binary>=2.9
 asyncpg>=0.29
 pytest-asyncio>=0.23
 opentelemetry-proto>=1.30
+sqlalchemy>=2.0

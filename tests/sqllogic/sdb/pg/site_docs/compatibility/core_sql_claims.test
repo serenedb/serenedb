@@ -2020,16 +2020,22 @@ statement ok
 SELECT row_to_json(row(1,2));
 
 # op_json: json_build_array
-statement error
+query T
 SELECT json_build_array(1,2,3);
+----
+json_build_array
+[1,2,3]
 
 # op_json: jsonb_build_array
 statement error
 SELECT jsonb_build_array(1,2,3);
 
 # op_json: json_build_object
-statement error
+query T
 SELECT json_build_object('a',1);
+----
+json_build_object
+{"a":1}
 
 # op_json: jsonb_build_object
 statement error

@@ -250,8 +250,15 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
           entry.Filter());
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
-      cf.not_null = MakeNotNullReplacement(entry.Filter(),
-                                           bind_data.columns.types[bind_index]);
+      if (proj_idx < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj_idx];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          DecodeExtractPath(column_index, bind_data.columns.types[bind_index],
+                            cf.extract_path);
+          cf.type = column_index.GetScanType();
+        }
+      }
+      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
     }
   }
 }

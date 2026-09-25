@@ -35,6 +35,7 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -68,6 +69,8 @@ struct ColFilterSpec {
   // IS NOT NULL replacement used when the segment's statistics classify the
   // filter TRUE_OR_NULL; owned by the scan state.
   const duckdb::TableFilter* not_null = nullptr;
+  std::span<const std::string_view> extract_path;
+  const duckdb::LogicalType* extract_type = nullptr;
 };
 
 // Per-worker cache of duckdb filter-evaluation state, keyed by the pushed
@@ -138,6 +141,9 @@ class ColFilterChain {
     // DICTIONARY view over codec-owned buffers), so every use goes through
     // VectorScratch::Reset() -- never reuse it dirty. Cache-owned.
     irs::ColumnReader::VectorScratch* scratch = nullptr;
+    std::span<const std::string_view> extract_path;
+    const duckdb::LogicalType* extract_type = nullptr;
+    std::unique_ptr<irs::ExtractBinding> extract;
   };
 
   bool Empty() const noexcept { return _cols.empty(); }

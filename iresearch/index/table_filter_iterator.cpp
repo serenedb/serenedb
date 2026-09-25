@@ -82,13 +82,28 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     if (spec.is_score) {
       continue;
     }
-    const auto* reader = col_reader.Column(spec.field);
-    SDB_ASSERT(reader != nullptr,
+    const auto* column = col_reader.Column(spec.field);
+    SDB_ASSERT(column != nullptr,
                "classification resolves filters on absent columns");
-    const auto type_id = reader->Type().id();
+    const auto* reader = column;
+    std::unique_ptr<ExtractBinding> extract;
+    if (!spec.extract_path.empty()) {
+      SDB_ASSERT(spec.extract_type != nullptr);
+      reader =
+        DirectExtractLeaf(*column, spec.extract_path, *spec.extract_type);
+      if (reader == nullptr) {
+        extract = std::make_unique<ExtractBinding>();
+        extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
+                      &context);
+        reader = column;
+      }
+    }
+    const auto type_id =
+      extract ? spec.extract_type->id() : reader->Type().id();
     const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
                            type_id == duckdb::LogicalTypeId::MAP;
-    const bool nested = list_like || type_id == duckdb::LogicalTypeId::ARRAY ||
+    const bool nested = extract != nullptr || list_like ||
+                        type_id == duckdb::LogicalTypeId::ARRAY ||
                         type_id == duckdb::LogicalTypeId::STRUCT ||
                         type_id == duckdb::LogicalTypeId::UNION ||
                         type_id == duckdb::LogicalTypeId::VARIANT;
@@ -103,6 +118,9 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .nested = nested,
       .state = &states.State(context, *spec.filter),
       .scan = reader->InitScan(ctx),
+      .extract_path = spec.extract_path,
+      .extract_type = spec.extract_type,
+      .extract = std::move(extract),
     });
   }
 }
@@ -112,7 +130,7 @@ bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
     // A children-backed column filters on a compact decode whose scan state
     // ends past the window -- it cannot double as the slot's materialization;
     // the caller scans it as a plain projected column instead.
-    if (c.field == field && !c.nested) {
+    if (c.field == field && !c.nested && c.extract_path.empty()) {
       c.output_slots.push_back(slot);
       return true;
     }
@@ -126,7 +144,8 @@ void ColFilterChain::FinishBind() {
   // evaluate the predicate.
   for (auto& c : _cols) {
     if (c.output_slots.empty()) {
-      c.scratch = &_states->Scratch(*c.filter, c.reader->Type());
+      c.scratch = &_states->Scratch(
+        *c.filter, c.extract ? *c.extract_type : c.reader->Type());
     }
   }
   // Reordering must not evaluate a throwing expression on rows an earlier
@@ -195,7 +214,9 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       if (f.list_like) {
         duckdb::ListVector::SetListSize(scratch, 0);
       }
-      if (span <= STANDARD_VECTOR_SIZE) {
+      if (f.extract) {
+        f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
+      } else if (span <= STANDARD_VECTOR_SIZE) {
         f.reader->GatherDense(f.scan, anchor, sel, survivors, span, scratch);
       } else {
         f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
@@ -381,6 +402,10 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, uint64_t* mask,
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   for (auto& f : _cols) {
     f.scan = f.reader->InitScan(ctx);
+    if (f.extract) {
+      f.extract->Bind(*f.reader, ctx, f.extract_path, *f.extract_type,
+                      _context);
+    }
   }
 }
 

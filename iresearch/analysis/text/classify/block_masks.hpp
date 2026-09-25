@@ -175,6 +175,89 @@ IRS_FORCE_INLINE inline uint32_t ClassifyNibbleBlock(
 #endif
 }
 
+struct NibbleClasses {
+  static constexpr size_t kMaxRows = 8;
+  static constexpr size_t kClasses = 2;
+
+  IRS_FORCE_INLINE constexpr void Add(byte_type b, size_t cls) noexcept {
+    const auto row = static_cast<size_t>(b >> 4);
+    auto& bit = row_bits[cls][row];
+    if (bit == 0) {
+      if (rows == kMaxRows) {
+        overflow = true;
+        return;
+      }
+      bit = static_cast<byte_type>(1U << rows++);
+      hi[row] |= bit;
+      masks[cls] |= bit;
+    }
+    lo[b & 0x0F] |= bit;
+  }
+
+  constexpr bool Blockable() const noexcept { return !overflow; }
+
+  alignas(16) std::array<byte_type, 16> lo{};
+  alignas(16) std::array<byte_type, 16> hi{};
+  std::array<byte_type, kClasses> masks{};
+  std::array<std::array<byte_type, 16>, kClasses> row_bits{};
+  size_t rows = 0;
+  bool overflow = false;
+};
+
+struct ClassMasks {
+  uint32_t first;
+  uint32_t second;
+};
+
+IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
+  const byte_type* block, const NibbleClasses& set) noexcept {
+  SDB_ASSERT(set.Blockable());
+#if defined(__AVX2__)
+  const auto lo = _mm256_broadcastsi128_si256(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(set.lo.data())));
+  const auto hi = _mm256_broadcastsi128_si256(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data())));
+  const auto nibble = _mm256_set1_epi8(0x0F);
+  const auto bytes =
+    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block));
+  const auto classes = _mm256_and_si256(
+    _mm256_shuffle_epi8(lo, _mm256_and_si256(bytes, nibble)),
+    _mm256_shuffle_epi8(
+      hi, _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibble)));
+  const auto miss = [&](byte_type mask) IRS_FORCE_INLINE {
+    return static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(
+      _mm256_and_si256(classes, _mm256_set1_epi8(static_cast<char>(mask))),
+      _mm256_setzero_si256())));
+  };
+  return {~miss(set.masks[0]), ~miss(set.masks[1])};
+#else
+  const auto lo =
+    _mm_load_si128(reinterpret_cast<const __m128i*>(set.lo.data()));
+  const auto hi =
+    _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data()));
+  const auto nibble = _mm_set1_epi8(0x0F);
+  ClassMasks out{0, 0};
+  for (size_t half = 0; half < kClassifyBlock; half += sizeof(__m128i)) {
+    const auto bytes =
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + half));
+    const auto classes =
+      _mm_and_si128(_mm_shuffle_epi8(lo, _mm_and_si128(bytes, nibble)),
+                    _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(bytes, 4),
+                                                       nibble)));
+    const auto hit = [&](byte_type mask) IRS_FORCE_INLINE {
+      return (~static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(
+                _mm_and_si128(classes, _mm_set1_epi8(static_cast<char>(mask))),
+                _mm_setzero_si128()))) &
+              0xFFFFU)
+             << half;
+    };
+    out.first |= hit(set.masks[0]);
+    out.second |= hit(set.masks[1]);
+  }
+  return out;
+#endif
+}
+
 IRS_FORCE_INLINE inline bool IsAsciiShort(const char* data,
                                           size_t size) noexcept {
   SDB_ASSERT(size <= 16);

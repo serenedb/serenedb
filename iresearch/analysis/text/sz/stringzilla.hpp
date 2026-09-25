@@ -69,15 +69,37 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
 #endif
 }
 
-inline const char* FindDenormalized(const char* text, size_t length,
-                                    sz_normal_form_t form) noexcept {
-#ifdef __x86_64__
-  return sz_utf8_find_denormalized_haswell(text, length, form);
-#elif defined(__aarch64__)
-  return sz_utf8_find_denormalized_neon(text, length, form);
-#else
-  return sz_utf8_find_denormalized_serial(text, length, form);
-#endif
+[[gnu::noinline]] inline bool SegmentDenormalized(
+  const char* segment, size_t length, sz_normal_form_t form) noexcept {
+  const auto* begin = reinterpret_cast<const sz_u8_t*>(segment);
+  const auto* end = begin + length;
+  if (form == sz_normal_form_nfc_k || form == sz_normal_form_nfkc_k) {
+    sz_rune_t starter;
+    const auto starter_length =
+      sz_rune_decode(segment, segment + length, &starter);
+    sz_rune_t next;
+    if (starter_length != sz_rune_invalid_k && starter_length < length &&
+        sz_rune_decode(segment + starter_length, segment + length, &next) !=
+          sz_rune_invalid_k &&
+        sz_utf8_norm_lookup_(starter).canonical_combining_class == 0 &&
+        sz_utf8_norm_compose_pair_(starter, next) != 0) {
+      return true;
+    }
+  }
+  const auto* position = begin;
+  sz_u8_t ccc = 0;
+  if (sz_utf8_norm_verify_block_(&position, end, end,
+                                 sz_utf8_norm_form_flag_(form),
+                                 &ccc) == nullptr) {
+    return false;
+  }
+  sz_utf8_norm_out_t out{.dst = nullptr,
+                         .cmp = begin,
+                         .cmp_end = end,
+                         .written = 0,
+                         .matches = sz_true_k};
+  sz_utf8_norm_run_(segment, length, form, &out);
+  return !out.matches || out.cmp != end;
 }
 
 inline constexpr size_t kFoldGrowth = 3;

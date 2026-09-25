@@ -229,6 +229,51 @@ TEST(norm_stringzilla_test, classify_nfkc_and_strip_safe_conformance) {
   CheckClassifyAndStripSafe<sz_normal_form_nfkc_k>();
 }
 
+template<sz_normal_form_t Form>
+void CheckQuickCheckEveryCodepoint() {
+  constexpr std::string_view kAcute = "\xCC\x81";
+  size_t failures = 0;
+  std::string text;
+  for (uint32_t cp = 0; cp < 0x110000 && failures <= 20; ++cp) {
+    if (cp >= 0xD800 && cp <= 0xDFFF) {
+      continue;
+    }
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    const std::string_view c{reinterpret_cast<const char*>(buf), len};
+    const auto check = [&](std::string_view prefix, std::string_view suffix) {
+      text.assign(prefix);
+      text.append(c);
+      text.append(suffix);
+      if (IsNormalized(text, Form) ==
+          irs::analysis::normalize::Denormalized<Form>(text.data(),
+                                                       text.size())) {
+        ++failures;
+        EXPECT_TRUE(false) << "cp: " << std::hex << cp << " size: " << std::dec
+                           << text.size();
+      }
+    };
+    check({}, {});
+    check("e", {});
+    check({}, kAcute);
+    check("e", kAcute);
+    for (const size_t pad : {29, 30, 31, 61}) {
+      const std::string before(pad, '.');
+      check(before, std::string(40, '.'));
+      check(before, std::string(kAcute) + std::string(40, '.'));
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+TEST(norm_stringzilla_test, quick_check_nfc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfc_k>();
+}
+
+TEST(norm_stringzilla_test, quick_check_nfkc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfkc_k>();
+}
+
 TEST(norm_stringzilla_test, simd_backends_match_serial) {
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);

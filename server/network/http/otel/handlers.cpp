@@ -25,24 +25,30 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
+#include <zlib.h>
 
+#include <algorithm>
 #include <array>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <memory>
 #include <protozero/pbf_writer.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
+#include "network/pg/wire_frames.h"
 #include "otel/model.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
-#include "pg/connection_context.h"
+#include "pg/sql_utils.h"
 
 // Endpoint paths, response shapes and status codes follow the OTLP/HTTP spec:
 // https://opentelemetry.io/docs/specs/otlp/#otlphttp
@@ -61,8 +67,6 @@ using network::http::FlattenBody;
 using network::http::HttpResponseWriter;
 using network::http::HttpStatus;
 using network::http::kJsonContentType;
-using network::http::SqlIdentifier;
-using network::http::SqlLiteral;
 
 namespace {
 
@@ -73,6 +77,7 @@ inline constexpr std::string_view kProtobufContentType =
 // https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
 inline constexpr int32_t kCodeInvalidArgument = 3;
 inline constexpr int32_t kCodeInternal = 13;
+inline constexpr int32_t kCodeUnavailable = 14;
 
 // google/rpc/status.proto is not vendored -- it is googleapis, not protobuf --
 // and the message is two fields, so it is written directly:
@@ -154,37 +159,193 @@ bool IsProtobufRequest(const HttpRequest& request) {
 }
 
 struct InsertOutcome {
-  bool ok = false;
-  bool missing_table = false;
+  HttpStatus status = HttpStatus::Ok;
+  int32_t code = 0;
   std::string error;
 };
 
-yaclib::Task<InsertOutcome> RunInsert(RequestContext& ctx, std::string sql) {
-  auto result = co_await ctx.RunQuery(std::move(sql), /*writes=*/true);
-  if (!result->HasError()) {
-    co_return InsertOutcome{.ok = true};
+// https://opentelemetry.io/docs/specs/otlp/#failures-1
+InsertOutcome Failed(const duckdb::ErrorData& error) {
+  auto sql = network::pg::DuckErrorToSqlData(error);
+  if (sql.errcode == ERRCODE_UNDEFINED_TABLE) {
+    return {HttpStatus::InternalError, kCodeInternal,
+            absl::StrCat("the OpenTelemetry schema is missing: ", sql.errmsg)};
   }
-  const auto message = result->GetError();
-  const bool missing = message.find("does not exist") != std::string::npos;
-  co_return InsertOutcome{
-    .ok = false, .missing_table = missing, .error = message};
+  if (sql.errcode == ERRCODE_INVALID_TABLE_DEFINITION) {
+    return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
+  }
+  char state[pg::kSqlStateSize];
+  pg::UnpackSqlState(state, sql.errcode);
+  const std::string_view sql_class{state, 2};
+  if (sql_class == "22" || sql_class == "23") {
+    return {HttpStatus::BadRequest, kCodeInvalidArgument,
+            std::move(sql.errmsg)};
+  }
+  if (sql_class == "40" || sql_class == "53" || sql_class == "57" ||
+      sql_class == "58") {
+    return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
+            std::move(sql.errmsg)};
+  }
+  return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
 }
 
-std::string InsertSql(std::string_view table, std::string_view function,
-                      std::string_view body, bool protobuf) {
-  return absl::StrCat("INSERT INTO ", SqlIdentifier(connector::kOtelSchema),
-                      ".", SqlIdentifier(table), " SELECT * FROM ", function,
-                      "(", SqlLiteral(body), ", ",
-                      protobuf ? "'protobuf'" : "'json'", ")");
+template<typename Signal>
+yaclib::Task<InsertOutcome> RunSourceInsert(
+  RequestContext& ctx, size_t target, const typename Signal::Request& request) {
+  using Box = connector::OtelRequestBox<typename Signal::Request>;
+  auto& entry = ctx.PreparedSlot(Signal::kTargets[target]);
+  auto& context = *ctx.Connection().context;
+  if (entry.statement != nullptr) {
+    bool stale = false;
+    context.RunFunctionInTransaction(
+      [&] { stale = entry.statement->data->RequireRebind(context, nullptr); });
+    if (stale) {
+      entry.statement.reset();
+    }
+  }
+  if (entry.statement == nullptr) {
+    auto box = duckdb::make_shared_ptr<Box>();
+    auto statement = ctx.Connection().Prepare(Signal::Insert(target, box));
+    if (statement->HasError()) {
+      // Not cached: the schema may appear later.
+      co_return Failed(statement->GetErrorObject());
+    }
+    entry.statement = std::move(statement);
+    entry.info = std::move(box);
+  }
+  auto& box = static_cast<Box&>(*entry.info);
+  box.request = &request;
+  const absl::Cleanup clear = [&] { box.request = nullptr; };
+  auto result = co_await ctx.RunPrepared(*entry.statement);
+  if (!result->HasError()) {
+    co_return InsertOutcome{};
+  }
+  co_return Failed(result->GetErrorObject());
 }
 
+struct LogsSignal {
+  using Request = ExportLogsRequest;
+  static constexpr std::string_view kRejectedField = "rejectedLogRecords";
+  static constexpr std::array<std::string_view, 1> kTargets{
+    connector::kOtelLogsTable};
+
+  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+    if (protobuf) {
+      DecodeLogsRequest(raw, out);
+    } else {
+      ParseLogsRequest(raw, out, /*padded=*/true);
+    }
+  }
+
+  static auto Insert(size_t, duckdb::shared_ptr<connector::OtelLogsBox> box) {
+    return connector::OtelLogsInsert(std::move(box));
+  }
+};
+
+struct TracesSignal {
+  using Request = ExportTracesRequest;
+  static constexpr std::string_view kRejectedField = "rejectedSpans";
+  static constexpr std::array<std::string_view, 1> kTargets{
+    connector::kOtelTracesTable};
+
+  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+    if (protobuf) {
+      DecodeTracesRequest(raw, out);
+    } else {
+      ParseTracesRequest(raw, out, /*padded=*/true);
+    }
+  }
+
+  static auto Insert(size_t, duckdb::shared_ptr<connector::OtelTracesBox> box) {
+    return connector::OtelTracesInsert(std::move(box));
+  }
+};
+
+// One payload feeds five tables; it is decoded once and each table's insert
+// reads it.
+struct MetricsSignal {
+  using Request = ExportMetricsRequest;
+  static constexpr std::string_view kRejectedField = "rejectedDataPoints";
+  static constexpr auto& kTargets = connector::kOtelMetricTables;
+
+  static void Decode(std::string_view raw, bool protobuf, Request& out) {
+    if (protobuf) {
+      DecodeMetricsRequest(raw, out);
+    } else {
+      ParseMetricsRequest(raw, out, /*padded=*/true);
+    }
+  }
+
+  static auto Insert(size_t target,
+                     duckdb::shared_ptr<connector::OtelMetricsBox> box) {
+    return connector::OtelMetricsInsert(target, std::move(box));
+  }
+};
+
+// A decompressed request may not exceed this: a few KB of gzip can inflate to
+// gigabytes.
+inline constexpr size_t kMaxInflatedBytes = size_t{256} << 20;
+
+// Inflates a gzip body straight from the receive chunks into a buffer that
+// ends with kJsonPadding zero bytes, like FlattenBody's. Empty on failure,
+// with `error` set.
+// https://opentelemetry.io/docs/specs/otlp/#otlphttp-request
+std::string InflateGzip(const message::SequenceView& body, std::string& error) {
+  z_stream stream{};
+  // 16 + MAX_WBITS: a gzip wrapper, not raw deflate or zlib.
+  if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) {
+    error = "gzip: cannot initialize the decoder";
+    return {};
+  }
+  const absl::Cleanup end = [&] { inflateEnd(&stream); };
+  std::string out;
+  size_t size = 0;
+  int rc = Z_OK;
+  for (const auto chunk : body) {
+    stream.next_in =
+      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(chunk.data()));
+    stream.avail_in = static_cast<uInt>(chunk.size());
+    while (stream.avail_in != 0 && rc != Z_STREAM_END) {
+      if (out.size() - size < 64 * 1024) {
+        out.resize(std::max<size_t>(out.size() * 2, 1 << 20));
+      }
+      stream.next_out = reinterpret_cast<Bytef*>(out.data() + size);
+      stream.avail_out = static_cast<uInt>(out.size() - size);
+      rc = inflate(&stream, Z_NO_FLUSH);
+      size = out.size() - stream.avail_out;
+      if (rc != Z_OK && rc != Z_STREAM_END) {
+        error = absl::StrCat("gzip: ", stream.msg ? stream.msg : zError(rc));
+        return {};
+      }
+      if (size > kMaxInflatedBytes) {
+        error = absl::StrCat("gzip: decompressed body exceeds ",
+                             kMaxInflatedBytes, " bytes");
+        return {};
+      }
+    }
+  }
+  if (rc != Z_STREAM_END) {
+    error = "gzip: truncated body";
+    return {};
+  }
+  out.resize(size);
+  out.append(kJsonPadding, '\0');
+  return out;
+}
+
+// Answers a failed insert; false when there is nothing to answer.
+bool WriteFailure(HttpResponseWriter& writer, const InsertOutcome& outcome,
+                  bool protobuf) {
+  if (outcome.status == HttpStatus::Ok) {
+    return false;
+  }
+  WriteStatus(writer, outcome.status, outcome.code, outcome.error, protobuf);
+  return true;
+}
+
+template<typename Signal>
 class ExportHandler final : public HttpHandler {
  public:
-  ExportHandler(
-    std::span<const std::pair<std::string_view, std::string_view>> targets,
-    std::string_view rejected_field)
-    : _targets{targets}, _rejected_field{rejected_field} {}
-
   yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
                         HttpResponseWriter& writer) override {
     const bool protobuf = IsProtobufRequest(request);
@@ -195,103 +356,68 @@ class ExportHandler final : public HttpHandler {
                   /*protobuf=*/false);
       co_return {};
     }
-    // TODO(mkornaukhov) content encoding
-    if (!request.Header(HttpHeader::ContentEncoding).empty()) {
+    const auto encoding = request.Header(HttpHeader::ContentEncoding);
+    const bool gzip = absl::EqualsIgnoreCase(encoding, "gzip");
+    if (!encoding.empty() && !gzip &&
+        !absl::EqualsIgnoreCase(encoding, "identity")) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                  absl::StrCat("unsupported Content-Encoding: ",
-                               request.Header(HttpHeader::ContentEncoding)),
+                  absl::StrCat("unsupported Content-Encoding: ", encoding,
+                               "; expected gzip"),
                   protobuf);
       co_return {};
     }
 
-    const auto raw = FlattenBody(request.body);
+    // One copy of the body, padded so the JSON parser reads it in place. The
+    // decoded model's text points into it (protobuf) or into the parser.
+    std::string buffer;
+    if (gzip) {
+      std::string error;
+      buffer = InflateGzip(request.body, error);
+      if (buffer.empty()) {
+        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument, error,
+                    protobuf);
+        co_return {};
+      }
+    } else {
+      buffer = FlattenBody(request.body, kJsonPadding);
+    }
+    const std::string_view raw{buffer.data(), buffer.size() - kJsonPadding};
     if (raw.empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   "empty request body", protobuf);
       co_return {};
     }
 
-    // Metrics fan out into five tables; decoding per table would walk the
-    // payload five times, so it is decoded once and left on the connection.
-    DecodedMetrics decoded;
-    auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
-    const absl::Cleanup clear_metrics = [&] {
-      sdb_ctx.SetOtelMetrics(nullptr);
-    };
-    std::string body = protobuf ? absl::Base64Escape(raw) : raw;
-    if (_targets.size() > 1) {
-      try {
-        if (protobuf) {
-          DecodeMetricsRequest(raw, decoded.request);
-        } else {
-          ParseMetricsRequest(raw, decoded.request);
-        }
-      } catch (const std::exception& error) {
-        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                    error.what(), protobuf);
-        co_return {};
-      }
-      sdb_ctx.SetOtelMetrics(&decoded);
-      body.clear();
+    typename Signal::Request decoded;
+    try {
+      Signal::Decode(raw, protobuf, decoded);
+    } catch (const std::exception& error) {
+      WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
+                  error.what(), protobuf);
+      co_return {};
     }
-
-    for (const auto& [table, function] : _targets) {
+    for (size_t target = 0; target < Signal::kTargets.size(); ++target) {
       const auto outcome =
-        co_await RunInsert(ctx, InsertSql(table, function, body, protobuf));
-      if (outcome.missing_table) {
-        WriteStatus(
-          writer, HttpStatus::InternalError, kCodeInternal,
-          absl::StrCat("the OpenTelemetry schema is missing: ", outcome.error),
-          protobuf);
-        co_return {};
-      }
-      if (!outcome.ok) {
-        WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
-                    outcome.error, protobuf);
+        co_await RunSourceInsert<Signal>(ctx, target, decoded);
+      if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }
     }
     // TODO(mkornaukhov) implement rejected field
-    WriteExportResponse(writer, _rejected_field, 0, {}, protobuf);
+    WriteExportResponse(writer, Signal::kRejectedField, 0, {}, protobuf);
     co_return {};
   }
-
- private:
-  std::span<const std::pair<std::string_view, std::string_view>> _targets;
-  std::string_view _rejected_field;
 };
-
-constexpr std::array<std::pair<std::string_view, std::string_view>, 1>
-  kLogTargets{{
-    {connector::kOtelLogsTable, "otel_parse_logs"},
-  }};
-
-constexpr std::array<std::pair<std::string_view, std::string_view>, 1>
-  kTraceTargets{{
-    {connector::kOtelTracesTable, "otel_parse_traces"},
-  }};
-
-constexpr std::array<std::pair<std::string_view, std::string_view>, 5>
-  kMetricTargets{{
-    {connector::kOtelMetricTables[0], "otel_parse_metrics_gauge"},
-    {connector::kOtelMetricTables[1], "otel_parse_metrics_sum"},
-    {connector::kOtelMetricTables[2], "otel_parse_metrics_histogram"},
-    {connector::kOtelMetricTables[3],
-     "otel_parse_metrics_exponential_histogram"},
-    {connector::kOtelMetricTables[4], "otel_parse_metrics_summary"},
-  }};
 
 }  // namespace
 
 void RegisterHandlers(HttpRouter& router) {
-  router.Add(
-    HttpMethod::Post, "/v1/logs",
-    std::make_unique<ExportHandler>(kLogTargets, "rejectedLogRecords"));
+  router.Add(HttpMethod::Post, "/v1/logs",
+             std::make_unique<ExportHandler<LogsSignal>>());
   router.Add(HttpMethod::Post, "/v1/traces",
-             std::make_unique<ExportHandler>(kTraceTargets, "rejectedSpans"));
-  router.Add(
-    HttpMethod::Post, "/v1/metrics",
-    std::make_unique<ExportHandler>(kMetricTargets, "rejectedDataPoints"));
+             std::make_unique<ExportHandler<TracesSignal>>());
+  router.Add(HttpMethod::Post, "/v1/metrics",
+             std::make_unique<ExportHandler<MetricsSignal>>());
 }
 
 }  // namespace sdb::otel

@@ -239,3 +239,6 @@
 [submodule "third_party/protozero"]
 	path = third_party/protozero
 	url = https://github.com/serenedb/protozero.git
+[submodule "third_party/zxc"]
+	path = third_party/zxc
+	url = https://github.com/serenedb/zxc.git

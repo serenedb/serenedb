@@ -8,13 +8,16 @@ wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 from __future__ import annotations
 
 import base64
+import gzip
 import http.client
 import json
 import os
 import pathlib
 import socket
 
+import psycopg
 import pytest
+from spec_loader import conn_kwargs
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
@@ -129,9 +132,27 @@ def test_unknown_content_type_is_rejected(conn):
     assert "Content-Type" in json.loads(payload)["message"]
 
 
-def test_content_encoding_is_rejected(conn):
+@pytest.mark.parametrize("signal,fixture", SIGNALS)
+def test_gzip_export_accepts_conformance_fixture(conn, signal, fixture):
+    body = gzip.compress((FIXTURES / fixture).read_bytes())
     status, payload = _post(
-        conn, "/v1/logs", b"{}", headers={"Content-Encoding": "gzip"}
+        conn, f"/v1/{signal}", body, headers={"Content-Encoding": "gzip"}
+    )
+    assert status == 200, payload
+    assert json.loads(payload) == {}
+
+
+def test_corrupt_gzip_is_rejected(conn):
+    status, payload = _post(
+        conn, "/v1/logs", b"not gzip", headers={"Content-Encoding": "gzip"}
+    )
+    assert status == 400, payload
+    assert "gzip" in json.loads(payload)["message"]
+
+
+def test_unknown_content_encoding_is_rejected(conn):
+    status, payload = _post(
+        conn, "/v1/logs", b"{}", headers={"Content-Encoding": "br"}
     )
     assert status == 400, payload
     assert "Content-Encoding" in json.loads(payload)["message"]
@@ -153,3 +174,54 @@ def test_get_is_not_routed(conn):
     response = conn.getresponse()
     response.read()
     assert response.status == 404
+
+
+def _logs_ddl() -> list[str]:
+    sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+    return [
+        statement
+        for statement in sql.split(";")
+        if "otel_logs (" in statement or "ON otel_logs " in statement
+    ]
+
+
+def test_mistyped_schema_is_rejected(conn):
+    body = (FIXTURES / "logs/basic.json").read_bytes()
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute("DROP TABLE otel_logs")
+        pg.execute(
+            'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
+            "WITH (storage = 'search')"
+        )
+        try:
+            status, payload = _post(conn, "/v1/logs", body)
+            assert status == 500, payload
+            message = json.loads(payload)["message"]
+            assert "invalid OpenTelemetry schema" in message, message
+            assert '"timestamp"' in message, message
+        finally:
+            pg.execute("DROP TABLE otel_logs")
+            for statement in _logs_ddl():
+                pg.execute(statement)
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
+
+
+def test_dropped_table_is_reported_missing(conn):
+    body = (FIXTURES / "logs/basic.json").read_bytes()
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute("DROP TABLE otel_logs")
+        try:
+            status, payload = _post(conn, "/v1/logs", body)
+            assert status == 500, payload
+            message = json.loads(payload)["message"]
+            assert "schema is missing" in message, message
+        finally:
+            for statement in _logs_ddl():
+                pg.execute(statement)
+    status, payload = _post(conn, "/v1/logs", body)
+    assert status == 200, payload

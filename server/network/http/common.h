@@ -44,6 +44,7 @@ enum class HttpStatus : int {
   RequestTimeout = 408,
   Conflict = 409,
   ContentTooLarge = 413,
+  UnsupportedMediaType = 415,
   ExpectationFailed = 417,
   TooManyRequests = 429,
   RequestHeaderFieldsTooLarge = 431,
@@ -66,6 +67,7 @@ std::string SqlIdentifier(std::string_view name);
 
 // Flattens a request-body view (chunks pinned in the recv channel) into one
 // string for parsers that need contiguous bytes (simdjson padded input).
-std::string FlattenBody(const message::SequenceView& body);
+// `padding` zero bytes follow the body in the returned string.
+std::string FlattenBody(const message::SequenceView& body, size_t padding = 0);
 
 }  // namespace sdb::network::http

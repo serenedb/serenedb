@@ -34,6 +34,8 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -223,7 +225,36 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
+      co_return co_await Drive(
+        conn.PendingQuery(sql, /*allow_stream_result=*/false));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+        duckdb::ErrorData{ex});
+    }
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunPrepared(
+    duckdb::PreparedStatement& statement) final {
+    try {
+      duckdb::vector<duckdb::Value> params;
+      co_return co_await Drive(
+        statement.PendingQuery(params, /*allow_stream_result=*/false));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+        duckdb::ErrorData{ex});
+    }
+  }
+
+  PreparedEntry& PreparedSlot(std::string_view key) final {
+    return _prepared[key];
+  }
+
+  std::string_view User() const final { return _user; }
+
+ private:
+  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> Drive(
+    duckdb::unique_ptr<duckdb::PendingQueryResult> pending) {
+    try {
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.
 #ifdef SDB_DEV
@@ -267,9 +298,6 @@ class HttpSession final
     }
   }
 
-  std::string_view User() const final { return _user; }
-
- private:
   using Transport<Kind, HttpSession<Kind>>::_socket;
   using Transport<Kind, HttpSession<Kind>>::_ioexec;
   using Transport<Kind, HttpSession<Kind>>::_recv;
@@ -333,6 +361,9 @@ class HttpSession final
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  // Statements prepared on _conn; declared after it so they are destroyed
+  // first.
+  irs::containers::FlatHashMap<std::string, PreparedEntry> _prepared;
   std::string _user;
 };
 
@@ -535,6 +566,24 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
+      const auto negotiated = http::NegotiateContentCoding(
+        request.Header(HttpHeader::AcceptEncoding));
+      switch (negotiated.acceptance) {
+        case http::Acceptance::Ok:
+          if (negotiated.coding != nullptr) {
+            writer.SetContentCoding(*negotiated.coding);
+          }
+          break;
+        case http::Acceptance::Malformed:
+          writer.Error(http::HttpStatus::BadRequest, "bad_accept_encoding");
+          co_await DrainSendOnTask();
+          continue;
+        case http::Acceptance::NotAcceptable:
+          writer.Error(http::HttpStatus::UnsupportedMediaType,
+                       "no_acceptable_content_coding");
+          co_await DrainSendOnTask();
+          continue;
+      }
 
       if (_max_conn != 0 && _active &&
           _active->load(std::memory_order_relaxed) > _max_conn) {

@@ -31,6 +31,7 @@
 #include <yaclib/coro/task.hpp>
 
 #include "network/http/common.h"
+#include "network/http/compression.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::network::http {
@@ -72,6 +73,13 @@ class HttpResponseWriter {
   // complete "Name: value\r\n" lines; set before the handler writes its head.
   void SetExtraHeaders(std::string_view headers) noexcept { _extra = headers; }
 
+  // The content-coding negotiated from Accept-Encoding; set before the head.
+  // Bodies are compressed unless the response is HEAD, bodiless, or a fixed
+  // body under kMinCompressBytes.
+  void SetContentCoding(const ContentCoding& coding) noexcept {
+    _coding = &coding;
+  }
+
   // --- one-shot responses -------------------------------------------------
   void Json(HttpStatus status, std::string_view body) {
     Fixed(status, kJsonContentType, body);
@@ -87,6 +95,24 @@ class HttpResponseWriter {
 
   void Fixed(HttpStatus status, std::string_view content_type,
              std::string_view body, std::string_view extra_headers = {}) {
+    // `_encoder != nullptr` means `body` IS the compressed bytes, handed back
+    // by the branch below; without that guard an incompressible body (whose
+    // encoding is never smaller) would re-enter here forever.
+    if (_encoder == nullptr && ShouldEncode(status, body.size())) {
+      std::string compressed;
+      _encoder = _coding->make();
+      _encoder->Encode(body, true,
+                       [&](std::string_view out) { compressed.append(out); });
+      if (compressed.size() < body.size()) {
+        Fixed(status, content_type, compressed, extra_headers);
+        return;
+      }
+      // Encoding made this body bigger; send it as-is. Clearing the coding
+      // drops the Content-Encoding header and stops WriteHead below from
+      // taking the compress-and-chunk path for the same body.
+      _encoder.reset();
+      _coding = nullptr;
+    }
     WriteHead(status, content_type, body.size(), extra_headers);
     // WriteHead (via EncodeHead) already committed the head. Append the body
     // (if one is expected) and flush.
@@ -96,11 +122,17 @@ class HttpResponseWriter {
     }
     writer.Commit(true);
     _state = State::kFinished;
+    _encoder.reset();
   }
 
   // --- known-length streamed body ----------------------------------------
+  // A compressed body has no known length up front, so it is framed chunked.
   void WriteHead(HttpStatus status, std::string_view content_type,
                  uint64_t content_length, std::string_view extra_headers = {}) {
+    if (_encoder == nullptr && ShouldEncode(status, content_length)) {
+      WriteHeadChunked(status, content_type, extra_headers);
+      return;
+    }
     const bool bodiless =
       EncodeHead(status, content_type, &content_length, extra_headers);
     _state = State::kFixedBody;
@@ -127,10 +159,10 @@ class HttpResponseWriter {
         return;
       }
       case State::kChunkedBody:
-        if (!data.empty()) {
-          BeginChunk();
-          _chunk->Write(data);
-          EndChunk();
+        if (_encoder != nullptr) {
+          EncodeChunks(data, false);
+        } else if (!data.empty()) {
+          WriteChunk(data);
         }
         return;
       default:
@@ -139,8 +171,15 @@ class HttpResponseWriter {
   }
 
   // --- chunked streamed body ----------------------------------------------
+  // A compressed stream buffers inside the codec, so Write() no longer maps
+  // one-to-one onto chunks the client can consume: bytes leave when a codec
+  // block fills or at Finish(). Incremental-delivery endpoints (SSE and the
+  // like) must not run on a listener with compression enabled.
   void WriteHeadChunked(HttpStatus status, std::string_view content_type,
                         std::string_view extra_headers = {}) {
+    if (_encoder == nullptr && ShouldEncode(status, kMinCompressBytes)) {
+      _encoder = _coding->make();
+    }
     EncodeHead(status, content_type, nullptr, extra_headers);
     _state = State::kChunkedBody;
   }
@@ -191,6 +230,10 @@ class HttpResponseWriter {
     switch (_state) {
       case State::kChunkedBody: {
         SDB_ASSERT(!_chunk.has_value());
+        if (_encoder != nullptr) {
+          EncodeChunks({}, true);
+          _encoder.reset();
+        }
         message::Writer writer{_send};
         if (!_head_only) {
           writer.Write("0\r\n\r\n");
@@ -222,6 +265,35 @@ class HttpResponseWriter {
 
   static constexpr size_t kChunkHeaderLen = 10;  // "XXXXXXXX\r\n"
 
+  static bool Bodiless(HttpStatus status) noexcept {
+    // 1xx/204/304 carry neither a body nor framing length (RFC 9112 6.1).
+    const auto code = std::to_underlying(status);
+    return status == HttpStatus::NoContent ||
+           status == HttpStatus::NotModified || (code >= 100 && code < 200);
+  }
+
+  bool ShouldEncode(HttpStatus status, uint64_t body_size) const noexcept {
+    return _coding != nullptr && !_head_only && !Bodiless(status) &&
+           body_size >= kMinCompressBytes;
+  }
+
+  void WriteChunk(std::string_view data) {
+    BeginChunk();
+    _chunk->Write(data);
+    EndChunk();
+  }
+
+  void EncodeChunks(std::string_view data, bool finish) {
+    if (data.empty() && !finish) {
+      return;
+    }
+    _encoder->Encode(data, finish, [&](std::string_view out) {
+      if (!out.empty() && !_head_only) {
+        WriteChunk(out);
+      }
+    });
+  }
+
   // Returns whether the status is bodiless (1xx/204/304); the caller must then
   // emit no body and no framing length.
   bool EncodeHead(HttpStatus status, std::string_view content_type,
@@ -229,10 +301,7 @@ class HttpResponseWriter {
                   std::string_view extra_headers) {
     SDB_ASSERT(_state == State::kIdle);
     const auto code = std::to_underlying(status);
-    // 1xx/204/304 carry neither a body nor framing length (RFC 9112 6.1).
-    const bool bodiless = status == HttpStatus::NoContent ||
-                          status == HttpStatus::NotModified ||
-                          (code >= 100 && code < 200);
+    const bool bodiless = Bodiless(status);
     std::string head =
       absl::StrCat("HTTP/1.1 ", code, " ", ReasonPhrase(status),
                    "\r\nContent-Type: ", content_type);
@@ -242,6 +311,10 @@ class HttpResponseWriter {
       absl::StrAppend(&head, "\r\nContent-Length: ", *content_length);
     } else {
       absl::StrAppend(&head, "\r\nTransfer-Encoding: chunked");
+    }
+    if (_encoder != nullptr) {
+      absl::StrAppend(&head, "\r\nContent-Encoding: ", _coding->token,
+                      "\r\nVary: Accept-Encoding");
     }
     absl::StrAppend(&head,
                     "\r\nConnection: ", _keep_alive ? "keep-alive" : "close",
@@ -254,6 +327,8 @@ class HttpResponseWriter {
 
   message::Buffer& _send;
   ResponseSink& _sink;
+  const ContentCoding* _coding = nullptr;
+  std::unique_ptr<ContentEncoder> _encoder;
   // The in-progress chunk's Writer (live between BeginChunk and EndChunk).
   std::optional<message::Writer> _chunk;
   uint8_t* _chunk_header = nullptr;

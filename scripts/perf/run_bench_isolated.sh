@@ -5,6 +5,7 @@
 # bench as the invoking user inside it, then relinquishes the cores on exit.
 #
 # Usage:  sudo bash scripts/perf/run_bench_isolated.sh
+#         sudo bash scripts/perf/run_bench_isolated.sh <command> [args...]
 #         sudo BENCH_CORES=8-31 bash scripts/perf/run_bench_isolated.sh
 #         sudo PERF_DB=all bash scripts/perf/run_bench_isolated.sh
 #         sudo PERF_DB=pg,crdb PERF_REMEASURE_DB=crdb bash scripts/perf/run_bench_isolated.sh
@@ -13,6 +14,11 @@
 # serenedb release image); PERF_REMEASURE_DB refreshes their cached baselines.
 # Default (no PERF_DB) measures only the new server.
 #
+# With a command, that command runs instead of the wire bench: as the invoking
+# user, inside the exclusive partition, pinned to the reserved cores (server
+# and client cores alike, so every process it starts shares them). PERF_DB and
+# PERF_SDB_DOCKER do not apply to it.
+#
 # PERF_SDB_DOCKER=1 (the default) runs serened itself in docker for fairness with
 # the engine containers. A container cannot schedule inside the exclusive partition
 # (the same reason the engines are seeded outside it), so in docker mode NO
@@ -20,6 +26,8 @@
 # unpartitioned, every container pinned to the chosen cores via --cpuset-cpus.
 # PERF_SDB_DOCKER=0 keeps the original exclusive-partition bare-process run.
 set -euo pipefail
+
+CMD=("$@")
 
 # Reserve WHOLE physical cores (both SMT siblings) -- otherwise a co-tenant on the
 # sibling thread shares our core's execution units and pollutes the measurement.
@@ -114,6 +122,7 @@ remeasure_wanted() {
 # Seed each selected engine's baseline BEFORE reserving the partition. Only runs
 # when its cache is missing or a refresh is asked for.
 for eng in "${SELECTED[@]}"; do
+	((${#CMD[@]} == 0)) || break
 	cache="${BASELINES}/${eng}.tsv"
 	if [[ -s "${cache}" ]] && ! remeasure_wanted "${eng}"; then
 		continue
@@ -132,7 +141,7 @@ done
 # baselines are seeded above (containers --cpuset-cpus-pinned to ${CORES}, the
 # pgbench/perf side unpinned). This matches the conditions the cached engine
 # numbers were taken under, which is the fairness the docker mode is for.
-if [[ "${PERF_SDB_DOCKER:-1}" != 0 ]]; then
+if ((${#CMD[@]} == 0)) && [[ "${PERF_SDB_DOCKER:-1}" != 0 ]]; then
 	echo "PERF_SDB_DOCKER=${PERF_SDB_DOCKER:-1}: no partition (containers can't use one);"
 	echo "running bench unpartitioned as ${RUN_USER}, containers pinned to ${CORES}"
 	exec sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
@@ -176,6 +185,12 @@ fi
 # Put this shell into the cgroup; the bench and its children (serened, pgbench,
 # perf) inherit it, so they all run only on the reserved cores.
 echo $$ >"$CG/cgroup.procs"
+if ((${#CMD[@]} > 0)); then
+	echo "reserved cores ${ALL_CORES}; running as ${RUN_USER}: ${CMD[*]}"
+	sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
+		taskset -c "${ALL_CORES}" "${CMD[@]}"
+	exit
+fi
 echo "reserved cores ${CORES}; running bench as ${RUN_USER}"
 # PERF_REUSE_ONLY_DB=all: every external engine was already measured OUTSIDE the
 # partition (seeded above); the main bench must NOT re-measure any here -- a

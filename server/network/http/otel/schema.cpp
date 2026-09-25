@@ -60,6 +60,7 @@ class Creator {
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};
     std::vector<duckdb::CatalogSearchEntry> paths{
+      // TODO()
       duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
                                  duckdb::Identifier{"$user"}},
       duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
@@ -99,43 +100,69 @@ class Creator {
     return true;
   }
 
+  std::string Check() {
+    std::vector<duckdb::unique_ptr<duckdb::SQLStatement>> inserts;
+    inserts.push_back(connector::OtelLogsInsert(
+      duckdb::make_shared_ptr<connector::OtelLogsBox>()));
+    inserts.push_back(connector::OtelTracesInsert(
+      duckdb::make_shared_ptr<connector::OtelTracesBox>()));
+    for (size_t i = 0; i < connector::kOtelMetricTables.size(); ++i) {
+      inserts.push_back(connector::OtelMetricsInsert(
+        i, duckdb::make_shared_ptr<connector::OtelMetricsBox>()));
+    }
+    for (auto& insert : inserts) {
+      auto prepared = _conn->Prepare(std::move(insert));
+      if (prepared->HasError()) {
+        return prepared->GetErrorObject().RawMessage();
+      }
+    }
+    return {};
+  }
+
  private:
   std::unique_ptr<duckdb::Connection> _conn;
 };
 
 }  // namespace
 
-void EnsureSchema(std::string_view database) {
+// TODO -- returning std::string is strange for errors, idk. Smth like result or
+// expected, IDK
+std::string EnsureSchema(std::string_view database) {
   auto entry = catalog::FindDatabase(database);
   if (!entry) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
     auto home = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
     if (!home) {
-      SDB_WARN(STARTUP, "OpenTelemetry schema: default database not found");
-      return;
+      return "default database not found";
     }
     Creator bootstrap{home->name.GetIdentifierName(), home->oid};
     if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
                                     network::http::SqlIdentifier(database)))) {
-      return;
+      return absl::StrCat("cannot create database '", database, "'");
     }
     entry = catalog::FindDatabase(database);
     if (!entry) {
-      SDB_WARN(STARTUP, "OpenTelemetry schema: database '", database,
-               "' not visible after CREATE DATABASE");
-      return;
+      return absl::StrCat("database '", database,
+                          "' not visible after CREATE DATABASE");
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
   Creator creator{entry->name.GetIdentifierName(), entry->oid};
   if (creator.Exists()) {
     SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database);
-    return;
-  }
-  if (creator.Create()) {
+  } else if (creator.Create()) {
     SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database);
   }
+  auto error = creator.Check();
+  if (error.empty()) {
+    return error;
+  }
+  return absl::StrCat(
+    "database '", database, "' does not match the built-in schema: ", error,
+    ". Fix the table, or start with the built-in schema in a new database: "
+    "set db=<new database> on the ?api=otel listener, e.g. "
+    "--listen='http://0.0.0.0:4318?api=otel&db=otel'");
 }
 
 }  // namespace sdb::otel

@@ -8,11 +8,12 @@ here so they cannot drift from the `.sql`.
 
     scripts/otel/schema.py generate      # rewrite the sqllogic include
     scripts/otel/schema.py check         # fail if that include has drifted
-    scripts/otel/schema.py embed <out>   # write the C++ header
+    scripts/otel/schema.py embed <out>   # write the C++ header: DDL + columns
 """
 
 import argparse
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -40,6 +41,8 @@ def render_header():
         "#pragma once\n"
         "\n"
         "#include <array>\n"
+        "#include <cstddef>\n"
+        "#include <cstdint>\n"
         "#include <string_view>\n"
         "\n"
         "namespace sdb::otel {\n"
@@ -50,7 +53,93 @@ def render_header():
         "}};\n"
         "\n"
         "}  // namespace sdb::otel\n"
+        "\n"
+        f"{render_columns()}"
     )
+
+
+TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*)\) WITH", re.S)
+COLUMN = re.compile(r'^\s*"?(\w+)"?\s+(.+?)(?:\s+NOT NULL)?,?\s*$')
+TYPES = {
+    "TIMESTAMP_NS": "TimestampNs",
+    "VARCHAR": "Varchar",
+    "JSON": "Varchar",
+    "SMALLINT": "Smallint",
+    "INTEGER": "Integer",
+    "BIGINT": "Bigint",
+    "DOUBLE PRECISION": "Double",
+    "BOOLEAN": "Boolean",
+}
+
+
+def camel(name):
+    return "".join(part.capitalize() for part in name.split("_"))
+
+
+def column_type(sql):
+    element = sql.removesuffix("[]")
+    if element not in TYPES:
+        sys.exit(f"{SCHEMA.relative_to(ROOT)}: no C++ mapping for type {sql}")
+    if element != sql:
+        return f"Type::List, Type::{TYPES[element]}"
+    return f"Type::{TYPES[element]}"
+
+
+def tables():
+    for statement in statements():
+        match = TABLE.match(statement)
+        if match is None:
+            continue
+        columns = []
+        for line in match.group(2).strip().splitlines():
+            column = COLUMN.match(line)
+            if column is None:
+                sys.exit(f"{SCHEMA.relative_to(ROOT)}: cannot parse column {line!r}")
+            columns.append((column.group(1), column_type(column.group(2))))
+        yield match.group(1), columns
+
+
+def render_columns():
+    out = [
+        "namespace sdb::otel::schema {",
+        "",
+        "enum class Type : uint8_t {",
+        "  None,",
+        *(f"  {t}," for t in dict.fromkeys(TYPES.values())),
+        "  List,",
+        "};",
+        "",
+        "struct Column {",
+        "  std::string_view name;",
+        "  Type type;",
+        "  Type element = Type::None;",
+        "};",
+        "",
+        "template<size_t N>",
+        "struct Table {",
+        "  std::string_view name;",
+        "  std::array<Column, N> columns;",
+        "};",
+    ]
+    for table, columns in tables():
+        name = camel(table.removeprefix("otel_"))
+        out += [
+            "",
+            f"enum class {name}Column : uint8_t {{",
+            *(f"  {camel(column)}," for column, _ in columns),
+            "};",
+            "",
+            f"inline constexpr Table<{len(columns)}> k{name}{{",
+            f'  "{table}",',
+            "  {{",
+            *(f'    {{"{column}", {kind}}},' for column, kind in columns),
+            "  }},",
+            "};",
+            "",
+            f"constexpr const auto& TableOf({name}Column) {{ return k{name}; }}",
+        ]
+    out += ["", "}  // namespace sdb::otel::schema", ""]
+    return "\n".join(out)
 
 
 def generate():

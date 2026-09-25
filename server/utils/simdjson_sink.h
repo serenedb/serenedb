@@ -98,6 +98,10 @@ class JsonSource {
   std::string ReadString() {
     return std::string{Read(_curr.get_string(), JsonType::string)};
   }
+  // Valid until the parser is destroyed or parses another document.
+  std::string_view ReadStringView() {
+    return Read(_curr.get_string(), JsonType::string);
+  }
 
   bool OnNullableBegin() { return !_curr.is_null().value(); }
 

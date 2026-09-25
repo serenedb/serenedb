@@ -22,6 +22,8 @@
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_split.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -433,7 +435,10 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      otel::EnsureSchema(database);
+      if (const auto error = otel::EnsureSchema(database); !error.empty()) {
+        SDB_FATAL(GENERAL, "endpoint '", spec.url,
+                  "': OpenTelemetry schema: ", error);
+      }
     }
     if (!catalog::FindDatabase(database)) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,

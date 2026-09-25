@@ -41,6 +41,11 @@ add_bench(norm_gather)
 add_bench(word_bloom)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
+add_bench(http_compression)
+target_compile_definitions(
+    serenedb-bench-micro-http_compression
+    PRIVATE "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
+)
 add_bench(sloppy_phrase_vs_disjunction)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
